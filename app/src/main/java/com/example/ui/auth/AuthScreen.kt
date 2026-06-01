@@ -2,6 +2,8 @@ package com.example.ui.auth
 
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -24,11 +26,14 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.example.R
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -174,6 +179,126 @@ class AuthViewModelFactory(private val db: AppDatabase) : ViewModelProvider.Fact
     }
 }
 
+// ── Dark premium palette shared with FeeDashboard ──────────
+private val AuthBg       = Color(0xFF0F0C29)
+private val AuthBgMid    = Color(0xFF302B63)
+private val AuthBgEnd    = Color(0xFF24243E)
+private val AuthCardBg   = Color(0xFF0F172A)
+private val AuthCardAlt  = Color(0xFF111827)
+private val AuthBorder   = Color(0xFF1E293B)
+private val AuthCyan     = Color(0xFF22D3EE)
+private val AuthBlue     = Color(0xFF3B82F6)
+private val AuthViolet   = Color(0xFFA855F7)
+private val AuthWhite    = Color(0xFFF8FAFC)
+private val AuthMuted    = Color(0xFF94A3B8)
+private val AuthErrorBg  = Color(0x33EF4444)
+
+// ── Animated, floating logo composable ──────────────────────
+@Composable
+private fun AnimatedLogo(modifier: Modifier = Modifier) {
+    var startAnim by remember { mutableStateOf(false) }
+
+    val fadeAlpha by animateFloatAsState(
+        targetValue = if (startAnim) 1f else 0f,
+        animationSpec = tween(800, easing = FastOutSlowInEasing)
+    )
+    val scale by animateFloatAsState(
+        targetValue = if (startAnim) 1f else 0.3f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)
+    )
+    val floatOffset by rememberInfiniteTransition().animateFloat(
+        initialValue = -4f,
+        targetValue = 4f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(2500, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        )
+    )
+
+    LaunchedEffect(Unit) { startAnim = true }
+
+    Box(
+        modifier = modifier
+            .size(100.dp)
+            .graphicsLayer {
+                alpha = fadeAlpha
+                scaleX = scale
+                scaleY = scale
+                translationY = floatOffset * density
+            }
+            .shadow(20.dp, RoundedCornerShape(24.dp), spotColor = AuthCyan.copy(alpha = 0.35f))
+            .clip(RoundedCornerShape(24.dp)),
+        contentAlignment = Alignment.Center
+    ) {
+        Image(
+            painter = painterResource(R.drawable.app_logo),
+            contentDescription = "BatchFee Logo",
+            modifier = Modifier.fillMaxSize()
+        )
+    }
+}
+
+// ── Glass card for input fields ─────────────────────────────
+@Composable
+private fun GlassCard(content: @Composable ColumnScope.() -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .shadow(12.dp, RoundedCornerShape(20.dp), spotColor = AuthCyan.copy(alpha = 0.10f)),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = AuthCardBg.copy(alpha = 0.85f)),
+        border = BorderStroke(1.dp, AuthBorder.copy(alpha = 0.6f))
+    ) {
+        Column(modifier = Modifier.padding(24.dp)) { content() }
+    }
+}
+
+// ── Styled text field for dark theme ────────────────────────
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DarkTextField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    leadingIcon: @Composable () -> Unit,
+    modifier: Modifier = Modifier,
+    trailingIcon: @Composable (() -> Unit)? = null,
+    visualTransformation: VisualTransformation = VisualTransformation.None,
+    keyboardType: androidx.compose.ui.text.input.KeyboardType = androidx.compose.ui.text.input.KeyboardType.Text,
+    imeAction: androidx.compose.ui.text.input.ImeAction = androidx.compose.ui.text.input.ImeAction.Next
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        label = { Text(label, color = AuthMuted) },
+        leadingIcon = leadingIcon,
+        trailingIcon = trailingIcon,
+        visualTransformation = visualTransformation,
+        modifier = modifier.fillMaxWidth(),
+        singleLine = true,
+        shape = RoundedCornerShape(12.dp),
+        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+            keyboardType = keyboardType,
+            imeAction = imeAction
+        ),
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedContainerColor = AuthCardAlt,
+            unfocusedContainerColor = AuthCardAlt,
+            focusedBorderColor = AuthCyan,
+            unfocusedBorderColor = AuthBorder,
+            focusedTextColor = AuthWhite,
+            unfocusedTextColor = AuthWhite,
+            cursorColor = AuthCyan,
+            focusedLabelColor = AuthCyan,
+            unfocusedLabelColor = AuthMuted,
+            focusedLeadingIconColor = AuthCyan,
+            unfocusedLeadingIconColor = AuthMuted,
+            focusedTrailingIconColor = AuthMuted,
+            unfocusedTrailingIconColor = AuthMuted
+        )
+    )
+}
+
 @Composable
 fun AuthScreen(
     db: AppDatabase,
@@ -182,260 +307,188 @@ fun AuthScreen(
 ) {
     val viewModel: AuthViewModel = viewModel(factory = AuthViewModelFactory(db))
     var isLoginMode by remember { mutableStateOf(true) }
-    
+
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var instituteName by remember { mutableStateOf("") }
     var ownerName by remember { mutableStateOf("") }
-    
+
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var isLoading by remember { mutableStateOf(false) }
     var loadingDemoAccount by remember { mutableStateOf<String?>(null) }
     var passwordVisible by remember { mutableStateOf(false) }
+    var contentVisible by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) { contentVisible = true }
 
     val bgGradient = Brush.verticalGradient(
-        colors = listOf(
-            Color(0xFF0F0C29),
-            Color(0xFF302B63),
-            Color(0xFF24243E)
-        )
+        colors = listOf(AuthBg, AuthBgMid, AuthBgEnd)
     )
-    
-    var isVisible by remember { mutableStateOf(false) }
-    var animatedTitleAlpha by remember { mutableStateOf(0f) }
-    var animatedTaglineOffset by remember { mutableStateOf(20f) }
-
-    LaunchedEffect(Unit) {
-        isVisible = true
-        animatedTitleAlpha = 1f
-        animatedTaglineOffset = 0f
-    }
-
-    val titleAlpha by animateFloatAsState(targetValue = animatedTitleAlpha, animationSpec = tween(1200))
-    val taglineOffset by animateFloatAsState(targetValue = animatedTaglineOffset, animationSpec = tween(1200, delayMillis = 200))
-
-    // Styling Combinations
-    val isStyleA = true // Set to false to switch to Combination B: Dark-Light Hybrid
-
-    val titleColor = if (isStyleA) Color(0xFF1E1B4B) else Color(0xFF1F2937)
-    val taglineColor = if (isStyleA) Color(0xFF4C1D95) else Color(0xFF6D28D9)
-    val subtitleColor = if (isStyleA) Color(0xFF64748B) else Color(0xFF9CA3AF)
-    
-    val primaryButtonGradient = if (isStyleA) {
-        listOf(Color(0xFF4F46E5), Color(0xFF7C3AED))
-    } else {
-        listOf(Color(0xFF8B5CF6), Color(0xFFD946EF))
-    }
-    
-    val demoOwnerBgColor = if (isStyleA) Color(0xFFEEF2FF) else Color(0xFFE0F2FE)
-    val demoOwnerTextColor = if (isStyleA) Color(0xFF4338CA) else Color(0xFF0284C7)
-    
-    val superAdminBgColor = if (isStyleA) Color(0xFFECFDF5) else Color(0xFFD1FAE5)
-    val superAdminTextColor = if (isStyleA) Color(0xFF047857) else Color(0xFF059669)
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(bgGradient)
     ) {
-        // Decorative Blurred Orbs
+        // Decorative orbs
         Box(
             modifier = Modifier
                 .align(Alignment.TopStart)
-                .offset(x = (-80).dp, y = (-80).dp)
-                .size(250.dp)
+                .offset(x = (-100).dp, y = (-60).dp)
+                .size(280.dp)
                 .background(
-                    brush = Brush.radialGradient(
-                        colors = listOf(Color(0xFF6366F1).copy(alpha = 0.4f), Color.Transparent)
+                    Brush.radialGradient(
+                        colors = listOf(Color(0xFF6D28D9).copy(alpha = 0.35f), Color.Transparent)
                     )
                 )
         )
-        
         Box(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
-                .offset(x = 60.dp, y = 100.dp)
-                .size(300.dp)
+                .offset(x = 80.dp, y = 120.dp)
+                .size(320.dp)
                 .background(
-                    brush = Brush.radialGradient(
-                        colors = listOf(Color(0xFFA855F7).copy(alpha = 0.3f), Color.Transparent)
+                    Brush.radialGradient(
+                        colors = listOf(AuthCyan.copy(alpha = 0.25f), Color.Transparent)
+                    )
+                )
+        )
+        Box(
+            modifier = Modifier
+                .align(Alignment.Center)
+                .offset(y = (-80).dp)
+                .size(200.dp)
+                .background(
+                    Brush.radialGradient(
+                        colors = listOf(AuthViolet.copy(alpha = 0.08f), Color.Transparent)
                     )
                 )
         )
 
-        // Main content
         AnimatedVisibility(
-            visible = isVisible,
-            enter = fadeIn(animationSpec = tween(800)) + slideInVertically(initialOffsetY = { 40 }, animationSpec = tween(800)),
+            visible = contentVisible,
+            enter = fadeIn(tween(800, easing = FastOutSlowInEasing)) +
+                    slideInVertically(tween(800, easing = FastOutSlowInEasing, delayMillis = 200)) { it / 2 },
             modifier = Modifier.fillMaxSize()
         ) {
-            Box(
+            Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .verticalScroll(rememberScrollState()),
-                contentAlignment = Alignment.Center
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 24.dp, vertical = 48.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Column(
-                    modifier = Modifier
-                        .padding(horizontal = 24.dp, vertical = 48.dp)
-                        .fillMaxWidth()
-                        .shadow(16.dp, RoundedCornerShape(32.dp), spotColor = Color(0x33000000))
-                        .clip(RoundedCornerShape(32.dp))
-                        .background(Color.White.copy(alpha = 0.9f))
-                        .border(1.dp, Color.White.copy(alpha = 0.6f), RoundedCornerShape(32.dp))
-                        .padding(32.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    // Logo Box
-                    Box(
-                        modifier = Modifier
-                            .size(64.dp)
-                            .shadow(8.dp, RoundedCornerShape(16.dp), spotColor = Color(0x666366F1))
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(
-                                Brush.linearGradient(
-                                    colors = listOf(Color(0xFF6366F1), Color(0xFFA855F7))
-                                )
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.School,
-                            contentDescription = "App Icon",
-                            tint = Color.White,
-                            modifier = Modifier.size(36.dp)
-                        )
-                    }
-                    
-                    Spacer(modifier = Modifier.height(20.dp))
-                    
-                    Text(
-                        text = "BatchFee",
-                        style = MaterialTheme.typography.headlineLarge.copy(
-                            fontWeight = if (isStyleA) FontWeight.Bold else FontWeight.ExtraBold
-                        ),
-                        color = titleColor,
-                        modifier = Modifier.graphicsLayer(alpha = titleAlpha)
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "Smart institute management, simplified.",
-                        style = MaterialTheme.typography.titleMedium.copy(
-                            fontWeight = FontWeight.Medium
-                        ),
-                        color = taglineColor,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.graphicsLayer(translationY = taglineOffset, alpha = titleAlpha)
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "Manage students, batches, fees, attendance, and reports from one beautiful app.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = subtitleColor,
-                        textAlign = TextAlign.Center
-                    )
-                    
-                    Spacer(modifier = Modifier.height(32.dp))
+                Spacer(Modifier.height(16.dp))
 
-                    val textFieldColors = OutlinedTextFieldDefaults.colors(
-                        unfocusedContainerColor = Color(0xFFF3F4F6).copy(alpha = 0.6f),
-                        focusedContainerColor = Color.White,
-                        unfocusedBorderColor = Color.Transparent,
-                        focusedBorderColor = Color(0xFF6366F1),
-                        unfocusedLabelColor = Color(0xFF6B7280),
-                        focusedLabelColor = Color(0xFF6366F1),
-                        focusedTextColor = Color(0xFF111827),
-                        unfocusedTextColor = Color(0xFF111827),
-                        cursorColor = Color(0xFF6366F1)
-                    )
+                // ═════════════════════════════════════════════════
+                //  Animated Logo
+                // ═════════════════════════════════════════════════
+                AnimatedLogo()
 
+                Spacer(Modifier.height(24.dp))
+
+                // ═════════════════════════════════════════════════
+                //  App Name + Tagline
+                // ═════════════════════════════════════════════════
+                Text(
+                    text = "BatchFee",
+                    style = MaterialTheme.typography.headlineLarge.copy(
+                        fontWeight = FontWeight.ExtraBold,
+                        letterSpacing = androidx.compose.ui.unit.TextUnit(1.5f, androidx.compose.ui.unit.TextUnitType.Sp)
+                    ),
+                    color = AuthWhite
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "Smart institute management, simplified.",
+                    style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
+                    color = AuthCyan,
+                    textAlign = TextAlign.Center
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = "Manage students, batches, fees, attendance, and reports from one beautiful app.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = AuthMuted,
+                    textAlign = TextAlign.Center,
+                    lineHeight = androidx.compose.ui.unit.TextUnit(18f, androidx.compose.ui.unit.TextUnitType.Sp)
+                )
+
+                Spacer(Modifier.height(32.dp))
+
+                // ═════════════════════════════════════════════════
+                //  Login / Register Form Card
+                // ═════════════════════════════════════════════════
+                GlassCard {
                     if (!isLoginMode) {
-                        OutlinedTextField(
+                        DarkTextField(
                             value = instituteName,
                             onValueChange = { instituteName = it },
-                            label = { Text("Institute Name") },
-                            leadingIcon = { Icon(Icons.Filled.AccountBalance, contentDescription = null, tint = Color(0xFF9CA3AF)) },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true,
-                            shape = RoundedCornerShape(16.dp),
-                            colors = textFieldColors
+                            label = "Institute Name",
+                            leadingIcon = { Icon(Icons.Filled.AccountBalance, null, tint = AuthMuted) }
                         )
-                        Spacer(modifier = Modifier.height(12.dp))
-                        OutlinedTextField(
+                        Spacer(Modifier.height(12.dp))
+                        DarkTextField(
                             value = ownerName,
                             onValueChange = { ownerName = it },
-                            label = { Text("Your Name") },
-                            leadingIcon = { Icon(Icons.Filled.Person, contentDescription = null, tint = Color(0xFF9CA3AF)) },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true,
-                            shape = RoundedCornerShape(16.dp),
-                            colors = textFieldColors
+                            label = "Your Name",
+                            leadingIcon = { Icon(Icons.Filled.Person, null, tint = AuthMuted) }
                         )
-                        Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(Modifier.height(12.dp))
                     }
 
-                    OutlinedTextField(
+                    DarkTextField(
                         value = email,
                         onValueChange = { email = it },
-                        label = { Text("Email Address") },
-                        leadingIcon = { Icon(Icons.Filled.Email, contentDescription = null, tint = Color(0xFF9CA3AF)) },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                            keyboardType = androidx.compose.ui.text.input.KeyboardType.Email,
-                            imeAction = androidx.compose.ui.text.input.ImeAction.Next
-                        ),
-                        shape = RoundedCornerShape(16.dp),
-                        colors = textFieldColors
+                        label = "Email Address",
+                        leadingIcon = { Icon(Icons.Filled.Email, null, tint = AuthMuted) },
+                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Email
                     )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    
-                    OutlinedTextField(
+                    Spacer(Modifier.height(12.dp))
+
+                    DarkTextField(
                         value = password,
                         onValueChange = { password = it },
-                        label = { Text("Password") },
-                        leadingIcon = { Icon(Icons.Filled.Lock, contentDescription = null, tint = Color(0xFF9CA3AF)) },
+                        label = "Password",
+                        leadingIcon = { Icon(Icons.Filled.Lock, null, tint = AuthMuted) },
                         visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                            keyboardType = androidx.compose.ui.text.input.KeyboardType.Password,
-                            imeAction = androidx.compose.ui.text.input.ImeAction.Done
-                        ),
+                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Password,
+                        imeAction = androidx.compose.ui.text.input.ImeAction.Done,
                         trailingIcon = {
                             IconButton(onClick = { passwordVisible = !passwordVisible }) {
                                 Icon(
-                                    imageVector = if (passwordVisible) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
-                                    contentDescription = if (passwordVisible) "Hide password" else "Show password",
-                                    tint = Color(0xFF9CA3AF)
+                                    if (passwordVisible) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
+                                    if (passwordVisible) "Hide" else "Show",
+                                    tint = AuthMuted
                                 )
                             }
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        shape = RoundedCornerShape(16.dp),
-                        colors = textFieldColors
+                        }
                     )
-                    
+
                     if (errorMessage != null) {
-                        Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(Modifier.height(12.dp))
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .background(Color(0xFFFEF2F2), RoundedCornerShape(12.dp))
-                                .border(1.dp, Color(0xFFFCA5A5), RoundedCornerShape(12.dp))
-                                .padding(12.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(AuthErrorBg)
+                                .border(1.dp, Color(0xFFEF4444).copy(alpha = 0.4f), RoundedCornerShape(10.dp))
+                                .padding(10.dp)
                         ) {
                             Text(
-                                text = errorMessage!!,
-                                color = Color(0xFFDC2626),
-                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+                                errorMessage!!,
+                                color = Color(0xFFFCA5A5),
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium,
                                 textAlign = TextAlign.Center,
                                 modifier = Modifier.fillMaxWidth()
                             )
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(24.dp))
-                    
+                    Spacer(Modifier.height(20.dp))
+
+                    // Primary action button
                     Button(
                         onClick = {
                             if (isLoading || loadingDemoAccount != null) return@Button
@@ -446,9 +499,9 @@ fun AuthScreen(
                                     isLoading = false
                                     if (role == "SuperAdmin") onNavigateSuperAdmin()
                                     else onNavigateDashboard()
-                                }, onError = { 
+                                }, onError = {
                                     errorMessage = it
-                                    isLoading = false 
+                                    isLoading = false
                                 })
                             } else {
                                 viewModel.registerInstitute(
@@ -457,140 +510,145 @@ fun AuthScreen(
                                         isLoading = false
                                         onNavigateDashboard()
                                     },
-                                    onError = { 
+                                    onError = {
                                         errorMessage = it
-                                        isLoading = false 
+                                        isLoading = false
                                     }
                                 )
                             }
                         },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(56.dp),
-                        shape = RoundedCornerShape(16.dp),
+                            .height(52.dp),
+                        shape = RoundedCornerShape(14.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent),
                         contentPadding = PaddingValues()
                     ) {
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .background(
-                                    Brush.horizontalGradient(primaryButtonGradient),
-                                    RoundedCornerShape(16.dp)
-                                ),
+                                .shadow(8.dp, RoundedCornerShape(14.dp), spotColor = AuthCyan.copy(alpha = 0.4f))
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(Brush.horizontalGradient(listOf(AuthBlue, AuthCyan))),
                             contentAlignment = Alignment.Center
                         ) {
                             if (isLoading && loadingDemoAccount == null) {
-                                CircularProgressIndicator(modifier = Modifier.size(24.dp), color = Color.White, strokeWidth = 2.dp)
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(22.dp),
+                                    color = Color.White,
+                                    strokeWidth = 2.dp
+                                )
                             } else {
                                 Text(
                                     text = if (isLoginMode) "Login" else "Create Institute & Start Trial",
                                     color = Color.White,
                                     fontWeight = FontWeight.Bold,
-                                    style = MaterialTheme.typography.titleMedium
+                                    fontSize = 15.sp
                                 )
                             }
                         }
                     }
+                }
 
-                    Spacer(modifier = Modifier.height(16.dp))
-                    
-                    TextButton(onClick = { 
-                        isLoginMode = !isLoginMode 
-                        errorMessage = null
-                    }) {
-                        Text(
-                            text = if (isLoginMode) "Need an account? Register Institute" else "Already have an account? Login",
-                            color = taglineColor,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-                    
-                    Spacer(modifier = Modifier.height(24.dp))
-                    
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        HorizontalDivider(modifier = Modifier.weight(1f), color = Color(0xFFE5E7EB))
-                        Text(
-                            text = "or try demo access",
-                            color = subtitleColor,
-                            style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.padding(horizontal = 12.dp)
-                        )
-                        HorizontalDivider(modifier = Modifier.weight(1f), color = Color(0xFFE5E7EB))
-                    }
-                    
-                    Spacer(modifier = Modifier.height(24.dp))
-                    
-                    Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-                        Button(
-                            onClick = {
-                                if (isLoading || loadingDemoAccount != null) return@Button
-                                errorMessage = null
-                                loadingDemoAccount = "owner"
-                                viewModel.login("owner@batchfee.app", "123456", onSuccess = { role ->
-                                    loadingDemoAccount = null
-                                    onNavigateDashboard()
-                                }, onError = { 
-                                    errorMessage = it
-                                    loadingDemoAccount = null
-                                })
-                            },
-                            modifier = Modifier.fillMaxWidth().height(52.dp),
-                            shape = RoundedCornerShape(16.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = demoOwnerBgColor,
-                                contentColor = demoOwnerTextColor
-                            ),
-                            elevation = ButtonDefaults.buttonElevation(0.dp)
-                        ) {
-                            if (loadingDemoAccount == "owner") {
-                                CircularProgressIndicator(modifier = Modifier.size(24.dp), color = demoOwnerTextColor, strokeWidth = 2.dp)
-                            } else {
-                                Text("Enter Demo Owner Account", fontWeight = FontWeight.Bold)
-                            }
-                        }
-                        
-                        Button(
-                            onClick = {
-                                if (isLoading || loadingDemoAccount != null) return@Button
-                                errorMessage = null
-                                loadingDemoAccount = "admin"
-                                viewModel.login("admin@batchfee.app", "123456", onSuccess = { role ->
-                                    loadingDemoAccount = null
-                                    // Demo Login: navigate to Dashboard instead of SuperAdmin.
-                                    onNavigateDashboard()
-                                }, onError = { 
-                                    errorMessage = it
-                                    loadingDemoAccount = null
-                                })
-                            },
-                            modifier = Modifier.fillMaxWidth().height(52.dp),
-                            shape = RoundedCornerShape(16.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = superAdminBgColor,
-                                contentColor = superAdminTextColor
-                            ),
-                            elevation = ButtonDefaults.buttonElevation(0.dp)
-                        ) {
-                            if (loadingDemoAccount == "admin") {
-                                CircularProgressIndicator(modifier = Modifier.size(24.dp), color = superAdminTextColor, strokeWidth = 2.dp)
-                            } else {
-                                Text("Enter Super Admin Account", fontWeight = FontWeight.Bold)
-                            }
-                        }
-                    }
-                    
-                    Spacer(modifier = Modifier.height(16.dp))
+                Spacer(Modifier.height(16.dp))
+
+                // Toggle login/register
+                TextButton(onClick = { isLoginMode = !isLoginMode; errorMessage = null }) {
                     Text(
-                        text = "Debug Info: isLoading=$isLoading, loadingDemoAccount=$loadingDemoAccount, error=${errorMessage ?: "null"}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color.Gray,
-                        textAlign = TextAlign.Center
+                        text = if (isLoginMode) "Need an account? Register Institute" else "Already have an account? Login",
+                        color = AuthCyan,
+                        fontWeight = FontWeight.Medium
                     )
                 }
+
+                Spacer(Modifier.height(8.dp))
+
+                // Divider
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    HorizontalDivider(modifier = Modifier.weight(1f), color = AuthBorder)
+                    Text(
+                        "or try demo access",
+                        color = AuthMuted,
+                        fontSize = 13.sp,
+                        modifier = Modifier.padding(horizontal = 14.dp)
+                    )
+                    HorizontalDivider(modifier = Modifier.weight(1f), color = AuthBorder)
+                }
+
+                Spacer(Modifier.height(16.dp))
+
+                // Demo access buttons
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            if (isLoading || loadingDemoAccount != null) return@OutlinedButton
+                            errorMessage = null
+                            loadingDemoAccount = "owner"
+                            viewModel.login("owner@batchfee.app", "123456", onSuccess = {
+                                loadingDemoAccount = null
+                                onNavigateDashboard()
+                            }, onError = {
+                                errorMessage = it
+                                loadingDemoAccount = null
+                            })
+                        },
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                        shape = RoundedCornerShape(14.dp),
+                        border = BorderStroke(1.dp, AuthCyan.copy(alpha = 0.5f)),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = AuthCyan)
+                    ) {
+                        if (loadingDemoAccount == "owner") {
+                            CircularProgressIndicator(Modifier.size(20.dp), color = AuthCyan, strokeWidth = 2.dp)
+                        } else {
+                            Icon(Icons.Filled.PlayArrow, null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Enter Demo Owner Account", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        }
+                    }
+
+                    OutlinedButton(
+                        onClick = {
+                            if (isLoading || loadingDemoAccount != null) return@OutlinedButton
+                            errorMessage = null
+                            loadingDemoAccount = "admin"
+                            viewModel.login("admin@batchfee.app", "123456", onSuccess = {
+                                loadingDemoAccount = null
+                                onNavigateDashboard()
+                            }, onError = {
+                                errorMessage = it
+                                loadingDemoAccount = null
+                            })
+                        },
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                        shape = RoundedCornerShape(14.dp),
+                        border = BorderStroke(1.dp, AuthViolet.copy(alpha = 0.5f)),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = AuthViolet.copy(alpha = 0.9f))
+                    ) {
+                        if (loadingDemoAccount == "admin") {
+                            CircularProgressIndicator(Modifier.size(20.dp), color = AuthViolet, strokeWidth = 2.dp)
+                        } else {
+                            Icon(Icons.Filled.Shield, null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Enter Super Admin Account", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(16.dp))
+                Text(
+                    text = "v1.0 — BatchFee",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = AuthMuted.copy(alpha = 0.5f),
+                    textAlign = TextAlign.Center
+                )
+
+                Spacer(Modifier.height(24.dp))
             }
         }
     }
