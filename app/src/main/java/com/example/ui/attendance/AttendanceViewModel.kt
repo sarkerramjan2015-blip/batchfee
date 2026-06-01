@@ -1,0 +1,307 @@
+package com.example.ui.attendance
+
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewModelScope
+import com.example.data.database.AppDatabase
+import com.example.data.models.AbsentMessageEntity
+import com.example.data.models.AttendanceEntity
+import com.example.data.models.BatchEntity
+import com.example.data.models.StudentEntity
+import com.example.domain.SessionManager
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.firstOrNull
+import kotlinx.coroutines.launch
+import java.net.URLEncoder
+import java.text.SimpleDateFormat
+import java.util.*
+
+data class BatchAttendanceSummary(
+    val batchId: String = "",
+    val batchName: String = "",
+    val totalStudents: Int = 0,
+    val presentCount: Int = 0,
+    val absentCount: Int = 0,
+    val leaveCount: Int = 0,
+    val holidayCount: Int = 0
+) {
+    val markedCount get() = presentCount + absentCount + leaveCount + holidayCount
+    val presentPct get() = if (totalStudents > 0) presentCount * 100f / totalStudents else 0f
+    val absentPct get() = if (totalStudents > 0) absentCount * 100f / totalStudents else 0f
+    val leavePct get() = if (totalStudents > 0) leaveCount * 100f / totalStudents else 0f
+    val holidayPct get() = if (totalStudents > 0) holidayCount * 100f / totalStudents else 0f
+}
+
+data class StaffAttendanceSummary(
+    val totalStaff: Int = 0,
+    val presentCount: Int = 0,
+    val absentCount: Int = 0,
+    val leaveCount: Int = 0,
+    val holidayCount: Int = 0
+) {
+    val markedCount get() = presentCount + absentCount + leaveCount + holidayCount
+    val presentPct get() = if (totalStaff > 0) presentCount * 100f / totalStaff else 0f
+    val absentPct get() = if (totalStaff > 0) absentCount * 100f / totalStaff else 0f
+    val leavePct get() = if (totalStaff > 0) leaveCount * 100f / totalStaff else 0f
+    val holidayPct get() = if (totalStaff > 0) holidayCount * 100f / totalStaff else 0f
+}
+
+fun startOfDay(ms: Long): Long {
+    val cal = Calendar.getInstance().apply { timeInMillis = ms; set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0) }
+    return cal.timeInMillis
+}
+
+fun getCurrentMonthRange(): Pair<Long, Long> {
+    val cal = Calendar.getInstance()
+    cal.set(Calendar.DAY_OF_MONTH, 1); cal.set(Calendar.HOUR_OF_DAY, 0); cal.set(Calendar.MINUTE, 0); cal.set(Calendar.SECOND, 0); cal.set(Calendar.MILLISECOND, 0)
+    val start = cal.timeInMillis
+    cal.add(Calendar.MONTH, 1)
+    val end = cal.timeInMillis - 1
+    return Pair(start, end)
+}
+
+class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
+    private val _batches = MutableStateFlow<List<BatchEntity>>(emptyList())
+    val batches = _batches.asStateFlow()
+
+    private val _students = MutableStateFlow<List<StudentEntity>>(emptyList())
+    val students = _students.asStateFlow()
+    private val _attendanceRecords = MutableStateFlow<Map<String, AttendanceEntity>>(emptyMap())
+    val attendanceRecords = _attendanceRecords.asStateFlow()
+    private val _absentMessageMap = MutableStateFlow<Map<String, Boolean>>(emptyMap())
+    val absentMessageMap = _absentMessageMap.asStateFlow()
+    private val _sendingMessageIds = MutableStateFlow<Set<String>>(emptySet())
+    val sendingMessageIds = _sendingMessageIds.asStateFlow()
+    private val _currentBatch = MutableStateFlow<BatchEntity?>(null)
+    val currentBatch = _currentBatch.asStateFlow()
+
+    private val _batchSummaries = MutableStateFlow<List<BatchAttendanceSummary>>(emptyList())
+    val batchSummaries = _batchSummaries.asStateFlow()
+    private val _selectedBatchSummary = MutableStateFlow<BatchAttendanceSummary?>(null)
+    val selectedBatchSummary = _selectedBatchSummary.asStateFlow()
+    private val _studentHistory = MutableStateFlow<List<AttendanceEntity>>(emptyList())
+    val studentHistory = _studentHistory.asStateFlow()
+
+    private val _staffAttendanceSummary = MutableStateFlow(StaffAttendanceSummary())
+    val staffAttendanceSummary = _staffAttendanceSummary.asStateFlow()
+
+    private val _staffName = MutableStateFlow("")
+    val staffName = _staffName.asStateFlow()
+
+    init { loadBatches() }
+
+    private fun isAdmin() = SessionManager.isAdmin()
+    private fun isStaff() = SessionManager.isStaff()
+
+    private suspend fun getStaffAssignedBatchIds(): Set<String> {
+        if (isAdmin()) return emptySet()
+        val instId = SessionManager.currentInstituteId.value ?: return emptySet()
+        val userName = SessionManager.currentUserId.value?.let { db.userDao().getUserFlow(it).firstOrNull()?.name } ?: return emptySet()
+        val allStaff = db.staffDao().getStaffByInstitute(instId).firstOrNull() ?: return emptySet()
+        val matched = allStaff.find { it.fullName.equals(userName, ignoreCase = true) }
+        return matched?.assignedBatchIds?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() }?.toSet() ?: emptySet()
+    }
+
+    private fun loadBatches() {
+        viewModelScope.launch {
+            val instId = SessionManager.currentInstituteId.value ?: return@launch
+            db.batchDao().getBatchesByInstitute(instId).collect { allBatches ->
+                if (isAdmin()) _batches.value = allBatches
+                else {
+                    val assigned = getStaffAssignedBatchIds()
+                    _batches.value = allBatches.filter { it.id in assigned }
+                }
+            }
+        }
+        viewModelScope.launch {
+            SessionManager.currentUserId.value?.let { uid ->
+                db.userDao().getUserFlow(uid).collect { user -> _staffName.value = user?.name ?: "" }
+            }
+        }
+    }
+
+    fun loadBatchStudentsAndAttendance(batchId: String, dateMs: Long) {
+        val instId = SessionManager.currentInstituteId.value ?: return
+        val startDay = startOfDay(dateMs)
+        viewModelScope.launch { db.batchDao().getBatchById(batchId, instId).collect { _currentBatch.value = it } }
+        viewModelScope.launch { db.batchStudentDao().getStudentsForBatch(batchId, instId).collect { _students.value = it } }
+        viewModelScope.launch {
+            db.attendanceDao().getAttendanceForBatchByDate(instId, batchId, startDay).collect { records ->
+                _attendanceRecords.value = records.associateBy { it.studentId }
+            }
+        }
+        viewModelScope.launch {
+            db.absentMessageDao().getMessagesForBatchDate(instId, batchId, startDay).collect { msgs ->
+                _absentMessageMap.value = msgs.associate { it.studentId to true }
+            }
+        }
+    }
+
+    fun markAttendance(studentId: String, batchId: String, dateMs: Long, status: String) {
+        val instId = SessionManager.currentInstituteId.value ?: return
+        val currentUserId = SessionManager.currentUserId.value ?: return
+        val startDay = startOfDay(dateMs)
+        viewModelScope.launch {
+            val existing = _attendanceRecords.value[studentId]
+            val record = existing?.copy(status = status, updatedAtMs = System.currentTimeMillis())
+                ?: AttendanceEntity(
+                    id = UUID.randomUUID().toString(),
+                    instituteId = instId, batchId = batchId, studentId = studentId,
+                    attendanceDateMs = startDay, status = status, note = null,
+                    markedByUserId = currentUserId,
+                    createdAtMs = System.currentTimeMillis(), updatedAtMs = System.currentTimeMillis()
+                )
+            db.attendanceDao().insertOrUpdateAttendance(record)
+        }
+    }
+
+    fun markAll(batchId: String, dateMs: Long, status: String) {
+        _students.value.forEach { markAttendance(it.id, batchId, dateMs, status) }
+    }
+
+    fun bulkMark(batchId: String, dateMs: Long, studentIds: List<String>, status: String) {
+        studentIds.forEach { markAttendance(it, batchId, dateMs, status) }
+    }
+
+    fun undoAttendance(studentId: String, dateMs: Long, batchId: String) {
+        val instId = SessionManager.currentInstituteId.value ?: return
+        viewModelScope.launch { db.attendanceDao().deleteAttendance(instId, studentId, startOfDay(dateMs)) }
+    }
+
+    fun sendAbsentMessage(
+        context: Context, studentId: String, batchId: String, dateMs: Long,
+        channel: String, studentName: String, batchName: String,
+        phone: String?, staffLabel: String,
+        onSent: () -> Unit, onError: () -> Unit
+    ) {
+        val instId = SessionManager.currentInstituteId.value ?: return
+        val userId = SessionManager.currentUserId.value ?: return
+        val startDay = startOfDay(dateMs)
+        val dateLabel = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(startDay))
+        _sendingMessageIds.value = _sendingMessageIds.value + studentId
+
+        viewModelScope.launch {
+            val msg = buildString {
+                append("Dear Parent, $studentName was absent on $dateLabel in $batchName.")
+                append(" Please note your attendance.")
+                if (staffLabel.isNotBlank()) append(" \u2013 $staffLabel")
+            }
+            val alreadySent = db.absentMessageDao().hasMessageForStudentDate(instId, studentId, startDay)
+            if (alreadySent > 0) {
+                _sendingMessageIds.value = _sendingMessageIds.value - studentId
+                onError(); return@launch
+            }
+            db.absentMessageDao().insertMessage(
+                AbsentMessageEntity(
+                    id = UUID.randomUUID().toString(), instituteId = instId,
+                    batchId = batchId, studentId = studentId, attendanceDateMs = startDay,
+                    messageType = channel, messageText = msg, sentByUserId = userId,
+                    status = "sent", createdAtMs = System.currentTimeMillis()
+                )
+            )
+            try {
+                val encoded = URLEncoder.encode(msg, "UTF-8")
+                when (channel) {
+                    "whatsapp" -> {
+                        val number = phone?.replace("+", "")?.replace(" ", "")
+                        val url = if (!number.isNullOrBlank()) "https://wa.me/$number?text=$encoded" else "https://wa.me/?text=$encoded"
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                    }
+                    "sms" -> context.startActivity(
+                        Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${phone ?: ""}")).apply { putExtra("sms_body", msg) }
+                    )
+                }
+                _sendingMessageIds.value = _sendingMessageIds.value - studentId
+                onSent()
+            } catch (e: Exception) {
+                _sendingMessageIds.value = _sendingMessageIds.value - studentId
+                onError()
+            }
+        }
+    }
+
+    fun sendAllAbsentMessages(context: Context, batchId: String, dateMs: Long, channel: String, onComplete: () -> Unit) {
+        val absentRecords = _attendanceRecords.value.values.filter { it.status == "absent" }
+        absentRecords.forEach { record ->
+            val student = _students.value.find { it.id == record.studentId } ?: return@forEach
+            val batchName = _currentBatch.value?.name ?: ""
+            sendAbsentMessage(context, record.studentId, batchId, dateMs, channel,
+                student.fullName, batchName, student.phone, _staffName.value, {}, {})
+        }
+        onComplete()
+    }
+
+    fun loadDashboardSummaries() {
+        val instId = SessionManager.currentInstituteId.value ?: return
+        val (start, end) = getCurrentMonthRange()
+        viewModelScope.launch {
+            db.batchDao().getBatchesByInstitute(instId).collect { allBatches ->
+                val assignedIds = if (isAdmin()) allBatches.map { it.id }.toSet() else getStaffAssignedBatchIds()
+                val summaries = mutableListOf<BatchAttendanceSummary>()
+                allBatches.filter { it.id in assignedIds }.forEach { batch ->
+                    db.batchStudentDao().getStudentsForBatch(batch.id, instId).firstOrNull()?.let { students ->
+                        db.attendanceDao().getAttendanceForBatchByDateRange(instId, batch.id, start, end).firstOrNull()?.let { records ->
+                            summaries.add(BatchAttendanceSummary(
+                                batchId = batch.id, batchName = batch.name, totalStudents = students.size,
+                                presentCount = records.count { it.status == "present" },
+                                absentCount = records.count { it.status == "absent" },
+                                leaveCount = records.count { it.status == "leave" },
+                                holidayCount = records.count { it.status == "holiday" }
+                            ))
+                        } ?: summaries.add(BatchAttendanceSummary(batchId = batch.id, batchName = batch.name, totalStudents = students.size))
+                    }
+                }
+                _batchSummaries.value = summaries
+            }
+        }
+        viewModelScope.launch {
+            db.staffAttendanceDao().getAttendanceByDateRange(instId, start, end).collect { sa ->
+                db.staffDao().countStaff(instId).collect { totalCount ->
+                    _staffAttendanceSummary.value = StaffAttendanceSummary(
+                        totalStaff = totalCount,
+                        presentCount = sa.count { it.status == "present" },
+                        absentCount = sa.count { it.status == "absent" },
+                        leaveCount = sa.count { it.status == "leave" },
+                        holidayCount = sa.count { it.status == "holiday" }
+                    )
+                }
+            }
+        }
+    }
+
+    fun loadBatchMonthSummary(batchId: String) {
+        val instId = SessionManager.currentInstituteId.value ?: return
+        val (start, end) = getCurrentMonthRange()
+        viewModelScope.launch {
+            val batch = db.batchDao().getBatchById(batchId, instId).firstOrNull() ?: return@launch
+            val students = db.batchStudentDao().getStudentsForBatch(batchId, instId).firstOrNull() ?: return@launch
+            db.attendanceDao().getAttendanceForBatchByDateRange(instId, batchId, start, end).collect { records ->
+                _selectedBatchSummary.value = BatchAttendanceSummary(
+                    batchId = batchId, batchName = batch.name, totalStudents = students.size,
+                    presentCount = records.count { it.status == "present" },
+                    absentCount = records.count { it.status == "absent" },
+                    leaveCount = records.count { it.status == "leave" },
+                    holidayCount = records.count { it.status == "holiday" }
+                )
+            }
+        }
+    }
+
+    fun loadStudentHistory(studentId: String, batchId: String) {
+        val instId = SessionManager.currentInstituteId.value ?: return
+        viewModelScope.launch {
+            db.attendanceDao().getAttendanceForStudent(instId, studentId, batchId).collect { _studentHistory.value = it }
+        }
+    }
+}
+
+class AttendanceViewModelFactory(private val db: AppDatabase) : ViewModelProvider.Factory {
+    override fun <T : ViewModel> create(modelClass: Class<T>): T {
+        if (modelClass.isAssignableFrom(AttendanceViewModel::class.java)) return AttendanceViewModel(db) as T
+        throw IllegalArgumentException()
+    }
+}

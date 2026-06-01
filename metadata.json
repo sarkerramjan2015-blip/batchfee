@@ -1,0 +1,6 @@
+{
+  "name": "BatchFee",
+  "description": "SaaS education management platform for institutes, tutors, and academies.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
