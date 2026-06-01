@@ -163,7 +163,8 @@ class MainActivity : ComponentActivity() {
                                 db = appDb,
                                 onBack = { navController.popBackStack() },
                                 onNavigateDueFees = { navController.navigate(DueFeesRoute) },
-                                onCreateFee = { navController.navigate(CreateFeeRoute) }
+                                onCreateFee = { navController.navigate(CreateFeeRoute) },
+                                onCollectPayment = { feeId -> navController.navigate(CollectPaymentRoute(feeId)) }
                             )
                         }
                         

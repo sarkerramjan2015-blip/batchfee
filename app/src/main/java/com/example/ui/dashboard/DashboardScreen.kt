@@ -27,6 +27,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -74,6 +75,7 @@ private val AccentRed = Color(0xFFEF4444)
 private val AccentAmber = Color(0xFFF59E0B)
 private val TextPrimary = Color(0xFFF8FAFC)
 private val TextSecondary = Color(0xFF94A3B8)
+private val TextMuted = Color(0xFF64748B)
 
 data class FinancialSummary(
     val todayIncome: Double = 0.0,
@@ -260,6 +262,27 @@ fun DashboardScreen(
     val galleryLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri -> if (uri != null) profilePhotoUri = uri }
+
+    // ── Attendance state (shared with dialog) ──────────────
+    val attVM: AttendanceViewModel = viewModel(factory = AttendanceViewModelFactory(db))
+    val attSummaries by attVM.batchSummaries.collectAsState()
+    val staffSum by attVM.staffAttendanceSummary.collectAsState()
+    var attLoading by remember { mutableStateOf(true) }
+    LaunchedEffect(Unit) { attVM.loadDashboardSummaries(); attLoading = false }
+    val currentMonthLabel = remember {
+        SimpleDateFormat("MMM yyyy", Locale.getDefault()).format(java.util.Calendar.getInstance().time)
+    }
+    val studentOverall = remember(attSummaries) {
+        if (attSummaries.isEmpty()) null else BatchAttendanceSummary(
+            batchName = "All Batches",
+            totalStudents = attSummaries.sumOf { it.totalStudents },
+            presentCount = attSummaries.sumOf { it.presentCount },
+            absentCount = attSummaries.sumOf { it.absentCount },
+            leaveCount = attSummaries.sumOf { it.leaveCount },
+            holidayCount = attSummaries.sumOf { it.holidayCount }
+        )
+    }
+    var selectedBatchId by remember { mutableStateOf<String?>(null) }
 
     val safeNavigate: (String) -> Unit = { route ->
         val allowedRoutes = setOf("StudentsRoute", "AddStudentRoute", "BatchesRoute", "AddBatchRoute", "FeeDashboardRoute", "DueFeesRoute", "CreateFeeRoute", "AttendanceRoute", "AttendanceReportRoute", "ReportsRoute", "ReminderTemplatesRoute", "StaffRoute", "SalaryRoute", "ExpensesRoute", "ProfitLossRoute", "ExamsRoute", "IdCardGeneratorRoute", "BirthdayReminderRoute", "SettingsRoute")
@@ -473,27 +496,6 @@ fun DashboardScreen(
                 Spacer(modifier = Modifier.height(16.dp))
 
                 // ── Live Attendance Summary ────────────────────
-                val attVM: AttendanceViewModel = viewModel(factory = AttendanceViewModelFactory(db))
-                val attSummaries by attVM.batchSummaries.collectAsState()
-                val staffSum by attVM.staffAttendanceSummary.collectAsState()
-                var attLoading by remember { mutableStateOf(true) }
-                LaunchedEffect(Unit) { attVM.loadDashboardSummaries(); attLoading = false }
-                val currentMonthLabel = remember {
-                    SimpleDateFormat("MMM yyyy", Locale.getDefault()).format(java.util.Calendar.getInstance().time)
-                }
-                // Student overall
-                val studentOverall = remember(attSummaries) {
-                    if (attSummaries.isEmpty()) null else BatchAttendanceSummary(
-                        batchName = "All Batches",
-                        totalStudents = attSummaries.sumOf { it.totalStudents },
-                        presentCount = attSummaries.sumOf { it.presentCount },
-                        absentCount = attSummaries.sumOf { it.absentCount },
-                        leaveCount = attSummaries.sumOf { it.leaveCount },
-                        holidayCount = attSummaries.sumOf { it.holidayCount }
-                    )
-                }
-                // Batch detail dialog state
-                var selectedBatchId by remember { mutableStateOf<String?>(null) }
 
                 // ── Main attendance card ───────────────────────
                 Card(
@@ -572,10 +574,10 @@ fun DashboardScreen(
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     val sMarked = studentOverall?.markedCount ?: 0
                     val sTotal = studentOverall?.totalStudents ?: 0
-                    AttendanceMiniCard("Student", Icons.Filled.School, sMarked, sTotal, AccentGreen, { safeNavigate("AttendanceRoute") })
+                    AttendanceMiniCard("Student", Icons.Filled.School, sMarked, sTotal, AccentGreen, { safeNavigate("AttendanceRoute") }, Modifier.weight(1f))
                     val stMarked = staffSum.markedCount
                     val stTotal = staffSum.totalStaff
-                    AttendanceMiniCard("Staff", Icons.Filled.Group, stMarked, stTotal, AccentSky, { safeNavigate("StaffRoute") })
+                    AttendanceMiniCard("Staff", Icons.Filled.Group, stMarked, stTotal, AccentSky, { safeNavigate("StaffRoute") }, Modifier.weight(1f))
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -1364,9 +1366,9 @@ private fun BatchMiniCard(name: String, total: Int, marked: Int, presentPct: Flo
 }
 
 @Composable
-private fun AttendanceMiniCard(label: String, icon: ImageVector, marked: Int, total: Int, accent: Color, onClick: () -> Unit) {
+private fun AttendanceMiniCard(label: String, icon: ImageVector, marked: Int, total: Int, accent: Color, onClick: () -> Unit, modifier: Modifier = Modifier) {
     Card(
-        modifier = Modifier.weight(1f).clickable(onClick = onClick),
+        modifier = modifier.clickable(onClick = onClick),
         shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = DashboardCard),
         border = borderStroke()

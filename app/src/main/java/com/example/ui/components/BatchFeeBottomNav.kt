@@ -38,7 +38,7 @@ private val navItems = listOf(
     NavItem("DashboardRoute",  "Home",      Icons.Filled.Home),
     NavItem("StudentsRoute",    "Students",  Icons.Default.Person),
     NavItem("BatchesRoute",     "Batches",   Icons.AutoMirrored.Filled.List),
-    NavItem("FeeDashboardRoute","Fees",      Icons.Default.DateRange),
+    NavItem("FeeDashboardRoute","Collection Fee", Icons.Default.DateRange),
     NavItem("More",             "More",      Icons.Default.Menu)
 )
 

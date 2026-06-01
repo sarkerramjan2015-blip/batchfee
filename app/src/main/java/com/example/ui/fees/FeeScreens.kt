@@ -118,11 +118,6 @@ private fun parseFeePeriod(period: String): Pair<Int, Int>? {
 }
 
 // ── Helper: Image processing ────────────────────────────────────
-private fun createTempImageUri(context: Context): Uri {
-    val file = File(context.cacheDir, "payment_photo_${System.currentTimeMillis()}.jpg")
-    return FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-}
-
 private fun compressAndResizeBitmap(context: Context, uri: Uri, maxSize: Int = 800): Bitmap? {
     val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
@@ -498,12 +493,6 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
 
     // ── Image ──
     var paymentBitmap by remember { mutableStateOf<Bitmap?>(null) }
-    var tempCameraUri by remember { mutableStateOf<Uri?>(null) }
-    val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
-        if (ok && tempCameraUri != null) {
-            paymentBitmap = compressAndResizeBitmap(context, tempCameraUri!!)
-        }
-    }
     val galleryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) paymentBitmap = compressAndResizeBitmap(context, uri)
     }
@@ -788,20 +777,6 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
                     SectionLabel("RECEIPT IMAGE (optional)")
                     Spacer(Modifier.height(6.dp))
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        OutlinedButton(
-                            onClick = {
-                                val uri = createTempImageUri(context)
-                                tempCameraUri = uri
-                                cameraLauncher.launch(uri)
-                            },
-                            shape = RoundedCornerShape(10.dp),
-                            border = BorderStroke(1.dp, BorderSub),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = TextMuted)
-                        ) {
-                            Icon(Icons.Filled.CameraAlt, null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("Camera", fontSize = 13.sp)
-                        }
                         OutlinedButton(
                             onClick = { galleryLauncher.launch("image/*") },
                             shape = RoundedCornerShape(10.dp),
