@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.data.database.AppDatabase
+import com.example.data.models.BatchEntity
 import com.example.data.models.StudentEntity
 import com.example.domain.SessionManager
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -17,8 +18,12 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
     private val _studentList = MutableStateFlow<List<StudentEntity>>(emptyList())
     val studentList = _studentList.asStateFlow()
 
+    private val _batchList = MutableStateFlow<List<BatchEntity>>(emptyList())
+    val batchList = _batchList.asStateFlow()
+
     init {
         loadStudents()
+        loadBatches()
     }
 
     private fun loadStudents() {
@@ -30,11 +35,16 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
         }
     }
 
-    fun generateStudentCode(): String {
-        val now = Date()
-        val fmt = SimpleDateFormat("yyyyMMddHHmmss", Locale.getDefault())
-        return "STD-${fmt.format(now)}"
+    private fun loadBatches() {
+        viewModelScope.launch {
+            val instId = SessionManager.currentInstituteId.value ?: return@launch
+            db.batchDao().getBatchesByInstitute(instId).collect {
+                _batchList.value = it
+            }
+        }
     }
+
+    fun generateStudentCode(): String = "STD-${UUID.randomUUID().toString().take(8)}"
 
     fun addStudent(
         studentCode: String,
@@ -50,8 +60,11 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
         address: String?,
         notes: String?,
         photoUri: String?,
-        onSuccess: () -> Unit
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit = {}
     ) {
+        if (fullName.isBlank()) { onError("Student name is required."); return }
+        if (phone.isBlank()) { onError("Phone number is required."); return }
         val instId = SessionManager.currentInstituteId.value ?: return
         val combinedNotes = buildString {
             if (!whatsappNumber.isNullOrBlank()) {

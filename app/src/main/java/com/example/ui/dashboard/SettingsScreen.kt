@@ -12,19 +12,21 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.database.AppDatabase
+import com.example.domain.DataExporter
+import com.example.domain.ThemePreferences
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
@@ -46,6 +48,10 @@ fun SettingsScreen(
     onNavigate: (String) -> Unit
 ) {
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val isDark by ThemePreferences.isDarkMode.collectAsState()
+    val currentDark = isDark ?: true
+    var showResetConfirmation by remember { mutableStateOf(false) }
     Scaffold(
         containerColor = BgColor, // polish: navy background
         topBar = {
@@ -83,6 +89,40 @@ fun SettingsScreen(
                     SettingsRow("Reminder Templates", Icons.Filled.Notifications, onClick = { onNavigate("ReminderTemplatesRoute") })
                     HorizontalDivider(color = BorderSub)
                     SettingsRow("Backup & Restore", Icons.Filled.Backup, onClick = { onNavigate("BackupRestoreRoute") })
+                    HorizontalDivider(color = BorderSub)
+                    SettingsRow("Export All Data", Icons.Filled.FileDownload, onClick = {
+                        scope.launch(Dispatchers.IO) {
+                            DataExporter.exportAllToCsv(context, db)
+                        }
+                    })
+                }
+            }
+
+            // Theme toggle card
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 16.dp)
+                    .shadow(2.dp, RoundedCornerShape(14.dp), spotColor = Cyan.copy(alpha = 0.15f)),
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = CardBg),
+                border = BorderStroke(1.dp, BorderSub)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Filled.Palette, null, tint = Cyan, modifier = Modifier.size(22.dp))
+                    Spacer(Modifier.width(14.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("Dark Mode", color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                        Text(if (currentDark) "Currently dark" else "Currently light", color = TextMuted, fontSize = 11.sp)
+                    }
+                    Switch(
+                        checked = currentDark,
+                        onCheckedChange = { ThemePreferences.setDarkMode(context, it) },
+                        colors = SwitchDefaults.colors(checkedThumbColor = Cyan, checkedTrackColor = Cyan.copy(alpha = 0.3f))
+                    )
                 }
             }
 
@@ -97,8 +137,6 @@ fun SettingsScreen(
                 border = BorderStroke(1.dp, BorderSub)
             ) {
                 Column {
-                    SettingsRow("App Theme", Icons.Filled.Palette, subtitle = "System Default (Future Update)", onClick = null)
-                    HorizontalDivider(color = BorderSub)
                     SettingsRow("Currency / Locale", Icons.Filled.Language, subtitle = "BDT (Future Update)", onClick = null)
                 }
             }
@@ -112,9 +150,7 @@ fun SettingsScreen(
                     .border(1.dp, AccentRed.copy(alpha = 0.4f), RoundedCornerShape(14.dp))
                     .background(AccentRed.copy(alpha = 0.1f))
                     .shadow(2.dp, RoundedCornerShape(14.dp), spotColor = AccentRed.copy(alpha = 0.2f))
-                    .clickable {
-                        scope.launch(Dispatchers.IO) { db.clearAllTables() }
-                    },
+                    .clickable { showResetConfirmation = true },
                 contentAlignment = Alignment.Center
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -135,6 +171,35 @@ fun SettingsScreen(
                 modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp)
             )
         }
+    }
+
+    if (showResetConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showResetConfirmation = false },
+            containerColor = CardBg,
+            title = { Text("Reset Demo Data?", color = TextWhite, fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    "This will delete all local students, batches, fees, payments, receipts, attendance, reports, and settings data in this app database. This cannot be undone.",
+                    color = TextMuted
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showResetConfirmation = false
+                        scope.launch(Dispatchers.IO) { db.clearAllTables() }
+                    }
+                ) {
+                    Text("Delete Everything", color = AccentRed, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showResetConfirmation = false }) {
+                    Text("Cancel", color = TextMuted)
+                }
+            }
+        )
     }
 }
 

@@ -191,14 +191,14 @@ fun AddEditBatchScreen(db: AppDatabase, onBack: () -> Unit) {
                             viewModel.addBatch(
                                 name = name.trim(),
                                 feeAmount = fee,
-                                description = description.trim().takeIf { it.isNotEmpty() }
-                            ) {
+                                description = description.trim().takeIf { it.isNotEmpty() },
+                                onSuccess = {
                                 // Show snackbar on success (Main thread)
                                 scope.launch {
                                     snackbarHostState.showSnackbar("Batch saved successfully")
                                 }
                                 onBack()
-                            }
+                            })
                         }
                     },
                 contentAlignment = Alignment.Center

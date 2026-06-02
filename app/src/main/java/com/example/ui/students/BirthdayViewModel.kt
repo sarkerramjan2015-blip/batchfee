@@ -23,26 +23,45 @@ class BirthdayViewModel(private val db: AppDatabase) : ViewModel() {
         val instId = SessionManager.currentInstituteId.value ?: return
         viewModelScope.launch {
             db.studentDao().getStudentsByInstitute(instId).collect { students ->
+                val today = Calendar.getInstance()
                 val upcoming = students.filter { student ->
                     student.dateOfBirthMs?.let { dob ->
-                        val calDob = Calendar.getInstance().apply { timeInMillis = dob }
-                        val today = Calendar.getInstance()
-                        calDob.set(Calendar.YEAR, today.get(Calendar.YEAR))
-                        if (calDob.before(today)) {
-                            calDob.add(Calendar.YEAR, 1)
-                        }
-                        val diff = calDob.timeInMillis - today.timeInMillis
-                        diff in 0..(30L * 24 * 60 * 60 * 1000)
+                        val diff = daysUntilNextBirthday(dob, today)
+                        diff in 0..30
                     } ?: false
-                }.sortedBy { 
-                    val calDob = Calendar.getInstance().apply { timeInMillis = it.dateOfBirthMs!! }
-                    calDob.set(Calendar.YEAR, Calendar.getInstance().get(Calendar.YEAR))
-                    calDob.timeInMillis
+                }.sortedBy {
+                    daysUntilNextBirthday(it.dateOfBirthMs!!, today)
                 }
                 _upcomingBirthdays.value = upcoming
             }
         }
     }
+
+    private fun daysUntilNextBirthday(dobMs: Long, today: Calendar): Int {
+        val dob = Calendar.getInstance().apply { timeInMillis = dobMs }
+        val next = Calendar.getInstance().apply {
+            val month = dob.get(Calendar.MONTH)
+            val day = dob.get(Calendar.DAY_OF_MONTH)
+            val isFeb29 = month == Calendar.FEBRUARY && day == 29
+            val year = today.get(Calendar.YEAR)
+            if (isFeb29 && !isLeapYear(year)) {
+                set(year, Calendar.FEBRUARY, 28)
+            } else {
+                set(year, month, day)
+            }
+            if (before(today)) {
+                val nextYear = year + 1
+                if (isFeb29 && !isLeapYear(nextYear)) {
+                    set(nextYear, Calendar.FEBRUARY, 28)
+                } else {
+                    set(nextYear, month, day)
+                }
+            }
+        }
+        return ((next.timeInMillis - today.timeInMillis) / (1000 * 60 * 60 * 24)).toInt()
+    }
+
+    private fun isLeapYear(year: Int) = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
 }
 
 class BirthdayViewModelFactory(private val db: AppDatabase) : ViewModelProvider.Factory {

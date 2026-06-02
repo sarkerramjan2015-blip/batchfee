@@ -28,12 +28,20 @@ class BatchViewModel(private val db: AppDatabase) : ViewModel() {
         }
     }
 
-    fun addBatch(name: String, feeAmount: Double, description: String? = null, onSuccess: () -> Unit) {
+    fun addBatch(name: String, feeAmount: Double, description: String? = null, onError: (String) -> Unit = {}, onSuccess: () -> Unit) {
+        if (name.isBlank()) {
+            onError("Batch name is required.")
+            return
+        }
+        if (feeAmount < 0) {
+            onError("Fee amount cannot be negative.")
+            return
+        }
         val instId = SessionManager.currentInstituteId.value ?: return
         val batch = BatchEntity(
             id = UUID.randomUUID().toString(),
             instituteId = instId,
-            batchCode = "BAT-${System.currentTimeMillis()}",
+            batchCode = "BAT-${UUID.randomUUID().toString().take(8)}",
             name = name,
             subject = null,
             className = null,

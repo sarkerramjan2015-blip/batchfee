@@ -32,17 +32,17 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
-import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.example.data.database.AppDatabase
 import com.example.data.models.BatchEntity
 import com.example.data.models.BatchStudentEntity
 import com.example.data.models.FeeEntity
+import com.example.data.models.PaymentEntity
 import com.example.data.models.StudentEntity
+import com.example.data.repository.FeeCollectionRepository
 import com.example.domain.SessionManager
-import com.example.ui.fees.FeeViewModel
-import com.example.ui.fees.FeeViewModelFactory
+import com.example.ui.components.buildWhatsAppUrl
 import kotlinx.coroutines.launch
 import java.io.File
 import java.net.URLEncoder
@@ -62,6 +62,7 @@ private val TextWhite     = Color(0xFFF8FAFC)
 private val TextMuted     = Color(0xFF94A3B8)
 private val WAGreen       = Color(0xFF25D366)
 private val Teal          = Color(0xFF14B8A6)
+private val AccentAmber   = Color(0xFFF59E0B)
 
 // ── Screen ──────────────────────────────────────────────────────
 @OptIn(ExperimentalMaterial3Api::class)
@@ -70,25 +71,33 @@ fun StudentProfileScreen(
     db: AppDatabase,
     studentId: String,
     onBack: () -> Unit,
-    onEdit: (() -> Unit)? = null
+    onEdit: (() -> Unit)? = null,
+    onGenerateIdCard: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val instId = SessionManager.currentInstituteId.collectAsState().value
 
     var student by remember { mutableStateOf<StudentEntity?>(null) }
+    var showStudentMenu by remember { mutableStateOf(false) }
+    var showMessageDialog by remember { mutableStateOf(false) }
+    var directMessage by remember { mutableStateOf("") }
+    var pendingConfirmAction by remember { mutableStateOf<StudentMenuConfirmAction?>(null) }
+    var showStudentInsights by remember { mutableStateOf(false) }
     var totalPaid by remember { mutableStateOf(0.0) }
     var totalDue by remember { mutableStateOf(0.0) }
     var batches by remember { mutableStateOf<List<BatchEntity>>(emptyList()) }
     var enrolledBatchIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var feeHistory by remember { mutableStateOf<List<FeeEntity>>(emptyList()) }
+    var paymentHistory by remember { mutableStateOf<List<PaymentEntity>>(emptyList()) }
+    var monthAttendance by remember { mutableStateOf<List<com.example.data.models.AttendanceEntity>>(emptyList()) }
 
     // ── Batch dialog state ──────────────────────────────────
     var showBatchDialog by remember { mutableStateOf(false) }
 
     // ── Fee collection state ─────────────────────────────────
     var showFeeForm by remember { mutableStateOf(false) }
-    val feeViewModel: FeeViewModel = viewModel(factory = FeeViewModelFactory(db))
+    val feeRepository = remember { FeeCollectionRepository(db) }
     var selectedBatchId by remember { mutableStateOf<String?>(null) }
     var feePeriod by remember { mutableStateOf("") }
     var feeAmount by remember { mutableStateOf("") }
@@ -100,6 +109,7 @@ fun StudentProfileScreen(
     var showPaymentDatePicker by remember { mutableStateOf(false) }
     var selectedFeeId by remember { mutableStateOf<String?>(null) }
     var receiptText by remember { mutableStateOf<String?>(null) }
+    var feeErrorMessage by remember { mutableStateOf<String?>(null) }
 
     // ── Receipt image upload state ───────────────────────────
     var receiptImageUri by remember { mutableStateOf<Uri?>(null) }
@@ -118,15 +128,32 @@ fun StudentProfileScreen(
     // ── Load data ────────────────────────────────────────────
     LaunchedEffect(instId, studentId) {
         if (instId != null) {
-            db.studentDao().getStudentById(studentId, instId).collect { student = it }
-            db.feeDao().getFeesByStudent(instId, studentId).collect { fees ->
-                feeHistory = fees
-                totalPaid = fees.sumOf { it.paidAmount }
-                totalDue = fees.sumOf { it.dueAmount }
+            launch {
+                db.studentDao().getStudentById(studentId, instId).collect { student = it }
             }
-            db.batchStudentDao().getBatchesForStudent(studentId, instId).collect {
-                batches = it
-                enrolledBatchIds = it.map { b -> b.id }.toSet()
+            launch {
+                db.feeDao().getFeesByStudent(instId, studentId).collect { fees ->
+                    feeHistory = fees
+                    totalPaid = fees.sumOf { it.paidAmount }
+                    totalDue = fees.sumOf { it.dueAmount }
+                }
+            }
+            launch {
+                db.paymentDao().getRecentPayments(instId).collect { payments ->
+                    paymentHistory = payments.filter { it.studentId == studentId }
+                }
+            }
+            launch {
+                val range = currentMonthRangeMs()
+                db.attendanceDao().getAttendanceForStudentByDateRange(instId, studentId, range.first, range.second).collect {
+                    monthAttendance = it
+                }
+            }
+            launch {
+                db.batchStudentDao().getBatchesForStudent(studentId, instId).collect {
+                    batches = it
+                    enrolledBatchIds = it.map { b -> b.id }.toSet()
+                }
             }
         }
     }
@@ -136,7 +163,16 @@ fun StudentProfileScreen(
         containerColor = BgColor,
         topBar = {
             TopAppBar(
-                title = { Text(student?.fullName ?: "Profile", color = TextWhite, fontWeight = FontWeight.Bold) },
+                title = {
+                    Column {
+                        Text(student?.fullName ?: "Profile", color = TextWhite, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                        Text(
+                            student?.status?.replaceFirstChar { it.uppercase() } ?: "",
+                            color = TextMuted,
+                            fontSize = 13.sp
+                        )
+                    }
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = TextWhite)
@@ -144,8 +180,8 @@ fun StudentProfileScreen(
                 },
                 actions = {
                     if (onEdit != null) {
-                        IconButton(onClick = onEdit) {
-                            Icon(Icons.Filled.Edit, contentDescription = "Edit", tint = Cyan)
+                        IconButton(onClick = { showStudentMenu = true }) {
+                            Icon(Icons.Filled.MoreVert, contentDescription = "More", tint = TextWhite)
                         }
                     }
                 },
@@ -165,6 +201,20 @@ fun StudentProfileScreen(
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 20.dp, vertical = 16.dp)
             ) {
+                StudentDashboardContent(
+                    student = s,
+                    batches = batches,
+                    totalPaid = totalPaid,
+                    totalDue = totalDue,
+                    paymentHistory = paymentHistory,
+                    monthAttendance = monthAttendance,
+                    context = context,
+                    insightsVisible = showStudentInsights,
+                    onToggleInsights = { showStudentInsights = !showStudentInsights },
+                    onAssignBatch = { showBatchDialog = true }
+                )
+
+                if (false) {
                 // ── Photo + Student Code ──────────────────────
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -211,7 +261,7 @@ fun StudentProfileScreen(
                     // Assign Batch
                     Box(
                         modifier = Modifier
-                            .weight(1f)
+                            .fillMaxWidth()
                             .height(48.dp)
                             .clip(RoundedCornerShape(14.dp))
                             .background(
@@ -224,24 +274,6 @@ fun StudentProfileScreen(
                             Icon(Icons.Filled.Groups, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp))
                             Text("Assign Batch", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                        }
-                    }
-                    // Collect Fees
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(48.dp)
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(
-                                brush = Brush.horizontalGradient(listOf(WAGreen, Teal))
-                            )
-                            .clickable { showFeeForm = !showFeeForm },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Filled.Payments, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Collect Fees", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -306,7 +338,16 @@ fun StudentProfileScreen(
                                                 )
                                                 .clickable {
                                                     selectedFeeId = fee.id
+                                                    selectedBatchId = fee.batchId
+                                                    feePeriod = fee.feePeriod
+                                                    feeAmount = fee.totalAmount.toLong().toString()
+                                                    discountPercent = if (fee.baseAmount > 0.0) {
+                                                        ((fee.discountAmount / fee.baseAmount) * 100.0).toInt().toString()
+                                                    } else {
+                                                        "0"
+                                                    }
                                                     collectAmount = fee.dueAmount.toLong().toString()
+                                                    feeErrorMessage = null
                                                 }
                                                 .padding(horizontal = 12.dp, vertical = 6.dp)
                                         ) {
@@ -339,8 +380,10 @@ fun StudentProfileScreen(
                                             )
                                             .clickable {
                                                 selectedBatchId = batch.id
+                                                selectedFeeId = null
                                                 feeAmount = batch.monthlyFeeAmount.toLong().toString()
                                                 discountPercent = "0"
+                                                feeErrorMessage = null
                                             }
                                             .padding(horizontal = 12.dp, vertical = 6.dp)
                                     ) {
@@ -515,6 +558,10 @@ fun StudentProfileScreen(
                             }
 
                             Spacer(Modifier.height(14.dp))
+                            if (feeErrorMessage != null) {
+                                Text(feeErrorMessage!!, color = Color(0xFFEF4444), fontSize = 12.sp)
+                                Spacer(Modifier.height(8.dp))
+                            }
 
                             // Three action buttons: Save / Print / Share
                             Row(
@@ -533,6 +580,88 @@ fun StudentProfileScreen(
                                         .clickable {
                                             val base = feeAmount.toDoubleOrNull() ?: 0.0
                                             val paid = collectAmount.toDoubleOrNull() ?: 0.0
+                                            feeErrorMessage = null
+                                            if (base <= 0.0) {
+                                                feeErrorMessage = "Enter a valid fee amount."
+                                                return@clickable
+                                            }
+                                            if (feePeriod.isBlank()) {
+                                                feeErrorMessage = "Enter a fee period."
+                                                return@clickable
+                                            }
+                                            if (paid < 0.0) {
+                                                feeErrorMessage = "Collected amount cannot be negative."
+                                                return@clickable
+                                            }
+                                            val inst = instId ?: run {
+                                                feeErrorMessage = "No active institute session."
+                                                return@clickable
+                                            }
+                                            val userId = SessionManager.currentUserId.value ?: run {
+                                                feeErrorMessage = "No active user session."
+                                                return@clickable
+                                            }
+                                            val total = (base - discountAmt).coerceAtLeast(0.0)
+                                            val due = (total - paid).coerceAtLeast(0.0)
+                                            val rText = buildString {
+                                                appendLine("BatchFee - Fee Receipt")
+                                                appendLine("Student : ${s.fullName}")
+                                                appendLine("ID      : ${s.studentCode}")
+                                                appendLine("Phone   : ${s.phone ?: "N/A"}")
+                                                appendLine("Batch   : ${batches.find { it.id == selectedBatchId }?.name ?: "N/A"}")
+                                                appendLine("Period  : $feePeriod")
+                                                appendLine("Date    : ${SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(paymentDateMs))}")
+                                                appendLine("Fee     : BDT ${base.toLong()}")
+                                                appendLine("Discount: BDT ${discountAmt.toLong()} (${discountPct}%)")
+                                                appendLine("Total   : BDT ${total.toLong()}")
+                                                appendLine("Paid    : BDT ${paid.toLong()}")
+                                                appendLine("Due     : BDT ${due.toLong()}")
+                                            }
+                                            receiptText = rText
+                                            scope.launch {
+                                                try {
+                                                    val existingFeeId = selectedFeeId
+                                                    if (existingFeeId != null) {
+                                                        feeRepository.collectPayment(
+                                                            instituteId = inst,
+                                                            collectedByUserId = userId,
+                                                            feeId = existingFeeId,
+                                                            amount = paid,
+                                                            paymentMethod = "cash",
+                                                            paymentDateMs = paymentDateMs,
+                                                            note = receiptImageUri?.toString(),
+                                                            receiptText = rText
+                                                        )
+                                                    } else {
+                                                        feeRepository.createFeeWithInitialPayment(
+                                                            instituteId = inst,
+                                                            collectedByUserId = userId,
+                                                            studentId = studentId,
+                                                            batchId = selectedBatchId,
+                                                            feePeriod = feePeriod,
+                                                            feeType = "monthly_fee",
+                                                            dueDateMs = paymentDateMs,
+                                                            baseAmount = base,
+                                                            discountAmount = discountAmt,
+                                                            lateFeeAmount = 0.0,
+                                                            collectedAmount = paid,
+                                                            paymentMethod = "cash",
+                                                            paymentDateMs = paymentDateMs,
+                                                            note = receiptImageUri?.toString(),
+                                                            receiptText = rText
+                                                        )
+                                                    }
+                                                    feePeriod = ""
+                                                    feeAmount = ""
+                                                    discountPercent = "0"
+                                                    collectAmount = ""
+                                                    selectedFeeId = null
+                                                    receiptImageUri = null
+                                                } catch (e: IllegalArgumentException) {
+                                                    feeErrorMessage = e.message ?: "Payment rejected."
+                                                }
+                                            }
+                                            return@clickable
                                             if (base > 0 && feePeriod.isNotBlank()) {
                                                 val total = (base - discountAmt).coerceAtLeast(0.0)
                                                 val due = (total - paid).coerceAtLeast(0.0)
@@ -556,72 +685,6 @@ fun StudentProfileScreen(
                                                     appendLine("═══════════════════════")
                                                 }
                                                 receiptText = rText
-                                                scope.launch {
-                                                    instId?.let { inst ->
-                                                        // Insert Fee, Payment, and Receipt records
-                                                        val fee = FeeEntity(
-                                                            id = UUID.randomUUID().toString(),
-                                                            instituteId = inst,
-                                                            studentId = studentId,
-                                                            batchId = selectedBatchId,
-                                                            feePeriod = feePeriod,
-                                                            feeType = "monthly_fee",
-                                                            dueDateMs = paymentDateMs,
-                                                            baseAmount = base,
-                                                            discountAmount = discountAmt,
-                                                            lateFeeAmount = 0.0,
-                                                            totalAmount = total,
-                                                            paidAmount = paid,
-                                                            dueAmount = due,
-                                                            status = if (due <= 0) "paid" else "partially_paid",
-                                                            note = null,
-                                                            createdAtMs = System.currentTimeMillis(),
-                                                            updatedAtMs = System.currentTimeMillis(),
-                                                            cancelledAtMs = null
-                                                        )
-                                                        db.feeDao().insertFee(fee)
-                                                        if (paid > 0) {
-                                                            val paymentId = UUID.randomUUID().toString()
-                                                            val receiptNumber = "REC-${System.currentTimeMillis()}"
-                                                            val payment = com.example.data.models.PaymentEntity(
-                                                                id = paymentId,
-                                                                instituteId = inst,
-                                                                feeId = fee.id,
-                                                                studentId = studentId,
-                                                                amount = paid,
-                                                                paymentMethod = "cash",
-                                                                transactionId = null,
-                                                                receiptNumber = receiptNumber,
-                                                                paymentDateMs = paymentDateMs,
-                                                                collectedByUserId = SessionManager.currentUserId.value ?: "",
-                                                                status = "completed",
-                                                                note = receiptImageUri?.toString(),
-                                                                createdAtMs = System.currentTimeMillis(),
-                                                                updatedAtMs = System.currentTimeMillis()
-                                                            )
-                                                            db.paymentDao().insertPayment(payment)
-                                                            db.receiptDao().insertReceipt(
-                                                                com.example.data.models.ReceiptEntity(
-                                                                    id = UUID.randomUUID().toString(),
-                                                                    instituteId = inst,
-                                                                    paymentId = paymentId,
-                                                                    feeId = fee.id,
-                                                                    studentId = studentId,
-                                                                    receiptNumber = receiptNumber,
-                                                                    receiptDateMs = paymentDateMs,
-                                                                    totalAmount = total,
-                                                                    paidAmount = paid,
-                                                                    dueAmount = due,
-                                                                    paymentMethod = "cash",
-                                                                    receiptText = rText,
-                                                                    createdAtMs = System.currentTimeMillis()
-                                                                )
-                                                            )
-                                                        }
-                                                    }
-                                                    feePeriod = ""; feeAmount = ""; discountPercent = "0"
-                                                    collectAmount = ""; receiptImageUri = null
-                                                }
                                             }
                                         },
                                     contentAlignment = Alignment.Center
@@ -683,11 +746,7 @@ fun StudentProfileScreen(
                                                 appendLine("Fee: BDT $feeAmount")
                                             }
                                             val studentPhone = s.phone?.takeIf { it.isNotBlank() } ?: ""
-                                            val encoded = URLEncoder.encode(msg, "UTF-8")
-                                            val url = if (studentPhone.isNotEmpty())
-                                                "https://wa.me/88${studentPhone}?text=$encoded"
-                                            else
-                                                "https://wa.me/?text=$encoded"
+                                            val url = buildWhatsAppUrl(studentPhone, msg)
                                             context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
                                         },
                                     contentAlignment = Alignment.Center
@@ -843,6 +902,7 @@ fun StudentProfileScreen(
                 }
 
                 Spacer(Modifier.height(32.dp))
+                }
             }
 
             // ── Batch Assignment Dialog ────────────────────────
@@ -920,11 +980,824 @@ fun StudentProfileScreen(
                     }
                 )
             }
+
+            if (showStudentMenu) {
+                StudentBatchMenuDialog(
+                    onDismiss = { showStudentMenu = false },
+                    onEdit = {
+                        showStudentMenu = false
+                        onEdit?.invoke()
+                    },
+                    onAssignBatch = {
+                        showStudentMenu = false
+                        showBatchDialog = true
+                    },
+                    onCloseStudent = {
+                        showStudentMenu = false
+                        pendingConfirmAction = StudentMenuConfirmAction.Close
+                    },
+                    onShareLogin = {
+                        showStudentMenu = false
+                        shareStudentText(
+                            context,
+                            "Student Login",
+                            "Student: ${s.fullName}\nLogin ID: ${s.studentCode}\nPassword: Not set yet"
+                        )
+                    },
+                    onMessage = {
+                        showStudentMenu = false
+                        showMessageDialog = true
+                    },
+                    onDeleteStudent = {
+                        showStudentMenu = false
+                        pendingConfirmAction = StudentMenuConfirmAction.Delete
+                    },
+                    onGenerateReport = {
+                        showStudentMenu = false
+                        shareStudentText(context, "Student Report", buildStudentReportText(s, batches, totalPaid, totalDue))
+                    },
+                    onRegistrationForm = {
+                        showStudentMenu = false
+                        shareStudentText(context, "Student Registration Form", buildStudentRegistrationText(s))
+                    },
+                    onFeeSummary = {
+                        showStudentMenu = false
+                        shareStudentText(context, "Student Fee Summary", buildStudentFeeSummaryText(s, totalPaid, totalDue))
+                    },
+                    onGenerateIdCard = {
+                        showStudentMenu = false
+                        onGenerateIdCard?.invoke()
+                    }
+                )
+            }
+
+            if (showMessageDialog) {
+                StudentMessageDialog(
+                    message = directMessage,
+                    onMessageChange = { directMessage = it },
+                    onDismiss = { showMessageDialog = false },
+                    onSendSms = {
+                        sendStudentMessage(context, s.phone, directMessage, useWhatsApp = false)
+                        showMessageDialog = false
+                    },
+                    onSendWhatsApp = {
+                        sendStudentMessage(context, s.phone, directMessage, useWhatsApp = true)
+                        showMessageDialog = false
+                    }
+                )
+            }
+
+            pendingConfirmAction?.let { action ->
+                AlertDialog(
+                    onDismissRequest = { pendingConfirmAction = null },
+                    containerColor = CardBgAlt,
+                    shape = RoundedCornerShape(14.dp),
+                    title = {
+                        Text(
+                            if (action == StudentMenuConfirmAction.Delete) "Delete student?" else "Close student?",
+                            color = TextWhite,
+                            fontWeight = FontWeight.Bold
+                        )
+                    },
+                    text = {
+                        Text(
+                            if (action == StudentMenuConfirmAction.Delete)
+                                "This will hide the student from active lists."
+                            else
+                                "This will mark the student status as inactive.",
+                            color = TextMuted
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(
+                            onClick = {
+                                val currentStudent = student ?: return@TextButton
+                                scope.launch {
+                                    val updated = when (action) {
+                                        StudentMenuConfirmAction.Close -> currentStudent.copy(status = "inactive", updatedAtMs = System.currentTimeMillis())
+                                        StudentMenuConfirmAction.Delete -> currentStudent.copy(archivedAtMs = System.currentTimeMillis(), updatedAtMs = System.currentTimeMillis())
+                                    }
+                                    db.studentDao().updateStudent(updated)
+                                    pendingConfirmAction = null
+                                    if (action == StudentMenuConfirmAction.Delete) onBack()
+                                }
+                            }
+                        ) {
+                            Text(if (action == StudentMenuConfirmAction.Delete) "Delete" else "Close", color = Color(0xFFEF4444))
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { pendingConfirmAction = null }) {
+                            Text("Cancel", color = TextMuted)
+                        }
+                    }
+                )
+            }
         }
     }
 }
 
 // ── Helpers ─────────────────────────────────────────────────────
+private enum class StudentMenuConfirmAction {
+    Close,
+    Delete
+}
+
+private data class StudentBatchMenuItem(
+    val title: String,
+    val subtitle: String,
+    val icon: androidx.compose.ui.graphics.vector.ImageVector,
+    val onClick: () -> Unit
+)
+
+@Composable
+private fun StudentBatchMenuDialog(
+    onDismiss: () -> Unit,
+    onEdit: () -> Unit,
+    onAssignBatch: () -> Unit,
+    onCloseStudent: () -> Unit,
+    onShareLogin: () -> Unit,
+    onMessage: () -> Unit,
+    onDeleteStudent: () -> Unit,
+    onGenerateReport: () -> Unit,
+    onRegistrationForm: () -> Unit,
+    onFeeSummary: () -> Unit,
+    onGenerateIdCard: () -> Unit
+) {
+    val items = listOf(
+        StudentBatchMenuItem("Edit Student", "You can edit student details here", Icons.Filled.Edit, onEdit),
+        StudentBatchMenuItem("Assign Batch", "You can assign new batch here", Icons.Filled.Groups, onAssignBatch),
+        StudentBatchMenuItem("Close", "You can mark student status as inactive.", Icons.Filled.Close, onCloseStudent),
+        StudentBatchMenuItem("Share Login Id And Password", "Share login Id And Password", Icons.Filled.Share, onShareLogin),
+        StudentBatchMenuItem("Message", "Send a direct message", Icons.Filled.Email, onMessage),
+        StudentBatchMenuItem("Delete student", "You can delete student here", Icons.Filled.Delete, onDeleteStudent),
+        StudentBatchMenuItem("Generate Report", "You can generate student report here", Icons.Filled.Article, onGenerateReport),
+        StudentBatchMenuItem("Registration Form", "You can generate student registration form here", Icons.Filled.Article, onRegistrationForm),
+        StudentBatchMenuItem("Fees Summary", "Generate complete fee summary with collected fees and pending dues", Icons.Filled.Article, onFeeSummary),
+        StudentBatchMenuItem("Generate ID card", "You can generate student ID card.", Icons.Filled.Badge, onGenerateIdCard)
+    )
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = CardBg,
+        shape = RoundedCornerShape(14.dp),
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "Student Batch Menu",
+                    color = AccentAmber,
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f)
+                )
+                IconButton(onClick = onDismiss) {
+                    Icon(Icons.Filled.Close, contentDescription = "Close", tint = Color(0xFFEF4444), modifier = Modifier.size(30.dp))
+                }
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 620.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                items.forEachIndexed { index, item ->
+                    StudentBatchMenuRow(item)
+                    if (index != items.lastIndex) {
+                        HorizontalDivider(color = BorderSub)
+                    }
+                }
+            }
+        },
+        confirmButton = {}
+    )
+}
+
+@Composable
+private fun StudentBatchMenuRow(item: StudentBatchMenuItem) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 74.dp)
+            .clickable(onClick = item.onClick)
+            .padding(horizontal = 4.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(item.icon, contentDescription = null, tint = AccentAmber, modifier = Modifier.size(30.dp))
+        Spacer(Modifier.width(18.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(item.title, color = TextWhite, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(3.dp))
+            Text(item.subtitle, color = TextMuted.copy(alpha = 0.72f), fontSize = 13.sp, lineHeight = 17.sp)
+        }
+    }
+}
+
+@Composable
+private fun StudentMessageDialog(
+    message: String,
+    onMessageChange: (String) -> Unit,
+    onDismiss: () -> Unit,
+    onSendSms: () -> Unit,
+    onSendWhatsApp: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = CardBg,
+        shape = RoundedCornerShape(14.dp),
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Message", color = AccentAmber, fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                IconButton(onClick = onDismiss) {
+                    Icon(Icons.Filled.Close, contentDescription = "Close", tint = Color(0xFFEF4444), modifier = Modifier.size(30.dp))
+                }
+            }
+        },
+        text = {
+            OutlinedTextField(
+                value = message,
+                onValueChange = onMessageChange,
+                placeholder = { Text("Message", color = TextMuted.copy(alpha = 0.7f)) },
+                minLines = 3,
+                modifier = Modifier.fillMaxWidth(),
+                colors = darkFieldColors(),
+                shape = RoundedCornerShape(16.dp)
+            )
+        },
+        confirmButton = {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedButton(
+                    onClick = onSendWhatsApp,
+                    modifier = Modifier.weight(1f).height(52.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    border = BorderStroke(1.dp, AccentAmber),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentAmber)
+                ) {
+                    Text("WhatsApp", fontWeight = FontWeight.Bold)
+                }
+                Button(
+                    onClick = onSendSms,
+                    modifier = Modifier.weight(1f).height(52.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = AccentAmber, contentColor = Color(0xFF201A05))
+                ) {
+                    Text("SMS", fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    )
+}
+
+private fun shareStudentText(context: android.content.Context, title: String, text: String) {
+    val intent = Intent(Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(Intent.EXTRA_SUBJECT, title)
+        putExtra(Intent.EXTRA_TEXT, text)
+    }
+    context.startActivity(Intent.createChooser(intent, title))
+}
+
+private fun printStudentText(context: android.content.Context, title: String, text: String) {
+    val reportTitle = title.ifBlank { "Student Report" }
+    val webView = android.webkit.WebView(context)
+    webView.webViewClient = object : android.webkit.WebViewClient() {
+        override fun onPageFinished(view: android.webkit.WebView, url: String?) {
+            val printManager = context.getSystemService(android.content.Context.PRINT_SERVICE) as android.print.PrintManager
+            printManager.print(
+                reportTitle,
+                view.createPrintDocumentAdapter(reportTitle),
+                android.print.PrintAttributes.Builder().build()
+            )
+        }
+    }
+    val body = android.text.Html.escapeHtml(text).replace("\n", "<br/>")
+    val html = """
+        <html>
+            <body style="font-family:sans-serif;padding:24px;color:#111;">
+                <h2>$reportTitle</h2>
+                <p style="font-size:14px;line-height:1.55;">$body</p>
+            </body>
+        </html>
+    """.trimIndent()
+    webView.loadDataWithBaseURL(null, html, "text/html", "UTF-8", null)
+}
+
+private fun sendStudentMessage(context: android.content.Context, phone: String?, message: String, useWhatsApp: Boolean) {
+    val body = message.trim()
+    if (useWhatsApp) {
+        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(buildWhatsAppUrl(phone, body))))
+    } else {
+        val cleanPhone = phone?.filter(Char::isDigit).orEmpty()
+        val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:$cleanPhone")).apply {
+            putExtra("sms_body", body)
+        }
+        context.startActivity(intent)
+    }
+}
+
+private fun buildStudentReportText(student: StudentEntity, batches: List<BatchEntity>, totalPaid: Double, totalDue: Double): String =
+    buildString {
+        appendLine("Student Report")
+        appendLine("Name: ${student.fullName}")
+        appendLine("ID: ${student.studentCode}")
+        appendLine("Status: ${student.status}")
+        appendLine("Phone: ${student.phone ?: "N/A"}")
+        appendLine("Class: ${student.className ?: "N/A"}")
+        appendLine("Batches: ${batches.joinToString { it.name }.ifBlank { "N/A" }}")
+        appendLine("Collected Fees: ${totalPaid.toLong()}")
+        appendLine("Due Fees: ${totalDue.toLong()}")
+    }
+
+private fun buildStudentRegistrationText(student: StudentEntity): String =
+    buildString {
+        appendLine("Student Registration Form")
+        appendLine("Name: ${student.fullName}")
+        appendLine("Student ID: ${student.studentCode}")
+        appendLine("Phone: ${student.phone ?: "N/A"}")
+        appendLine("Guardian: ${student.guardianName ?: "N/A"}")
+        appendLine("Mother Name: ${student.emergencyContact ?: "N/A"}")
+        appendLine("Address: ${student.address ?: "N/A"}")
+        appendLine("School: ${student.schoolName ?: "N/A"}")
+        appendLine("Class: ${student.className ?: "N/A"}")
+    }
+
+private fun buildStudentFeeSummaryText(student: StudentEntity, totalPaid: Double, totalDue: Double): String =
+    buildString {
+        appendLine("Student Fee Summary")
+        appendLine("Name: ${student.fullName}")
+        appendLine("ID: ${student.studentCode}")
+        appendLine("Collected Fees: ${totalPaid.toLong()}")
+        appendLine("Pending Dues: ${totalDue.toLong()}")
+    }
+
+@Composable
+private fun StudentDashboardContent(
+    student: StudentEntity,
+    batches: List<BatchEntity>,
+    totalPaid: Double,
+    totalDue: Double,
+    paymentHistory: List<PaymentEntity>,
+    monthAttendance: List<com.example.data.models.AttendanceEntity>,
+    context: android.content.Context,
+    insightsVisible: Boolean,
+    onToggleInsights: () -> Unit,
+    onAssignBatch: () -> Unit
+) {
+    val dateFormat = remember { SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()) }
+    val primaryBatch = batches.firstOrNull()
+    val whatsappNumber = student.notes?.let { notes ->
+        notes.lineSequence()
+            .firstOrNull { it.startsWith("WhatsApp: ") }
+            ?.removePrefix("WhatsApp: ")
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+    } ?: student.phone.orEmpty()
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(54.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(CardBg)
+            .border(1.dp, BorderSub, RoundedCornerShape(16.dp))
+            .clickable(onClick = onAssignBatch)
+            .padding(horizontal = 18.dp),
+        contentAlignment = Alignment.CenterStart
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Text("Assign Batch", color = TextWhite, fontSize = 17.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .clip(CircleShape)
+                    .background(AccentAmber),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Filled.Add, contentDescription = null, tint = Color(0xFF1B1B1B), modifier = Modifier.size(22.dp))
+            }
+        }
+    }
+
+    Spacer(Modifier.height(14.dp))
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = CardBg),
+        border = BorderStroke(1.dp, BorderSub)
+    ) {
+        Column(modifier = Modifier.padding(18.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(68.dp)
+                        .clip(CircleShape)
+                        .background(Brush.linearGradient(listOf(VioletBlue, SkyBlue))),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (!student.photoUri.isNullOrBlank()) {
+                        AsyncImage(
+                            model = ImageRequest.Builder(context).data(Uri.parse(student.photoUri)).crossfade(true).build(),
+                            contentDescription = "Student photo",
+                            modifier = Modifier.fillMaxSize().clip(CircleShape),
+                            contentScale = ContentScale.Crop
+                        )
+                    } else {
+                        Icon(Icons.Filled.School, contentDescription = null, tint = Color.White, modifier = Modifier.size(36.dp))
+                    }
+                }
+                Spacer(Modifier.width(16.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(primaryBatch?.name ?: "No Batch Assigned", color = TextWhite, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        if (primaryBatch != null) "Batch Fee • Monthly • ${primaryBatch.monthlyFeeAmount.toLong()}" else "Assign a batch to see fee details",
+                        color = TextMuted,
+                        fontSize = 13.sp
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(20.dp))
+
+            Row(horizontalArrangement = Arrangement.spacedBy(20.dp), modifier = Modifier.fillMaxWidth()) {
+                ProfileMetric(Icons.Filled.CalendarMonth, "Join Date", dateFormat.format(Date(student.admissionDateMs)), Modifier.weight(1f))
+                ProfileMetric(
+                    Icons.Filled.CalendarMonth,
+                    "Finish Date",
+                    primaryBatch?.endDateMs?.let { dateFormat.format(Date(it)) } ?: "Running",
+                    Modifier.weight(1f)
+                )
+            }
+            Spacer(Modifier.height(14.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(20.dp), modifier = Modifier.fillMaxWidth()) {
+                ProfileMetric(Icons.Filled.Savings, "Collected Fees", totalPaid.toLong().toString(), Modifier.weight(1f))
+                ProfileMetric(Icons.Filled.Paid, "Due Fees", totalDue.toLong().toString(), Modifier.weight(1f))
+            }
+            Spacer(Modifier.height(18.dp))
+            Button(
+                onClick = onToggleInsights,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(46.dp),
+                shape = RoundedCornerShape(14.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = AccentAmber, contentColor = Color(0xFF201A05))
+            ) {
+                Icon(
+                    if (insightsVisible) Icons.Filled.KeyboardArrowUp else Icons.Filled.Analytics,
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(if (insightsVisible) "Hide Reports & Details" else "View Reports & Details", fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+
+    if (insightsVisible) {
+        Spacer(Modifier.height(14.dp))
+        StudentInsightsPanel(
+            student = student,
+            monthAttendance = monthAttendance,
+            paymentHistory = paymentHistory,
+            totalPaid = totalPaid,
+            totalDue = totalDue,
+            context = context
+        )
+    }
+
+    Spacer(Modifier.height(14.dp))
+
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+        SmallDashboardTile("Exam (0)", Modifier.weight(1f))
+        SmallDashboardTile("HomeWork (0)", Modifier.weight(1f))
+    }
+
+    Spacer(Modifier.height(16.dp))
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = CardBg),
+        border = BorderStroke(1.dp, BorderSub)
+    ) {
+        Column(modifier = Modifier.padding(18.dp)) {
+            Text("Personal Info", color = TextWhite, fontSize = 20.sp, fontWeight = FontWeight.Medium)
+            Spacer(Modifier.height(18.dp))
+            TwoColumnInfo("Father name", student.guardianName ?: "N/A", "Mother name", student.emergencyContact ?: "N/A")
+            Spacer(Modifier.height(16.dp))
+            TwoColumnInfo(
+                "Date of Birth",
+                student.dateOfBirthMs?.let { dateFormat.format(Date(it)) } ?: "N/A",
+                "Gender",
+                student.gender ?: "N/A"
+            )
+
+            Spacer(Modifier.height(26.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Contact Information", color = TextWhite, fontSize = 20.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+                IconButton(onClick = {
+                    student.phone?.takeIf { it.isNotBlank() }?.let { context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$it"))) }
+                }) { Icon(Icons.Filled.Phone, contentDescription = null, tint = AccentAmber) }
+                IconButton(onClick = {
+                    val email = student.email.orEmpty()
+                    if (email.isNotBlank()) context.startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:$email")))
+                }) { Icon(Icons.Filled.Email, contentDescription = null, tint = AccentAmber) }
+                IconButton(onClick = {
+                    if (whatsappNumber.isNotBlank()) context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(buildWhatsAppUrl(whatsappNumber, ""))))
+                }) { Icon(Icons.Filled.Whatsapp, contentDescription = null, tint = WAGreen) }
+            }
+            Spacer(Modifier.height(16.dp))
+            TwoColumnInfo("Phone number", student.phone ?: "N/A", "WhatsApp", whatsappNumber.ifBlank { "N/A" })
+            Spacer(Modifier.height(16.dp))
+            ProfileInfoBlock("Address", student.address ?: "N/A")
+
+            Spacer(Modifier.height(26.dp))
+            Text("Academic Info", color = TextWhite, fontSize = 20.sp, fontWeight = FontWeight.Medium)
+            Spacer(Modifier.height(18.dp))
+            TwoColumnInfo("Standard", student.className ?: "N/A", "Roll number", student.studentCode)
+            Spacer(Modifier.height(16.dp))
+            ProfileInfoBlock("School name", student.schoolName ?: "N/A")
+        }
+    }
+
+    Spacer(Modifier.height(24.dp))
+}
+
+@Composable
+private fun StudentInsightsPanel(
+    student: StudentEntity,
+    monthAttendance: List<com.example.data.models.AttendanceEntity>,
+    paymentHistory: List<PaymentEntity>,
+    totalPaid: Double,
+    totalDue: Double,
+    context: android.content.Context
+) {
+    val monthLabel = remember { SimpleDateFormat("MMMM yyyy", Locale.getDefault()).format(Date()) }
+    val present = monthAttendance.count { it.status.equals("present", ignoreCase = true) }
+    val absent = monthAttendance.count { it.status.equals("absent", ignoreCase = true) }
+    val leave = monthAttendance.count { it.status.equals("leave", ignoreCase = true) }
+    val holiday = monthAttendance.count { it.status.equals("holiday", ignoreCase = true) }
+    val marked = monthAttendance.size.coerceAtLeast(1)
+    val attendanceText = buildMonthlyAttendanceReportText(student, monthLabel, present, absent, leave, holiday, monthAttendance.size)
+    val feeText = buildDetailedFeeReportText(student, paymentHistory, totalPaid, totalDue)
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = CardBg),
+        border = BorderStroke(1.dp, BorderSub)
+    ) {
+        Column(modifier = Modifier.padding(18.dp)) {
+            Text("Monthly Attendance", color = TextWhite, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            Text(monthLabel, color = TextMuted, fontSize = 13.sp)
+            Spacer(Modifier.height(14.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                InsightStat("Present", present, WAGreen, Modifier.weight(1f))
+                InsightStat("Absent", absent, Color(0xFFEF4444), Modifier.weight(1f))
+                InsightStat("Leave", leave, SkyBlue, Modifier.weight(1f))
+                InsightStat("Holiday", holiday, TextMuted, Modifier.weight(1f))
+            }
+            Spacer(Modifier.height(12.dp))
+            LinearProgressIndicator(
+                progress = { present.toFloat() / marked.toFloat() },
+                modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(20.dp)),
+                color = WAGreen,
+                trackColor = BorderSub
+            )
+            Spacer(Modifier.height(12.dp))
+            ReportActionRow(
+                context = context,
+                phone = student.phone,
+                title = "Monthly Attendance Report",
+                body = attendanceText
+            )
+
+            Spacer(Modifier.height(22.dp))
+            HorizontalDivider(color = BorderSub)
+            Spacer(Modifier.height(18.dp))
+
+            Text("Fee Details", color = TextWhite, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            Text("Submitted fee history", color = TextMuted, fontSize = 13.sp)
+            Spacer(Modifier.height(12.dp))
+            if (paymentHistory.isEmpty()) {
+                Text("No fee payments found yet.", color = TextMuted, fontSize = 14.sp)
+            } else {
+                paymentHistory.take(8).forEach { payment ->
+                    FeePaymentRow(payment)
+                    if (payment != paymentHistory.take(8).last()) {
+                        Spacer(Modifier.height(8.dp))
+                    }
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                ProfileInfoBlock("Total Paid", totalPaid.toLong().toString(), Modifier.weight(1f))
+                ProfileInfoBlock("Total Due", totalDue.toLong().toString(), Modifier.weight(1f))
+            }
+            Spacer(Modifier.height(12.dp))
+            ReportActionRow(
+                context = context,
+                phone = student.phone,
+                title = "Student Fee Details",
+                body = feeText
+            )
+        }
+    }
+}
+
+@Composable
+private fun InsightStat(label: String, value: Int, color: Color, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(CardBg)
+            .border(1.dp, BorderSub, RoundedCornerShape(12.dp))
+            .padding(10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(value.toString(), color = color, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        Text(label, color = TextMuted, fontSize = 10.sp, maxLines = 1)
+    }
+}
+
+@Composable
+private fun FeePaymentRow(payment: PaymentEntity) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(CardBg)
+            .border(1.dp, BorderSub, RoundedCornerShape(12.dp))
+            .padding(12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(Icons.Filled.ReceiptLong, contentDescription = null, tint = AccentAmber, modifier = Modifier.size(24.dp))
+        Spacer(Modifier.width(10.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(payment.paymentDateMs)),
+                color = TextWhite,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Text("${payment.paymentMethod.replaceFirstChar { it.uppercase() }} • ${payment.receiptNumber}", color = TextMuted, fontSize = 12.sp)
+        }
+        Text(payment.amount.toLong().toString(), color = WAGreen, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+private fun ReportActionRow(context: android.content.Context, phone: String?, title: String, body: String) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+        ReportActionButton(Icons.Filled.Share, "Share", Modifier.weight(1f)) {
+            shareStudentText(context, title, body)
+        }
+        ReportActionButton(Icons.Filled.Whatsapp, "WhatsApp", Modifier.weight(1f)) {
+            sendStudentMessage(context, phone, body, useWhatsApp = true)
+        }
+        ReportActionButton(Icons.Filled.Sms, "SMS", Modifier.weight(1f)) {
+            sendStudentMessage(context, phone, body, useWhatsApp = false)
+        }
+        ReportActionButton(Icons.Filled.Print, "Print", Modifier.weight(1f)) {
+            printStudentText(context, title, body)
+        }
+    }
+}
+
+@Composable
+private fun ReportActionButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Column(
+        modifier = modifier
+            .height(58.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(CardBg)
+            .border(1.dp, BorderSub, RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Icon(icon, contentDescription = null, tint = AccentAmber, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.height(3.dp))
+        Text(label, color = TextMuted, fontSize = 10.sp, maxLines = 1)
+    }
+}
+
+private fun currentMonthRangeMs(): Pair<Long, Long> {
+    val calendar = Calendar.getInstance()
+    calendar.set(Calendar.DAY_OF_MONTH, 1)
+    calendar.set(Calendar.HOUR_OF_DAY, 0)
+    calendar.set(Calendar.MINUTE, 0)
+    calendar.set(Calendar.SECOND, 0)
+    calendar.set(Calendar.MILLISECOND, 0)
+    val start = calendar.timeInMillis
+    calendar.add(Calendar.MONTH, 1)
+    calendar.add(Calendar.MILLISECOND, -1)
+    return start to calendar.timeInMillis
+}
+
+private fun buildMonthlyAttendanceReportText(
+    student: StudentEntity,
+    monthLabel: String,
+    present: Int,
+    absent: Int,
+    leave: Int,
+    holiday: Int,
+    totalMarked: Int
+): String =
+    buildString {
+        appendLine("Monthly Attendance Report")
+        appendLine("Student: ${student.fullName}")
+        appendLine("ID: ${student.studentCode}")
+        appendLine("Month: $monthLabel")
+        appendLine("Present: $present")
+        appendLine("Absent: $absent")
+        appendLine("Leave: $leave")
+        appendLine("Holiday: $holiday")
+        appendLine("Total marked days: $totalMarked")
+    }
+
+private fun buildDetailedFeeReportText(
+    student: StudentEntity,
+    payments: List<PaymentEntity>,
+    totalPaid: Double,
+    totalDue: Double
+): String =
+    buildString {
+        appendLine("Student Fee Details")
+        appendLine("Student: ${student.fullName}")
+        appendLine("ID: ${student.studentCode}")
+        appendLine("Total Paid: ${totalPaid.toLong()}")
+        appendLine("Total Due: ${totalDue.toLong()}")
+        appendLine()
+        if (payments.isEmpty()) {
+            appendLine("No payments found.")
+        } else {
+            appendLine("Payment History:")
+            payments.forEach { payment ->
+                appendLine("- ${SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(payment.paymentDateMs))}: ${payment.amount.toLong()} (${payment.paymentMethod}, ${payment.receiptNumber})")
+            }
+        }
+    }
+
+@Composable
+private fun ProfileMetric(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier
+) {
+    Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
+        Icon(icon, contentDescription = null, tint = AccentAmber, modifier = Modifier.size(24.dp))
+        Spacer(Modifier.width(10.dp))
+        Column {
+            Text(label, color = TextMuted, fontSize = 13.sp)
+            Text(value, color = TextWhite, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+private fun SmallDashboardTile(title: String, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .height(64.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(CardBg)
+            .border(1.dp, BorderSub, RoundedCornerShape(14.dp))
+            .padding(horizontal = 16.dp),
+        contentAlignment = Alignment.CenterStart
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Filled.MenuBook, contentDescription = null, tint = AccentAmber, modifier = Modifier.size(28.dp))
+            Spacer(Modifier.width(10.dp))
+            Text(title, color = TextWhite, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+private fun TwoColumnInfo(leftLabel: String, leftValue: String, rightLabel: String, rightValue: String) {
+    Row(horizontalArrangement = Arrangement.spacedBy(20.dp), modifier = Modifier.fillMaxWidth()) {
+        ProfileInfoBlock(leftLabel, leftValue, Modifier.weight(1f))
+        ProfileInfoBlock(rightLabel, rightValue, Modifier.weight(1f))
+    }
+}
+
+@Composable
+private fun ProfileInfoBlock(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(modifier = modifier) {
+        Text(label, color = TextMuted, fontSize = 14.sp)
+        Spacer(Modifier.height(4.dp))
+        Text(value, color = TextWhite, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
 @Composable
 private fun SectionHeader(title: String) {
     Text(

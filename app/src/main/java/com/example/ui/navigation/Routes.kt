@@ -36,6 +36,7 @@ object BillingRoute
 @Serializable data class CollectPaymentRoute(val feeId: String)
 @Serializable object DueFeesRoute
 @Serializable data class ReceiptDetailRoute(val paymentId: String)
+@Serializable object UnifiedCollectRoute
 
 @Serializable object ReportsRoute
 @Serializable object ReminderTemplatesRoute
@@ -44,6 +45,7 @@ object BillingRoute
 
 @Serializable object StaffRoute
 @Serializable object AddStaffRoute
+@Serializable data class EditStaffRoute(val staffId: String)
 @Serializable data class StaffProfileRoute(val staffId: String)
 @Serializable object StaffAttendanceRoute
 @Serializable object StaffAttendanceReportRoute

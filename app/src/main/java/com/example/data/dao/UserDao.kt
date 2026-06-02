@@ -20,4 +20,7 @@ interface UserDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertUser(user: UserEntity)
+
+    @androidx.room.Update
+    suspend fun updateUser(user: UserEntity)
 }

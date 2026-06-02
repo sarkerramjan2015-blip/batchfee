@@ -8,19 +8,16 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.data.database.AppDatabase
 import com.example.data.models.FeeEntity
+import com.example.data.repository.FeeCollectionRepository
 import com.example.domain.SessionManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
 import java.net.URLEncoder
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import java.util.UUID
 
-// ── Enriched pending-due data for the Collection Fee dashboard ──
 data class DueFeeDetail(
     val feeId: String,
     val studentId: String,
@@ -32,7 +29,8 @@ data class DueFeeDetail(
     val totalAmount: Double,
     val paidAmount: Double,
     val dueDateMs: Long,
-    val status: String
+    val status: String,
+    val studentStatus: String
 )
 
 data class MonthWiseDue(
@@ -42,16 +40,17 @@ data class MonthWiseDue(
 )
 
 class FeeViewModel(private val db: AppDatabase) : ViewModel() {
+    private val feeRepository = FeeCollectionRepository(db)
+
     private val _feeList = MutableStateFlow<List<FeeEntity>>(emptyList())
     val feeList = _feeList.asStateFlow()
 
     private val _dueFeeList = MutableStateFlow<List<FeeEntity>>(emptyList())
     val dueFeeList = _dueFeeList.asStateFlow()
-    
+
     private val _totalCollected = MutableStateFlow(0.0)
     val totalCollected = _totalCollected.asStateFlow()
 
-    // ── Enriched due fees with student + batch details ──────
     private val _dueFeesWithDetails = MutableStateFlow<List<DueFeeDetail>>(emptyList())
     val dueFeesWithDetails = _dueFeesWithDetails.asStateFlow()
 
@@ -83,17 +82,15 @@ class FeeViewModel(private val db: AppDatabase) : ViewModel() {
         }
     }
 
-    // ── Enrich due fees with student name/phone and batch name ──
     private suspend fun enrichDueFees(instId: String, fees: List<FeeEntity>) {
-        val details = mutableListOf<DueFeeDetail>()
+        val allStudents = db.studentDao().getStudentsByInstituteOnce(instId).associateBy { it.id }
+        val allBatches = db.batchDao().getBatchesByInstituteOnce(instId).associateBy { it.id }
         var total = 0.0
-        for (fee in fees) {
-            val student = db.studentDao().getStudentById(fee.studentId, instId).firstOrNull()
-            var batchName = ""
-            fee.batchId?.let { bid ->
-                db.batchDao().getBatchById(bid, instId).firstOrNull()?.let { batchName = it.name }
-            }
-            details.add(DueFeeDetail(
+        val details = fees.map { fee ->
+            val student = allStudents[fee.studentId]
+            val batchName = fee.batchId?.let { allBatches[it]?.name } ?: ""
+            total += fee.dueAmount
+            DueFeeDetail(
                 feeId = fee.id,
                 studentId = fee.studentId,
                 studentName = student?.fullName ?: "Unknown",
@@ -104,18 +101,21 @@ class FeeViewModel(private val db: AppDatabase) : ViewModel() {
                 totalAmount = fee.totalAmount,
                 paidAmount = fee.paidAmount,
                 dueDateMs = fee.dueDateMs,
-                status = fee.status
-            ))
-            total += fee.dueAmount
+                status = fee.status,
+                studentStatus = student?.status ?: "active"
+            )
         }
         _dueFeesWithDetails.value = details
         _totalDueAmount.value = total
         _monthWiseDues.value = buildMonthWiseDues(details)
     }
 
-    // ── Month-wise grouping ─────────────────────────────────
     private fun buildMonthWiseDues(details: List<DueFeeDetail>): List<MonthWiseDue> {
-        val grouped = details.groupBy { it.feePeriod }
+        val monthOrder = listOf(
+            "january", "february", "march", "april", "may", "june",
+            "july", "august", "september", "october", "november", "december"
+        )
+        return details.groupBy { it.feePeriod }
             .map { (month, list) ->
                 MonthWiseDue(
                     monthLabel = month,
@@ -123,11 +123,16 @@ class FeeViewModel(private val db: AppDatabase) : ViewModel() {
                     totalDue = list.sumOf { it.dueAmount }
                 )
             }
-            .sortedBy { it.monthLabel }
-        return grouped
+            .sortedWith(compareBy { item ->
+                val parts = item.monthLabel.split("\\s+".toRegex())
+                val year = parts.getOrNull(1)?.toIntOrNull() ?: 0
+                val monthIdx = monthOrder.indexOfFirst {
+                    parts.firstOrNull().orEmpty().equals(it, ignoreCase = true)
+                }.let { if (it >= 0) it else Int.MAX_VALUE }
+                year * 100 + monthIdx
+            })
     }
 
-    // ── SMS / WhatsApp notification launchers ───────────────
     fun sendDueNotification(
         context: Context,
         studentName: String,
@@ -137,14 +142,17 @@ class FeeViewModel(private val db: AppDatabase) : ViewModel() {
         channel: String
     ) {
         val dateLabel = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date())
-        val msg = "Dear Parent, ${studentName} has a pending fee of BDT ${"%.0f".format(dueAmount)} for ${feePeriod} as of ${dateLabel}. Please pay at your earliest convenience. \u2013 BatchFee"
+        val msg = "Dear Parent, $studentName has a pending fee of BDT ${"%.0f".format(dueAmount)} for $feePeriod as of $dateLabel. Please pay at your earliest convenience. - BatchFee"
         try {
             when (channel) {
                 "whatsapp" -> {
                     val number = phone?.replace("+", "")?.replace(" ", "")?.replace("-", "")
                     val encoded = URLEncoder.encode(msg, "UTF-8")
-                    val url = if (!number.isNullOrBlank()) "https://wa.me/$number?text=$encoded"
-                    else "https://wa.me/?text=$encoded"
+                    val url = if (!number.isNullOrBlank()) {
+                        "https://wa.me/$number?text=$encoded"
+                    } else {
+                        "https://wa.me/?text=$encoded"
+                    }
                     context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
                 }
                 "sms" -> {
@@ -154,110 +162,73 @@ class FeeViewModel(private val db: AppDatabase) : ViewModel() {
                     )
                 }
             }
-        } catch (_: Exception) { }
-    }
-
-    fun createFee(studentId: String, batchId: String?, feePeriod: String, feeType: String, dueDateMs: Long, baseAmount: Double, discount: Double, lateFee: Double) {
-        val instId = SessionManager.currentInstituteId.value ?: return
-        val total = baseAmount - discount + lateFee
-        if (total < 0) return
-        val fee = FeeEntity(
-            id = UUID.randomUUID().toString(),
-            instituteId = instId,
-            studentId = studentId,
-            batchId = batchId,
-            feePeriod = feePeriod,
-            feeType = feeType,
-            dueDateMs = dueDateMs,
-            baseAmount = baseAmount,
-            discountAmount = discount,
-            lateFeeAmount = lateFee,
-            totalAmount = total,
-            paidAmount = 0.0,
-            dueAmount = total,
-            status = "unpaid",
-            note = null,
-            createdAtMs = System.currentTimeMillis(),
-            updatedAtMs = System.currentTimeMillis(),
-            cancelledAtMs = null
-        )
-        viewModelScope.launch {
-            db.feeDao().insertFee(fee)
+        } catch (_: Exception) {
         }
     }
 
-    fun collectPayment(feeId: String, amount: Double, paymentMethod: String, note: String?, onSuccess: (String) -> Unit, onError: (String) -> Unit) {
+    fun createFee(
+        studentId: String,
+        batchId: String?,
+        feePeriod: String,
+        feeType: String,
+        dueDateMs: Long,
+        baseAmount: Double,
+        discount: Double,
+        lateFee: Double
+    ) {
         val instId = SessionManager.currentInstituteId.value ?: return
-        val userId = SessionManager.currentUserId.value ?: return
+        viewModelScope.launch {
+            try {
+                feeRepository.createFee(
+                    instituteId = instId,
+                    studentId = studentId,
+                    batchId = batchId,
+                    feePeriod = feePeriod,
+                    feeType = feeType,
+                    dueDateMs = dueDateMs,
+                    baseAmount = baseAmount,
+                    discountAmount = discount,
+                    lateFeeAmount = lateFee
+                )
+            } catch (_: IllegalArgumentException) {
+            }
+        }
+    }
+
+    fun collectPayment(
+        feeId: String,
+        amount: Double,
+        paymentMethod: String,
+        note: String?,
+        onSuccess: (String) -> Unit,
+        onError: (String) -> Unit
+    ) {
+        val instId = SessionManager.currentInstituteId.value ?: run {
+            onError("No active institute session.")
+            return
+        }
+        val userId = SessionManager.currentUserId.value ?: run {
+            onError("No active user session.")
+            return
+        }
         if (amount <= 0.0) {
             onError("Amount must be greater than zero.")
             return
         }
         viewModelScope.launch {
-            val fee = db.feeDao().getFeeById(feeId, instId)
-            if (fee == null) {
-                onError("Fee not found.")
-                return@launch
+            try {
+                val result = feeRepository.collectPayment(
+                    instituteId = instId,
+                    collectedByUserId = userId,
+                    feeId = feeId,
+                    amount = amount,
+                    paymentMethod = paymentMethod,
+                    note = note
+                )
+                onSuccess(result.paymentId)
+            } catch (e: IllegalArgumentException) {
+                onError(e.message ?: "Payment rejected.")
             }
-            if (fee.cancelledAtMs != null) {
-                onError("Fee is cancelled.")
-                return@launch
-            }
-            if (amount > fee.dueAmount) {
-                onError("Payment amount exceeds due amount.")
-                return@launch
-            }
-
-            val paymentId = UUID.randomUUID().toString()
-            val receiptNumber = "REC-${System.currentTimeMillis()}"
-            val payment = com.example.data.models.PaymentEntity(
-                id = paymentId,
-                instituteId = instId,
-                feeId = feeId,
-                studentId = fee.studentId,
-                amount = amount,
-                paymentMethod = paymentMethod,
-                transactionId = null,
-                receiptNumber = receiptNumber,
-                paymentDateMs = System.currentTimeMillis(),
-                collectedByUserId = userId,
-                status = "completed",
-                note = note,
-                createdAtMs = System.currentTimeMillis(),
-                updatedAtMs = System.currentTimeMillis()
-            )
-            db.paymentDao().insertPayment(payment)
-
-            val newPaid = fee.paidAmount + amount
-            val newDue = fee.totalAmount - newPaid
-            val newStatus = if (newDue <= 0.0) "paid" else "partially_paid"
-
-            val updatedFee = fee.copy(
-                paidAmount = newPaid,
-                dueAmount = newDue,
-                status = newStatus,
-                updatedAtMs = System.currentTimeMillis()
-            )
-            db.feeDao().updateFee(updatedFee)
-
-            val receipt = com.example.data.models.ReceiptEntity(
-                id = UUID.randomUUID().toString(),
-                instituteId = instId,
-                paymentId = paymentId,
-                feeId = fee.id,
-                studentId = fee.studentId,
-                receiptNumber = receiptNumber,
-                receiptDateMs = System.currentTimeMillis(),
-                totalAmount = fee.totalAmount,
-                paidAmount = newPaid,
-                dueAmount = newDue,
-                paymentMethod = paymentMethod,
-                receiptText = "Payment of $amount received.",
-                createdAtMs = System.currentTimeMillis()
-            )
-            db.receiptDao().insertReceipt(receipt)
-
-            onSuccess(paymentId)
         }
     }
 
@@ -268,100 +239,48 @@ class FeeViewModel(private val db: AppDatabase) : ViewModel() {
         collectedAmount: Double,
         paymentMethod: String,
         feePeriod: String,
+        note: String? = null,
         onSuccess: (String) -> Unit,
         onError: (String) -> Unit
     ) {
-        val instId = SessionManager.currentInstituteId.value ?: return
-        val userId = SessionManager.currentUserId.value ?: return
+        val instId = SessionManager.currentInstituteId.value ?: run {
+            onError("No active institute session.")
+            return
+        }
+        val userId = SessionManager.currentUserId.value ?: run {
+            onError("No active user session.")
+            return
+        }
         if (collectedAmount <= 0.0) {
             onError("Amount must be greater than zero.")
             return
         }
         viewModelScope.launch {
-            val fee = db.feeDao().getFeeById(feeId, instId)
-            if (fee == null) { onError("Fee not found."); return@launch }
-            if (fee.cancelledAtMs != null) { onError("Fee is cancelled."); return@launch }
-
-            val discountAmount = newBaseAmount * discountPercent / 100.0
-            val totalAmount = newBaseAmount - discountAmount
-            val alreadyPaid = fee.paidAmount
-            val dueAfterDiscount = totalAmount - alreadyPaid
-
-            if (collectedAmount > dueAfterDiscount + 0.001) {
-                onError("Payment amount exceeds due amount.")
-                return@launch
+            try {
+                val result = feeRepository.updateFeeAndCollectPayment(
+                    instituteId = instId,
+                    collectedByUserId = userId,
+                    feeId = feeId,
+                    newBaseAmount = newBaseAmount,
+                    discountPercent = discountPercent,
+                    collectedAmount = collectedAmount,
+                    paymentMethod = paymentMethod,
+                    feePeriod = feePeriod,
+                    note = note
+                )
+                onSuccess(result.paymentId)
+            } catch (e: IllegalArgumentException) {
+                onError(e.message ?: "Payment rejected.")
             }
-
-            val newPaid = alreadyPaid + collectedAmount
-            val newDue = totalAmount - newPaid
-            val newStatus = if (newDue <= 0.001) "paid" else "partially_paid"
-
-            val updatedFee = fee.copy(
-                baseAmount = newBaseAmount,
-                discountAmount = discountAmount,
-                totalAmount = totalAmount,
-                paidAmount = newPaid,
-                dueAmount = newDue.coerceAtLeast(0.0),
-                status = newStatus,
-                feePeriod = feePeriod,
-                updatedAtMs = System.currentTimeMillis()
-            )
-            db.feeDao().updateFee(updatedFee)
-
-            val paymentId = UUID.randomUUID().toString()
-            val receiptNumber = "REC-${System.currentTimeMillis()}"
-            val payment = com.example.data.models.PaymentEntity(
-                id = paymentId,
-                instituteId = instId,
-                feeId = feeId,
-                studentId = fee.studentId,
-                amount = collectedAmount,
-                paymentMethod = paymentMethod,
-                transactionId = null,
-                receiptNumber = receiptNumber,
-                paymentDateMs = System.currentTimeMillis(),
-                collectedByUserId = userId,
-                status = "completed",
-                note = null,
-                createdAtMs = System.currentTimeMillis(),
-                updatedAtMs = System.currentTimeMillis()
-            )
-            db.paymentDao().insertPayment(payment)
-
-            val receipt = com.example.data.models.ReceiptEntity(
-                id = UUID.randomUUID().toString(),
-                instituteId = instId,
-                paymentId = paymentId,
-                feeId = fee.id,
-                studentId = fee.studentId,
-                receiptNumber = receiptNumber,
-                receiptDateMs = System.currentTimeMillis(),
-                totalAmount = totalAmount,
-                paidAmount = newPaid,
-                dueAmount = newDue.coerceAtLeast(0.0),
-                paymentMethod = paymentMethod,
-                receiptText = buildString {
-                    append("Receipt: $receiptNumber\n")
-                    append("Period: $feePeriod\n")
-                    append("Base: BDT $newBaseAmount\n")
-                    append("Discount (${discountPercent.toInt()}%): BDT ${"%.2f".format(discountAmount)}\n")
-                    append("Payable: BDT ${"%.2f".format(totalAmount)}\n")
-                    append("Paid: BDT ${"%.2f".format(newPaid)}\n")
-                    append("Due: BDT ${"%.2f".format(newDue.coerceAtLeast(0.0))}\n")
-                    append("Collected Now: BDT ${"%.2f".format(collectedAmount)}")
-                },
-                createdAtMs = System.currentTimeMillis()
-            )
-            db.receiptDao().insertReceipt(receipt)
-
-            onSuccess(paymentId)
         }
     }
 }
 
 class FeeViewModelFactory(private val db: AppDatabase) : ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        if (modelClass.isAssignableFrom(FeeViewModel::class.java)) return FeeViewModel(db) as T
+        if (modelClass.isAssignableFrom(FeeViewModel::class.java)) {
+            return FeeViewModel(db) as T
+        }
         throw IllegalArgumentException()
     }
 }

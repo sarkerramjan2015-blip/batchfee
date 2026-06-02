@@ -8,6 +8,9 @@ import kotlinx.coroutines.flow.Flow
 interface FeeDao {
     @Query("SELECT * FROM fees WHERE instituteId = :instituteId AND cancelledAtMs IS NULL ORDER BY dueDateMs DESC")
     fun getAllFees(instituteId: String): Flow<List<FeeEntity>>
+
+    @Query("SELECT * FROM fees WHERE instituteId = :instituteId AND cancelledAtMs IS NULL ORDER BY dueDateMs DESC")
+    suspend fun getAllFeesOnce(instituteId: String): List<FeeEntity>
     
     @Query("SELECT * FROM fees WHERE instituteId = :instituteId AND dueAmount > 0 AND cancelledAtMs IS NULL ORDER BY dueDateMs ASC")
     fun getDueFees(instituteId: String): Flow<List<FeeEntity>>
@@ -33,6 +36,12 @@ interface FeeDao {
 
     @Update
     suspend fun updateFee(fee: FeeEntity)
+
+    @Query("UPDATE fees SET paidAmount = paidAmount + :amount, dueAmount = dueAmount - :amount, status = CASE WHEN dueAmount - :amount <= 0 THEN 'paid' ELSE 'partially_paid' END, updatedAtMs = :now WHERE id = :feeId AND instituteId = :instituteId AND dueAmount >= :amount AND cancelledAtMs IS NULL")
+    suspend fun atomicallyPayFee(feeId: String, instituteId: String, amount: Double, now: Long): Int
+
+    @Query("UPDATE fees SET baseAmount = :baseAmount, discountAmount = :discountAmount, totalAmount = :totalAmount, feePeriod = :feePeriod, paidAmount = paidAmount + :collectedAmount, dueAmount = :totalAmount - paidAmount - :collectedAmount, status = CASE WHEN :totalAmount - paidAmount - :collectedAmount <= 0.001 THEN 'paid' ELSE 'partially_paid' END, updatedAtMs = :now WHERE id = :feeId AND instituteId = :instituteId AND cancelledAtMs IS NULL AND :totalAmount - paidAmount >= :collectedAmount")
+    suspend fun atomicallyUpdateAndPayFee(feeId: String, instituteId: String, baseAmount: Double, discountAmount: Double, totalAmount: Double, feePeriod: String, collectedAmount: Double, now: Long): Int
     
     @Query("SELECT SUM(paidAmount) FROM fees WHERE instituteId = :instituteId AND cancelledAtMs IS NULL")
     fun getTotalCollected(instituteId: String): Flow<Double?>

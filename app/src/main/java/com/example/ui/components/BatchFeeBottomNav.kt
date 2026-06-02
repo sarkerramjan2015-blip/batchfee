@@ -37,8 +37,8 @@ private data class NavItem(
 private val navItems = listOf(
     NavItem("DashboardRoute",  "Home",      Icons.Filled.Home),
     NavItem("StudentsRoute",    "Students",  Icons.Default.Person),
+    NavItem("UnifiedCollectRoute", "Fee",    Icons.Filled.Payments),
     NavItem("BatchesRoute",     "Batches",   Icons.AutoMirrored.Filled.List),
-    NavItem("FeeDashboardRoute","Collection Fee", Icons.Default.DateRange),
     NavItem("More",             "More",      Icons.Default.Menu)
 )
 
@@ -49,7 +49,8 @@ fun BatchFeeBottomNav(
 ) {
     NavigationBar(
         containerColor = NavBg,
-        tonalElevation = 0.dp
+        tonalElevation = 0.dp,
+        windowInsets = WindowInsets(0.dp)
     ) {
         navItems.forEach { item ->
             val isSelected = currentRoute == item.route

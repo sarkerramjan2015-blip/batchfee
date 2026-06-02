@@ -32,11 +32,14 @@ class ExpenseViewModel(private val db: AppDatabase) : ViewModel() {
         title: String,
         category: String,
         amount: Double,
-        onSuccess: () -> Unit
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit = {}
     ) {
         val instId = SessionManager.currentInstituteId.value ?: return
         val currentUserId = SessionManager.currentUserId.value ?: return
-        if (title.isBlank() || category.isBlank() || amount <= 0) return
+        if (title.isBlank()) { onError("Expense title is required."); return }
+        if (category.isBlank()) { onError("Category is required."); return }
+        if (amount <= 0) { onError("Amount must be greater than 0."); return }
 
         val expense = ExpenseEntity(
             id = UUID.randomUUID().toString(),

@@ -4,6 +4,7 @@ import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -28,10 +29,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.database.AppDatabase
+import com.example.data.models.AttendanceEntity
 import com.example.data.models.PaymentEntity
+import com.example.data.models.StaffEntity
 import com.example.domain.SessionManager
+import com.example.ui.components.buildWhatsAppUrl
 import kotlinx.coroutines.launch
 import java.net.URLEncoder
 import java.text.SimpleDateFormat
@@ -60,6 +65,8 @@ fun BatchDetailScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
+    val instId = SessionManager.currentInstituteId.collectAsState().value
     val paymentVM: BatchPaymentViewModel = viewModel(factory = BatchPaymentViewModelFactory(db))
     val batch by paymentVM.batch.collectAsState()
     val studentsWF by paymentVM.studentsWithFee.collectAsState()
@@ -85,6 +92,11 @@ fun BatchDetailScreen(
     var sortBy by remember { mutableStateOf("name") }
     var showPaymentHistoryFor by remember { mutableStateOf<String?>(null) }
     var historyPayments by remember { mutableStateOf<List<PaymentEntity>>(emptyList()) }
+    var recentPayments by remember { mutableStateOf<List<PaymentEntity>>(emptyList()) }
+    var monthOffset by remember { mutableStateOf(0) }
+    var monthAttendance by remember { mutableStateOf<List<AttendanceEntity>>(emptyList()) }
+    var allowedStaff by remember { mutableStateOf<List<StaffEntity>>(emptyList()) }
+    var showBatchMenu by remember { mutableStateOf(false) }
 
     // Dialogs
     var sendMessageTarget by remember { mutableStateOf<BatchStudentWithFee?>(null) }
@@ -92,6 +104,22 @@ fun BatchDetailScreen(
 
     // Load data on first composition
     LaunchedEffect(batchId) { paymentVM.loadBatchDetail(batchId) }
+    LaunchedEffect(instId, batchId, monthOffset) {
+        val instituteId = instId ?: return@LaunchedEffect
+        val range = monthRangeForOffset(monthOffset)
+        launch {
+            db.attendanceDao().getAttendanceForBatchByDateRange(instituteId, batchId, range.first, range.second)
+                .collect { monthAttendance = it }
+        }
+        launch {
+            db.staffDao().getActiveStaff(instituteId).collect { staff ->
+                allowedStaff = staff.filter { it.isAssignedToBatch(batchId) }
+            }
+        }
+        launch {
+            db.paymentDao().getRecentPayments(instituteId).collect { recentPayments = it }
+        }
+    }
 
     // ── Filter + sort + search ────────────────────────────
     val monthlyFee = batch?.monthlyFeeAmount ?: 0.0
@@ -127,12 +155,10 @@ fun BatchDetailScreen(
 
     fun openWhatsApp(target: BatchStudentWithFee) {
         val msg = buildDueMessage(target)
-        val encoded = URLEncoder.encode(msg, "UTF-8")
-        val phone = target.student.phone?.takeIf { it.isNotBlank() }
-        val url = if (phone != null) "https://wa.me/88$phone?text=$encoded"
-                  else "https://wa.me/?text=$encoded"
+        val url = buildWhatsAppUrl(target.student.phone, msg)
         try { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
-        catch (_: Exception) { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/?text=$encoded"))) }
+        catch (_: Exception) { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/?text=${
+            java.net.URLEncoder.encode(msg, "UTF-8") }"))) }
     }
 
     fun openSMS(target: BatchStudentWithFee) {
@@ -187,15 +213,54 @@ fun BatchDetailScreen(
         }
     }
 
+    fun shareBatchReport(title: String, text: String) {
+        context.startActivity(
+            Intent.createChooser(
+                Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_SUBJECT, title)
+                    putExtra(Intent.EXTRA_TEXT, text)
+                },
+                title
+            )
+        )
+    }
+
     // ── Scaffold ─────────────────────────────────────────
     Scaffold(
         containerColor = BgColor,
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
-                title = { Text(batch?.name ?: "Batch Details", color = TextWhite, fontWeight = FontWeight.Bold, fontSize = 20.sp) },
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        BatchAvatar(Modifier.size(48.dp))
+                        Spacer(Modifier.width(12.dp))
+                        Column {
+                            Text(
+                                batch?.name ?: "Batch Details",
+                                color = TextWhite,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 20.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                batch?.status?.replaceFirstChar { it.uppercase() } ?: "",
+                                color = TextMuted,
+                                fontSize = 14.sp
+                            )
+                        }
+                    }
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = TextWhite)
+                    }
+                },
+                actions = {
+                    IconButton(onClick = { showBatchMenu = true }) {
+                        Icon(Icons.Filled.MoreVert, contentDescription = "Batch menu", tint = TextWhite)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = BgColor)
@@ -219,6 +284,34 @@ fun BatchDetailScreen(
                 .padding(horizontal = 20.dp, vertical = 10.dp)
         ) {
             // ── Batch Summary Card ────────────────────────
+            val batchFeeIds = studentsWF.mapNotNull { it.fee?.id }.toSet()
+            val batchPayments = recentPayments.filter { it.feeId in batchFeeIds }
+            BatchDashboardSummary(
+                batchName = batch?.name ?: "Batch",
+                studentCount = totalEnrolled,
+                activeStudentCount = totalEnrolled,
+                closeStudentCount = 0,
+                dueCount = dueCount,
+                totalDue = (totalExpected - totalCollected).coerceAtLeast(0.0),
+                paidThisMonth = paidThisMonth,
+                dueThisMonth = dueThisMonth,
+                todayCollected = batchPayments.sumByDateRange(dayRange(System.currentTimeMillis())),
+                monthCollected = batchPayments.sumByDateRange(monthRangeForOffset(monthOffset)),
+                totalCollected = totalCollected,
+                monthLabel = monthLabelForOffset(monthOffset),
+                attendance = monthAttendance,
+                allowedStaff = allowedStaff,
+                onPreviousMonth = { monthOffset -= 1 },
+                onNextMonth = { monthOffset += 1 },
+                onReport = {
+                    shareBatchReport(
+                        "Batch Attendance Report",
+                        buildBatchAttendanceReport(batch?.name ?: "Batch", monthLabelForOffset(monthOffset), monthAttendance)
+                    )
+                }
+            )
+
+            if (false) {
             Card(
                 modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
                     .shadow(4.dp, RoundedCornerShape(14.dp), spotColor = Cyan.copy(alpha = 0.2f)),
@@ -258,6 +351,8 @@ fun BatchDetailScreen(
             }
 
             // ── Action bar ────────────────────────────────
+            }
+
             Row(
                 modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -370,6 +465,32 @@ fun BatchDetailScreen(
     }
 
     // ── Payment History Dialog ────────────────────────────
+    if (showBatchMenu) {
+        BatchMenuDialog(
+            onDismiss = { showBatchMenu = false },
+            onEdit = {
+                showBatchMenu = false
+                scope.launch { snackbarHostState.showSnackbar("Edit batch will be added next.") }
+            },
+            onClose = {
+                showBatchMenu = false
+                scope.launch { snackbarHostState.showSnackbar("Close batch will be added with confirmation next.") }
+            },
+            onShift = {
+                showBatchMenu = false
+                scope.launch { snackbarHostState.showSnackbar("Shift batch will be added next.") }
+            },
+            onDelete = {
+                showBatchMenu = false
+                scope.launch { snackbarHostState.showSnackbar("Delete batch needs strong confirmation; not enabled yet.") }
+            },
+            onAssignedStudents = {
+                showBatchMenu = false
+                onEnroll()
+            }
+        )
+    }
+
     if (showPaymentHistoryFor != null) {
         val studentName = studentsWF.find { it.student.id == showPaymentHistoryFor }?.student?.fullName ?: "Student"
         AlertDialog(
@@ -483,6 +604,401 @@ fun BatchDetailScreen(
 }
 
 // ── Reusable components ─────────────────────────────────────────
+
+@Composable
+private fun BatchMenuDialog(
+    onDismiss: () -> Unit,
+    onEdit: () -> Unit,
+    onClose: () -> Unit,
+    onShift: () -> Unit,
+    onDelete: () -> Unit,
+    onAssignedStudents: () -> Unit
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(14.dp),
+            colors = CardDefaults.cardColors(containerColor = CardBg),
+            border = BorderStroke(1.dp, BorderSub)
+        ) {
+            Column {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 18.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "Student Batch Menu",
+                        color = AccentAmber,
+                        fontSize = 21.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(38.dp)) {
+                        Icon(Icons.Filled.Close, contentDescription = "Close", tint = Color(0xFFFFB4B4), modifier = Modifier.size(30.dp))
+                    }
+                }
+                HorizontalDivider(color = BorderSub)
+                BatchMenuItem(Icons.Filled.Edit, "Edit batch", "You can edit batch here", onEdit)
+                BatchMenuItem(Icons.Filled.Close, "Close Batch", "You can mark batch status as you want Active or Close", onClose)
+                BatchMenuItem(Icons.Filled.Groups, "Shift Batch", "You can shift batch's students to another batch.", onShift)
+                BatchMenuItem(Icons.Filled.Delete, "Delete Batch", "You can delete batch forever.", onDelete)
+                BatchMenuItem(Icons.Filled.Groups, "Batch Assigned Students", "You can assign this batch to students.", onAssignedStudents, showDivider = false)
+            }
+        }
+    }
+}
+
+@Composable
+private fun BatchMenuItem(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit,
+    showDivider: Boolean = true
+) {
+    Column {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onClick)
+                .padding(horizontal = 22.dp, vertical = 17.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(icon, contentDescription = null, tint = AccentAmber, modifier = Modifier.size(30.dp))
+            Spacer(Modifier.width(18.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, color = TextWhite, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    subtitle,
+                    color = TextMuted,
+                    fontSize = 14.sp,
+                    lineHeight = 18.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+        if (showDivider) HorizontalDivider(color = BorderSub)
+    }
+}
+
+@Composable
+private fun BatchDashboardSummary(
+    batchName: String,
+    studentCount: Int,
+    activeStudentCount: Int,
+    closeStudentCount: Int,
+    dueCount: Int,
+    totalDue: Double,
+    paidThisMonth: Int,
+    dueThisMonth: Int,
+    todayCollected: Double,
+    monthCollected: Double,
+    totalCollected: Double,
+    monthLabel: String,
+    attendance: List<AttendanceEntity>,
+    allowedStaff: List<StaffEntity>,
+    onPreviousMonth: () -> Unit,
+    onNextMonth: () -> Unit,
+    onReport: () -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.fillMaxWidth()) {
+        DashboardCard {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Filled.Groups, contentDescription = null, tint = AccentAmber, modifier = Modifier.size(26.dp))
+                Spacer(Modifier.width(12.dp))
+                Text("Students Summary", color = TextWhite, fontSize = 19.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                Row(modifier = Modifier.clip(RoundedCornerShape(12.dp)).background(WAGreen.copy(alpha = 0.86f))) {
+                    Text(activeStudentCount.toString(), color = TextWhite, fontSize = 15.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 14.dp, vertical = 5.dp))
+                    Box(Modifier.width(1.dp).height(30.dp).background(TextWhite.copy(alpha = 0.18f)))
+                    Text(closeStudentCount.toString(), color = TextWhite, fontSize = 15.sp, fontWeight = FontWeight.Bold, modifier = Modifier.background(AccentRed.copy(alpha = 0.72f)).padding(horizontal = 14.dp, vertical = 5.dp))
+                }
+            }
+        }
+
+        DashboardCard {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.Calculate, contentDescription = null, tint = AccentAmber, modifier = Modifier.size(25.dp))
+                Spacer(Modifier.width(10.dp))
+                Text("Due Fees", color = TextWhite, fontSize = 19.sp, fontWeight = FontWeight.Bold)
+            }
+            Spacer(Modifier.height(18.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(22.dp)) {
+                FeeStateBlock("($dueCount) ${money(totalDue)}", "Active", Modifier.weight(1f))
+                FeeStateBlock("(0) 0", "Close", Modifier.weight(1f))
+            }
+        }
+
+        DashboardCard {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Text("Collected Fees", color = TextWhite, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                MonthSwitcher(monthLabel, onPreviousMonth, onNextMonth)
+            }
+            Spacer(Modifier.height(18.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                CollectedMetric(money(todayCollected, decimals = true), "Today")
+                CollectedMetric(money(monthCollected, decimals = true), monthLabel)
+                CollectedMetric(money(totalCollected, decimals = true), "All Time")
+            }
+        }
+
+        DashboardCard {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Text("Attendance Summary", color = TextWhite, fontSize = 20.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+                MonthSwitcher(monthLabel, onPreviousMonth, onNextMonth)
+            }
+            Spacer(Modifier.height(18.dp))
+            AttendanceMiniChart(attendance)
+            Spacer(Modifier.height(16.dp))
+            AttendanceLegend()
+            Spacer(Modifier.height(14.dp))
+            OutlinedButton(
+                onClick = onReport,
+                modifier = Modifier.fillMaxWidth().height(50.dp),
+                shape = RoundedCornerShape(14.dp),
+                border = BorderStroke(1.dp, BorderSub),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentAmber)
+            ) {
+                Icon(Icons.Filled.Download, contentDescription = null, tint = AccentAmber, modifier = Modifier.size(24.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("$monthLabel Report", color = TextWhite, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+            BatchSmallTile("Class works (0)", Modifier.weight(1f))
+            BatchSmallTile("Home works (0)", Modifier.weight(1f))
+        }
+
+        AllowedStaffCard(allowedStaff)
+    }
+}
+
+@Composable
+private fun DashboardCard(content: @Composable ColumnScope.() -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = CardBg),
+        border = BorderStroke(1.dp, BorderSub)
+    ) {
+        Column(modifier = Modifier.padding(18.dp), content = content)
+    }
+}
+
+@Composable
+private fun BatchAvatar(modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier.clip(CircleShape).background(Brush.linearGradient(listOf(Color(0xFF7C3AED), SkyBlue))),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(Icons.Filled.AccountBalance, contentDescription = null, tint = TextWhite, modifier = Modifier.size(30.dp))
+    }
+}
+
+@Composable
+private fun FeeStateBlock(value: String, label: String, modifier: Modifier = Modifier) {
+    Column(modifier = modifier) {
+        Text(value, color = TextWhite, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        Text(label, color = TextMuted, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+@Composable
+private fun MonthSwitcher(label: String, onPrevious: () -> Unit, onNext: () -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        IconButton(onClick = onPrevious, modifier = Modifier.size(36.dp)) {
+            Icon(Icons.Filled.KeyboardArrowLeft, contentDescription = "Previous month", tint = AccentAmber)
+        }
+        Text(label, color = TextWhite, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+        IconButton(onClick = onNext, modifier = Modifier.size(36.dp)) {
+            Icon(Icons.Filled.KeyboardArrowRight, contentDescription = "Next month", tint = AccentAmber)
+        }
+    }
+}
+
+@Composable
+private fun CollectedMetric(value: String, label: String) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(value, color = WAGreen, fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+        Text(label, color = TextMuted, fontSize = 14.sp, maxLines = 1)
+    }
+}
+
+@Composable
+private fun AttendanceMiniChart(attendance: List<AttendanceEntity>) {
+    val dayRecords = (1..10).map { day ->
+        attendance.filter {
+            Calendar.getInstance().apply { timeInMillis = it.attendanceDateMs }.get(Calendar.DAY_OF_MONTH) == day
+        }
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth().height(150.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.Bottom
+    ) {
+        dayRecords.forEachIndexed { index, records ->
+            val present = records.count { it.status.equals("present", ignoreCase = true) }
+            val absent = records.count { it.status.equals("absent", ignoreCase = true) }
+            val leave = records.count { it.status.equals("leave", ignoreCase = true) }
+            val holiday = records.count { it.status.equals("holiday", ignoreCase = true) }
+            val total = records.size.coerceAtLeast(1)
+            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.weight(1f)) {
+                Box(modifier = Modifier.fillMaxWidth().height(118.dp), contentAlignment = Alignment.BottomCenter) {
+                    Box(Modifier.width(1.dp).fillMaxHeight().background(BorderSub))
+                    Column(modifier = Modifier.width(10.dp).height(100.dp), verticalArrangement = Arrangement.Bottom) {
+                        AttendanceSegment(holiday, total, SkyBlue)
+                        AttendanceSegment(leave, total, AccentAmber)
+                        AttendanceSegment(absent, total, AccentRed)
+                        AttendanceSegment(present, total, WAGreen)
+                    }
+                }
+                Text((index + 1).toString(), color = TextWhite, fontSize = 13.sp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ColumnScope.AttendanceSegment(count: Int, total: Int, color: Color) {
+    if (count <= 0) return
+    Box(modifier = Modifier.fillMaxWidth().weight(count.toFloat() / total.toFloat()).background(color))
+}
+
+@Composable
+private fun AttendanceLegend() {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+        LegendItem("Present", WAGreen)
+        LegendItem("Absent", AccentRed)
+        LegendItem("Leave", AccentAmber)
+        LegendItem("Holiday", SkyBlue)
+    }
+}
+
+@Composable
+private fun LegendItem(label: String, color: Color) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(label, color = TextWhite, fontSize = 14.sp)
+        Box(Modifier.width(54.dp).height(5.dp).clip(RoundedCornerShape(8.dp)).background(color))
+    }
+}
+
+@Composable
+private fun BatchSmallTile(title: String, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .height(66.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(CardBg)
+            .border(1.dp, BorderSub, RoundedCornerShape(14.dp))
+            .padding(horizontal = 14.dp),
+        contentAlignment = Alignment.CenterStart
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Filled.TableChart, contentDescription = null, tint = AccentAmber, modifier = Modifier.size(26.dp))
+            Spacer(Modifier.width(10.dp))
+            Text(title, color = TextWhite, fontSize = 17.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@Composable
+private fun AllowedStaffCard(staff: List<StaffEntity>) {
+    DashboardCard {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Icon(Icons.Filled.Groups, contentDescription = null, tint = AccentAmber, modifier = Modifier.size(25.dp))
+            Spacer(Modifier.width(10.dp))
+            Text("Allowed Staffs", color = TextWhite, fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+            Box(modifier = Modifier.clip(RoundedCornerShape(9.dp)).background(Color(0xFF8A6500)).padding(horizontal = 12.dp, vertical = 8.dp)) {
+                Text(staff.size.toString(), color = AccentAmber, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+        Spacer(Modifier.height(18.dp))
+        if (staff.isEmpty()) {
+            Text("No staff assigned yet.", color = TextMuted, fontSize = 14.sp)
+        } else {
+            staff.take(3).forEach { member ->
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                    Box(modifier = Modifier.size(48.dp).clip(CircleShape).background(AccentRed.copy(alpha = 0.22f)), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Filled.Person, contentDescription = null, tint = AccentRed, modifier = Modifier.size(28.dp))
+                    }
+                    Spacer(Modifier.width(16.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(member.fullName, color = TextWhite, fontSize = 20.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(member.roleTitle, color = TextMuted, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun StaffEntity.isAssignedToBatch(batchId: String): Boolean =
+    assignedBatchIds?.split(",")?.map { it.trim() }?.any { it == batchId } ?: false
+
+private fun List<PaymentEntity>.sumByDateRange(range: Pair<Long, Long>): Double =
+    filter { it.paymentDateMs in range.first..range.second }.sumOf { it.amount }
+
+private fun dayRange(timeMs: Long): Pair<Long, Long> {
+    val calendar = Calendar.getInstance().apply {
+        timeInMillis = timeMs
+        set(Calendar.HOUR_OF_DAY, 0)
+        set(Calendar.MINUTE, 0)
+        set(Calendar.SECOND, 0)
+        set(Calendar.MILLISECOND, 0)
+    }
+    val start = calendar.timeInMillis
+    calendar.add(Calendar.DAY_OF_MONTH, 1)
+    calendar.add(Calendar.MILLISECOND, -1)
+    return start to calendar.timeInMillis
+}
+
+private fun monthRangeForOffset(offset: Int): Pair<Long, Long> {
+    val calendar = Calendar.getInstance().apply {
+        add(Calendar.MONTH, offset)
+        set(Calendar.DAY_OF_MONTH, 1)
+        set(Calendar.HOUR_OF_DAY, 0)
+        set(Calendar.MINUTE, 0)
+        set(Calendar.SECOND, 0)
+        set(Calendar.MILLISECOND, 0)
+    }
+    val start = calendar.timeInMillis
+    calendar.add(Calendar.MONTH, 1)
+    calendar.add(Calendar.MILLISECOND, -1)
+    return start to calendar.timeInMillis
+}
+
+private fun monthLabelForOffset(offset: Int): String {
+    val calendar = Calendar.getInstance().apply { add(Calendar.MONTH, offset) }
+    return SimpleDateFormat("MMM-yyyy", Locale.getDefault()).format(calendar.time)
+}
+
+private fun money(amount: Double, decimals: Boolean = false): String {
+    val value = if (decimals) amount else amount.toLong().toDouble()
+    val formatter = java.text.NumberFormat.getNumberInstance(Locale.getDefault()).apply {
+        minimumFractionDigits = if (decimals) 1 else 0
+        maximumFractionDigits = if (decimals) 1 else 0
+    }
+    return formatter.format(value)
+}
+
+private fun buildBatchAttendanceReport(batchName: String, monthLabel: String, attendance: List<AttendanceEntity>): String {
+    val present = attendance.count { it.status.equals("present", ignoreCase = true) }
+    val absent = attendance.count { it.status.equals("absent", ignoreCase = true) }
+    val leave = attendance.count { it.status.equals("leave", ignoreCase = true) }
+    val holiday = attendance.count { it.status.equals("holiday", ignoreCase = true) }
+    return buildString {
+        appendLine("Batch Attendance Report")
+        appendLine("Batch: $batchName")
+        appendLine("Month: $monthLabel")
+        appendLine("Present: $present")
+        appendLine("Absent: $absent")
+        appendLine("Leave: $leave")
+        appendLine("Holiday: $holiday")
+        appendLine("Total marked records: ${attendance.size}")
+    }
+}
 
 @Composable
 private fun RowScope.outlinenedButton(

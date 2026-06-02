@@ -40,6 +40,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.database.AppDatabase
 import com.example.data.models.InstituteEntity
 import com.example.data.models.UserEntity
+import com.example.domain.PasswordHasher
 import com.example.domain.SessionManager
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -82,7 +83,7 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
             instituteId = instituteId,
             name = ownerName,
             email = email,
-            passwordHash = passwordHash,
+            passwordHash = PasswordHasher.hash(passwordHash),
             role = "InstituteOwner",
             createdAtMs = now
         )
@@ -148,7 +149,21 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                     return@launch
                 }
 
-                if (user.passwordHash != passwordHash) {
+                // ── Password verification with backward compatibility ──
+                val storedHash = user.passwordHash
+                val passwordValid = if (PasswordHasher.isHashed(storedHash)) {
+                    PasswordHasher.verify(passwordHash, storedHash)
+                } else {
+                    // Legacy plain-text password — auto-upgrade to hashed
+                    if (storedHash == passwordHash) {
+                        db.userDao().updateUser(user.copy(passwordHash = PasswordHasher.hash(passwordHash)))
+                        true
+                    } else {
+                        false
+                    }
+                }
+
+                if (!passwordValid) {
                     onError("Invalid credentials")
                     return@launch
                 }

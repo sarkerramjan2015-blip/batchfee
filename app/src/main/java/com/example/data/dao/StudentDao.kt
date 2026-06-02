@@ -9,6 +9,9 @@ interface StudentDao {
     @Query("SELECT * FROM students WHERE instituteId = :instituteId AND archivedAtMs IS NULL ORDER BY fullName ASC")
     fun getStudentsByInstitute(instituteId: String): Flow<List<StudentEntity>>
 
+    @Query("SELECT * FROM students WHERE instituteId = :instituteId AND archivedAtMs IS NULL ORDER BY fullName ASC")
+    suspend fun getStudentsByInstituteOnce(instituteId: String): List<StudentEntity>
+
     @Query("SELECT * FROM students WHERE id = :studentId AND instituteId = :instituteId LIMIT 1")
     fun getStudentById(studentId: String, instituteId: String): Flow<StudentEntity?>
 

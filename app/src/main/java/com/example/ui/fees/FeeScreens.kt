@@ -38,6 +38,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -246,12 +247,12 @@ private fun createReceiptBitmap(
 
 // ── Helper: WhatsApp / share ─────────────────────────────────────
 private fun shareReceiptImage(context: Context, bitmap: Bitmap, phone: String?) {
-    val file = File(context.cacheDir, "receipt_share_${System.currentTimeMillis()}.jpg")
-    FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.JPEG, 90, it) }
+    val file = File(context.cacheDir, "receipt_share_${System.currentTimeMillis()}.png")
+    FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
     val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
     val send = { pkg: String? ->
         Intent(Intent.ACTION_SEND).apply {
-            type = "image/jpeg"; putExtra(Intent.EXTRA_STREAM, uri)
+            type = "image/png"; putExtra(Intent.EXTRA_STREAM, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             if (pkg != null) `package` = pkg
             if (!phone.isNullOrBlank() && pkg == "com.whatsapp") {
@@ -261,6 +262,49 @@ private fun shareReceiptImage(context: Context, bitmap: Bitmap, phone: String?) 
     }
     try { context.startActivity(Intent.createChooser(send("com.whatsapp"), "Share Receipt")) }
     catch (_: Exception) { context.startActivity(Intent.createChooser(send(null), "Share Receipt")) }
+}
+
+private fun shareReceiptImageAny(context: Context, bitmap: Bitmap) {
+    val file = File(context.cacheDir, "receipt_share_${System.currentTimeMillis()}.png")
+    FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+    val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+    context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+        type = "image/png"
+        putExtra(Intent.EXTRA_STREAM, uri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }, "Share Receipt"))
+}
+
+private fun sendReceiptMessage(context: Context, phone: String?, body: String) {
+    val intent = Intent(Intent.ACTION_SENDTO).apply {
+        data = Uri.parse("smsto:${phone.orEmpty()}")
+        putExtra("sms_body", body)
+    }
+    try {
+        context.startActivity(intent)
+    } catch (_: Exception) {
+        context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, body)
+        }, "Send Receipt Message"))
+    }
+}
+
+private fun buildReceiptMessage(
+    receiptNumber: String,
+    studentName: String,
+    feePeriod: String,
+    collectedAmount: Double,
+    dueAmount: Double,
+    paymentMethod: String
+): String = buildString {
+    appendLine("BatchFee Receipt")
+    appendLine("Receipt: $receiptNumber")
+    appendLine("Student: $studentName")
+    appendLine("Period: $feePeriod")
+    appendLine("Collected: BDT ${"%.0f".format(collectedAmount)}")
+    appendLine("Remaining Due: BDT ${"%.0f".format(dueAmount)}")
+    appendLine("Payment Mode: ${paymentMethod.uppercase()}")
 }
 
 // ── Reusable dropdown composable ─────────────────────────────────
@@ -419,7 +463,9 @@ fun CreateFeeScreen(db: AppDatabase, onBack: () -> Unit) {
             )
             Spacer(Modifier.height(20.dp))
 
-            val saveEnabled = selectedStudentId != null && baseAmount.isNotBlank() && feePeriod.isNotBlank()
+            val saveEnabled = selectedStudentId != null &&
+                    feePeriod.isNotBlank() &&
+                    (baseAmount.toDoubleOrNull() ?: 0.0) > 0.0
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -490,6 +536,15 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
     var discountPercent by remember { mutableDoubleStateOf(0.0) }
     var collectedAmount by remember { mutableStateOf("") }
     var manualAmountEdit by remember { mutableStateOf(false) }
+    var paymentMethod by remember { mutableStateOf("cash") }
+    var remarks by remember { mutableStateOf("") }
+    val paymentDateMs = remember { System.currentTimeMillis() }
+    val paymentDateLabel = remember(paymentDateMs) {
+        SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()).format(Date(paymentDateMs))
+    }
+    val previewReceiptNumber = remember {
+        "Rc-${(System.currentTimeMillis() % 1000000).toString().padStart(6, '0')}"
+    }
 
     // ── Image ──
     var paymentBitmap by remember { mutableStateOf<Bitmap?>(null) }
@@ -536,13 +591,14 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
 
     // ── Reactive math ──
     val selectedBatch = batches.find { it.id == selectedBatchId }
-    val batchFee = selectedBatch?.monthlyFeeAmount ?: 0.0
-    val numMonths = if (endMonthIdx >= startMonthIdx && startMonthIdx >= 0) endMonthIdx - startMonthIdx + 1 else 0
-    val baseAmount = batchFee * numMonths
-    val discountAmount = baseAmount * discountPercent / 100.0
-    val payableAmount = baseAmount - discountAmount
+    val isDirectFee = fee?.batchId == null
+    val batchFee = if (isDirectFee) fee?.baseAmount ?: 0.0 else selectedBatch?.monthlyFeeAmount ?: 0.0
+    val numMonths = if (isDirectFee) 1 else if (endMonthIdx >= startMonthIdx && startMonthIdx >= 0) endMonthIdx - startMonthIdx + 1 else 0
+    val baseAmount = if (isDirectFee) fee?.baseAmount ?: 0.0 else batchFee * numMonths
+    val discountAmount = if (isDirectFee) fee?.discountAmount ?: 0.0 else baseAmount * discountPercent / 100.0
+    val payableAmount = if (isDirectFee) fee?.totalAmount ?: 0.0 else baseAmount - discountAmount
     val totalPaid = fee?.paidAmount ?: 0.0
-    val dueAmount = (payableAmount - totalPaid).coerceAtLeast(0.0)
+    val dueAmount = if (isDirectFee) fee?.dueAmount ?: 0.0 else (payableAmount - totalPaid).coerceAtLeast(0.0)
 
     // Auto-fill collected amount
     LaunchedEffect(discountPercent, selectedBatchId, startMonthIdx, endMonthIdx) { manualAmountEdit = false }
@@ -596,7 +652,7 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
                             Spacer(Modifier.height(6.dp))
                             selectedBatch?.let { ReceiptRow("Batch", it.name) }
                             Spacer(Modifier.height(6.dp))
-                            ReceiptRow("Period", monthOptions.getOrNull(startMonthIdx)?.label ?: "")
+                            ReceiptRow("Period", if (isDirectFee) fee?.feePeriod ?: "" else monthOptions.getOrNull(startMonthIdx)?.label ?: "")
                             Spacer(Modifier.height(6.dp))
                             ReceiptRow("Collected", "BDT ${"%.2f".format(collectedAmount.toDoubleOrNull() ?: 0.0)}")
                             Spacer(Modifier.height(6.dp))
@@ -605,18 +661,30 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
                     }
 
                     Spacer(Modifier.height(20.dp))
-                    // Print & Share
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    // Receipt actions
+                    val receiptNumber = savedReceipt?.receiptNumber ?: previewReceiptNumber
+                    val receiptPeriod = if (isDirectFee) fee?.feePeriod ?: "" else monthOptions.getOrNull(startMonthIdx)?.label ?: ""
+                    val collectedNow = collectedAmount.toDoubleOrNull() ?: 0.0
+                    val remainingDue = dueAmount - collectedNow.coerceAtMost(dueAmount)
+                    val receiptMessage = buildReceiptMessage(
+                        receiptNumber = receiptNumber,
+                        studentName = student?.fullName ?: "",
+                        feePeriod = receiptPeriod,
+                        collectedAmount = collectedNow,
+                        dueAmount = remainingDue,
+                        paymentMethod = paymentMethod
+                    )
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         OutlinedButton(
                             onClick = {
                                 try {
                                     val uri = generatePdfReceipt(
-                                        context, savedReceipt?.receiptNumber ?: "", student?.fullName ?: "",
-                                        selectedBatch?.name ?: "", monthOptions.getOrNull(startMonthIdx)?.label ?: "",
+                                        context, receiptNumber, student?.fullName ?: "",
+                                        selectedBatch?.name ?: "", receiptPeriod,
                                         baseAmount, discountPercent, discountAmount, payableAmount,
                                         totalPaid + (collectedAmount.toDoubleOrNull() ?: 0.0),
-                                        dueAmount - (collectedAmount.toDoubleOrNull() ?: 0.0).coerceAtMost(dueAmount),
-                                        collectedAmount.toDoubleOrNull() ?: 0.0, "cash"
+                                        remainingDue,
+                                        collectedNow, paymentMethod
                                     )
                                     context.startActivity(Intent(Intent.ACTION_VIEW).apply {
                                         setDataAndType(uri, "application/pdf")
@@ -635,19 +703,52 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
                             Spacer(Modifier.width(6.dp))
                             Text("Print")
                         }
-                        Button(
+                        OutlinedButton(
                             onClick = {
                                 val bmp = createReceiptBitmap(
-                                    savedReceipt?.receiptNumber ?: "", student?.fullName ?: "",
-                                    selectedBatch?.name ?: "", monthOptions.getOrNull(startMonthIdx)?.label ?: "",
-                                    payableAmount, collectedAmount.toDoubleOrNull() ?: 0.0,
-                                    dueAmount - (collectedAmount.toDoubleOrNull() ?: 0.0).coerceAtMost(dueAmount), "cash"
+                                    receiptNumber, student?.fullName ?: "",
+                                    selectedBatch?.name ?: "", receiptPeriod,
+                                    payableAmount, collectedNow,
+                                    remainingDue, paymentMethod
                                 )
                                 shareReceiptImage(context, bmp, student?.phone)
                             },
                             modifier = Modifier.weight(1f).height(48.dp),
                             shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = AccentGreen)
+                            border = BorderStroke(1.dp, AccentGreen),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentGreen)
+                        ) {
+                            Icon(Icons.Filled.Chat, null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("WhatsApp")
+                        }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        OutlinedButton(
+                            onClick = { sendReceiptMessage(context, student?.phone, receiptMessage) },
+                            modifier = Modifier.weight(1f).height(48.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, TextMuted),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = TextMuted)
+                        ) {
+                            Icon(Icons.Filled.Message, null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Message")
+                        }
+                        Button(
+                            onClick = {
+                                val bmp = createReceiptBitmap(
+                                    receiptNumber, student?.fullName ?: "",
+                                    selectedBatch?.name ?: "", receiptPeriod,
+                                    payableAmount, collectedNow,
+                                    remainingDue, paymentMethod
+                                )
+                                shareReceiptImageAny(context, bmp)
+                            },
+                            modifier = Modifier.weight(1f).height(48.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = ElectricBlue)
                         ) {
                             Icon(Icons.Filled.Share, null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp))
@@ -690,6 +791,21 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
                         }
                     }
 
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        ReadOnlyPaymentBox(
+                            label = "No. of Receipts",
+                            value = savedReceipt?.receiptNumber ?: previewReceiptNumber,
+                            modifier = Modifier.weight(1f)
+                        )
+                        ReadOnlyPaymentBox(
+                            label = "Payment Date",
+                            value = paymentDateLabel,
+                            icon = Icons.Filled.CalendarMonth,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    Spacer(Modifier.height(18.dp))
+
                     // Batch selection
                     SectionLabel("BATCH")
                     Spacer(Modifier.height(4.dp))
@@ -702,7 +818,13 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
                         enabled = batches.isNotEmpty()
                     )
                     if (batches.isEmpty()) {
-                        Text("Student is not enrolled in any batch.", color = AccentRed, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
+                        Text(
+                            if (isDirectFee) "No batch linked to this fee. Collecting as direct student fee."
+                            else "Student is not enrolled in any batch.",
+                            color = if (isDirectFee) TextMuted else AccentRed,
+                            fontSize = 12.sp,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
                     }
                     Spacer(Modifier.height(14.dp))
 
@@ -773,6 +895,30 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
                     )
                     Spacer(Modifier.height(14.dp))
 
+                    SectionLabel("PAYMENT MODE")
+                    Spacer(Modifier.height(4.dp))
+                    PremiumDropdown(
+                        label = "Payment mode",
+                        options = listOf("cash", "bkash", "nagad", "bank"),
+                        selectedOption = paymentMethod,
+                        onOptionSelected = { paymentMethod = it },
+                        optionLabel = { it.replaceFirstChar { c -> c.uppercase() } }
+                    )
+                    Spacer(Modifier.height(14.dp))
+
+                    SectionLabel("REMARKS")
+                    Spacer(Modifier.height(4.dp))
+                    OutlinedTextField(
+                        value = remarks,
+                        onValueChange = { remarks = it },
+                        placeholder = { Text("Remarks", color = TextMuted.copy(0.5f)) },
+                        modifier = Modifier.fillMaxWidth().height(88.dp),
+                        colors = premiumTextFieldColors(),
+                        shape = RoundedCornerShape(12.dp),
+                        maxLines = 3
+                    )
+                    Spacer(Modifier.height(18.dp))
+
                     // Image upload
                     SectionLabel("RECEIPT IMAGE (optional)")
                     Spacer(Modifier.height(6.dp))
@@ -809,8 +955,43 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
                         Text(errorMsg!!, color = AccentRed, fontSize = 13.sp, modifier = Modifier.padding(bottom = 8.dp))
                     }
 
+                    Text(
+                        "Collected Fees And Discount",
+                        color = TextMuted,
+                        modifier = Modifier.fillMaxWidth(),
+                        fontSize = 13.sp,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Filled.Paid, contentDescription = null, tint = Color(0xFFFBBF24), modifier = Modifier.size(28.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            formatCurrencyPlain(collectedAmount.toDoubleOrNull() ?: 0.0),
+                            color = Color(0xFFFBBF24),
+                            fontSize = 24.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        Text("•", color = TextMuted, fontSize = 22.sp)
+                        Spacer(Modifier.width(12.dp))
+                        Icon(Icons.Filled.Savings, contentDescription = null, tint = Color(0xFFFFA3A3), modifier = Modifier.size(28.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            formatCurrencyPlain(discountAmount),
+                            color = Color(0xFFFFA3A3),
+                            fontSize = 24.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    Spacer(Modifier.height(18.dp))
+
                     // Save button
-                    val canSave = batches.isNotEmpty() && numMonths > 0 && endMonthIdx >= startMonthIdx
+                    val canSave = (isDirectFee || batches.isNotEmpty()) && numMonths > 0 && endMonthIdx >= startMonthIdx
                             && (collectedAmount.toDoubleOrNull() ?: 0.0) > 0
                     Box(
                         modifier = Modifier.fillMaxWidth().height(50.dp)
@@ -827,6 +1008,22 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
                                 errorMsg = null
                                 val amount = collectedAmount.toDoubleOrNull() ?: 0.0
                                 if (amount <= 0) { errorMsg = "Enter a valid amount."; return@TextButton }
+                                if (isDirectFee) {
+                                    viewModel.collectPayment(
+                                        feeId = feeId,
+                                        amount = amount,
+                                        paymentMethod = paymentMethod,
+                                        note = remarks.ifBlank { null },
+                                        onSuccess = { pid ->
+                                            scope.launch {
+                                                savedPaymentId = pid
+                                                savedReceipt = instId?.let { db.receiptDao().getReceiptByPaymentIdOnce(it, pid) }
+                                            }
+                                        },
+                                        onError = { errorMsg = it }
+                                    )
+                                    return@TextButton
+                                }
                                 val periodLabel = if (startMonthIdx == endMonthIdx) monthOptions[startMonthIdx].label
                                 else "${monthOptions[startMonthIdx].label} – ${monthOptions[endMonthIdx].label}"
                                 viewModel.updateFeeAndCollectPayment(
@@ -834,8 +1031,9 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
                                     newBaseAmount = baseAmount,
                                     discountPercent = discountPercent,
                                     collectedAmount = amount,
-                                    paymentMethod = "cash",
+                                    paymentMethod = paymentMethod,
                                     feePeriod = periodLabel,
+                                    note = remarks.ifBlank { null },
                                     onSuccess = { pid ->
                                         scope.launch {
                                             savedPaymentId = pid
@@ -851,7 +1049,7 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
                                 contentColor = if (canSave) Color.White else TextMuted,
                                 disabledContentColor = TextMuted
                             )
-                        ) { Text("Save Payment", fontWeight = FontWeight.Bold, fontSize = 16.sp) }
+                        ) { Text("Add Fee", fontWeight = FontWeight.Bold, fontSize = 16.sp) }
                     }
                     Spacer(Modifier.height(12.dp))
                 }
@@ -859,6 +1057,53 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
         }
     }
 }
+
+@Composable
+private fun ReadOnlyPaymentBox(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier,
+    icon: ImageVector? = null
+) {
+    Box(
+        modifier = modifier
+            .height(72.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(CardBgAlt)
+            .border(1.dp, TextMuted.copy(alpha = 0.45f), RoundedCornerShape(14.dp))
+            .padding(horizontal = 14.dp, vertical = 8.dp)
+    ) {
+        Text(
+            label,
+            color = TextMuted,
+            fontSize = 12.sp,
+            modifier = Modifier
+                .background(CardBgAlt)
+                .padding(horizontal = 4.dp)
+        )
+        Row(
+            modifier = Modifier.align(Alignment.CenterStart).fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                value,
+                color = TextWhite,
+                fontSize = 17.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f),
+                maxLines = 1
+            )
+            if (icon != null) {
+                Icon(icon, contentDescription = null, tint = TextMuted, modifier = Modifier.size(20.dp))
+            }
+        }
+    }
+}
+
+private fun formatCurrencyPlain(value: Double): String =
+    java.text.NumberFormat.getNumberInstance(Locale.getDefault()).apply {
+        maximumFractionDigits = 0
+    }.format(value)
 
 @Composable
 private fun SummaryRow(label: String, value: String, bold: Boolean = false, isDiscount: Boolean = false, valueColor: Color = TextWhite) {

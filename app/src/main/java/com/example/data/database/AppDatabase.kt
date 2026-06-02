@@ -11,6 +11,7 @@ import com.example.data.dao.UserDao
 import com.example.data.models.InstituteEntity
 import com.example.data.models.SubscriptionPlanEntity
 import com.example.data.models.UserEntity
+import com.example.domain.PasswordHasher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -38,7 +39,7 @@ import kotlinx.coroutines.withContext
         com.example.data.models.AuditLogEntity::class,
         com.example.data.models.AbsentMessageEntity::class
     ],
-    version = 7,
+    version = 10,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -67,6 +68,32 @@ abstract class AppDatabase : RoomDatabase() {
         @Volatile
         private var INSTANCE: AppDatabase? = null
 
+        private val MIGRATION_7_8 = object : androidx.room.migration.Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // No schema changes — establishing safe migration path for future versions
+            }
+        }
+
+        private val MIGRATION_8_9 = object : androidx.room.migration.Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE INDEX IF NOT EXISTS idx_fees_institute_student ON fees(instituteId, studentId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS idx_fees_institute ON fees(instituteId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS idx_payments_institute_fee ON payments(instituteId, feeId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS idx_batch_students_batch ON batch_students(batchId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS idx_batch_students_student ON batch_students(studentId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS idx_results_exam ON results(examId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS idx_staff_attendance_staff_date ON staff_attendance(staffId, attendanceDateMs)")
+            }
+        }
+
+        private val MIGRATION_9_10 = object : androidx.room.migration.Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE institutes ADD COLUMN phone TEXT")
+                db.execSQL("ALTER TABLE institutes ADD COLUMN address TEXT")
+                db.execSQL("ALTER TABLE institutes ADD COLUMN profilePhotoUri TEXT")
+            }
+        }
+
         fun getDatabase(context: Context, scope: CoroutineScope): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -74,7 +101,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "batchfee_database"
                 )
-                .fallbackToDestructiveMigration()
+                .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10)
                 .build()
                 INSTANCE = instance
                 instance
@@ -149,7 +176,7 @@ abstract class AppDatabase : RoomDatabase() {
                     instituteId = null,
                     name = "System Admin",
                     email = "admin@batchfee.app",
-                    passwordHash = "123456",
+                    passwordHash = PasswordHasher.hash("123456"),
                     role = "SuperAdmin",
                     createdAtMs = System.currentTimeMillis()
                 )
@@ -178,7 +205,7 @@ abstract class AppDatabase : RoomDatabase() {
                     instituteId = demoInstituteId,
                     name = "Demo Owner",
                     email = "owner@batchfee.app",
-                    passwordHash = "123456",
+                    passwordHash = PasswordHasher.hash("123456"),
                     role = "InstituteOwner",
                     createdAtMs = now
                 )
@@ -209,7 +236,7 @@ abstract class AppDatabase : RoomDatabase() {
                     emergencyContact = "0190000000$it",
                     bloodGroup = "O+",
                     admissionDateMs = now,
-                    status = "Active",
+                    status = "active",
                     notes = null,
                     createdAtMs = now,
                     updatedAtMs = now,
@@ -236,7 +263,7 @@ abstract class AppDatabase : RoomDatabase() {
                     startTime = "16:00",
                     endTime = "18:00",
                     maxStudents = 30,
-                    status = "Active",
+                    status = "active",
                     description = "Demo batch description",
                     createdAtMs = now,
                     updatedAtMs = now,
@@ -254,7 +281,7 @@ abstract class AppDatabase : RoomDatabase() {
                     batchId = "demo_batch_1",
                     studentId = "demo_student_1",
                     joinedAtMs = now,
-                    status = "Active",
+                    status = "active",
                     leftAtMs = null
                 )
             )
@@ -273,9 +300,9 @@ abstract class AppDatabase : RoomDatabase() {
                     discountAmount = 0.0,
                     lateFeeAmount = 0.0,
                     totalAmount = 1500.0,
-                    paidAmount = 0.0,
-                    dueAmount = 1500.0,
-                    status = "Unpaid",
+                    paidAmount = 500.0,
+                    dueAmount = 1000.0,
+                    status = "partially_paid",
                     note = "Demo fee",
                     createdAtMs = now,
                     updatedAtMs = now,
@@ -292,10 +319,10 @@ abstract class AppDatabase : RoomDatabase() {
                     studentId = "demo_student_1",
                     amount = 500.0,
                     paymentDateMs = now,
-                    paymentMethod = "Cash",
+                    paymentMethod = "cash",
                     transactionId = "TXN001",
                     receiptNumber = "REC-001",
-                    status = "Completed",
+                    status = "completed",
                     note = "Partial payment",
                     collectedByUserId = "demo_owner_1",
                     createdAtMs = now,
@@ -315,7 +342,7 @@ abstract class AppDatabase : RoomDatabase() {
                     totalAmount = 1500.0,
                     paidAmount = 500.0,
                     dueAmount = 1000.0,
-                    paymentMethod = "Cash",
+                    paymentMethod = "cash",
                     receiptText = "Received partial payment",
                     createdAtMs = now
                 )
@@ -336,7 +363,7 @@ abstract class AppDatabase : RoomDatabase() {
                     joiningDateMs = now - (30L * 24 * 60 * 60 * 1000),
                     monthlySalary = 15000.0,
                     assignedBatchIds = "demo_batch_1",
-                    status = "Active",
+                    status = "active",
                     notes = null,
                     createdAtMs = now,
                     updatedAtMs = now,
@@ -353,7 +380,7 @@ abstract class AppDatabase : RoomDatabase() {
                     title = "Electricity Bill",
                     expenseDateMs = now - (2L * 24 * 60 * 60 * 1000),
                     amount = 1200.0,
-                    paymentMethod = "Cash",
+                    paymentMethod = "cash",
                     description = "Monthly electricity bill",
                     attachmentUri = null,
                     createdByUserId = "demo_owner_1",
@@ -376,7 +403,7 @@ abstract class AppDatabase : RoomDatabase() {
                     passingMarks = 40.0,
                     teacherName = "Teacher 1",
                     note = null,
-                    status = "Scheduled",
+                    status = "scheduled",
                     createdAtMs = now,
                     updatedAtMs = now,
                     archivedAtMs = null

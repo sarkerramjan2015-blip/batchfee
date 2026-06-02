@@ -30,10 +30,11 @@ data class BatchAttendanceSummary(
     val holidayCount: Int = 0
 ) {
     val markedCount get() = presentCount + absentCount + leaveCount + holidayCount
-    val presentPct get() = if (totalStudents > 0) presentCount * 100f / totalStudents else 0f
-    val absentPct get() = if (totalStudents > 0) absentCount * 100f / totalStudents else 0f
-    val leavePct get() = if (totalStudents > 0) leaveCount * 100f / totalStudents else 0f
-    val holidayPct get() = if (totalStudents > 0) holidayCount * 100f / totalStudents else 0f
+    private val percentDenominator get() = markedCount.takeIf { it > 0 } ?: totalStudents
+    val presentPct get() = if (percentDenominator > 0) presentCount * 100f / percentDenominator else 0f
+    val absentPct get() = if (percentDenominator > 0) absentCount * 100f / percentDenominator else 0f
+    val leavePct get() = if (percentDenominator > 0) leaveCount * 100f / percentDenominator else 0f
+    val holidayPct get() = if (percentDenominator > 0) holidayCount * 100f / percentDenominator else 0f
 }
 
 data class StaffAttendanceSummary(
@@ -44,10 +45,11 @@ data class StaffAttendanceSummary(
     val holidayCount: Int = 0
 ) {
     val markedCount get() = presentCount + absentCount + leaveCount + holidayCount
-    val presentPct get() = if (totalStaff > 0) presentCount * 100f / totalStaff else 0f
-    val absentPct get() = if (totalStaff > 0) absentCount * 100f / totalStaff else 0f
-    val leavePct get() = if (totalStaff > 0) leaveCount * 100f / totalStaff else 0f
-    val holidayPct get() = if (totalStaff > 0) holidayCount * 100f / totalStaff else 0f
+    private val percentDenominator get() = markedCount.takeIf { it > 0 } ?: totalStaff
+    val presentPct get() = if (percentDenominator > 0) presentCount * 100f / percentDenominator else 0f
+    val absentPct get() = if (percentDenominator > 0) absentCount * 100f / percentDenominator else 0f
+    val leavePct get() = if (percentDenominator > 0) leaveCount * 100f / percentDenominator else 0f
+    val holidayPct get() = if (percentDenominator > 0) holidayCount * 100f / percentDenominator else 0f
 }
 
 fun startOfDay(ms: Long): Long {
@@ -72,10 +74,15 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
     val students = _students.asStateFlow()
     private val _attendanceRecords = MutableStateFlow<Map<String, AttendanceEntity>>(emptyMap())
     val attendanceRecords = _attendanceRecords.asStateFlow()
-    private val _absentMessageMap = MutableStateFlow<Map<String, Boolean>>(emptyMap())
-    val absentMessageMap = _absentMessageMap.asStateFlow()
     private val _sendingMessageIds = MutableStateFlow<Set<String>>(emptySet())
     val sendingMessageIds = _sendingMessageIds.asStateFlow()
+
+    private fun addSendingId(id: String) { synchronized(_sendingMessageIds) { _sendingMessageIds.value = _sendingMessageIds.value + id } }
+    private fun removeSendingId(id: String) { synchronized(_sendingMessageIds) { _sendingMessageIds.value = _sendingMessageIds.value - id } }
+
+    private val _absentMessageMap = MutableStateFlow<Map<String, Boolean>>(emptyMap())
+    val absentMessageMap = _absentMessageMap.asStateFlow()
+
     private val _currentBatch = MutableStateFlow<BatchEntity?>(null)
     val currentBatch = _currentBatch.asStateFlow()
 
@@ -160,16 +167,48 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
     }
 
     fun markAll(batchId: String, dateMs: Long, status: String) {
-        _students.value.forEach { markAttendance(it.id, batchId, dateMs, status) }
+        val instId = SessionManager.currentInstituteId.value ?: return
+        val currentUserId = SessionManager.currentUserId.value ?: return
+        val startDay = startOfDay(dateMs)
+        viewModelScope.launch {
+            _students.value.forEach { student ->
+                val existing = _attendanceRecords.value[student.id]
+                val record = existing?.copy(status = status, updatedAtMs = System.currentTimeMillis())
+                    ?: AttendanceEntity(
+                        id = UUID.randomUUID().toString(),
+                        instituteId = instId, batchId = batchId, studentId = student.id,
+                        attendanceDateMs = startDay, status = status, note = null,
+                        markedByUserId = currentUserId,
+                        createdAtMs = System.currentTimeMillis(), updatedAtMs = System.currentTimeMillis()
+                    )
+                db.attendanceDao().insertOrUpdateAttendance(record)
+            }
+        }
     }
 
     fun bulkMark(batchId: String, dateMs: Long, studentIds: List<String>, status: String) {
-        studentIds.forEach { markAttendance(it, batchId, dateMs, status) }
+        val instId = SessionManager.currentInstituteId.value ?: return
+        val currentUserId = SessionManager.currentUserId.value ?: return
+        val startDay = startOfDay(dateMs)
+        viewModelScope.launch {
+            studentIds.forEach { sid ->
+                val existing = _attendanceRecords.value[sid]
+                val record = existing?.copy(status = status, updatedAtMs = System.currentTimeMillis())
+                    ?: AttendanceEntity(
+                        id = UUID.randomUUID().toString(),
+                        instituteId = instId, batchId = batchId, studentId = sid,
+                        attendanceDateMs = startDay, status = status, note = null,
+                        markedByUserId = currentUserId,
+                        createdAtMs = System.currentTimeMillis(), updatedAtMs = System.currentTimeMillis()
+                    )
+                db.attendanceDao().insertOrUpdateAttendance(record)
+            }
+        }
     }
 
     fun undoAttendance(studentId: String, dateMs: Long, batchId: String) {
         val instId = SessionManager.currentInstituteId.value ?: return
-        viewModelScope.launch { db.attendanceDao().deleteAttendance(instId, studentId, startOfDay(dateMs)) }
+        viewModelScope.launch { db.attendanceDao().deleteAttendance(instId, studentId, batchId, startOfDay(dateMs)) }
     }
 
     fun sendAbsentMessage(
@@ -182,7 +221,7 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
         val userId = SessionManager.currentUserId.value ?: return
         val startDay = startOfDay(dateMs)
         val dateLabel = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(startDay))
-        _sendingMessageIds.value = _sendingMessageIds.value + studentId
+        addSendingId(studentId)
 
         viewModelScope.launch {
             val msg = buildString {
@@ -192,8 +231,8 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
             }
             val alreadySent = db.absentMessageDao().hasMessageForStudentDate(instId, studentId, startDay)
             if (alreadySent > 0) {
-                _sendingMessageIds.value = _sendingMessageIds.value - studentId
-                onError(); return@launch
+                removeSendingId(studentId)
+                onSent(); return@launch
             }
             db.absentMessageDao().insertMessage(
                 AbsentMessageEntity(
@@ -215,10 +254,10 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
                         Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${phone ?: ""}")).apply { putExtra("sms_body", msg) }
                     )
                 }
-                _sendingMessageIds.value = _sendingMessageIds.value - studentId
+                removeSendingId(studentId)
                 onSent()
             } catch (e: Exception) {
-                _sendingMessageIds.value = _sendingMessageIds.value - studentId
+                removeSendingId(studentId)
                 onError()
             }
         }
@@ -226,13 +265,18 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
 
     fun sendAllAbsentMessages(context: Context, batchId: String, dateMs: Long, channel: String, onComplete: () -> Unit) {
         val absentRecords = _attendanceRecords.value.values.filter { it.status == "absent" }
+        if (absentRecords.isEmpty()) { onComplete(); return }
+        val total = absentRecords.size
+        val completed = java.util.concurrent.atomic.AtomicInteger(0)
         absentRecords.forEach { record ->
-            val student = _students.value.find { it.id == record.studentId } ?: return@forEach
+            val student = _students.value.find { it.id == record.studentId } ?: run { completed.incrementAndGet(); return@forEach }
             val batchName = _currentBatch.value?.name ?: ""
             sendAbsentMessage(context, record.studentId, batchId, dateMs, channel,
-                student.fullName, batchName, student.phone, _staffName.value, {}, {})
+                student.fullName, batchName, student.phone, _staffName.value,
+                onSent = { if (completed.incrementAndGet() >= total) onComplete() },
+                onError = { if (completed.incrementAndGet() >= total) onComplete() }
+            )
         }
-        onComplete()
     }
 
     fun loadDashboardSummaries() {

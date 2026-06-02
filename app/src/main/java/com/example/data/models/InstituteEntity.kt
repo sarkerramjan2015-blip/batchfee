@@ -12,5 +12,8 @@ data class InstituteEntity(
     val trialStartDateMs: Long,
     val trialEndDateMs: Long,
     val currentPeriodEndMs: Long,
-    val createdAtMs: Long
+    val createdAtMs: Long,
+    val phone: String? = null,
+    val address: String? = null,
+    val profilePhotoUri: String? = null
 )

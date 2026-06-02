@@ -34,6 +34,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.example.data.database.AppDatabase
+import com.example.ui.components.PhoneInputField
 import kotlinx.coroutines.launch
 import java.io.File
 import java.text.SimpleDateFormat
@@ -309,25 +310,21 @@ fun AddEditStudentScreen(
 
                 // ── Phone ──────────────────────────────────────
                 SectionLabel("Phone Number *")
-                DarkTextField(
+                PhoneInputField(
                     value = phone,
                     onValueChange = { phone = it; phoneError = false },
                     isError = phoneError,
                     supportingText = if (phoneError) "Required" else null,
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone)
+                    modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(Modifier.height(12.dp))
 
                 // ── WhatsApp ───────────────────────────────────
                 SectionLabel("WhatsApp Number")
-                DarkTextField(
+                PhoneInputField(
                     value = whatsappNumber,
                     onValueChange = { whatsappNumber = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone)
+                    modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(Modifier.height(14.dp))
 

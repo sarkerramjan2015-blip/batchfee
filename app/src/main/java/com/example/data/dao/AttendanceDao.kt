@@ -21,6 +21,6 @@ interface AttendanceDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertOrUpdateAttendance(attendance: AttendanceEntity)
 
-    @Query("DELETE FROM attendance WHERE instituteId = :instituteId AND studentId = :studentId AND attendanceDateMs = :dateMs")
-    suspend fun deleteAttendance(instituteId: String, studentId: String, dateMs: Long)
+    @Query("DELETE FROM attendance WHERE instituteId = :instituteId AND studentId = :studentId AND batchId = :batchId AND attendanceDateMs = :dateMs")
+    suspend fun deleteAttendance(instituteId: String, studentId: String, batchId: String, dateMs: Long)
 }

@@ -1,14 +1,19 @@
 package com.example.ui.students
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
@@ -20,6 +25,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -28,6 +34,8 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.database.AppDatabase
 import com.example.data.models.StudentEntity
+import com.example.domain.SessionManager
+import kotlinx.coroutines.launch
 
 // ── Colors (matching PricingScreen premium theme) ───────────────
 private val BgColor      = Color(0xFF07111F)
@@ -47,35 +55,117 @@ fun StudentListScreen(
     db: AppDatabase,
     onBack: () -> Unit,
     onAddStudent: () -> Unit,
-    onNavigateToProfile: (String) -> Unit
+    onNavigateToProfile: (String) -> Unit,
+    onNavigateToIdCards: () -> Unit = {}
 ) {
     val viewModel: StudentViewModel = viewModel(factory = StudentViewModelFactory(db))
     val students by viewModel.studentList.collectAsState()
+    val batches by viewModel.batchList.collectAsState()
+    val context = LocalContext.current
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
 
     var searchQuery by remember { mutableStateOf("") }
+    var showSearch by remember { mutableStateOf(true) }
+    var showFilterDialog by remember { mutableStateOf(false) }
+    var showStudentsMenu by remember { mutableStateOf(false) }
+    var showMessageDialog by remember { mutableStateOf(false) }
+    var messageText by remember { mutableStateOf("") }
+    var selectedBatchId by remember { mutableStateOf<String?>(null) }
+    var selectedStatus by remember { mutableStateOf("active") }
+    var sortBy by remember { mutableStateOf("name") }
+    var batchStudentIds by remember { mutableStateOf<Set<String>>(emptySet()) }
 
-    val filteredStudents = remember(students, searchQuery) {
-        if (searchQuery.isBlank()) students
-        else students.filter {
-            it.fullName.contains(searchQuery, ignoreCase = true) ||
-            it.studentCode.contains(searchQuery, ignoreCase = true) ||
-            (it.phone?.contains(searchQuery) == true)
+    LaunchedEffect(selectedBatchId) {
+        val batchId = selectedBatchId
+        val instId = SessionManager.currentInstituteId.value
+        if (batchId == null || instId == null) {
+            batchStudentIds = emptySet()
+        } else {
+            db.batchStudentDao().getStudentsForBatch(batchId, instId).collect { batchStudents ->
+                batchStudentIds = batchStudents.map { it.id }.toSet()
+            }
         }
+    }
+
+    val filteredStudents = remember(students, searchQuery, selectedBatchId, batchStudentIds, selectedStatus, sortBy) {
+        students
+            .asSequence()
+            .filter { student ->
+                searchQuery.isBlank() ||
+                    student.fullName.contains(searchQuery, ignoreCase = true) ||
+                    student.studentCode.contains(searchQuery, ignoreCase = true) ||
+                    (student.phone?.contains(searchQuery) == true)
+            }
+            .filter { student -> selectedBatchId == null || student.id in batchStudentIds }
+            .filter { student -> selectedStatus == "any" || student.status.equals(selectedStatus, ignoreCase = true) }
+            .let { sequence ->
+                when (sortBy) {
+                    "roll" -> sequence.sortedBy { it.studentCode.lowercase() }
+                    else -> sequence.sortedBy { it.fullName.lowercase() }
+                }
+            }
+            .toList()
+    }
+
+    fun sendMessage(useWhatsApp: Boolean) {
+        val message = messageText.trim()
+        if (message.isBlank()) {
+            scope.launch { snackbarHostState.showSnackbar("Write a message first.") }
+            return
+        }
+
+        val phones = filteredStudents.mapNotNull { it.phone?.filter(Char::isDigit)?.takeIf(String::isNotBlank) }
+        if (phones.isEmpty()) {
+            scope.launch { snackbarHostState.showSnackbar("No phone numbers found for selected students.") }
+            return
+        }
+
+        val intent = if (useWhatsApp) {
+            Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/${phones.first()}?text=${Uri.encode(message)}"))
+        } else {
+            Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${phones.joinToString(";")}")).apply {
+                putExtra("sms_body", message)
+            }
+        }
+        runCatching { context.startActivity(intent) }
+            .onFailure { scope.launch { snackbarHostState.showSnackbar("No app found to send this message.") } }
     }
 
     Scaffold(
         containerColor = BgColor,
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = {
-                    Text("Students", color = TextWhite, fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                    Column {
+                        Text("Student", color = TextWhite, fontWeight = FontWeight.Bold, fontSize = 24.sp)
+                        Text(
+                            "${filteredStudents.size} Total Students found",
+                            color = TextMuted,
+                            fontSize = 18.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = TextWhite)
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = BgColor)
+                actions = {
+                    IconButton(onClick = { showSearch = !showSearch }) {
+                        Icon(Icons.Filled.Search, contentDescription = "Search", tint = TextWhite, modifier = Modifier.size(28.dp))
+                    }
+                    IconButton(onClick = { showFilterDialog = true }) {
+                        Icon(Icons.Filled.FilterList, contentDescription = "Filter", tint = TextWhite, modifier = Modifier.size(28.dp))
+                    }
+                    IconButton(onClick = { showStudentsMenu = true }) {
+                        Icon(Icons.Filled.MoreVert, contentDescription = "Student menu", tint = TextWhite, modifier = Modifier.size(28.dp))
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF1F1F1F))
             )
         },
         floatingActionButton = {
@@ -102,33 +192,35 @@ fun StudentListScreen(
                 .padding(horizontal = 20.dp, vertical = 8.dp)
         ) {
             // ── Search bar ───────────────────────────────────
-            OutlinedTextField(
-                value = searchQuery,
-                onValueChange = { searchQuery = it },
-                placeholder = { Text("Search by name, ID, or phone", color = TextMuted.copy(alpha = 0.5f), fontSize = 13.sp) },
-                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null, tint = TextMuted) },
-                trailingIcon = {
-                    if (searchQuery.isNotEmpty()) {
-                        IconButton(onClick = { searchQuery = "" }) {
-                            Icon(Icons.Filled.Close, contentDescription = "Clear", tint = TextMuted)
+            if (showSearch || searchQuery.isNotBlank()) {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = { Text("Search by name, ID, or phone", color = TextMuted.copy(alpha = 0.5f), fontSize = 13.sp) },
+                    leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null, tint = TextMuted) },
+                    trailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { searchQuery = "" }) {
+                                Icon(Icons.Filled.Close, contentDescription = "Clear", tint = TextMuted)
+                            }
                         }
-                    }
-                },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedTextColor = TextWhite,
-                    unfocusedTextColor = TextWhite,
-                    focusedBorderColor = ElectricBlue,
-                    unfocusedBorderColor = BorderSub,
-                    focusedContainerColor = CardBg,
-                    unfocusedContainerColor = CardBg,
-                    cursorColor = Cyan
-                ),
-                shape = RoundedCornerShape(12.dp)
-            )
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = TextWhite,
+                        unfocusedTextColor = TextWhite,
+                        focusedBorderColor = ElectricBlue,
+                        unfocusedBorderColor = BorderSub,
+                        focusedContainerColor = CardBg,
+                        unfocusedContainerColor = CardBg,
+                        cursorColor = Cyan
+                    ),
+                    shape = RoundedCornerShape(12.dp)
+                )
 
-            Spacer(Modifier.height(4.dp))
+                Spacer(Modifier.height(4.dp))
+            }
 
             // ── Student count ────────────────────────────────
             Row(
@@ -137,15 +229,27 @@ fun StudentListScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    "${filteredStudents.size} student${if (filteredStudents.size != 1) "s" else ""}",
+                    buildString {
+                        append("${filteredStudents.size} student${if (filteredStudents.size != 1) "s" else ""}")
+                        selectedBatchId?.let { batchId ->
+                            batches.find { it.id == batchId }?.let { append(" in ${it.name}") }
+                        }
+                    },
                     color = TextMuted,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.SemiBold
                 )
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.clickable { showFilterDialog = true }
+                ) {
                     Icon(Icons.Filled.FilterList, contentDescription = null, tint = TextMuted, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("Recent", color = TextMuted, fontSize = 12.sp)
+                    Text(
+                        if (selectedStatus == "any") "All" else selectedStatus.replaceFirstChar { it.uppercase() },
+                        color = TextMuted,
+                        fontSize = 12.sp
+                    )
                 }
             }
 
@@ -188,9 +292,271 @@ fun StudentListScreen(
             }
         }
     }
+
+    if (showFilterDialog) {
+        AlertDialog(
+            onDismissRequest = { showFilterDialog = false },
+            containerColor = Color(0xFF242C35),
+            shape = RoundedCornerShape(24.dp),
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Students Filter", color = Color(0xFFF4C542), fontSize = 24.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    IconButton(onClick = { showFilterDialog = false }) {
+                        Icon(Icons.Filled.Close, contentDescription = "Close", tint = Color(0xFFFFB4AB), modifier = Modifier.size(30.dp))
+                    }
+                }
+            },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(18.dp)
+                ) {
+                    Text("Select Batch", color = TextMuted, fontSize = 14.sp)
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(16.dp))
+                            .border(1.dp, TextMuted.copy(alpha = 0.6f), RoundedCornerShape(16.dp))
+                    ) {
+                        FilterChoiceRow(Icons.Filled.Groups, "All Batches", selectedBatchId == null) {
+                            selectedBatchId = null
+                        }
+                        batches.forEach { batch ->
+                            HorizontalDivider(color = Color(0xFF3A4652))
+                            FilterChoiceRow(Icons.Filled.Class, batch.name, selectedBatchId == batch.id) {
+                                selectedBatchId = batch.id
+                            }
+                        }
+                    }
+                    DialogChipRow(
+                        label = "Sort by",
+                        options = listOf("name" to "Name", "roll" to "RollNumber"),
+                        selected = sortBy,
+                        onSelect = { sortBy = it }
+                    )
+                    DialogChipRow(
+                        label = "Status",
+                        options = listOf("any" to "Any", "active" to "Active", "inactive" to "InActive"),
+                        selected = selectedStatus,
+                        onSelect = { selectedStatus = it }
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = { showFilterDialog = false },
+                    modifier = Modifier.fillMaxWidth().height(56.dp),
+                    shape = RoundedCornerShape(18.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF4C542), contentColor = Color(0xFF2A2212))
+                ) {
+                    Text("Apply Filter", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        )
+    }
+
+    if (showStudentsMenu) {
+        AlertDialog(
+            onDismissRequest = { showStudentsMenu = false },
+            containerColor = Color(0xFF242C35),
+            shape = RoundedCornerShape(24.dp),
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Students Menu", color = Color(0xFFF4C542), fontSize = 24.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    IconButton(onClick = { showStudentsMenu = false }) {
+                        Icon(Icons.Filled.Close, contentDescription = "Close", tint = Color(0xFFFFB4AB), modifier = Modifier.size(30.dp))
+                    }
+                }
+            },
+            text = {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    StudentMenuRow(Icons.Filled.Badge, "ID Cards", "Generate ID cards in bulk") {
+                        showStudentsMenu = false
+                        onNavigateToIdCards()
+                    }
+                    HorizontalDivider(color = Color(0xFF3A4652))
+                    StudentMenuRow(Icons.Filled.FileUpload, "Export", "You can export student list here") {
+                        showStudentsMenu = false
+                        scope.launch { snackbarHostState.showSnackbar("Export is coming soon.") }
+                    }
+                    HorizontalDivider(color = Color(0xFF3A4652))
+                    StudentMenuRow(Icons.Filled.Message, "Message", "You can send message to selected students here") {
+                        showStudentsMenu = false
+                        showMessageDialog = true
+                    }
+                    HorizontalDivider(color = Color(0xFF3A4652))
+                    StudentMenuRow(Icons.Filled.FileDownload, "Import Students", "You can import students using file") {
+                        showStudentsMenu = false
+                        scope.launch { snackbarHostState.showSnackbar("Import students is coming soon.") }
+                    }
+                    HorizontalDivider(color = Color(0xFF3A4652))
+                    StudentMenuRow(Icons.Filled.Download, "Sample File For Import student", "Download sample file for import students") {
+                        showStudentsMenu = false
+                        scope.launch { snackbarHostState.showSnackbar("Sample file download is coming soon.") }
+                    }
+                }
+            },
+            confirmButton = {}
+        )
+    }
+
+    if (showMessageDialog) {
+        AlertDialog(
+            onDismissRequest = { showMessageDialog = false },
+            containerColor = Color(0xFF242C35),
+            shape = RoundedCornerShape(24.dp),
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Message", color = Color(0xFFF4C542), fontSize = 24.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    IconButton(onClick = { showMessageDialog = false }) {
+                        Icon(Icons.Filled.Close, contentDescription = "Close", tint = Color(0xFFFFB4AB), modifier = Modifier.size(30.dp))
+                    }
+                }
+            },
+            text = {
+                OutlinedTextField(
+                    value = messageText,
+                    onValueChange = { messageText = it },
+                    placeholder = { Text("Message", color = TextMuted.copy(alpha = 0.75f)) },
+                    minLines = 3,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = TextWhite,
+                        unfocusedTextColor = TextWhite,
+                        focusedBorderColor = TextMuted,
+                        unfocusedBorderColor = TextMuted,
+                        focusedContainerColor = CardBgAlt,
+                        unfocusedContainerColor = CardBgAlt,
+                        cursorColor = Cyan
+                    ),
+                    shape = RoundedCornerShape(16.dp)
+                )
+            },
+            confirmButton = {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedButton(
+                        onClick = {
+                            sendMessage(useWhatsApp = true)
+                            showMessageDialog = false
+                        },
+                        modifier = Modifier.weight(1f).height(52.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        border = BorderStroke(2.dp, Color(0xFFF4C542)),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFF4C542))
+                    ) {
+                        Text("WhatsApp", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    }
+                    Button(
+                        onClick = {
+                            sendMessage(useWhatsApp = false)
+                            showMessageDialog = false
+                        },
+                        modifier = Modifier.weight(1f).height(52.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF4C542), contentColor = Color(0xFF2A2212))
+                    ) {
+                        Text("SMS", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    }
+                }
+            }
+        )
+    }
 }
 
 // ── Student Card ────────────────────────────────────────────────
+@Composable
+private fun FilterChoiceRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(icon, contentDescription = null, tint = if (selected) Color(0xFFF4C542) else TextMuted, modifier = Modifier.size(30.dp))
+        Spacer(Modifier.width(14.dp))
+        Text(
+            title,
+            color = if (selected) TextWhite else TextMuted,
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.weight(1f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        if (selected) {
+            Icon(Icons.Filled.Check, contentDescription = null, tint = Color(0xFFF4C542))
+        }
+    }
+}
+
+@Composable
+private fun DialogChipRow(
+    label: String,
+    options: List<Pair<String, String>>,
+    selected: String,
+    onSelect: (String) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Text(label, color = TextWhite, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.width(96.dp))
+        options.forEach { (value, title) ->
+            FilterChip(
+                selected = selected == value,
+                onClick = { onSelect(value) },
+                label = { Text(title, fontSize = 16.sp) },
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = Color(0xFFF4C542).copy(alpha = 0.18f),
+                    selectedLabelColor = Color(0xFFF4C542),
+                    containerColor = Color(0xFF3A3A3A),
+                    labelColor = TextWhite.copy(alpha = 0.82f)
+                ),
+                border = FilterChipDefaults.filterChipBorder(
+                    enabled = true,
+                    selected = selected == value,
+                    borderColor = Color.Transparent,
+                    selectedBorderColor = Color(0xFFF4C542),
+                    borderWidth = 1.dp,
+                    selectedBorderWidth = 1.dp
+                )
+            )
+        }
+    }
+}
+
+@Composable
+private fun StudentMenuRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 82.dp)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 6.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(icon, contentDescription = null, tint = Color(0xFFF4C542), modifier = Modifier.size(34.dp))
+        Spacer(Modifier.width(18.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, color = TextWhite, fontSize = 23.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Spacer(Modifier.height(4.dp))
+            Text(subtitle, color = TextMuted.copy(alpha = 0.72f), fontSize = 15.sp, lineHeight = 19.sp)
+        }
+    }
+}
+
 @Composable
 private fun StudentCard(student: StudentEntity, onClick: () -> Unit) {
     val statusColor = when (student.status.lowercase()) {

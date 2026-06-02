@@ -13,11 +13,17 @@ interface StaffDao {
     @Query("SELECT * FROM staff WHERE instituteId = :instituteId AND archivedAtMs IS NULL ORDER BY fullName ASC")
     fun getStaffByInstitute(instituteId: String): Flow<List<StaffEntity>>
 
+    @Query("SELECT * FROM staff WHERE instituteId = :instituteId AND archivedAtMs IS NULL ORDER BY fullName ASC")
+    suspend fun getStaffByInstituteAsList(instituteId: String): List<StaffEntity>
+
     @Query("SELECT * FROM staff WHERE instituteId = :instituteId AND status = 'active' AND archivedAtMs IS NULL ORDER BY fullName ASC")
     fun getActiveStaff(instituteId: String): Flow<List<StaffEntity>>
 
     @Query("SELECT * FROM staff WHERE id = :staffId AND instituteId = :instituteId LIMIT 1")
     fun getStaffById(staffId: String, instituteId: String): Flow<StaffEntity?>
+
+    @Query("SELECT * FROM staff WHERE id = :staffId AND instituteId = :instituteId LIMIT 1")
+    suspend fun getStaffByIdOnce(staffId: String, instituteId: String): StaffEntity?
 
     @Query("SELECT * FROM staff WHERE instituteId = :instituteId AND archivedAtMs IS NULL AND fullName LIKE '%' || :query || '%' ORDER BY fullName ASC")
     fun searchStaff(instituteId: String, query: String): Flow<List<StaffEntity>>

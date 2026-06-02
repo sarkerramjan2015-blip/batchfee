@@ -9,6 +9,7 @@ import com.example.data.models.StaffEntity
 import com.example.domain.SessionManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
 import java.util.UUID
 
@@ -44,32 +45,38 @@ class SalaryViewModel(private val db: AppDatabase) : ViewModel() {
         bonusAmount: Double,
         deductionAmount: Double,
         advanceAmount: Double,
-        onSuccess: () -> Unit
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit = {}
     ) {
         val instId = SessionManager.currentInstituteId.value ?: return
         val net = basicSalary + bonusAmount - (deductionAmount + advanceAmount)
-        if (net < 0) return
+        if (net < 0) { onError("Net salary cannot be negative."); return }
 
-        val entity = SalaryEntity(
-            id = UUID.randomUUID().toString(),
-            instituteId = instId,
-            staffId = staffId,
-            salaryMonth = salaryMonth,
-            basicSalary = basicSalary,
-            bonusAmount = bonusAmount,
-            deductionAmount = deductionAmount,
-            advanceAmount = advanceAmount,
-            netSalary = net,
-            paymentMethod = null,
-            paymentDateMs = null,
-            status = "unpaid",
-            salarySlipNumber = "SLP-${System.currentTimeMillis() % 100000}",
-            note = null,
-            createdAtMs = System.currentTimeMillis(),
-            updatedAtMs = System.currentTimeMillis(),
-            cancelledAtMs = null
-        )
         viewModelScope.launch {
+            val existing = db.salaryDao().getSalariesByInstitute(instId).firstOrNull()?.any {
+                it.staffId == staffId && it.salaryMonth == salaryMonth && it.cancelledAtMs == null
+            } ?: false
+            if (existing) { onError("Salary already exists for ${staffId} in $salaryMonth."); return@launch }
+
+            val entity = SalaryEntity(
+                id = UUID.randomUUID().toString(),
+                instituteId = instId,
+                staffId = staffId,
+                salaryMonth = salaryMonth,
+                basicSalary = basicSalary,
+                bonusAmount = bonusAmount,
+                deductionAmount = deductionAmount,
+                advanceAmount = advanceAmount,
+                netSalary = net,
+                paymentMethod = null,
+                paymentDateMs = null,
+                status = "unpaid",
+                salarySlipNumber = "SLP-${UUID.randomUUID().toString().take(8)}",
+                note = null,
+                createdAtMs = System.currentTimeMillis(),
+                updatedAtMs = System.currentTimeMillis(),
+                cancelledAtMs = null
+            )
             db.salaryDao().insertSalary(entity)
             onSuccess()
         }

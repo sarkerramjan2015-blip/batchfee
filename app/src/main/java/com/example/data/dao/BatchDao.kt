@@ -9,6 +9,9 @@ interface BatchDao {
     @Query("SELECT * FROM batches WHERE instituteId = :instituteId AND archivedAtMs IS NULL ORDER BY name ASC")
     fun getBatchesByInstitute(instituteId: String): Flow<List<BatchEntity>>
 
+    @Query("SELECT * FROM batches WHERE instituteId = :instituteId AND archivedAtMs IS NULL ORDER BY name ASC")
+    suspend fun getBatchesByInstituteOnce(instituteId: String): List<BatchEntity>
+
     @Query("SELECT * FROM batches WHERE id = :batchId AND instituteId = :instituteId LIMIT 1")
     fun getBatchById(batchId: String, instituteId: String): Flow<BatchEntity?>
 

@@ -26,8 +26,11 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -43,7 +46,9 @@ import com.example.ui.components.AnimatedGlowBorder
 import com.example.ui.components.BatchFeeBottomNav
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import android.content.Intent
 import android.net.Uri
 import java.net.URLEncoder
@@ -77,6 +82,19 @@ private val TextPrimary = Color(0xFFF8FAFC)
 private val TextSecondary = Color(0xFF94A3B8)
 private val TextMuted = Color(0xFF64748B)
 
+data class UpcomingBirthday(val studentName: String, val daysUntil: Int, val photoUri: String?)
+data class ActivityItem(val title: String, val subtitle: String, val timeMs: Long, val icon: ImageVector)
+
+private fun formatRelativeTime(timeMs: Long): String {
+    val diff = System.currentTimeMillis() - timeMs
+    return when {
+        diff < 60000 -> "just now"
+        diff < 3600000 -> "${diff / 60000}m ago"
+        diff < 86400000 -> "${diff / 3600000}h ago"
+        else -> "${diff / 86400000}d ago"
+    }
+}
+
 data class FinancialSummary(
     val todayIncome: Double = 0.0,
     val todayExpense: Double = 0.0,
@@ -85,6 +103,52 @@ data class FinancialSummary(
     val lifetimeIncome: Double = 0.0,
     val lifetimeExpense: Double = 0.0
 )
+
+data class DueFeeSummary(
+    val activeCount: Int = 0,
+    val activeAmount: Double = 0.0,
+    val closeCount: Int = 0,
+    val closeAmount: Double = 0.0
+)
+
+data class EnquirySummary(
+    val total: Int = 0,
+    val active: Int = 0,
+    val close: Int = 0,
+    val followUp: Int = 0
+)
+
+private fun isClosedStudentStatus(status: String?): Boolean {
+    val normalized = status.orEmpty().trim().lowercase()
+    return normalized == "close" || normalized == "closed" || normalized == "inactive"
+}
+
+private fun daysUntilNextBirthday(dobMs: Long, today: java.util.Calendar): Int {
+    val dob = java.util.Calendar.getInstance().apply { timeInMillis = dobMs }
+    val next = java.util.Calendar.getInstance().apply {
+        val month = dob.get(java.util.Calendar.MONTH)
+        val day = dob.get(java.util.Calendar.DAY_OF_MONTH)
+        val isFeb29 = month == java.util.Calendar.FEBRUARY && day == 29
+        val year = today.get(java.util.Calendar.YEAR)
+        if (isFeb29 && !isLeapYear(year)) {
+            set(year, java.util.Calendar.FEBRUARY, 28)
+        } else {
+            set(year, month, day)
+        }
+        if (before(today)) {
+            val nextYear = year + 1
+            if (isFeb29 && !isLeapYear(nextYear)) {
+                set(nextYear, java.util.Calendar.FEBRUARY, 28)
+            } else {
+                set(nextYear, month, day)
+            }
+        }
+    }
+    return ((next.timeInMillis - today.timeInMillis) / (1000 * 60 * 60 * 24)).toInt()
+}
+
+private fun isLeapYear(year: Int) =
+    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
 
 class DashboardViewModel(private val db: AppDatabase) : ViewModel() {
     private val _institute = MutableStateFlow<InstituteEntity?>(null)
@@ -107,6 +171,15 @@ class DashboardViewModel(private val db: AppDatabase) : ViewModel() {
 
     private val _pendingFeesCount = MutableStateFlow(0)
     val pendingFeesCount = _pendingFeesCount.asStateFlow()
+
+    private val _dueFeeSummary = MutableStateFlow(DueFeeSummary())
+    val dueFeeSummary = _dueFeeSummary.asStateFlow()
+
+    private val _examCount = MutableStateFlow(0)
+    val examCount = _examCount.asStateFlow()
+
+    private val _birthdayCount = MutableStateFlow(0)
+    val birthdayCount = _birthdayCount.asStateFlow()
 
     // Logged-in admin/owner user (for profile popup). Read-only; no schema change.
     private val _currentUser = MutableStateFlow<com.example.data.models.UserEntity?>(null)
@@ -151,6 +224,21 @@ class DashboardViewModel(private val db: AppDatabase) : ViewModel() {
                 db.staffDao().countStaff(instId).collect { _staffCount.value = it }
             }
             launch {
+                db.examDao().getExamsByInstitute(instId).collect { exams ->
+                    _examCount.value = exams.size
+                }
+            }
+            launch {
+                db.studentDao().getStudentsByInstitute(instId).collect { students ->
+                    val today = java.util.Calendar.getInstance()
+                    _birthdayCount.value = students.count { student ->
+                        student.dateOfBirthMs?.let { dob ->
+                            daysUntilNextBirthday(dob, today) in 0..30
+                        } ?: false
+                    }
+                }
+            }
+            launch {
                 kotlinx.coroutines.flow.combine(
                     db.paymentDao().getRecentPayments(instId),
                     db.expenseDao().getExpensesByInstitute(instId)
@@ -178,7 +266,16 @@ class DashboardViewModel(private val db: AppDatabase) : ViewModel() {
             }
             launch {
                 db.feeDao().getDueFees(instId).collect { fees ->
-                    _pendingFeesCount.value = fees.size
+                    val students = db.studentDao().getStudentsByInstituteOnce(instId).associateBy { it.id }
+                    val activeFees = fees.filter { !isClosedStudentStatus(students[it.studentId]?.status) }
+                    val closeFees = fees.filter { isClosedStudentStatus(students[it.studentId]?.status) }
+                    _pendingFeesCount.value = fees.distinctBy { it.studentId }.size
+                    _dueFeeSummary.value = DueFeeSummary(
+                        activeCount = activeFees.distinctBy { it.studentId }.size,
+                        activeAmount = activeFees.sumOf { it.dueAmount },
+                        closeCount = closeFees.distinctBy { it.studentId }.size,
+                        closeAmount = closeFees.sumOf { it.dueAmount }
+                    )
                 }
             }
         }
@@ -242,12 +339,31 @@ fun DashboardScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val financialSummary by viewModel.financialSummary.collectAsState()
     val pendingFeesCount by viewModel.pendingFeesCount.collectAsState()
+    val dueFeeSummary by viewModel.dueFeeSummary.collectAsState()
+    val examCount by viewModel.examCount.collectAsState()
+    val birthdayCount by viewModel.birthdayCount.collectAsState()
 
     // ── Edit / Image / Switch state for profile popup ────────
     var showEditDialog by remember { mutableStateOf(false) }
-    var editInstituteName by remember { mutableStateOf(institute?.name ?: "") }
-    var profilePhotoUri by remember { mutableStateOf<Uri?>(null) }
+    var showPhotoPicker by remember { mutableStateOf(false) }
+    var isSavingProfile by remember { mutableStateOf(false) }
+    var editOwnerName by remember { mutableStateOf("") }
+    var editInstituteName by remember { mutableStateOf("") }
+    var editPhone by remember { mutableStateOf("") }
+    var editAddress by remember { mutableStateOf("") }
+    var editProfilePhotoUri by remember { mutableStateOf<Uri?>(null) }
     val context = LocalContext.current
+    val savedProfilePhotoUri = remember(institute?.profilePhotoUri) {
+        institute?.profilePhotoUri?.takeIf { it.isNotBlank() }?.let(Uri::parse)
+    }
+    val openEditDialog: () -> Unit = {
+        editOwnerName = currentUser?.name.orEmpty()
+        editInstituteName = institute?.name.orEmpty()
+        editPhone = institute?.phone.orEmpty()
+        editAddress = institute?.address.orEmpty()
+        editProfilePhotoUri = savedProfilePhotoUri
+        showEditDialog = true
+    }
 
     // Camera/gallery launcher for profile photo
     val tempPhotoFile = remember { File(context.cacheDir, "profile_photo_${UUID.randomUUID()}.jpg").apply { parentFile?.mkdirs() } }
@@ -256,12 +372,12 @@ fun DashboardScreen(
     }
     val cameraLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.TakePicture()
-    ) { success -> if (success) profilePhotoUri = tempPhotoUri }
+    ) { success -> if (success) editProfilePhotoUri = tempPhotoUri }
 
     // Gallery picker launcher
     val galleryLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
-    ) { uri -> if (uri != null) profilePhotoUri = uri }
+    ) { uri -> if (uri != null) editProfilePhotoUri = uri }
 
     // ── Attendance state (shared with dialog) ──────────────
     val attVM: AttendanceViewModel = viewModel(factory = AttendanceViewModelFactory(db))
@@ -285,11 +401,16 @@ fun DashboardScreen(
     var selectedBatchId by remember { mutableStateOf<String?>(null) }
 
     val safeNavigate: (String) -> Unit = { route ->
-        val allowedRoutes = setOf("StudentsRoute", "AddStudentRoute", "BatchesRoute", "AddBatchRoute", "FeeDashboardRoute", "DueFeesRoute", "CreateFeeRoute", "AttendanceRoute", "AttendanceReportRoute", "ReportsRoute", "ReminderTemplatesRoute", "StaffRoute", "SalaryRoute", "ExpensesRoute", "ProfitLossRoute", "ExamsRoute", "IdCardGeneratorRoute", "BirthdayReminderRoute", "SettingsRoute")
+        val allowedRoutes = setOf("StudentsRoute", "AddStudentRoute", "BatchesRoute", "AddBatchRoute", "FeeDashboardRoute", "DueFeesRoute", "CreateFeeRoute", "UnifiedCollectRoute", "AttendanceRoute", "AttendanceReportRoute", "ReportsRoute", "ReminderTemplatesRoute", "StaffRoute", "AddStaffRoute", "SalaryRoute", "ExpensesRoute", "AddExpenseRoute", "ProfitLossRoute", "ExamsRoute", "CreateExamRoute", "IdCardGeneratorRoute", "BirthdayReminderRoute", "SettingsRoute")
         if (allowedRoutes.contains(route)) {
             onNavigate(route)
         } else {
             snappbarcoroutineScope.launch { snackbarHostState.showSnackbar("Coming soon") }
+        }
+    }
+    val showComingSoon: (String) -> Unit = { label ->
+        snappbarcoroutineScope.launch {
+            snackbarHostState.showSnackbar("$label will be added next.")
         }
     }
 
@@ -299,43 +420,6 @@ fun DashboardScreen(
             snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
             Column(horizontalAlignment = Alignment.End) {
-                if (showFabMenu) {
-                    Column(horizontalAlignment = Alignment.End, modifier = Modifier.padding(bottom = 16.dp)) {
-                        val actions = listOf(
-                            "Add Student" to "AddStudentRoute",
-                            "Create Batch" to "AddBatchRoute",
-                            "Create Fee" to "CreateFeeRoute",
-                            "Take Attendance" to "AttendanceRoute",
-                            "Add Expense" to "ExpensesRoute",
-                            "Add Staff" to "StaffRoute"
-                        )
-                        actions.forEach { (label, route) ->
-                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 8.dp)) {
-                                Text(label, color = TextPrimary, style = MaterialTheme.typography.labelLarge)
-                                Spacer(Modifier.width(8.dp))
-                                FloatingActionButton(
-                                    onClick = { showFabMenu = false; safeNavigate(route) },
-                                    containerColor = DashboardCard,
-                                    contentColor = AccentCyan,
-                                    modifier = Modifier.size(48.dp)
-                                ) {
-                                    Icon(
-                                        when(label) {
-                                            "Add Student" -> Icons.Filled.PersonAdd
-                                            "Create Batch" -> Icons.Filled.Class
-                                            "Create Fee" -> Icons.Filled.Payments
-                                            "Take Attendance" -> Icons.Filled.HowToReg
-                                            "Add Expense" -> Icons.Filled.Receipt
-                                            else -> Icons.Filled.PersonAdd
-                                        }, 
-                                        contentDescription = label
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-                
                 AnimatedGlowBorder(
                     cornerRadius = 16.dp,
                     backgroundColor = AccentCyan,
@@ -638,23 +722,38 @@ fun DashboardScreen(
                 // ── Due Fees & Pending Card ─────────────────────
                 Card(
                     modifier = Modifier.fillMaxWidth().clickable { safeNavigate("DueFeesRoute") },
-                    shape = RoundedCornerShape(14.dp),
+                    shape = RoundedCornerShape(16.dp),
                     colors = CardDefaults.cardColors(containerColor = DashboardCard),
                     border = borderStroke()
                 ) {
-                    Row(modifier = Modifier.padding(16.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier.size(44.dp).clip(RoundedCornerShape(12.dp))
-                                .background(AccentRed.copy(alpha = 0.15f)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(Icons.Filled.Warning, contentDescription = null, tint = AccentRed, modifier = Modifier.size(22.dp))
+                    Column(modifier = Modifier.padding(20.dp).fillMaxWidth()) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier.size(42.dp).clip(RoundedCornerShape(12.dp))
+                                    .background(AccentAmber.copy(alpha = 0.12f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Filled.Calculate, contentDescription = null, tint = AccentAmber, modifier = Modifier.size(24.dp))
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Text("Due Fees", color = TextPrimary, fontSize = 24.sp, fontWeight = FontWeight.Bold)
                         }
-                        Spacer(Modifier.width(14.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("Pending Due Fees", color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-                            Text("$pendingFeesCount student(s) have unpaid fees", color = TextSecondary, fontSize = 12.sp)
+                        Spacer(Modifier.height(20.dp))
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(28.dp)) {
+                            DueSummaryBlock(
+                                count = dueFeeSummary.activeCount,
+                                amount = dueFeeSummary.activeAmount,
+                                label = "Active",
+                                modifier = Modifier.weight(1f)
+                            )
+                            DueSummaryBlock(
+                                count = dueFeeSummary.closeCount,
+                                amount = dueFeeSummary.closeAmount,
+                                label = "Close",
+                                modifier = Modifier.weight(1f)
+                            )
                         }
+                        /*
                         Text("View →", color = AccentCyan, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
@@ -662,12 +761,29 @@ fun DashboardScreen(
                 Spacer(modifier = Modifier.height(16.dp))
 
                 // ── Shortcut Grid ──────────────────────────────
+                        */
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                HomeEngagementSection(
+                    examCount = examCount,
+                    birthdayCount = birthdayCount,
+                    enquirySummary = EnquirySummary(),
+                    onOpenExams = { safeNavigate("ExamsRoute") },
+                    onOpenBirthdays = { safeNavigate("BirthdayReminderRoute") },
+                    onComingSoon = showComingSoon
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
                 Text("Quick Actions", color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(10.dp))
                 val shortcuts = listOf(
                     Triple("Add Student", Icons.Filled.PersonAdd, "AddStudentRoute"),
                     Triple("Create Batch", Icons.Filled.Class, "AddBatchRoute"),
-                    Triple("Collect Fee", Icons.Filled.Payments, "DueFeesRoute"),
+                    Triple("Collect Fee", Icons.Filled.Payments, "UnifiedCollectRoute"),
                     Triple("Attendance", Icons.Filled.HowToReg, "AttendanceRoute"),
                     Triple("Add Expense", Icons.Filled.Receipt, "ExpensesRoute"),
                     Triple("Add Staff", Icons.Filled.PersonAddAlt1, "StaffRoute")
@@ -698,7 +814,7 @@ fun DashboardScreen(
                     }
                 }
                 
-                Spacer(modifier = Modifier.height(120.dp))
+                Spacer(modifier = Modifier.height(16.dp))
             }
         }
 
@@ -741,6 +857,116 @@ fun DashboardScreen(
                 },
                 confirmButton = { TextButton(onClick = { selectedBatchId = null }) { Text("Close", color = AccentCyan) } }
             )
+        }
+    }
+
+    androidx.compose.animation.AnimatedVisibility(
+        visible = showFabMenu,
+        enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.scaleIn(initialScale = 0.94f),
+        exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.scaleOut(targetScale = 0.94f),
+        modifier = Modifier.fillMaxSize()
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.62f))
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null
+                ) { showFabMenu = false },
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth(0.88f)
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(Color(0xFF202934))
+                    .border(1.dp, Color(0xFF334155), RoundedCornerShape(24.dp))
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) {}
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(82.dp)
+                        .padding(horizontal = 24.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "Add New",
+                        color = AccentAmber,
+                        fontSize = 27.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(onClick = { showFabMenu = false }) {
+                        Icon(
+                            Icons.Filled.Close,
+                            contentDescription = "Close add menu",
+                            tint = Color(0xFFFFA3A3),
+                            modifier = Modifier.size(34.dp)
+                        )
+                    }
+                }
+
+                HorizontalDivider(color = Color(0xFF3A4652))
+
+                val addMenuItems = listOf(
+                    Triple("Student", "You can add new student here", Icons.Filled.School) to "AddStudentRoute",
+                    Triple("Staff", "You can add new staff here", Icons.Filled.PersonAddAlt1) to "AddStaffRoute",
+                    Triple("Batch", "You can add new batch here", Icons.Filled.Groups) to "AddBatchRoute",
+                    Triple("Exams", "You can add new exam here", Icons.Filled.Assignment) to "CreateExamRoute",
+                    Triple("Expense", "You can add expense here", Icons.Filled.ReceiptLong) to "AddExpenseRoute",
+                    Triple("Fee", "You can add new fee here", Icons.Filled.Payments) to "CreateFeeRoute"
+                )
+
+                addMenuItems.forEachIndexed { index, item ->
+                    val (content, route) = item
+                    val (title, subtitle, icon) = content
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(88.dp)
+                            .clickable {
+                                showFabMenu = false
+                                safeNavigate(route)
+                            }
+                            .padding(horizontal = 24.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            icon,
+                            contentDescription = null,
+                            tint = AccentAmber,
+                            modifier = Modifier.size(36.dp)
+                        )
+                        Spacer(Modifier.width(24.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                title,
+                                color = TextPrimary,
+                                fontSize = 25.sp,
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                subtitle,
+                                color = TextSecondary.copy(alpha = 0.72f),
+                                fontSize = 15.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                    if (index != addMenuItems.lastIndex) {
+                        HorizontalDivider(color = Color(0xFF3A4652))
+                    }
+                }
+            }
         }
     }
     
@@ -799,10 +1025,7 @@ fun DashboardScreen(
                         Row(modifier = Modifier.align(Alignment.TopEnd).padding(16.dp)) {
                             // Edit button: opens edit profile dialog for institute name + photo
                             androidx.compose.material3.OutlinedButton(
-                                onClick = {
-                                    editInstituteName = institute?.name ?: ""
-                                    showEditDialog = true
-                                },
+                                onClick = openEditDialog,
                                 border = androidx.compose.foundation.BorderStroke(1.dp, AccentCyan),
                                 shape = RoundedCornerShape(10.dp),
                                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
@@ -831,7 +1054,6 @@ fun DashboardScreen(
                         }
                         
                         // Avatar — clickable to change profile photo via camera or gallery
-                        var showPhotoPicker by remember { mutableStateOf(false) }
                         Box(
                             modifier = Modifier
                                 .align(Alignment.BottomStart)
@@ -841,12 +1063,10 @@ fun DashboardScreen(
                                 .shadow(12.dp, CircleShape, spotColor = AccentBlue, ambientColor = AccentBlue)
                                 .clip(CircleShape)
                                 .background(Color(0xFF0F1629))
-                                .border(2.dp, AccentBlue, CircleShape)
-                                .clickable { showPhotoPicker = true },
+                                .border(2.dp, AccentBlue, CircleShape),
                             contentAlignment = Alignment.Center
                         ) {
-                            // Show photo if selected, otherwise initials
-                            val photo = profilePhotoUri
+                            val photo = savedProfilePhotoUri
                             if (photo != null) {
                                 coil.compose.AsyncImage(
                                     model = photo,
@@ -862,33 +1082,6 @@ fun DashboardScreen(
                                 )
                             }
                         }
-
-                        // Photo picker dialog (camera or gallery)
-                        if (showPhotoPicker) {
-                            AlertDialog(
-                                onDismissRequest = { showPhotoPicker = false },
-                                title = { Text("Profile Photo", color = Color.White) },
-                                text = { Text("Choose an option", color = TextSecondary) },
-                                confirmButton = {
-                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        TextButton(onClick = {
-                                            showPhotoPicker = false
-                                            try { cameraLauncher.launch(tempPhotoUri) } catch (_: Exception) {}
-                                        }) { Text("Camera", color = AccentCyan) }
-                                        TextButton(onClick = {
-                                            showPhotoPicker = false
-                                            galleryLauncher.launch("image/*")
-                                        }) { Text("Gallery", color = AccentCyan) }
-                                    }
-                                },
-                                dismissButton = {
-                                    TextButton(onClick = { showPhotoPicker = false }) {
-                                        Text("Cancel", color = TextSecondary)
-                                    }
-                                },
-                                containerColor = Color(0xFF0F1629)
-                            )
-                        }
                     }
                     
                     Spacer(Modifier.height(48.dp))
@@ -902,6 +1095,13 @@ fun DashboardScreen(
                             fontWeight = FontWeight.Bold
                         )
                         Spacer(Modifier.height(4.dp))
+                        Text(
+                            currentUser?.name ?: "Institute Owner",
+                            color = AccentCyan,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Spacer(Modifier.height(2.dp))
                         Text(
                             currentUser?.email ?: "owner@batchfee.app",
                             color = TextSecondary,
@@ -926,13 +1126,21 @@ fun DashboardScreen(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Filled.Phone, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(15.dp))
                             Spacer(Modifier.width(8.dp))
-                            Text("Not added", color = TextSecondary, fontSize = 13.sp)
+                            Text(
+                                institute?.phone?.takeIf { it.isNotBlank() } ?: "Not added",
+                                color = if (institute?.phone.isNullOrBlank()) TextSecondary else Color.White,
+                                fontSize = 13.sp
+                            )
                         }
                         Spacer(Modifier.height(6.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Filled.LocationOn, contentDescription = null, tint = AccentBlue, modifier = Modifier.size(15.dp))
                             Spacer(Modifier.width(8.dp))
-                            Text("Not added", color = TextSecondary, fontSize = 13.sp)
+                            Text(
+                                institute?.address?.takeIf { it.isNotBlank() } ?: "Not added",
+                                color = if (institute?.address.isNullOrBlank()) TextSecondary else Color.White,
+                                fontSize = 13.sp
+                            )
                         }
                         
                         Spacer(Modifier.height(20.dp))
@@ -1104,12 +1312,144 @@ fun DashboardScreen(
     }
 
     // ── Edit Institute Dialog ────────────────────────────────
-    if (showEditDialog) {
+    if (showPhotoPicker) {
         AlertDialog(
-            onDismissRequest = { showEditDialog = false },
-            title = { Text("Edit Institute", color = Color.White) },
+            onDismissRequest = { showPhotoPicker = false },
+            title = { Text("Profile Photo", color = Color.White) },
+            text = { Text("Choose an image to update your institute profile.", color = TextSecondary) },
+            confirmButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(
+                        onClick = {
+                            showPhotoPicker = false
+                            try {
+                                cameraLauncher.launch(tempPhotoUri)
+                            } catch (_: Exception) {
+                            }
+                        }
+                    ) {
+                        Text("Camera", color = AccentCyan)
+                    }
+                    TextButton(
+                        onClick = {
+                            showPhotoPicker = false
+                            galleryLauncher.launch("image/*")
+                        }
+                    ) {
+                        Text("Gallery", color = AccentCyan)
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showPhotoPicker = false }) {
+                    Text("Cancel", color = TextSecondary)
+                }
+            },
+            containerColor = Color(0xFF0F1629)
+        )
+    }
+
+    if (showEditDialog) {
+        val originalOwnerName = currentUser?.name?.trim().orEmpty()
+        val originalInstituteName = institute?.name?.trim().orEmpty()
+        val originalPhone = institute?.phone?.trim().orEmpty()
+        val originalAddress = institute?.address?.trim().orEmpty()
+        val originalPhotoUri = institute?.profilePhotoUri.orEmpty()
+        val hasProfileChanges =
+            editOwnerName.trim() != originalOwnerName ||
+            editInstituteName.trim() != originalInstituteName ||
+            editPhone.trim() != originalPhone ||
+            editAddress.trim() != originalAddress ||
+            editProfilePhotoUri?.toString().orEmpty() != originalPhotoUri
+
+        AlertDialog(
+            onDismissRequest = {
+                if (!isSavingProfile) {
+                    showEditDialog = false
+                }
+            },
+            title = { Text("Update Institute Info", color = Color.White) },
             text = {
-                Column {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(64.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF111827))
+                                .border(1.dp, AccentBlue.copy(alpha = 0.6f), CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (editProfilePhotoUri != null) {
+                                AsyncImage(
+                                    model = editProfilePhotoUri,
+                                    contentDescription = "Institute photo preview",
+                                    modifier = Modifier.fillMaxSize().clip(CircleShape),
+                                    contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                                )
+                            } else {
+                                Text(
+                                    editInstituteName.ifBlank { institute?.name ?: "B" }.take(1).uppercase(),
+                                    color = AccentCyan,
+                                    style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold)
+                                )
+                            }
+                        }
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                "Edit text or image, then save once to apply everything together.",
+                                color = TextSecondary,
+                                fontSize = 12.sp
+                            )
+                            OutlinedButton(
+                                onClick = { showPhotoPicker = true },
+                                border = borderStroke(),
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentCyan)
+                            ) {
+                                Icon(Icons.Filled.CameraAlt, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text(if (editProfilePhotoUri == null) "Upload Photo" else "Change Photo")
+                            }
+                        }
+                    }
+
+                    Text(
+                        "Institute Details",
+                        color = Color.White,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+
+                    OutlinedTextField(
+                        value = editOwnerName,
+                        onValueChange = { editOwnerName = it },
+                        label = { Text("Owner Name") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = AccentCyan,
+                            unfocusedBorderColor = DashboardStroke,
+                            focusedContainerColor = Color(0xFF111827),
+                            unfocusedContainerColor = Color(0xFF111827),
+                            cursorColor = AccentCyan
+                        )
+                    )
+
                     OutlinedTextField(
                         value = editInstituteName,
                         onValueChange = { editInstituteName = it },
@@ -1126,23 +1466,91 @@ fun DashboardScreen(
                             cursorColor = AccentCyan
                         )
                     )
+
+                    OutlinedTextField(
+                        value = editPhone,
+                        onValueChange = { editPhone = it },
+                        label = { Text("Phone Number") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = AccentCyan,
+                            unfocusedBorderColor = DashboardStroke,
+                            focusedContainerColor = Color(0xFF111827),
+                            unfocusedContainerColor = Color(0xFF111827),
+                            cursorColor = AccentCyan
+                        )
+                    )
+
+                    OutlinedTextField(
+                        value = editAddress,
+                        onValueChange = { editAddress = it },
+                        label = { Text("Address") },
+                        minLines = 2,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = AccentCyan,
+                            unfocusedBorderColor = DashboardStroke,
+                            focusedContainerColor = Color(0xFF111827),
+                            unfocusedContainerColor = Color(0xFF111827),
+                            cursorColor = AccentCyan
+                        )
+                    )
                 }
             },
             confirmButton = {
-                TextButton(onClick = {
-                    // Persist institute name update to DB
-                    val inst = institute
-                    if (inst != null && editInstituteName.isNotBlank()) {
-                        val updated = inst.copy(name = editInstituteName.trim())
+                TextButton(
+                    enabled = !isSavingProfile && hasProfileChanges && editInstituteName.isNotBlank() && editOwnerName.isNotBlank(),
+                    onClick = {
+                        val inst = institute
+                        val owner = currentUser
+                        if (inst == null || owner == null) {
+                            snappbarcoroutineScope.launch {
+                                snackbarHostState.showSnackbar("Unable to load institute information right now.")
+                            }
+                            return@TextButton
+                        }
+
+                        isSavingProfile = true
                         snappbarcoroutineScope.launch {
-                            db.instituteDao().updateInstitute(updated)
+                            try {
+                                val profilePhotoUri = when {
+                                    editProfilePhotoUri == null -> null
+                                    editProfilePhotoUri.toString() == inst.profilePhotoUri -> inst.profilePhotoUri
+                                    else -> persistInstituteProfilePhoto(context, editProfilePhotoUri!!)
+                                }
+
+                                db.instituteDao().updateInstitute(
+                                    inst.copy(
+                                        name = editInstituteName.trim(),
+                                        phone = editPhone.trim().ifBlank { null },
+                                        address = editAddress.trim().ifBlank { null },
+                                        profilePhotoUri = profilePhotoUri
+                                    )
+                                )
+                                db.userDao().updateUser(owner.copy(name = editOwnerName.trim()))
+                                showEditDialog = false
+                                snackbarHostState.showSnackbar("Institute information updated.")
+                            } catch (e: Exception) {
+                                snackbarHostState.showSnackbar(e.message ?: "Failed to update institute information.")
+                            } finally {
+                                isSavingProfile = false
+                            }
                         }
                     }
-                    showEditDialog = false
-                }) { Text("Save", color = AccentCyan) }
+                ) {
+                    Text(if (isSavingProfile) "Saving..." else "Save", color = AccentCyan)
+                }
             },
             dismissButton = {
-                TextButton(onClick = { showEditDialog = false }) {
+                TextButton(
+                    enabled = !isSavingProfile,
+                    onClick = { showEditDialog = false }
+                ) {
                     Text("Cancel", color = TextSecondary)
                 }
             },
@@ -1152,8 +1560,281 @@ fun DashboardScreen(
 }
 }
 
+private suspend fun persistInstituteProfilePhoto(context: android.content.Context, sourceUri: Uri): String =
+    withContext(Dispatchers.IO) {
+        val directory = File(context.filesDir, "institute_profile").apply { mkdirs() }
+        val targetFile = File(directory, "institute_profile_${System.currentTimeMillis()}.jpg")
+        context.contentResolver.openInputStream(sourceUri)?.use { input ->
+            targetFile.outputStream().use { output ->
+                input.copyTo(output)
+            }
+        } ?: throw IllegalStateException("Unable to read the selected image.")
+        Uri.fromFile(targetFile).toString()
+    }
+
 @Composable
 private fun borderStroke() = androidx.compose.foundation.BorderStroke(1.dp, DashboardStroke)
+
+@Composable
+private fun DueSummaryBlock(count: Int, amount: Double, label: String, modifier: Modifier = Modifier) {
+    Column(modifier = modifier) {
+        Text(
+            "($count) ${formatDashboardAmount(amount)}",
+            color = TextPrimary,
+            fontSize = 22.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Text(label, color = TextSecondary, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+private fun HomeEngagementSection(
+    examCount: Int,
+    birthdayCount: Int,
+    enquirySummary: EnquirySummary,
+    onOpenExams: () -> Unit,
+    onOpenBirthdays: () -> Unit,
+    onComingSoon: (String) -> Unit
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            HomeFeatureTile(
+                title = "Exams",
+                count = examCount,
+                icon = Icons.Filled.Assignment,
+                modifier = Modifier.weight(1f),
+                onClick = onOpenExams
+            )
+            HomeFeatureTile(
+                title = "Birthdays",
+                count = birthdayCount,
+                icon = Icons.Filled.Cake,
+                modifier = Modifier.weight(1f),
+                onClick = onOpenBirthdays
+            )
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            HomeFeatureTile(
+                title = "Home works",
+                count = 0,
+                icon = Icons.Filled.ListAlt,
+                modifier = Modifier.weight(1f),
+                onClick = { onComingSoon("Home works") }
+            )
+            HomeFeatureTile(
+                title = "Class works",
+                count = 0,
+                icon = Icons.Filled.ListAlt,
+                modifier = Modifier.weight(1f),
+                onClick = { onComingSoon("Class works") }
+            )
+        }
+
+        HomeFullActionTile(
+            title = "Announcements",
+            icon = Icons.Filled.Campaign,
+            onClick = { onComingSoon("Announcements") }
+        )
+        HomeFullActionTile(
+            title = "Messages",
+            icon = Icons.Filled.Message,
+            onClick = { onComingSoon("Messages") }
+        )
+        HomeFullActionTile(
+            title = "Online Lectures",
+            icon = Icons.Filled.VideoLibrary,
+            onClick = { onComingSoon("Online Lectures") }
+        )
+        EnquirySummaryCard(
+            summary = enquirySummary,
+            onAdd = { onComingSoon("Enquiry") }
+        )
+    }
+}
+
+@Composable
+private fun HomeFeatureTile(
+    title: String,
+    count: Int,
+    icon: ImageVector,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Card(
+        modifier = modifier
+            .height(78.dp)
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = DashboardCardAlt),
+        border = borderStroke()
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(icon, contentDescription = null, tint = AccentAmber, modifier = Modifier.size(30.dp))
+            Spacer(Modifier.width(12.dp))
+            Text(
+                buildAnnotatedString {
+                    append(title)
+                    append(" ")
+                    withStyle(SpanStyle(color = AccentAmber)) {
+                        append("($count)")
+                    }
+                },
+                color = TextPrimary,
+                fontSize = 19.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+@Composable
+private fun HomeFullActionTile(
+    title: String,
+    icon: ImageVector,
+    onClick: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(74.dp)
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = DashboardCardAlt),
+        border = borderStroke()
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 18.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(icon, contentDescription = null, tint = AccentAmber, modifier = Modifier.size(30.dp))
+            Spacer(Modifier.width(14.dp))
+            Text(
+                title,
+                color = TextPrimary,
+                fontSize = 23.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+@Composable
+private fun EnquirySummaryCard(
+    summary: EnquirySummary,
+    onAdd: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = DashboardCardAlt),
+        border = borderStroke()
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.PersonAddAlt1, contentDescription = null, tint = AccentAmber, modifier = Modifier.size(28.dp))
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    "Enquiry",
+                    color = TextPrimary,
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            Spacer(Modifier.height(18.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    modifier = Modifier.weight(1f),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    EnquiryStat(summary.total, "Total", Modifier.weight(1f))
+                    EnquiryStat(summary.active, "Active", Modifier.weight(1f))
+                    EnquiryStat(summary.close, "Close", Modifier.weight(1f))
+                    EnquiryStat(summary.followUp, "Follow up", Modifier.weight(1f))
+                }
+
+                Spacer(Modifier.width(12.dp))
+
+                Box(
+                    modifier = Modifier
+                        .size(68.dp)
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(AccentAmber)
+                        .clickable(onClick = onAdd),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        Icons.Filled.Add,
+                        contentDescription = "Add enquiry",
+                        tint = Color(0xFF111827),
+                        modifier = Modifier.size(34.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun EnquiryStat(value: Int, label: String, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            value.toString(),
+            color = TextPrimary,
+            fontSize = 21.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            label,
+            color = TextSecondary,
+            fontSize = 12.sp,
+            textAlign = TextAlign.Center,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+private fun formatDashboardAmount(amount: Double): String =
+    java.text.NumberFormat.getNumberInstance(Locale.getDefault()).apply {
+        maximumFractionDigits = 0
+    }.format(amount)
 
 @Composable
 private fun OverviewRow(

@@ -13,6 +13,9 @@ interface ExpenseDao {
     @Query("SELECT * FROM expenses WHERE instituteId = :instituteId AND archivedAtMs IS NULL ORDER BY expenseDateMs DESC")
     fun getExpensesByInstitute(instituteId: String): Flow<List<ExpenseEntity>>
 
+    @Query("SELECT * FROM expenses WHERE instituteId = :instituteId AND archivedAtMs IS NULL ORDER BY expenseDateMs DESC")
+    suspend fun getExpensesByInstituteAsList(instituteId: String): List<ExpenseEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertExpense(expense: ExpenseEntity)
 

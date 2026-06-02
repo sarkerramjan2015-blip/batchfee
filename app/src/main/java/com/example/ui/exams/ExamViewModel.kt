@@ -63,10 +63,14 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
         examName: String,
         totalMarks: Double,
         passingMarks: Double,
-        onSuccess: () -> Unit
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit = {}
     ) {
         val instId = SessionManager.currentInstituteId.value ?: return
-        if (batchId.isBlank() || examName.isBlank() || totalMarks <= 0 || passingMarks > totalMarks) return
+        if (batchId.isBlank()) { onError("Batch is required."); return }
+        if (examName.isBlank()) { onError("Exam name is required."); return }
+        if (totalMarks <= 0) { onError("Total marks must be greater than 0."); return }
+        if (passingMarks > totalMarks) { onError("Passing marks cannot exceed total marks."); return }
 
         val exam = ExamEntity(
             id = UUID.randomUUID().toString(),

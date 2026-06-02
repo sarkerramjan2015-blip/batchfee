@@ -8,6 +8,8 @@ import com.example.data.models.StaffEntity
 import com.example.domain.SessionManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.UUID
 
@@ -24,6 +26,8 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
 
     private val _isLoading = MutableStateFlow(false)
     val isLoading = _isLoading.asStateFlow()
+
+    private var searchJob: Job? = null
 
     init {
         loadStaff()
@@ -50,7 +54,9 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
 
     fun setSearchQuery(query: String) {
         _searchQuery.value = query
-        viewModelScope.launch {
+        searchJob?.cancel()
+        searchJob = viewModelScope.launch {
+            delay(300)
             val instId = SessionManager.currentInstituteId.value ?: return@launch
             if (query.isBlank()) {
                 db.staffDao().getStaffByInstitute(instId).collect { _staffList.value = it }
@@ -72,7 +78,7 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
         val instId = SessionManager.currentInstituteId.value ?: return
         if (fullName.isBlank() || roleTitle.isBlank() || monthlySalary < 0) return
 
-        val staffCode = "STF-${System.currentTimeMillis() % 100000}"
+        val staffCode = "STF-${UUID.randomUUID().toString().take(8)}"
         val staff = StaffEntity(
             id = UUID.randomUUID().toString(),
             instituteId = instId,
@@ -113,22 +119,18 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
         if (!SessionManager.isAdmin()) return
         viewModelScope.launch {
             val instId = SessionManager.currentInstituteId.value ?: return@launch
-            db.staffDao().getStaffById(staffId, instId).collect { existing ->
-                if (existing != null) {
-                    val updated = existing.copy(
-                        fullName = fullName,
-                        roleTitle = roleTitle,
-                        phone = phone,
-                        monthlySalary = monthlySalary,
-                        permissions = permissions,
-                        status = status ?: existing.status,
-                        updatedAtMs = System.currentTimeMillis()
-                    )
-                    db.staffDao().updateStaff(updated)
-                    onSuccess()
-                    return@collect
-                }
-            }
+            val existing = db.staffDao().getStaffByIdOnce(staffId, instId) ?: return@launch
+            val updated = existing.copy(
+                fullName = fullName,
+                roleTitle = roleTitle,
+                phone = phone,
+                monthlySalary = monthlySalary,
+                permissions = permissions,
+                status = status ?: existing.status,
+                updatedAtMs = System.currentTimeMillis()
+            )
+            db.staffDao().updateStaff(updated)
+            onSuccess()
         }
     }
 

@@ -5,14 +5,21 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
+import com.example.domain.PasswordHasher
+import com.example.domain.SessionManager
+import com.example.domain.ThemePreferences
 import com.example.ui.auth.AuthScreen
 import com.example.ui.billing.BillingScreen
 import com.example.ui.dashboard.DashboardScreen
@@ -28,12 +35,37 @@ class MainActivity : ComponentActivity() {
         val appDb = (application as BatchFeeApp).database
         
         setContent {
-            MyApplicationTheme {
+            val darkMode by ThemePreferences.isDarkMode.collectAsState()
+            MyApplicationTheme(darkTheme = darkMode ?: isSystemInDarkTheme()) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
                     val navController = rememberNavController()
+                    val lifecycleOwner = LocalLifecycleOwner.current
+
+                    // ── Auto-logout when app is backgrounded ─────────────────
+                    DisposableEffect(lifecycleOwner) {
+                        val observer = LifecycleEventObserver { _, event ->
+                            if (event == Lifecycle.Event.ON_STOP) {
+                                SessionManager.logout()
+                            }
+                        }
+                        lifecycleOwner.lifecycle.addObserver(observer)
+                        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+                    }
+
+                    // ── Redirect to login when session is cleared ─────────────
+                    val isLoggedIn by SessionManager.currentUserId.collectAsState()
+                    var wasLoggedIn by remember { mutableStateOf(false) }
+                    LaunchedEffect(isLoggedIn) {
+                        if (isLoggedIn == null && wasLoggedIn) {
+                            navController.navigate(AuthRoute) {
+                                popUpTo(navController.graph.id) { inclusive = true }
+                            }
+                        }
+                        wasLoggedIn = isLoggedIn != null
+                    }
 
                     NavHost(navController = navController, startDestination = AuthRoute) {
                         composable<AuthRoute> {
@@ -69,15 +101,19 @@ class MainActivity : ComponentActivity() {
                                             "FeeDashboardRoute" -> navController.navigate(FeeDashboardRoute)
                                             "DueFeesRoute" -> navController.navigate(DueFeesRoute)
                                             "CreateFeeRoute" -> navController.navigate(CreateFeeRoute)
+                                            "UnifiedCollectRoute" -> navController.navigate(UnifiedCollectRoute)
                                             "AttendanceRoute" -> navController.navigate(com.example.ui.navigation.AttendanceRoute)
                                             "AttendanceReportRoute" -> navController.navigate(com.example.ui.navigation.AttendanceReportRoute)
                                             "ReportsRoute" -> navController.navigate(com.example.ui.navigation.ReportsRoute)
                                             "ReminderTemplatesRoute" -> navController.navigate(com.example.ui.navigation.ReminderTemplatesRoute)
                                             "StaffRoute" -> navController.navigate(com.example.ui.navigation.StaffRoute)
+                                            "AddStaffRoute" -> navController.navigate(com.example.ui.navigation.AddStaffRoute)
                                             "SalaryRoute" -> navController.navigate(com.example.ui.navigation.SalaryRoute)
                                             "ExpensesRoute" -> navController.navigate(com.example.ui.navigation.ExpensesRoute)
+                                            "AddExpenseRoute" -> navController.navigate(com.example.ui.navigation.AddExpenseRoute)
                                             "ProfitLossRoute" -> navController.navigate(com.example.ui.navigation.ProfitLossRoute)
                                             "ExamsRoute" -> navController.navigate(com.example.ui.navigation.ExamsRoute)
+                                            "CreateExamRoute" -> navController.navigate(com.example.ui.navigation.CreateExamRoute)
                                             "IdCardGeneratorRoute" -> navController.navigate(com.example.ui.navigation.IdCardGeneratorRoute)
                                             "BirthdayReminderRoute" -> navController.navigate(com.example.ui.navigation.BirthdayReminderRoute)
                                             "SettingsRoute" -> navController.navigate(com.example.ui.navigation.SettingsRoute)
@@ -99,7 +135,8 @@ class MainActivity : ComponentActivity() {
                                 db = appDb,
                                 onBack = { navController.popBackStack() },
                                 onAddStudent = { navController.navigate(AddStudentRoute) },
-                                onNavigateToProfile = { studentId -> navController.navigate(StudentProfileRoute(studentId)) }
+                                onNavigateToProfile = { studentId -> navController.navigate(StudentProfileRoute(studentId)) },
+                                onNavigateToIdCards = { navController.navigate(IdCardGeneratorRoute) }
                             )
                         }
                         
@@ -122,7 +159,8 @@ class MainActivity : ComponentActivity() {
                                 db = appDb,
                                 studentId = route.studentId,
                                 onBack = { navController.popBackStack() },
-                                onEdit = { navController.navigate(EditStudentRoute(route.studentId)) }
+                                onEdit = { navController.navigate(EditStudentRoute(route.studentId)) },
+                                onGenerateIdCard = { navController.navigate(IdCardPreviewRoute("student", route.studentId)) }
                             )
                         }
                         
@@ -162,7 +200,7 @@ class MainActivity : ComponentActivity() {
                             com.example.ui.fees.FeeDashboardScreen(
                                 db = appDb,
                                 onBack = { navController.popBackStack() },
-                                onNavigateDueFees = { navController.navigate(DueFeesRoute) },
+                                onNavigateDueFees = { navController.navigate(UnifiedCollectRoute) },
                                 onCreateFee = { navController.navigate(CreateFeeRoute) },
                                 onCollectPayment = { feeId -> navController.navigate(CollectPaymentRoute(feeId)) }
                             )
@@ -196,6 +234,14 @@ class MainActivity : ComponentActivity() {
                         composable<ReceiptDetailRoute> { backStackEntry ->
                             val route = backStackEntry.toRoute<ReceiptDetailRoute>()
                             com.example.ui.fees.ReceiptDetailScreen(db = appDb, paymentId = route.paymentId, onBack = { navController.popBackStack() })
+                        }
+                        
+                        composable<UnifiedCollectRoute> {
+                            com.example.ui.fees.UnifiedCollectScreen(
+                                db = appDb,
+                                onBack = { navController.popBackStack() },
+                                onCollectPayment = { feeId -> navController.navigate(CollectPaymentRoute(feeId)) }
+                            )
                         }
                         
                         composable<ReportsRoute> {
@@ -234,7 +280,25 @@ class MainActivity : ComponentActivity() {
                         }
                         
                         composable<AddStaffRoute> {
-                            com.example.ui.staff.AddEditStaffScreen(db = appDb, onBack = { navController.popBackStack() })
+                            val staffId = runCatching {
+                                navController.previousBackStackEntry
+                                    ?.toRoute<StaffProfileRoute>()
+                                    ?.staffId
+                            }.getOrNull()
+                            com.example.ui.staff.AddEditStaffScreen(
+                                db = appDb,
+                                staffId = staffId,
+                                onBack = { navController.popBackStack() }
+                            )
+                        }
+
+                        composable<EditStaffRoute> { backStackEntry ->
+                            val route = backStackEntry.toRoute<EditStaffRoute>()
+                            com.example.ui.staff.AddEditStaffScreen(
+                                db = appDb,
+                                staffId = route.staffId,
+                                onBack = { navController.popBackStack() }
+                            )
                         }
                         
                         composable<StaffProfileRoute> { backStackEntry ->

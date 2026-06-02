@@ -26,6 +26,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.database.AppDatabase
 import com.example.domain.SessionManager
+import com.example.ui.components.PhoneInputField
 
 // ── Colors ──────────────────────────────────────────────────────
 private val BgColor      = Color(0xFF07111F)
@@ -136,13 +137,10 @@ fun AddEditStaffScreen(
             )
             Spacer(Modifier.height(12.dp))
             SectionLabel("Phone")
-            OutlinedTextField(
+            PhoneInputField(
                 value = phone,
                 onValueChange = { phone = it },
-                placeholder = { Text("01XXXXXXXXX", color = TextMuted.copy(alpha = 0.5f)) },
-                modifier = Modifier.fillMaxWidth(), singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
-                colors = darkFieldColors(), shape = RoundedCornerShape(12.dp)
+                modifier = Modifier.fillMaxWidth()
             )
             Spacer(Modifier.height(12.dp))
             SectionLabel("Monthly Salary (BDT)")
