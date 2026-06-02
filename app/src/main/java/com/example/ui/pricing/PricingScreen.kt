@@ -1,16 +1,13 @@
 package com.example.ui.pricing
 
 import androidx.compose.animation.core.*
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -21,7 +18,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -36,7 +32,6 @@ import com.example.domain.SessionManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.firstOrNull
-import kotlinx.coroutines.launch
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.ui.platform.LocalContext
@@ -149,8 +144,6 @@ fun PricingScreen(
     val viewModel: PricingViewModel = viewModel(factory = PricingViewModelFactory())
     val plans by viewModel.plans.collectAsState()
     val selectedDuration by viewModel.selectedDuration.collectAsState()
-    val snackbarHostState = remember { SnackbarHostState() }
-    val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
     // Load institute name for WhatsApp message (read-only, no logic change)
@@ -168,7 +161,6 @@ fun PricingScreen(
 
     Scaffold(
         containerColor = BgColor,
-        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text("BatchFee Plans", color = TextWhite, fontWeight = FontWeight.Bold) },
@@ -189,20 +181,20 @@ fun PricingScreen(
         ) {
             // ── Header ──────────────────────────────────────────
             Column(
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
                     "Choose Your Plan",
                     color = TextWhite,
-                    fontSize = 24.sp,
+                    fontSize = 22.sp,
                     fontWeight = FontWeight.Bold
                 )
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(6.dp))
                 Text(
                     "Scale your institute with the right plan. All plans include core features.",
                     color = TextMuted,
-                    fontSize = 14.sp,
+                    fontSize = 13.sp,
                     textAlign = TextAlign.Center
                 )
             }
@@ -211,10 +203,10 @@ fun PricingScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 20.dp)
-                    .clip(RoundedCornerShape(12.dp))
+                    .padding(horizontal = 18.dp)
+                    .clip(RoundedCornerShape(10.dp))
                     .background(CardBg)
-                    .border(1.dp, BorderSub, RoundedCornerShape(12.dp))
+                    .border(1.dp, BorderSub, RoundedCornerShape(10.dp))
                     .padding(4.dp),
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
@@ -224,7 +216,7 @@ fun PricingScreen(
                     Box(
                         modifier = Modifier
                             .weight(1f)
-                            .clip(RoundedCornerShape(10.dp))
+                            .clip(RoundedCornerShape(8.dp))
                             .then(
                                 if (isSelected) Modifier.background(
                                     brush = Brush.horizontalGradient(listOf(ElectricBlue, Cyan))
@@ -232,21 +224,21 @@ fun PricingScreen(
                                 else Modifier.background(Color.Transparent)
                             )
                             .clickable { viewModel.selectDuration(index) }
-                            .padding(vertical = 8.dp),
+                            .padding(vertical = 7.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Text(
                                 label,
                                 color = if (isSelected) Color.White else TextMuted,
-                                fontSize = 13.sp,
+                                fontSize = 12.sp,
                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
                             )
                             if (saveLabel != null) {
                                 Text(
                                     saveLabel,
                                     color = if (isSelected) Color.White.copy(alpha = 0.8f) else WAGreen,
-                                    fontSize = 10.sp,
+                                    fontSize = 9.sp,
                                     fontWeight = FontWeight.Bold
                                 )
                             }
@@ -255,21 +247,22 @@ fun PricingScreen(
                 }
             }
 
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(14.dp))
 
             // ── Plan Cards (Horizontal Scroll) ──────────────────
-            Text(
-                "Select a Plan",
-                color = TextMuted,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.padding(horizontal = 20.dp)
-            )
-            Spacer(Modifier.height(10.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Select a Plan", color = TextMuted, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                Text("Swipe to compare", color = TextMuted.copy(alpha = 0.75f), fontSize = 11.sp)
+            }
+            Spacer(Modifier.height(8.dp))
 
             LazyRow(
-                contentPadding = PaddingValues(horizontal = 20.dp),
-                horizontalArrangement = Arrangement.spacedBy(14.dp)
+                contentPadding = PaddingValues(horizontal = 18.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 items(plans.filter { !it.isEnterprise }) { plan ->
                     val price = remember(selectedDuration) { viewModel.priceFor(plan) }
@@ -295,7 +288,7 @@ fun PricingScreen(
                 }
             }
 
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(18.dp))
 
             // ── Enterprise Card ─────────────────────────────────
             val enterprisePlan = plans.find { it.isEnterprise }
@@ -303,8 +296,8 @@ fun PricingScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 20.dp)
-                        .clip(RoundedCornerShape(16.dp))
+                        .padding(horizontal = 18.dp)
+                        .clip(RoundedCornerShape(14.dp))
                         .background(
                             brush = Brush.linearGradient(
                                 colors = listOf(CardBg, CardBgAlt)
@@ -313,9 +306,9 @@ fun PricingScreen(
                         .border(
                             width = 1.5.dp,
                             brush = Brush.horizontalGradient(listOf(ElectricBlue, VioletBlue)),
-                            shape = RoundedCornerShape(16.dp)
+                            shape = RoundedCornerShape(14.dp)
                         )
-                        .padding(20.dp)
+                        .padding(16.dp)
                 ) {
                     Column(
                         modifier = Modifier.fillMaxWidth(),
@@ -325,33 +318,33 @@ fun PricingScreen(
                             Icons.Filled.Business,
                             contentDescription = null,
                             tint = Cyan,
-                            modifier = Modifier.size(40.dp)
+                            modifier = Modifier.size(32.dp)
                         )
-                        Spacer(Modifier.height(12.dp))
+                        Spacer(Modifier.height(8.dp))
                         Text(
                             enterprisePlan.name,
                             color = TextWhite,
-                            fontSize = 22.sp,
+                            fontSize = 20.sp,
                             fontWeight = FontWeight.Bold
                         )
                         Spacer(Modifier.height(4.dp))
                         Text(
                             "For institutions with ${enterprisePlan.studentLabel}",
                             color = TextMuted,
-                            fontSize = 14.sp
+                            fontSize = 13.sp
                         )
-                        Spacer(Modifier.height(14.dp))
+                        Spacer(Modifier.height(10.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = Cyan, modifier = Modifier.size(18.dp))
+                            Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = Cyan, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(8.dp))
-                            Text("Custom institute support", color = TextMuted, fontSize = 13.sp)
+                            Text("Custom institute support", color = TextMuted, fontSize = 12.sp)
                         }
-                        Spacer(Modifier.height(16.dp))
+                        Spacer(Modifier.height(14.dp))
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(48.dp)
-                                .clip(RoundedCornerShape(12.dp))
+                                .height(44.dp)
+                                .clip(RoundedCornerShape(10.dp))
                                 .background(
                                     brush = Brush.horizontalGradient(listOf(WAGreen, Teal))
                                 )
@@ -365,9 +358,9 @@ fun PricingScreen(
                             contentAlignment = Alignment.Center
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Filled.Phone, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp))
+                                Icon(Icons.Filled.Phone, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
                                 Spacer(Modifier.width(8.dp))
-                                Text("Contact Developer", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                Text("Contact Developer", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                             }
                         }
                     }
@@ -376,47 +369,7 @@ fun PricingScreen(
                 Spacer(Modifier.height(24.dp))
             }
 
-            // ── Footer ──────────────────────────────────────────
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(CardBg)
-                    .border(1.dp, BorderSub, RoundedCornerShape(16.dp))
-                    .padding(20.dp)
-            ) {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Icon(Icons.Filled.SupportAgent, contentDescription = null, tint = WAGreen, modifier = Modifier.size(32.dp))
-                    Spacer(Modifier.height(10.dp))
-                    Text("Need help choosing?", color = TextWhite, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                    Spacer(Modifier.height(4.dp))
-                    Text("Our team is here to assist you.", color = TextMuted, fontSize = 13.sp)
-                    Spacer(Modifier.height(14.dp))
-                    OutlinedButton(
-                        onClick = {
-                            // Open WhatsApp with institute name in message
-                            val message = "Hello Developer, Institute: $instituteName"
-                            val encoded = URLEncoder.encode(message, "UTF-8")
-                            val url = "https://wa.me/8801518657869?text=$encoded"
-                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-                        },
-                        modifier = Modifier.fillMaxWidth().height(44.dp),
-                        shape = RoundedCornerShape(12.dp),
-                        border = BorderStroke(1.dp, WAGreen.copy(alpha = 0.6f)),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = WAGreen)
-                    ) {
-                        Icon(Icons.Filled.Phone, contentDescription = null, tint = WAGreen, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("Contact Developer", color = WAGreen, fontWeight = FontWeight.Medium, fontSize = 14.sp)
-                    }
-                }
-            }
-
-            Spacer(Modifier.height(32.dp))
+            Spacer(Modifier.height(12.dp))
         }
     }
 }
@@ -452,8 +405,8 @@ private fun PlanCard(
 
     Box(
         modifier = Modifier
-            .width(250.dp)
-            .clip(RoundedCornerShape(16.dp))
+            .width(220.dp)
+            .clip(RoundedCornerShape(14.dp))
             .background(CardBg)
             .then(
                 if (showGlowBorder) Modifier.border(
@@ -465,13 +418,13 @@ private fun PlanCard(
                             borderColors[0].copy(alpha = glowAlpha)
                         )
                     ),
-                    shape = RoundedCornerShape(16.dp)
+                    shape = RoundedCornerShape(14.dp)
                 )
-                else Modifier.border(1.dp, BorderSub, RoundedCornerShape(16.dp))
+                else Modifier.border(1.dp, BorderSub, RoundedCornerShape(14.dp))
             )
     ) {
         Column(
-            modifier = Modifier.padding(16.dp)
+            modifier = Modifier.padding(12.dp)
         ) {
             // Badge
             if (plan.isPopular || plan.isPremium) {
@@ -488,44 +441,44 @@ private fun PlanCard(
                                     else listOf(ElectricBlue, Cyan)
                                 )
                             )
-                            .padding(horizontal = 12.dp, vertical = 4.dp)
+                            .padding(horizontal = 10.dp, vertical = 3.dp)
                     ) {
                         Text(
                             if (plan.isPremium) "Premium" else "Popular",
                             color = Color.White,
-                            fontSize = 11.sp,
+                            fontSize = 10.sp,
                             fontWeight = FontWeight.Bold
                         )
                     }
                 }
-                Spacer(Modifier.height(10.dp))
+                Spacer(Modifier.height(8.dp))
             } else {
-                Spacer(Modifier.height(2.dp))
+                Spacer(Modifier.height(1.dp))
             }
 
             // Plan Name + Student Limit
             Text(
                 plan.name,
                 color = TextWhite,
-                fontSize = 18.sp,
+                fontSize = 17.sp,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.fillMaxWidth(),
                 textAlign = TextAlign.Center
             )
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(3.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(Icons.Filled.Group, contentDescription = null, tint = SkyBlue, modifier = Modifier.size(16.dp))
+                Icon(Icons.Filled.Group, contentDescription = null, tint = SkyBlue, modifier = Modifier.size(15.dp))
                 Spacer(Modifier.width(4.dp))
-                Text(plan.studentLabel, color = SkyBlue, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                Text(plan.studentLabel, color = SkyBlue, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
             }
-            Spacer(Modifier.height(14.dp))
+            Spacer(Modifier.height(10.dp))
 
             HorizontalDivider(color = BorderSub)
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(9.dp))
 
             // Price
             Row(
@@ -533,45 +486,45 @@ private fun PlanCard(
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.Bottom
             ) {
-                Text("BDT", color = TextMuted, fontSize = 11.sp, modifier = Modifier.padding(bottom = 3.dp))
+                Text("BDT", color = TextMuted, fontSize = 10.sp, modifier = Modifier.padding(bottom = 3.dp))
                 Spacer(Modifier.width(2.dp))
                 Text(
                     formatPrice(price),
                     color = TextWhite,
-                    fontSize = 24.sp,
+                    fontSize = 22.sp,
                     fontWeight = FontWeight.Bold
                 )
             }
             Text(
                 durationLabel,
                 color = TextMuted,
-                fontSize = 11.sp,
+                fontSize = 10.sp,
                 modifier = Modifier.fillMaxWidth(),
                 textAlign = TextAlign.Center
             )
 
-            Spacer(Modifier.height(14.dp))
+            Spacer(Modifier.height(10.dp))
 
             // Feature list
             allPlanFeatures.forEach { (label, icon) ->
                 Row(
-                    modifier = Modifier.padding(vertical = 3.dp),
+                    modifier = Modifier.padding(vertical = 2.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(icon, contentDescription = null, tint = Cyan.copy(alpha = 0.7f), modifier = Modifier.size(14.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text(label, color = TextMuted, fontSize = 11.sp)
+                    Icon(icon, contentDescription = null, tint = Cyan.copy(alpha = 0.75f), modifier = Modifier.size(13.dp))
+                    Spacer(Modifier.width(5.dp))
+                    Text(label, color = TextMuted, fontSize = 10.sp)
                 }
             }
 
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(12.dp))
 
             // CTA Button
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(42.dp)
-                    .clip(RoundedCornerShape(12.dp))
+                    .height(38.dp)
+                    .clip(RoundedCornerShape(10.dp))
                     .background(
                         brush = if (plan.isPopular || plan.isPremium)
                             Brush.horizontalGradient(listOf(ElectricBlue, Cyan))
@@ -580,7 +533,7 @@ private fun PlanCard(
                     )
                     .then(
                         if (!plan.isPopular && !plan.isPremium)
-                            Modifier.border(1.dp, BorderSub, RoundedCornerShape(12.dp))
+                            Modifier.border(1.dp, BorderSub, RoundedCornerShape(10.dp))
                         else Modifier
                     )
                     .clickable { onChoose() },
@@ -589,7 +542,7 @@ private fun PlanCard(
                 Text(
                     "Choose Plan",
                     color = if (plan.isPopular || plan.isPremium) Color.White else TextMuted,
-                    fontSize = 13.sp,
+                    fontSize = 12.sp,
                     fontWeight = FontWeight.SemiBold
                 )
             }

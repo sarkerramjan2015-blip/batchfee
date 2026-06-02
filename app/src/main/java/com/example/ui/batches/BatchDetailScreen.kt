@@ -61,6 +61,7 @@ fun BatchDetailScreen(
     db: AppDatabase,
     batchId: String,
     onBack: () -> Unit,
+    onEdit: () -> Unit,
     onEnroll: () -> Unit
 ) {
     val context = LocalContext.current
@@ -470,7 +471,7 @@ fun BatchDetailScreen(
             onDismiss = { showBatchMenu = false },
             onEdit = {
                 showBatchMenu = false
-                scope.launch { snackbarHostState.showSnackbar("Edit batch will be added next.") }
+                onEdit()
             },
             onClose = {
                 showBatchMenu = false

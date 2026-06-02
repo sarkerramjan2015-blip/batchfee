@@ -1,5 +1,6 @@
 package com.example.ui.auth
 
+import android.content.Context
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
@@ -26,6 +27,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -40,6 +42,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.database.AppDatabase
 import com.example.data.models.InstituteEntity
 import com.example.data.models.UserEntity
+import com.example.domain.BiometricAuthManager
 import com.example.domain.PasswordHasher
 import com.example.domain.SessionManager
 import kotlinx.coroutines.flow.first
@@ -182,6 +185,50 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
             }
         }
     }
+
+    fun loginWithBiometric(
+        context: Context,
+        onSuccess: (role: String) -> Unit,
+        onError: (String) -> Unit
+    ) {
+        val appContext = context.applicationContext
+        val saved = BiometricAuthManager.savedSession(appContext)
+        if (saved == null) {
+            onError("Biometric login is not enabled.")
+            return
+        }
+
+        val availability = BiometricAuthManager.availabilityMessage(appContext)
+        if (availability != null) {
+            onError(availability)
+            return
+        }
+
+        viewModelScope.launch {
+            try {
+                val user = db.userDao().getUserFlow(saved.userId).first()
+                if (user == null) {
+                    BiometricAuthManager.disable(appContext)
+                    onError("Saved biometric user was not found. Log in with password again.")
+                    return@launch
+                }
+
+                val instituteId = user.instituteId ?: ""
+                if (instituteId.isEmpty() && user.role == "InstituteOwner") {
+                    BiometricAuthManager.disable(appContext)
+                    onError("Saved biometric account is incomplete. Log in with password again.")
+                    return@launch
+                }
+
+                SessionManager.login(user.id, instituteId, user.role)
+                BiometricAuthManager.refreshCurrentSession(appContext, user.email)
+                onSuccess(user.role)
+            } catch (e: Exception) {
+                e.printStackTrace()
+                onError("Biometric login failed. Try password login.")
+            }
+        }
+    }
 }
 
 class AuthViewModelFactory(private val db: AppDatabase) : ViewModelProvider.Factory {
@@ -317,10 +364,12 @@ private fun DarkTextField(
 @Composable
 fun AuthScreen(
     db: AppDatabase,
+    sessionNotice: String? = null,
     onNavigateDashboard: () -> Unit,
     onNavigateSuperAdmin: () -> Unit
 ) {
     val viewModel: AuthViewModel = viewModel(factory = AuthViewModelFactory(db))
+    val context = LocalContext.current
     var isLoginMode by remember { mutableStateOf(true) }
 
     var email by remember { mutableStateOf("") }
@@ -333,8 +382,14 @@ fun AuthScreen(
     var loadingDemoAccount by remember { mutableStateOf<String?>(null) }
     var passwordVisible by remember { mutableStateOf(false) }
     var contentVisible by remember { mutableStateOf(false) }
+    var biometricLoginAvailable by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { contentVisible = true }
+    LaunchedEffect(sessionNotice, isLoginMode) {
+        biometricLoginAvailable = isLoginMode &&
+            BiometricAuthManager.savedSession(context) != null &&
+            BiometricAuthManager.canAuthenticate(context)
+    }
 
     val bgGradient = Brush.verticalGradient(
         colors = listOf(AuthBg, AuthBgMid, AuthBgEnd)
@@ -499,6 +554,25 @@ fun AuthScreen(
                                 modifier = Modifier.fillMaxWidth()
                             )
                         }
+                    } else if (sessionNotice != null) {
+                        Spacer(Modifier.height(12.dp))
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(AuthBlue.copy(alpha = 0.14f))
+                                .border(1.dp, AuthCyan.copy(alpha = 0.35f), RoundedCornerShape(10.dp))
+                                .padding(10.dp)
+                        ) {
+                            Text(
+                                sessionNotice,
+                                color = AuthCyan,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
                     }
 
                     Spacer(Modifier.height(20.dp))
@@ -512,6 +586,7 @@ fun AuthScreen(
                             if (isLoginMode) {
                                 viewModel.login(email, password, onSuccess = { role ->
                                     isLoading = false
+                                    BiometricAuthManager.refreshCurrentSession(context, email)
                                     if (role == "SuperAdmin") onNavigateSuperAdmin()
                                     else onNavigateDashboard()
                                 }, onError = {
@@ -523,6 +598,7 @@ fun AuthScreen(
                                     instituteName, ownerName, email, password,
                                     onSuccess = {
                                         isLoading = false
+                                        BiometricAuthManager.refreshCurrentSession(context, email)
                                         onNavigateDashboard()
                                     },
                                     onError = {
@@ -561,6 +637,57 @@ fun AuthScreen(
                                     fontSize = 15.sp
                                 )
                             }
+                        }
+                    }
+
+                    if (biometricLoginAvailable) {
+                        Spacer(Modifier.height(12.dp))
+                        OutlinedButton(
+                            onClick = {
+                                if (isLoading || loadingDemoAccount != null) return@OutlinedButton
+                                errorMessage = null
+                                val availability = BiometricAuthManager.availabilityMessage(context)
+                                val activity = BiometricAuthManager.findFragmentActivity(context)
+                                when {
+                                    availability != null -> errorMessage = availability
+                                    activity == null -> errorMessage = "Biometric login needs an active app screen."
+                                    else -> BiometricAuthManager.showPrompt(
+                                        activity = activity,
+                                        title = "Unlock BatchFee",
+                                        subtitle = "Use your fingerprint to log in",
+                                        negativeButtonText = "Use password",
+                                        onSuccess = {
+                                            isLoading = true
+                                            viewModel.loginWithBiometric(
+                                                context = context,
+                                                onSuccess = { role ->
+                                                    isLoading = false
+                                                    if (role == "SuperAdmin") onNavigateSuperAdmin()
+                                                    else onNavigateDashboard()
+                                                },
+                                                onError = {
+                                                    errorMessage = it
+                                                    isLoading = false
+                                                    biometricLoginAvailable =
+                                                        BiometricAuthManager.savedSession(context) != null &&
+                                                        BiometricAuthManager.canAuthenticate(context)
+                                                }
+                                            )
+                                        },
+                                        onError = { errorMessage = it }
+                                    )
+                                }
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(50.dp),
+                            shape = RoundedCornerShape(14.dp),
+                            border = BorderStroke(1.dp, AuthCyan.copy(alpha = 0.55f)),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = AuthCyan)
+                        ) {
+                            Icon(Icons.Filled.Fingerprint, contentDescription = null, modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Login with Fingerprint", fontWeight = FontWeight.Bold, fontSize = 14.sp)
                         }
                     }
                 }
@@ -668,4 +795,3 @@ fun AuthScreen(
         }
     }
 }
-

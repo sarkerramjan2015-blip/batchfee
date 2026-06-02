@@ -24,6 +24,7 @@ object BillingRoute
 
 @Serializable object BatchesRoute
 @Serializable object AddBatchRoute
+@Serializable data class EditBatchRoute(val batchId: String)
 @Serializable data class BatchDetailRoute(val batchId: String)
 @Serializable data class EnrollStudentsRoute(val batchId: String)
 

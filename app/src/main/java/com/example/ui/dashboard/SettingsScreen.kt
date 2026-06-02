@@ -25,6 +25,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.database.AppDatabase
+import com.example.domain.BiometricAuthManager
 import com.example.domain.DataExporter
 import com.example.domain.ThemePreferences
 import kotlinx.coroutines.Dispatchers
@@ -49,11 +50,14 @@ fun SettingsScreen(
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val snackbarHostState = remember { SnackbarHostState() }
     val isDark by ThemePreferences.isDarkMode.collectAsState()
     val currentDark = isDark ?: true
+    var biometricEnabled by remember { mutableStateOf(BiometricAuthManager.isEnabled(context)) }
     var showResetConfirmation by remember { mutableStateOf(false) }
     Scaffold(
         containerColor = BgColor, // polish: navy background
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text("Settings", color = TextWhite, fontWeight = FontWeight.Bold, fontSize = 20.sp) },
@@ -124,6 +128,66 @@ fun SettingsScreen(
                         colors = SwitchDefaults.colors(checkedThumbColor = Cyan, checkedTrackColor = Cyan.copy(alpha = 0.3f))
                     )
                 }
+            }
+
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 16.dp)
+                    .shadow(2.dp, RoundedCornerShape(14.dp), spotColor = Cyan.copy(alpha = 0.15f)),
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = CardBg),
+                border = BorderStroke(1.dp, BorderSub)
+            ) {
+                val availabilityMessage = BiometricAuthManager.availabilityMessage(context)
+                SettingsSwitchRow(
+                    title = "Fingerprint Login",
+                    icon = Icons.Filled.Fingerprint,
+                    subtitle = when {
+                        biometricEnabled -> "Enabled for this account"
+                        availabilityMessage != null -> availabilityMessage
+                        else -> "Use fingerprint from the login screen"
+                    },
+                    checked = biometricEnabled,
+                    enabled = availabilityMessage == null || biometricEnabled,
+                    onCheckedChange = { checked ->
+                        if (checked) {
+                            val activity = BiometricAuthManager.findFragmentActivity(context)
+                            when {
+                                availabilityMessage != null -> {
+                                    scope.launch { snackbarHostState.showSnackbar(availabilityMessage) }
+                                }
+                                activity == null -> {
+                                    scope.launch { snackbarHostState.showSnackbar("Fingerprint setup needs an active app screen.") }
+                                }
+                                else -> {
+                                    BiometricAuthManager.showPrompt(
+                                        activity = activity,
+                                        title = "Enable Fingerprint Login",
+                                        subtitle = "Confirm your fingerprint for this BatchFee account",
+                                        negativeButtonText = "Cancel",
+                                        onSuccess = {
+                                            val error = BiometricAuthManager.enableForCurrentSession(context)
+                                            if (error == null) {
+                                                biometricEnabled = true
+                                                scope.launch { snackbarHostState.showSnackbar("Fingerprint login enabled.") }
+                                            } else {
+                                                scope.launch { snackbarHostState.showSnackbar(error) }
+                                            }
+                                        },
+                                        onError = { message ->
+                                            scope.launch { snackbarHostState.showSnackbar(message) }
+                                        }
+                                    )
+                                }
+                            }
+                        } else {
+                            BiometricAuthManager.disable(context)
+                            biometricEnabled = false
+                            scope.launch { snackbarHostState.showSnackbar("Fingerprint login disabled.") }
+                        }
+                    }
+                )
             }
 
             // polish: preferences card (non-clickable items)
@@ -228,5 +292,38 @@ private fun SettingsRow(
         if (onClick != null) {
             Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = TextMuted.copy(alpha = 0.4f), modifier = Modifier.size(18.dp))
         }
+    }
+}
+
+@Composable
+private fun SettingsSwitchRow(
+    title: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    subtitle: String,
+    checked: Boolean,
+    enabled: Boolean = true,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            icon,
+            contentDescription = null,
+            tint = if (enabled || checked) Cyan else TextMuted.copy(alpha = 0.55f),
+            modifier = Modifier.size(22.dp)
+        )
+        Spacer(Modifier.width(14.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+            Text(subtitle, color = TextMuted, fontSize = 11.sp)
+        }
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            enabled = enabled || checked,
+            colors = SwitchDefaults.colors(checkedThumbColor = Cyan, checkedTrackColor = Cyan.copy(alpha = 0.3f))
+        )
     }
 }

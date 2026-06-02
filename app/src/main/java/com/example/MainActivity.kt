@@ -1,7 +1,6 @@
 package com.example
 
 import android.os.Bundle
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
@@ -13,6 +12,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.fragment.app.FragmentActivity
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -27,8 +27,14 @@ import com.example.ui.navigation.*
 import com.example.ui.pricing.PricingScreen
 import com.example.ui.superadmin.SuperAdminScreen
 import com.example.ui.theme.MyApplicationTheme
+import kotlinx.coroutines.delay
 
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
+    override fun onUserInteraction() {
+        super.onUserInteraction()
+        SessionManager.markActivity()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -43,20 +49,10 @@ class MainActivity : ComponentActivity() {
                 ) {
                     val navController = rememberNavController()
                     val lifecycleOwner = LocalLifecycleOwner.current
-
-                    // ── Auto-logout when app is backgrounded ─────────────────
-                    DisposableEffect(lifecycleOwner) {
-                        val observer = LifecycleEventObserver { _, event ->
-                            if (event == Lifecycle.Event.ON_STOP) {
-                                SessionManager.logout()
-                            }
-                        }
-                        lifecycleOwner.lifecycle.addObserver(observer)
-                        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-                    }
-
-                    // ── Redirect to login when session is cleared ─────────────
+                    // Redirect to login when session is cleared.
                     val isLoggedIn by SessionManager.currentUserId.collectAsState()
+                    val sessionNotice by SessionManager.sessionNotice.collectAsState()
+                    val lastActivityAtMs by SessionManager.lastActivityAtMs.collectAsState()
                     var wasLoggedIn by remember { mutableStateOf(false) }
                     LaunchedEffect(isLoggedIn) {
                         if (isLoggedIn == null && wasLoggedIn) {
@@ -67,10 +63,35 @@ class MainActivity : ComponentActivity() {
                         wasLoggedIn = isLoggedIn != null
                     }
 
+                    DisposableEffect(lifecycleOwner) {
+                        val observer = LifecycleEventObserver { _, event ->
+                            if (event == Lifecycle.Event.ON_RESUME && SessionManager.isLoggedIn()) {
+                                if (SessionManager.isSessionInactive()) {
+                                    SessionManager.expireSession()
+                                } else {
+                                    SessionManager.markActivity()
+                                }
+                            }
+                        }
+                        lifecycleOwner.lifecycle.addObserver(observer)
+                        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+                    }
+
+                    LaunchedEffect(isLoggedIn, lastActivityAtMs) {
+                        val activeUserId = isLoggedIn ?: return@LaunchedEffect
+                        val elapsedMs = System.currentTimeMillis() - lastActivityAtMs
+                        val remainingMs = (SessionManager.SESSION_TIMEOUT_MS - elapsedMs).coerceAtLeast(0)
+                        delay(remainingMs)
+                        if (SessionManager.currentUserId.value == activeUserId && SessionManager.isSessionInactive()) {
+                            SessionManager.expireSession()
+                        }
+                    }
+
                     NavHost(navController = navController, startDestination = AuthRoute) {
                         composable<AuthRoute> {
                             AuthScreen(
                                 db = appDb,
+                                sessionNotice = sessionNotice,
                                 onNavigateDashboard = { 
                                     navController.navigate(DashboardRoute) {
                                         popUpTo(navController.graph.id) { inclusive = true }
@@ -117,12 +138,20 @@ class MainActivity : ComponentActivity() {
                                             "IdCardGeneratorRoute" -> navController.navigate(com.example.ui.navigation.IdCardGeneratorRoute)
                                             "BirthdayReminderRoute" -> navController.navigate(com.example.ui.navigation.BirthdayReminderRoute)
                                             "SettingsRoute" -> navController.navigate(com.example.ui.navigation.SettingsRoute)
+                                            else -> {
+                                                if (route.startsWith("TakeAttendanceRoute:")) {
+                                                    route.substringAfter(":").takeIf { it.isNotBlank() }?.let { batchId ->
+                                                        navController.navigate(TakeAttendanceRoute(batchId))
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 },
                                 onNavigatePricing = { navController.navigate(PricingRoute) },
                                 onNavigateBilling = { navController.navigate(BillingRoute) },
                                 onLogout = {
+                                    SessionManager.logout()
                                     navController.navigate(AuthRoute) {
                                         popUpTo(navController.graph.id) { inclusive = true }
                                     }
@@ -176,6 +205,15 @@ class MainActivity : ComponentActivity() {
                         composable<AddBatchRoute> {
                             com.example.ui.batches.AddEditBatchScreen(db = appDb, onBack = { navController.popBackStack() })
                         }
+
+                        composable<EditBatchRoute> { backStackEntry ->
+                            val route = backStackEntry.toRoute<EditBatchRoute>()
+                            com.example.ui.batches.AddEditBatchScreen(
+                                db = appDb,
+                                batchId = route.batchId,
+                                onBack = { navController.popBackStack() }
+                            )
+                        }
                         
                         composable<BatchDetailRoute> { backStackEntry ->
                             val route = backStackEntry.toRoute<BatchDetailRoute>()
@@ -183,6 +221,7 @@ class MainActivity : ComponentActivity() {
                                 db = appDb,
                                 batchId = route.batchId,
                                 onBack = { navController.popBackStack() },
+                                onEdit = { navController.navigate(EditBatchRoute(route.batchId)) },
                                 onEnroll = { navController.navigate(EnrollStudentsRoute(route.batchId)) }
                             )
                         }
@@ -307,7 +346,7 @@ class MainActivity : ComponentActivity() {
                                 db = appDb,
                                 staffId = route.staffId,
                                 onBack = { navController.popBackStack() },
-                                onEdit = { navController.navigate(AddStaffRoute) } // Navigate to edit — TODO: pass staffId for edit mode
+                                onEdit = { navController.navigate(EditStaffRoute(route.staffId)) }
                             )
                         }
                         
@@ -414,6 +453,7 @@ class MainActivity : ComponentActivity() {
                             SuperAdminScreen(
                                 db = appDb,
                                 onLogout = {
+                                    SessionManager.logout()
                                     navController.navigate(AuthRoute) {
                                         popUpTo(navController.graph.id) { inclusive = true }
                                     }

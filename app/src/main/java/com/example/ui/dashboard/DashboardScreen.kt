@@ -388,6 +388,9 @@ fun DashboardScreen(
     val currentMonthLabel = remember {
         SimpleDateFormat("MMM yyyy", Locale.getDefault()).format(java.util.Calendar.getInstance().time)
     }
+    val todayLabel = remember {
+        SimpleDateFormat("EEE, dd MMM", Locale.getDefault()).format(java.util.Calendar.getInstance().time)
+    }
     val studentOverall = remember(attSummaries) {
         if (attSummaries.isEmpty()) null else BatchAttendanceSummary(
             batchName = "All Batches",
@@ -444,70 +447,27 @@ fun DashboardScreen(
                 .padding(innerPadding)
                 .verticalScroll(rememberScrollState())
         ) {
-            // Header
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(DashboardCard)
-                    .padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(48.dp)
-                        .clip(CircleShape)
-                        .background(AccentCyan)
-                        .clickable { showProfilePopup = true },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        (institute?.name ?: "B").take(1).uppercase(),
-                        color = DashboardBg,
-                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
-                    )
-                }
-                Spacer(modifier = Modifier.width(16.dp))
-                Column(modifier = Modifier.weight(1f).clickable { showProfilePopup = true }) {
-                    Text(
-                        institute?.name ?: "BatchFee Institute",
-                        color = TextPrimary,
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
-                    )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("View Profile", color = TextSecondary, style = MaterialTheme.typography.bodySmall)
-                        Icon(Icons.Filled.ArrowDropDown, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(16.dp))
-                    }
-                }
-                IconButton(onClick = { onNavigate("SettingsRoute") }) {
-                    Icon(Icons.Filled.Settings, contentDescription = "Settings", tint = TextPrimary)
-                }
-            }
-            
-            // Thin accent line
-            Box(modifier = Modifier.fillMaxWidth().height(2.dp).background(
-                androidx.compose.ui.graphics.Brush.horizontalGradient(listOf(AccentCyan, AccentGreen, AccentBlue))
-            ))
+            DashboardHeader(
+                institute = institute,
+                ownerName = currentUser?.name,
+                savedProfilePhotoUri = savedProfilePhotoUri,
+                todayLabel = todayLabel,
+                planLabel = if (institute?.subscriptionStatus == "trial") {
+                    "Trial: $trialDays days"
+                } else {
+                    currentPlan?.name ?: "Active plan"
+                },
+                onProfileClick = { showProfilePopup = true },
+                onSettingsClick = { onNavigate("SettingsRoute") }
+            )
 
-            Column(modifier = Modifier.padding(16.dp)) {
+            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
                 if (institute?.subscriptionStatus == "trial") {
-                    Card(
-                        modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
-                        shape = RoundedCornerShape(16.dp),
-                        colors = CardDefaults.cardColors(containerColor = DashboardCard),
-                        border = borderStroke()
-                    ) {
-                        Row(modifier = Modifier.padding(16.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Filled.Info, contentDescription = null, tint = AccentCyan)
-                            Spacer(Modifier.width(12.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text("30-day Free Trial", color = TextPrimary, style = MaterialTheme.typography.titleSmall)
-                                Text("$trialDays days left", color = TextSecondary, style = MaterialTheme.typography.bodySmall)
-                            }
-                            TextButton(onClick = onNavigatePricing) {
-                                Text("Upgrade", color = AccentCyan)
-                            }
-                        }
-                    }
+                    TrialReminderCard(
+                        trialDays = trialDays,
+                        onUpgrade = onNavigatePricing,
+                        modifier = Modifier.padding(bottom = 12.dp)
+                    )
                 }
 
                 // Overview Card
@@ -519,10 +479,9 @@ fun DashboardScreen(
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text("Overview", color = TextPrimary, style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
+                            Text("Institute Snapshot", color = TextPrimary, style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
                             Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                                Text("Active", color = AccentCyan, style = MaterialTheme.typography.labelSmall)
-                                Text("Inactive", color = AccentRed, style = MaterialTheme.typography.labelSmall)
+                                Text("Tap to manage", color = TextSecondary, style = MaterialTheme.typography.labelSmall)
                             }
                         }
                         Spacer(Modifier.height(16.dp))
@@ -555,7 +514,7 @@ fun DashboardScreen(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
                 // Staff Logs Card
                 Card(
@@ -564,34 +523,45 @@ fun DashboardScreen(
                     border = borderStroke()
                 ) {
                     Row(
-                        modifier = Modifier.padding(16.dp).fillMaxWidth(),
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp).fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Filled.History, contentDescription = null, tint = AccentBlue)
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(AccentBlue.copy(alpha = 0.14f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Filled.History, contentDescription = null, tint = AccentBlue, modifier = Modifier.size(20.dp))
+                            }
                             Spacer(Modifier.width(12.dp))
-                            Text("Staff Logs", color = TextPrimary, style = MaterialTheme.typography.titleSmall)
+                            Column {
+                                Text("Staff Logs", color = TextPrimary, style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold))
+                                Text("Attendance and salary activity", color = TextSecondary, fontSize = 11.sp)
+                            }
                         }
-                        Text("View more", color = AccentCyan, style = MaterialTheme.typography.labelMedium)
+                        Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(20.dp))
                     }
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(14.dp))
 
                 // ── Live Attendance Summary ────────────────────
 
                 // ── Main attendance card ───────────────────────
                 Card(
-                    modifier = Modifier.fillMaxWidth().shadow(6.dp, RoundedCornerShape(16.dp), spotColor = AccentCyan.copy(0.15f)),
+                    modifier = Modifier.fillMaxWidth().shadow(3.dp, RoundedCornerShape(16.dp), spotColor = AccentCyan.copy(0.10f)),
                     shape = RoundedCornerShape(16.dp),
                     colors = CardDefaults.cardColors(containerColor = DashboardCard),
                     border = borderStroke()
                 ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
+                    Column(modifier = Modifier.padding(14.dp)) {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically) {
-                            Text("Attendance Summary", color = TextPrimary, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                            Text("Attendance", color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                             Text(currentMonthLabel, color = AccentCyan, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                         }
                         Spacer(Modifier.height(12.dp))
@@ -602,14 +572,13 @@ fun DashboardScreen(
                                 horizontalAlignment = Alignment.CenterHorizontally) {
                                 CircularProgressIndicator(color = AccentCyan, strokeWidth = 2.dp, modifier = Modifier.size(24.dp))
                                 Spacer(Modifier.height(8.dp))
-                                Text("Loading…", color = TextSecondary, fontSize = 12.sp)
+                                Text("Loading...", color = TextSecondary, fontSize = 12.sp)
                             }
                         } else if (studentOverall != null && studentOverall.markedCount > 0) {
                             // ── Student segmented bar ──────────────
                             AttendanceSegmentedBar(studentOverall, "Students")
                             Spacer(Modifier.height(12.dp))
                             // ── Staff segmented bar ────────────────
-                            val staffTot = staffSum.totalStaff.coerceAtLeast(1)
                             StaffSegmentedBar(staffSum)
                         } else {
                             Column(Modifier.fillMaxWidth().padding(vertical = 12.dp),
@@ -669,18 +638,18 @@ fun DashboardScreen(
                 // ── Financial Collection Cards ────────────────
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     // Today Collection
                     Card(
                         modifier = Modifier.weight(1f).clickable {
                             safeNavigate("ReportsRoute")
                         },
-                        shape = RoundedCornerShape(14.dp),
+                        shape = RoundedCornerShape(12.dp),
                         colors = CardDefaults.cardColors(containerColor = DashboardCard),
                         border = borderStroke()
                     ) {
-                        Column(modifier = Modifier.padding(14.dp)) {
+                        Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 12.dp)) {
                             Text("Today", color = TextSecondary, fontSize = 11.sp)
                             Spacer(Modifier.height(4.dp))
                             AnimatedCounter(target = financialSummary.todayIncome, prefix = "BDT ")
@@ -690,11 +659,11 @@ fun DashboardScreen(
                     // Monthly Collection
                     Card(
                         modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(14.dp),
+                        shape = RoundedCornerShape(12.dp),
                         colors = CardDefaults.cardColors(containerColor = DashboardCard),
                         border = borderStroke()
                     ) {
-                        Column(modifier = Modifier.padding(14.dp)) {
+                        Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 12.dp)) {
                             Text("Monthly", color = TextSecondary, fontSize = 11.sp)
                             Spacer(Modifier.height(4.dp))
                             AnimatedCounter(target = financialSummary.monthIncome, prefix = "BDT ")
@@ -704,11 +673,11 @@ fun DashboardScreen(
                     // Lifetime Collection
                     Card(
                         modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(14.dp),
+                        shape = RoundedCornerShape(12.dp),
                         colors = CardDefaults.cardColors(containerColor = DashboardCard),
                         border = borderStroke()
                     ) {
-                        Column(modifier = Modifier.padding(14.dp)) {
+                        Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 12.dp)) {
                             Text("Lifetime", color = TextSecondary, fontSize = 11.sp)
                             Spacer(Modifier.height(4.dp))
                             AnimatedCounter(target = financialSummary.lifetimeIncome, prefix = "BDT ")
@@ -726,20 +695,21 @@ fun DashboardScreen(
                     colors = CardDefaults.cardColors(containerColor = DashboardCard),
                     border = borderStroke()
                 ) {
-                    Column(modifier = Modifier.padding(20.dp).fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(16.dp).fillMaxWidth()) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Box(
-                                modifier = Modifier.size(42.dp).clip(RoundedCornerShape(12.dp))
+                                modifier = Modifier.size(38.dp).clip(RoundedCornerShape(12.dp))
                                     .background(AccentAmber.copy(alpha = 0.12f)),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Icon(Icons.Filled.Calculate, contentDescription = null, tint = AccentAmber, modifier = Modifier.size(24.dp))
+                                Icon(Icons.Filled.Calculate, contentDescription = null, tint = AccentAmber, modifier = Modifier.size(21.dp))
                             }
                             Spacer(Modifier.width(12.dp))
-                            Text("Due Fees", color = TextPrimary, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                            Text("Due Fees", color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                            Text("View", color = AccentCyan, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                         }
-                        Spacer(Modifier.height(20.dp))
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(28.dp)) {
+                        Spacer(Modifier.height(14.dp))
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             DueSummaryBlock(
                                 count = dueFeeSummary.activeCount,
                                 amount = dueFeeSummary.activeAmount,
@@ -766,7 +736,8 @@ fun DashboardScreen(
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
-
+                SectionHeader(title = "Tools & reminders")
+                Spacer(modifier = Modifier.height(10.dp))
                 HomeEngagementSection(
                     examCount = examCount,
                     birthdayCount = birthdayCount,
@@ -778,15 +749,15 @@ fun DashboardScreen(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                Text("Quick Actions", color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                SectionHeader(title = "Quick Actions")
                 Spacer(Modifier.height(10.dp))
                 val shortcuts = listOf(
                     Triple("Add Student", Icons.Filled.PersonAdd, "AddStudentRoute"),
                     Triple("Create Batch", Icons.Filled.Class, "AddBatchRoute"),
                     Triple("Collect Fee", Icons.Filled.Payments, "UnifiedCollectRoute"),
                     Triple("Attendance", Icons.Filled.HowToReg, "AttendanceRoute"),
-                    Triple("Add Expense", Icons.Filled.Receipt, "ExpensesRoute"),
-                    Triple("Add Staff", Icons.Filled.PersonAddAlt1, "StaffRoute")
+                    Triple("Add Expense", Icons.Filled.Receipt, "AddExpenseRoute"),
+                    Triple("Add Staff", Icons.Filled.PersonAddAlt1, "AddStaffRoute")
                 )
                 // FIX: Replaced LazyVerticalGrid with manual Row/Column grid.
                 // LazyVerticalGrid nested inside a scrollable Column receives
@@ -846,7 +817,10 @@ fun DashboardScreen(
                             }
                             Spacer(Modifier.height(12.dp))
                             OutlinedButton(
-                                onClick = { selectedBatchId = null; safeNavigate("TakeAttendanceRoute") },
+                                onClick = {
+                                    selectedBatchId = null
+                                    onNavigate("TakeAttendanceRoute:$bid")
+                                },
                                 modifier = Modifier.fillMaxWidth().height(44.dp),
                                 shape = RoundedCornerShape(12.dp),
                                 border = androidx.compose.foundation.BorderStroke(1.dp, AccentCyan),
@@ -1576,17 +1550,228 @@ private suspend fun persistInstituteProfilePhoto(context: android.content.Contex
 private fun borderStroke() = androidx.compose.foundation.BorderStroke(1.dp, DashboardStroke)
 
 @Composable
-private fun DueSummaryBlock(count: Int, amount: Double, label: String, modifier: Modifier = Modifier) {
-    Column(modifier = modifier) {
+private fun DashboardHeader(
+    institute: InstituteEntity?,
+    ownerName: String?,
+    savedProfilePhotoUri: Uri?,
+    todayLabel: String,
+    planLabel: String,
+    onProfileClick: () -> Unit,
+    onSettingsClick: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(DashboardCard)
+            .padding(horizontal = 16.dp, vertical = 14.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(54.dp)
+                    .clip(CircleShape)
+                    .background(if (savedProfilePhotoUri == null) AccentCyan else DashboardCardAlt)
+                    .border(1.dp, AccentCyan.copy(alpha = 0.70f), CircleShape)
+                    .clickable(onClick = onProfileClick),
+                contentAlignment = Alignment.Center
+            ) {
+                if (savedProfilePhotoUri != null) {
+                    AsyncImage(
+                        model = savedProfilePhotoUri,
+                        contentDescription = "Institute profile photo",
+                        modifier = Modifier.fillMaxSize().clip(CircleShape),
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                    )
+                } else {
+                    Text(
+                        (institute?.name ?: "B").take(1).uppercase(),
+                        color = DashboardBg,
+                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.width(14.dp))
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable(onClick = onProfileClick)
+            ) {
+                Text(
+                    institute?.name ?: "BatchFee Institute",
+                    color = TextPrimary,
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(Modifier.height(3.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        ownerName?.takeIf { it.isNotBlank() } ?: "Institute Owner",
+                        color = TextSecondary,
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    Icon(Icons.Filled.ArrowDropDown, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(16.dp))
+                }
+            }
+            IconButton(
+                onClick = onSettingsClick,
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(DashboardCardAlt)
+                    .border(1.dp, DashboardStroke, RoundedCornerShape(14.dp))
+            ) {
+                Icon(Icons.Filled.Settings, contentDescription = "Settings", tint = TextPrimary, modifier = Modifier.size(22.dp))
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            DashboardHeaderPill(
+                icon = Icons.Filled.CalendarToday,
+                text = todayLabel,
+                accent = AccentSky,
+                modifier = Modifier.weight(1f)
+            )
+            DashboardHeaderPill(
+                icon = Icons.Filled.WorkspacePremium,
+                text = planLabel,
+                accent = AccentGreen,
+                modifier = Modifier.weight(1f)
+            )
+        }
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(2.dp)
+            .background(
+                androidx.compose.ui.graphics.Brush.horizontalGradient(
+                    listOf(AccentCyan, AccentGreen, AccentBlue)
+                )
+            )
+    )
+}
+
+@Composable
+private fun DashboardHeaderPill(
+    icon: ImageVector,
+    text: String,
+    accent: Color,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .height(34.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(accent.copy(alpha = 0.10f))
+            .border(1.dp, accent.copy(alpha = 0.22f), RoundedCornerShape(12.dp))
+            .padding(horizontal = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(icon, contentDescription = null, tint = accent, modifier = Modifier.size(16.dp))
+        Spacer(Modifier.width(7.dp))
         Text(
-            "($count) ${formatDashboardAmount(amount)}",
+            text,
             color = TextPrimary,
-            fontSize = 22.sp,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
+private fun TrialReminderCard(
+    trialDays: Int,
+    onUpgrade: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = DashboardCard),
+        border = borderStroke()
+    ) {
+        Row(
+            modifier = Modifier
+                .padding(horizontal = 14.dp, vertical = 12.dp)
+                .fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(AccentCyan.copy(alpha = 0.12f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Filled.Info, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(20.dp))
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Free Trial", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Text("$trialDays days left", color = TextSecondary, fontSize = 12.sp)
+            }
+            TextButton(onClick = onUpgrade, contentPadding = PaddingValues(horizontal = 8.dp)) {
+                Text("Upgrade", color = AccentCyan, fontWeight = FontWeight.SemiBold)
+            }
+        }
+    }
+}
+
+@Composable
+private fun SectionHeader(title: String, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            title,
+            color = TextPrimary,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.weight(1f)
+        )
+        Box(
+            modifier = Modifier
+                .width(42.dp)
+                .height(2.dp)
+                .clip(RoundedCornerShape(2.dp))
+                .background(AccentCyan.copy(alpha = 0.55f))
+        )
+    }
+}
+
+@Composable
+private fun DueSummaryBlock(count: Int, amount: Double, label: String, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(DashboardCardAlt)
+            .border(1.dp, DashboardStroke, RoundedCornerShape(12.dp))
+            .padding(12.dp)
+    ) {
+        Text(label, color = TextSecondary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(6.dp))
+        Text(
+            formatDashboardAmount(amount),
+            color = TextPrimary,
+            fontSize = 17.sp,
             fontWeight = FontWeight.Bold,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
-        Text(label, color = TextSecondary, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+        Text("$count students", color = TextSecondary, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -1675,20 +1860,20 @@ private fun HomeFeatureTile(
 ) {
     Card(
         modifier = modifier
-            .height(78.dp)
+            .height(68.dp)
             .clickable(onClick = onClick),
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = DashboardCardAlt),
         border = borderStroke()
     ) {
         Row(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 14.dp),
+                .padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(icon, contentDescription = null, tint = AccentAmber, modifier = Modifier.size(30.dp))
-            Spacer(Modifier.width(12.dp))
+            Icon(icon, contentDescription = null, tint = AccentAmber, modifier = Modifier.size(24.dp))
+            Spacer(Modifier.width(10.dp))
             Text(
                 buildAnnotatedString {
                     append(title)
@@ -1698,7 +1883,7 @@ private fun HomeFeatureTile(
                     }
                 },
                 color = TextPrimary,
-                fontSize = 19.sp,
+                fontSize = 15.sp,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
@@ -1716,24 +1901,24 @@ private fun HomeFullActionTile(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .height(74.dp)
+            .height(58.dp)
             .clickable(onClick = onClick),
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = DashboardCardAlt),
         border = borderStroke()
     ) {
         Row(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 18.dp),
+                .padding(horizontal = 14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(icon, contentDescription = null, tint = AccentAmber, modifier = Modifier.size(30.dp))
-            Spacer(Modifier.width(14.dp))
+            Icon(icon, contentDescription = null, tint = AccentAmber, modifier = Modifier.size(23.dp))
+            Spacer(Modifier.width(12.dp))
             Text(
                 title,
                 color = TextPrimary,
-                fontSize = 23.sp,
+                fontSize = 16.sp,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
@@ -1753,14 +1938,14 @@ private fun EnquirySummaryCard(
         colors = CardDefaults.cardColors(containerColor = DashboardCardAlt),
         border = borderStroke()
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Column(modifier = Modifier.padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Filled.PersonAddAlt1, contentDescription = null, tint = AccentAmber, modifier = Modifier.size(28.dp))
+                Icon(Icons.Filled.PersonAddAlt1, contentDescription = null, tint = AccentAmber, modifier = Modifier.size(24.dp))
                 Spacer(Modifier.width(10.dp))
                 Text(
                     "Enquiry",
                     color = TextPrimary,
-                    fontSize = 22.sp,
+                    fontSize = 17.sp,
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.weight(1f),
                     maxLines = 1,
@@ -1768,7 +1953,7 @@ private fun EnquirySummaryCard(
                 )
             }
 
-            Spacer(Modifier.height(18.dp))
+            Spacer(Modifier.height(12.dp))
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1788,8 +1973,8 @@ private fun EnquirySummaryCard(
 
                 Box(
                     modifier = Modifier
-                        .size(68.dp)
-                        .clip(RoundedCornerShape(18.dp))
+                        .size(52.dp)
+                        .clip(RoundedCornerShape(14.dp))
                         .background(AccentAmber)
                         .clickable(onClick = onAdd),
                     contentAlignment = Alignment.Center
@@ -1798,7 +1983,7 @@ private fun EnquirySummaryCard(
                         Icons.Filled.Add,
                         contentDescription = "Add enquiry",
                         tint = Color(0xFF111827),
-                        modifier = Modifier.size(34.dp)
+                        modifier = Modifier.size(27.dp)
                     )
                 }
             }
@@ -1815,7 +2000,7 @@ private fun EnquiryStat(value: Int, label: String, modifier: Modifier = Modifier
         Text(
             value.toString(),
             color = TextPrimary,
-            fontSize = 21.sp,
+            fontSize = 17.sp,
             fontWeight = FontWeight.Bold,
             maxLines = 1
         )
@@ -1917,9 +2102,16 @@ private fun OverviewRow(
                     style = MaterialTheme.typography.bodyMedium
                 )
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("$active", color = AccentCyan, style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold), modifier = Modifier.width(40.dp), textAlign = TextAlign.End)
-                Text("$inactive", color = AccentRed, style = MaterialTheme.typography.titleSmall, modifier = Modifier.width(40.dp), textAlign = TextAlign.End)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(AccentCyan.copy(alpha = 0.12f))
+                        .padding(horizontal = 12.dp, vertical = 5.dp)
+                ) {
+                    Text("$active", color = AccentCyan, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                }
+                Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = TextMuted, modifier = Modifier.size(18.dp))
             }
         }
     }
@@ -2092,22 +2284,41 @@ private fun TableRow(label: String, val1: String, val2: String, val3: String, is
 
 @Composable
 private fun ShortcutItem(label: String, icon: ImageVector, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = modifier.clickable { onClick() }
+    Card(
+        modifier = modifier
+            .height(86.dp)
+            .clickable { onClick() },
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = DashboardCardAlt),
+        border = borderStroke()
     ) {
-        Box(
+        Column(
             modifier = Modifier
-                .size(56.dp)
-                .clip(RoundedCornerShape(16.dp))
-                .background(DashboardCard)
-                .border(1.dp, DashboardStroke, RoundedCornerShape(16.dp)),
-            contentAlignment = Alignment.Center
+                .fillMaxSize()
+                .padding(horizontal = 8.dp, vertical = 9.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
         ) {
-            Icon(icon, contentDescription = label, tint = AccentCyan, modifier = Modifier.size(24.dp))
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .clip(RoundedCornerShape(11.dp))
+                    .background(AccentCyan.copy(alpha = 0.12f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(icon, contentDescription = label, tint = AccentCyan, modifier = Modifier.size(20.dp))
+            }
+            Spacer(modifier = Modifier.height(7.dp))
+            Text(
+                label,
+                color = TextPrimary,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                textAlign = TextAlign.Center,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
         }
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(label, color = TextPrimary, style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center)
     }
 }
 
@@ -2127,9 +2338,10 @@ private fun AnimatedCounter(
     Text(
         "$prefix${animatedValue.toLong()}$suffix",
         color = TextPrimary,
-        fontSize = 16.sp,
+        fontSize = 13.sp,
         fontWeight = FontWeight.Bold,
-        maxLines = 1
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis
     )
 }
 

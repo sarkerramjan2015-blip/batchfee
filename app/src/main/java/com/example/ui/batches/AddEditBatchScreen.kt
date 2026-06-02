@@ -25,6 +25,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.database.AppDatabase
+import com.example.data.models.BatchEntity
+import com.example.domain.SessionManager
 import kotlinx.coroutines.launch
 
 // ── Colors (matching PricingScreen) ─────────────────────────────
@@ -40,26 +42,50 @@ private val TextMuted     = Color(0xFF94A3B8)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AddEditBatchScreen(db: AppDatabase, onBack: () -> Unit) {
+fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> Unit) {
     val viewModel: BatchViewModel = viewModel(factory = BatchViewModelFactory(db))
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+    val instId = SessionManager.currentInstituteId.collectAsState().value
+    val isEditMode = batchId != null
 
     // Form state
     var name by remember { mutableStateOf("") }
     var feeString by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
+    var editingBatch by remember(batchId) { mutableStateOf<BatchEntity?>(null) }
+    var loadedBatchId by remember(batchId) { mutableStateOf<String?>(null) }
 
     // Validation
     var nameError by remember { mutableStateOf(false) }
     var feeError by remember { mutableStateOf(false) }
+
+    LaunchedEffect(batchId, instId) {
+        val editId = batchId
+        val instituteId = instId
+        if (editId != null && instituteId != null) {
+            db.batchDao().getBatchById(editId, instituteId).collect { batch ->
+                editingBatch = batch
+                if (batch != null && loadedBatchId != batch.id) {
+                    name = batch.name
+                    feeString = if (batch.monthlyFeeAmount % 1.0 == 0.0) {
+                        batch.monthlyFeeAmount.toLong().toString()
+                    } else {
+                        batch.monthlyFeeAmount.toString()
+                    }
+                    description = batch.description.orEmpty()
+                    loadedBatchId = batch.id
+                }
+            }
+        }
+    }
 
     Scaffold(
         containerColor = BgColor,
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
-                title = { Text("Add Batch", color = TextWhite, fontWeight = FontWeight.Bold) },
+                title = { Text(if (isEditMode) "Edit Batch" else "Add Batch", color = TextWhite, fontWeight = FontWeight.Bold) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = TextWhite)
@@ -90,8 +116,13 @@ fun AddEditBatchScreen(db: AppDatabase, onBack: () -> Unit) {
                 }
                 Spacer(Modifier.width(14.dp))
                 Column {
-                    Text("Create New Batch", color = TextWhite, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                    Text("Set up a class batch with its monthly fee", color = TextMuted, fontSize = 12.sp)
+                    Text(if (isEditMode) "Edit Batch Details" else "Create New Batch", color = TextWhite, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        if (isEditMode) "Update the batch name, fee, and note"
+                        else "Set up a class batch with its monthly fee",
+                        color = TextMuted,
+                        fontSize = 12.sp
+                    )
                 }
             }
 
@@ -162,7 +193,8 @@ fun AddEditBatchScreen(db: AppDatabase, onBack: () -> Unit) {
                     Icon(Icons.Filled.Info, contentDescription = null, tint = SkyBlue, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(10.dp))
                     Text(
-                        "Batch ID will be auto-generated.\nStart date set to today. You can edit details later.",
+                        if (isEditMode) "Changes apply to this batch profile and future collection screens."
+                        else "Batch ID will be auto-generated.\nStart date set to today. You can edit details later.",
                         color = TextMuted,
                         fontSize = 12.sp,
                         lineHeight = 16.sp
@@ -188,17 +220,45 @@ fun AddEditBatchScreen(db: AppDatabase, onBack: () -> Unit) {
                         feeError = (fee == null || fee <= 0)
 
                         if (!nameError && !feeError && fee != null) {
-                            viewModel.addBatch(
-                                name = name.trim(),
-                                feeAmount = fee,
-                                description = description.trim().takeIf { it.isNotEmpty() },
-                                onSuccess = {
-                                // Show snackbar on success (Main thread)
-                                scope.launch {
-                                    snackbarHostState.showSnackbar("Batch saved successfully")
+                            val cleanDescription = description.trim().takeIf { it.isNotEmpty() }
+                            val existing = editingBatch
+                            if (isEditMode) {
+                                if (existing == null) {
+                                    scope.launch { snackbarHostState.showSnackbar("Batch is still loading.") }
+                                } else {
+                                    viewModel.updateBatch(
+                                        existing.copy(
+                                            name = name.trim(),
+                                            monthlyFeeAmount = fee,
+                                            description = cleanDescription
+                                        ),
+                                        onError = { message ->
+                                            scope.launch { snackbarHostState.showSnackbar(message) }
+                                        },
+                                        onSuccess = {
+                                            scope.launch {
+                                                snackbarHostState.showSnackbar("Batch updated successfully")
+                                            }
+                                            onBack()
+                                        }
+                                    )
                                 }
-                                onBack()
-                            })
+                            } else {
+                                viewModel.addBatch(
+                                    name = name.trim(),
+                                    feeAmount = fee,
+                                    description = cleanDescription,
+                                    onError = { message ->
+                                        scope.launch { snackbarHostState.showSnackbar(message) }
+                                    },
+                                    onSuccess = {
+                                        scope.launch {
+                                            snackbarHostState.showSnackbar("Batch saved successfully")
+                                        }
+                                        onBack()
+                                    }
+                                )
+                            }
                         }
                     },
                 contentAlignment = Alignment.Center
@@ -206,7 +266,7 @@ fun AddEditBatchScreen(db: AppDatabase, onBack: () -> Unit) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Filled.Save, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("Save Batch", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    Text(if (isEditMode) "Update Batch" else "Save Batch", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                 }
             }
 

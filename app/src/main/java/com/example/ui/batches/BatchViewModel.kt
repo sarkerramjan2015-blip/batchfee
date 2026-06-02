@@ -65,6 +65,21 @@ class BatchViewModel(private val db: AppDatabase) : ViewModel() {
             onSuccess()
         }
     }
+
+    fun updateBatch(batch: BatchEntity, onError: (String) -> Unit = {}, onSuccess: () -> Unit) {
+        if (batch.name.isBlank()) {
+            onError("Batch name is required.")
+            return
+        }
+        if (batch.monthlyFeeAmount <= 0) {
+            onError("Fee amount must be greater than 0.")
+            return
+        }
+        viewModelScope.launch {
+            db.batchDao().updateBatch(batch.copy(updatedAtMs = System.currentTimeMillis()))
+            onSuccess()
+        }
+    }
 }
 
 class BatchViewModelFactory(private val db: AppDatabase) : ViewModelProvider.Factory {
