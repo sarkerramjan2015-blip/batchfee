@@ -6,11 +6,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.*
@@ -23,15 +22,16 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -42,7 +42,6 @@ import com.example.domain.SessionManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import com.example.ui.components.AnimatedGlowBorder
 import com.example.ui.components.BatchFeeBottomNav
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -77,13 +76,19 @@ private val AccentViolet = Color(0xFF6366F1)
 private val AccentGray  = Color(0xFF64748B)
 private val AccentGreen = Color(0xFF22C55E)
 private val AccentRed = Color(0xFFEF4444)
-private val AccentAmber = Color(0xFFF59E0B)
+private val AccentAmber = AccentCyan
 private val TextPrimary = Color(0xFFF8FAFC)
 private val TextSecondary = Color(0xFF94A3B8)
 private val TextMuted = Color(0xFF64748B)
 
 data class UpcomingBirthday(val studentName: String, val daysUntil: Int, val photoUri: String?)
 data class ActivityItem(val title: String, val subtitle: String, val timeMs: Long, val icon: ImageVector)
+private data class AddMenuOption(
+    val title: String,
+    val subtitle: String,
+    val icon: ImageVector,
+    val route: String
+)
 
 private fun formatRelativeTime(timeMs: Long): String {
     val diff = System.currentTimeMillis() - timeMs
@@ -181,6 +186,9 @@ class DashboardViewModel(private val db: AppDatabase) : ViewModel() {
     private val _birthdayCount = MutableStateFlow(0)
     val birthdayCount = _birthdayCount.asStateFlow()
 
+    private val _enquirySummary = MutableStateFlow(EnquirySummary())
+    val enquirySummary = _enquirySummary.asStateFlow()
+
     // Logged-in admin/owner user (for profile popup). Read-only; no schema change.
     private val _currentUser = MutableStateFlow<com.example.data.models.UserEntity?>(null)
     val currentUser = _currentUser.asStateFlow()
@@ -239,6 +247,19 @@ class DashboardViewModel(private val db: AppDatabase) : ViewModel() {
                 }
             }
             launch {
+                db.enquiryDao().getEnquiriesByInstitute(instId).collect { enquiries ->
+                    val active = enquiries.count { it.status.equals("active", ignoreCase = true) }
+                    val close = enquiries.count { it.status.equals("close", ignoreCase = true) || it.status.equals("closed", ignoreCase = true) }
+                    val followUp = enquiries.count { it.status.equals("follow_up", ignoreCase = true) || it.status.equals("follow up", ignoreCase = true) }
+                    _enquirySummary.value = EnquirySummary(
+                        total = enquiries.size,
+                        active = active,
+                        close = close,
+                        followUp = followUp
+                    )
+                }
+            }
+            launch {
                 kotlinx.coroutines.flow.combine(
                     db.paymentDao().getRecentPayments(instId),
                     db.expenseDao().getExpensesByInstitute(instId)
@@ -280,6 +301,63 @@ class DashboardViewModel(private val db: AppDatabase) : ViewModel() {
             }
         }
     }
+
+    fun addEnquiry(
+        name: String,
+        phone: String,
+        address: String,
+        subjectName: String,
+        enquiryDateMs: Long,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        val instId = SessionManager.currentInstituteId.value
+        if (instId == null) {
+            onError("No active institute found.")
+            return
+        }
+        val cleanName = name.trim()
+        val cleanPhone = phone.trim()
+        val cleanSubject = subjectName.trim()
+        if (cleanName.isBlank()) {
+            onError("Name is required.")
+            return
+        }
+        if (cleanPhone.isBlank()) {
+            onError("Phone number is required.")
+            return
+        }
+        if (cleanSubject.isBlank()) {
+            onError("Subject name is required.")
+            return
+        }
+
+        viewModelScope.launch {
+            try {
+                val now = System.currentTimeMillis()
+                val enquiry = com.example.data.models.EnquiryEntity(
+                    id = UUID.randomUUID().toString(),
+                    instituteId = instId,
+                    name = cleanName,
+                    phone = cleanPhone,
+                    address = address.trim().ifBlank { null },
+                    subjectName = cleanSubject,
+                    enquiryDateMs = enquiryDateMs,
+                    status = "active",
+                    createdAtMs = now,
+                    updatedAtMs = now,
+                    archivedAtMs = null
+                )
+                withContext(Dispatchers.IO) {
+                    db.enquiryDao().insertEnquiry(enquiry)
+                }
+                onSuccess()
+            } catch (e: Exception) {
+                e.printStackTrace()
+                onError("Could not save enquiry. Try again.")
+            }
+        }
+    }
 }
 
 class DashboardViewModelFactory(private val db: AppDatabase) : ViewModelProvider.Factory {
@@ -302,11 +380,17 @@ fun DashboardTabsScreen(
     onLogout: () -> Unit
 ) {
     Scaffold(
+        containerColor = DashboardBg,
         bottomBar = {
             BatchFeeBottomNav(currentRoute = currentRoute, onNavigate = onNavigate)
         }
     ) { paddingValues ->
-        Box(modifier = Modifier.fillMaxSize().padding(paddingValues)) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(DashboardBg)
+                .padding(paddingValues)
+        ) {
             when (currentRoute) {
                 "DashboardRoute" -> DashboardScreen(db, onNavigatePricing, onNavigateBilling, onLogout, onNavigate)
                 "More" -> MoreScreen(onNavigateBilling, onLogout, onNavigate)
@@ -342,6 +426,8 @@ fun DashboardScreen(
     val dueFeeSummary by viewModel.dueFeeSummary.collectAsState()
     val examCount by viewModel.examCount.collectAsState()
     val birthdayCount by viewModel.birthdayCount.collectAsState()
+    val enquirySummary by viewModel.enquirySummary.collectAsState()
+    var showEnquiryForm by remember { mutableStateOf(false) }
 
     // ── Edit / Image / Switch state for profile popup ────────
     var showEditDialog by remember { mutableStateOf(false) }
@@ -421,24 +507,12 @@ fun DashboardScreen(
         Scaffold(
             containerColor = DashboardBg,
             snackbarHost = { SnackbarHost(snackbarHostState) },
+            contentWindowInsets = WindowInsets(0.dp),
         floatingActionButton = {
-            Column(horizontalAlignment = Alignment.End) {
-                AnimatedGlowBorder(
-                    cornerRadius = 16.dp,
-                    backgroundColor = AccentCyan,
-                    borderWidth = 2.dp,
-                    animationDurationMillis = 3000
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(56.dp)
-                            .clickable { showFabMenu = !showFabMenu },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(if (showFabMenu) Icons.Filled.Close else Icons.Filled.Add, contentDescription = "Add", tint = DashboardBg)
-                    }
-                }
-            }
+            CuteAddFab(
+                expanded = showFabMenu,
+                onClick = { showFabMenu = !showFabMenu }
+            )
         }
     ) { innerPadding ->
         Column(
@@ -592,37 +666,6 @@ fun DashboardScreen(
                 }
                 Spacer(Modifier.height(12.dp))
 
-                // ── Per-batch cards ─────────────────────────────
-                if (!attLoading && attSummaries.isNotEmpty()) {
-                    // "Per Batch" label row
-                    Row(Modifier.fillMaxWidth().padding(vertical = 6.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically) {
-                        Text("Per Batch", color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-                        if (attSummaries.size > 2) {
-                            TextButton(onClick = { safeNavigate("AttendanceReportRoute") }, contentPadding = PaddingValues(0.dp)) {
-                                Text("View All →", color = AccentCyan, fontSize = 12.sp)
-                            }
-                        }
-                    }
-                    // LazyRow of batch mini-cards
-                    androidx.compose.foundation.lazy.LazyRow(
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        contentPadding = PaddingValues(end = 8.dp)
-                    ) {
-                        items(attSummaries.take(5)) { batchSum ->
-                            BatchMiniCard(
-                                name = batchSum.batchName,
-                                total = batchSum.totalStudents,
-                                marked = batchSum.markedCount,
-                                presentPct = batchSum.presentPct,
-                                onClick = { selectedBatchId = batchSum.batchId }
-                            )
-                        }
-                    }
-                    Spacer(Modifier.height(12.dp))
-                }
-
                 // ── Mini Cards (Student + Staff marking) ────────
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     val sMarked = studentOverall?.markedCount ?: 0
@@ -741,9 +784,10 @@ fun DashboardScreen(
                 HomeEngagementSection(
                     examCount = examCount,
                     birthdayCount = birthdayCount,
-                    enquirySummary = EnquirySummary(),
+                    enquirySummary = enquirySummary,
                     onOpenExams = { safeNavigate("ExamsRoute") },
                     onOpenBirthdays = { safeNavigate("BirthdayReminderRoute") },
+                    onOpenEnquiry = { showEnquiryForm = true },
                     onComingSoon = showComingSoon
                 )
 
@@ -832,6 +876,32 @@ fun DashboardScreen(
                 confirmButton = { TextButton(onClick = { selectedBatchId = null }) { Text("Close", color = AccentCyan) } }
             )
         }
+
+        if (showEnquiryForm) {
+            AddEnquiryDialog(
+                onDismiss = { showEnquiryForm = false },
+                onSave = { name, phone, address, subjectName, enquiryDateMs ->
+                    viewModel.addEnquiry(
+                        name = name,
+                        phone = phone,
+                        address = address,
+                        subjectName = subjectName,
+                        enquiryDateMs = enquiryDateMs,
+                        onSuccess = {
+                            showEnquiryForm = false
+                            snappbarcoroutineScope.launch {
+                                snackbarHostState.showSnackbar("Enquiry saved.")
+                            }
+                        },
+                        onError = { message ->
+                            snappbarcoroutineScope.launch {
+                                snackbarHostState.showSnackbar(message)
+                            }
+                        }
+                    )
+                }
+            )
+        }
     }
 
     androidx.compose.animation.AnimatedVisibility(
@@ -850,97 +920,13 @@ fun DashboardScreen(
                 ) { showFabMenu = false },
             contentAlignment = Alignment.Center
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth(0.88f)
-                    .clip(RoundedCornerShape(24.dp))
-                    .background(Color(0xFF202934))
-                    .border(1.dp, Color(0xFF334155), RoundedCornerShape(24.dp))
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null
-                    ) {}
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(82.dp)
-                        .padding(horizontal = 24.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        "Add New",
-                        color = AccentAmber,
-                        fontSize = 27.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.weight(1f)
-                    )
-                    IconButton(onClick = { showFabMenu = false }) {
-                        Icon(
-                            Icons.Filled.Close,
-                            contentDescription = "Close add menu",
-                            tint = Color(0xFFFFA3A3),
-                            modifier = Modifier.size(34.dp)
-                        )
-                    }
+            AddNewMenuPanel(
+                onClose = { showFabMenu = false },
+                onNavigate = { route ->
+                    showFabMenu = false
+                    safeNavigate(route)
                 }
-
-                HorizontalDivider(color = Color(0xFF3A4652))
-
-                val addMenuItems = listOf(
-                    Triple("Student", "You can add new student here", Icons.Filled.School) to "AddStudentRoute",
-                    Triple("Staff", "You can add new staff here", Icons.Filled.PersonAddAlt1) to "AddStaffRoute",
-                    Triple("Batch", "You can add new batch here", Icons.Filled.Groups) to "AddBatchRoute",
-                    Triple("Exams", "You can add new exam here", Icons.Filled.Assignment) to "CreateExamRoute",
-                    Triple("Expense", "You can add expense here", Icons.Filled.ReceiptLong) to "AddExpenseRoute",
-                    Triple("Fee", "You can add new fee here", Icons.Filled.Payments) to "CreateFeeRoute"
-                )
-
-                addMenuItems.forEachIndexed { index, item ->
-                    val (content, route) = item
-                    val (title, subtitle, icon) = content
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(88.dp)
-                            .clickable {
-                                showFabMenu = false
-                                safeNavigate(route)
-                            }
-                            .padding(horizontal = 24.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            icon,
-                            contentDescription = null,
-                            tint = AccentAmber,
-                            modifier = Modifier.size(36.dp)
-                        )
-                        Spacer(Modifier.width(24.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                title,
-                                color = TextPrimary,
-                                fontSize = 25.sp,
-                                fontWeight = FontWeight.Medium,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Spacer(Modifier.height(4.dp))
-                            Text(
-                                subtitle,
-                                color = TextSecondary.copy(alpha = 0.72f),
-                                fontSize = 15.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-                    if (index != addMenuItems.lastIndex) {
-                        HorizontalDivider(color = Color(0xFF3A4652))
-                    }
-                }
-            }
+            )
         }
     }
     
@@ -1550,6 +1536,249 @@ private suspend fun persistInstituteProfilePhoto(context: android.content.Contex
 private fun borderStroke() = androidx.compose.foundation.BorderStroke(1.dp, DashboardStroke)
 
 @Composable
+private fun CuteAddFab(
+    expanded: Boolean,
+    onClick: () -> Unit
+) {
+    val infiniteTransition = rememberInfiniteTransition(label = "cuteFabShine")
+    val shineOffset by infiniteTransition.animateFloat(
+        initialValue = -90f,
+        targetValue = 150f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1800, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "shineOffset"
+    )
+    val glowAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.38f,
+        targetValue = 0.72f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1400, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "glowAlpha"
+    )
+
+    Box(
+        modifier = Modifier
+            .size(50.dp)
+            .shadow(
+                elevation = 14.dp,
+                shape = RoundedCornerShape(18.dp),
+                spotColor = AccentCyan.copy(alpha = glowAlpha)
+            )
+            .clip(RoundedCornerShape(18.dp))
+            .background(
+                Brush.linearGradient(
+                    colors = listOf(
+                        AccentSky,
+                        AccentCyan,
+                        Color(0xFF67E8F9)
+                    ),
+                    start = Offset(0f, 0f),
+                    end = Offset(110f, 110f)
+                )
+            )
+            .border(
+                width = 1.dp,
+                color = Color.White.copy(alpha = 0.20f),
+                shape = RoundedCornerShape(18.dp)
+            )
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.linearGradient(
+                        colors = listOf(
+                            Color.Transparent,
+                            Color.White.copy(alpha = 0.42f),
+                            Color.Transparent
+                        ),
+                        start = Offset(shineOffset, -10f),
+                        end = Offset(shineOffset + 42f, 88f)
+                    )
+                )
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(5.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .border(1.dp, DashboardBg.copy(alpha = 0.08f), RoundedCornerShape(14.dp))
+        )
+        Icon(
+            if (expanded) Icons.Filled.Close else Icons.Filled.Add,
+            contentDescription = if (expanded) "Close add menu" else "Open add menu",
+            tint = DashboardBg,
+            modifier = Modifier.size(if (expanded) 24.dp else 28.dp)
+        )
+    }
+}
+
+@Composable
+private fun AddNewMenuPanel(
+    onClose: () -> Unit,
+    onNavigate: (String) -> Unit
+) {
+    val addMenuItems = remember {
+        listOf(
+            AddMenuOption("Student", "Create a new student profile", Icons.Filled.School, "AddStudentRoute"),
+            AddMenuOption("Staff", "Add a teacher or staff member", Icons.Filled.PersonAddAlt1, "AddStaffRoute"),
+            AddMenuOption("Batch", "Create a batch and class schedule", Icons.Filled.Groups, "AddBatchRoute"),
+            AddMenuOption("Exams", "Schedule an exam or result entry", Icons.Filled.Assignment, "CreateExamRoute"),
+            AddMenuOption("Expense", "Record an institute expense", Icons.Filled.ReceiptLong, "AddExpenseRoute"),
+            AddMenuOption("Collection Fee", "Collect student fee payment", Icons.Filled.Payments, "UnifiedCollectRoute")
+        )
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth(0.90f)
+            .shadow(18.dp, RoundedCornerShape(24.dp), spotColor = AccentCyan.copy(alpha = 0.18f))
+            .clip(RoundedCornerShape(24.dp))
+            .background(DashboardCardAlt)
+            .border(1.dp, AccentCyan.copy(alpha = 0.16f), RoundedCornerShape(24.dp))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null
+            ) {}
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(
+                    Brush.linearGradient(
+                        colors = listOf(
+                            DashboardCardAlt,
+                            AccentCyan.copy(alpha = 0.10f),
+                            DashboardCardAlt
+                        ),
+                        start = Offset(0f, 0f),
+                        end = Offset(420f, 80f)
+                    )
+                )
+                .padding(start = 18.dp, top = 16.dp, end = 12.dp, bottom = 15.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(42.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(AccentCyan.copy(alpha = 0.14f))
+                    .border(1.dp, AccentCyan.copy(alpha = 0.22f), RoundedCornerShape(14.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Filled.Add, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(24.dp))
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "Add New",
+                    color = TextPrimary,
+                    fontSize = 23.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    "Choose what you want to create",
+                    color = TextSecondary,
+                    fontSize = 12.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            IconButton(
+                onClick = onClose,
+                modifier = Modifier
+                    .size(38.dp)
+                    .clip(RoundedCornerShape(13.dp))
+                    .background(AccentRed.copy(alpha = 0.10f))
+            ) {
+                Icon(
+                    Icons.Filled.Close,
+                    contentDescription = "Close add menu",
+                    tint = Color(0xFFFFA3A3),
+                    modifier = Modifier.size(23.dp)
+                )
+            }
+        }
+
+        HorizontalDivider(color = DashboardStroke.copy(alpha = 0.85f))
+
+        addMenuItems.forEachIndexed { index, item ->
+            AddMenuActionRow(
+                item = item,
+                onClick = { onNavigate(item.route) }
+            )
+            if (index != addMenuItems.lastIndex) {
+                HorizontalDivider(
+                    color = DashboardStroke.copy(alpha = 0.70f),
+                    modifier = Modifier.padding(start = 70.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AddMenuActionRow(
+    item: AddMenuOption,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(74.dp)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(42.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(AccentCyan.copy(alpha = 0.12f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(item.icon, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(23.dp))
+        }
+        Spacer(Modifier.width(14.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                item.title,
+                color = TextPrimary,
+                fontSize = 21.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                item.subtitle,
+                color = TextSecondary.copy(alpha = 0.76f),
+                fontSize = 12.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        Box(
+            modifier = Modifier
+                .size(30.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(AccentCyan.copy(alpha = 0.08f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(18.dp))
+        }
+    }
+}
+
+@Composable
 private fun DashboardHeader(
     institute: InstituteEntity?,
     ownerName: String?,
@@ -1648,6 +1877,7 @@ private fun DashboardHeader(
                 modifier = Modifier.weight(1f)
             )
         }
+
     }
     Box(
         modifier = Modifier
@@ -1782,6 +2012,7 @@ private fun HomeEngagementSection(
     enquirySummary: EnquirySummary,
     onOpenExams: () -> Unit,
     onOpenBirthdays: () -> Unit,
+    onOpenEnquiry: () -> Unit,
     onComingSoon: (String) -> Unit
 ) {
     Column(
@@ -1845,7 +2076,7 @@ private fun HomeEngagementSection(
         )
         EnquirySummaryCard(
             summary = enquirySummary,
-            onAdd = { onComingSoon("Enquiry") }
+            onClick = onOpenEnquiry
         )
     }
 }
@@ -1875,18 +2106,21 @@ private fun HomeFeatureTile(
             Icon(icon, contentDescription = null, tint = AccentAmber, modifier = Modifier.size(24.dp))
             Spacer(Modifier.width(10.dp))
             Text(
-                buildAnnotatedString {
-                    append(title)
-                    append(" ")
-                    withStyle(SpanStyle(color = AccentAmber)) {
-                        append("($count)")
-                    }
-                },
+                title,
                 color = TextPrimary,
                 fontSize = 15.sp,
                 fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
+            )
+            Spacer(Modifier.width(5.dp))
+            Text(
+                "($count)",
+                color = AccentAmber,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1
             )
         }
     }
@@ -1930,62 +2164,71 @@ private fun HomeFullActionTile(
 @Composable
 private fun EnquirySummaryCard(
     summary: EnquirySummary,
-    onAdd: () -> Unit
+    onClick: () -> Unit
 ) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = DashboardCardAlt),
         border = borderStroke()
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Filled.PersonAddAlt1, contentDescription = null, tint = AccentAmber, modifier = Modifier.size(24.dp))
-                Spacer(Modifier.width(10.dp))
-                Text(
-                    "Enquiry",
-                    color = TextPrimary,
-                    fontSize = 17.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.weight(1f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(13.dp))
+                        .background(AccentCyan.copy(alpha = 0.14f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Filled.PersonAddAlt1, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(22.dp))
+                }
+                Spacer(Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Enquiry",
+                        color = TextPrimary,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        "Add and track new student interest",
+                        color = TextSecondary,
+                        fontSize = 11.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .size(34.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(AccentCyan.copy(alpha = 0.10f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(20.dp))
+                }
             }
 
             Spacer(Modifier.height(12.dp))
 
             Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(13.dp))
+                    .background(DashboardBg.copy(alpha = 0.55f))
+                    .border(1.dp, DashboardStroke.copy(alpha = 0.72f), RoundedCornerShape(13.dp))
+                    .padding(horizontal = 10.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Row(
-                    modifier = Modifier.weight(1f),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    EnquiryStat(summary.total, "Total", Modifier.weight(1f))
-                    EnquiryStat(summary.active, "Active", Modifier.weight(1f))
-                    EnquiryStat(summary.close, "Close", Modifier.weight(1f))
-                    EnquiryStat(summary.followUp, "Follow up", Modifier.weight(1f))
-                }
-
-                Spacer(Modifier.width(12.dp))
-
-                Box(
-                    modifier = Modifier
-                        .size(52.dp)
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(AccentAmber)
-                        .clickable(onClick = onAdd),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        Icons.Filled.Add,
-                        contentDescription = "Add enquiry",
-                        tint = Color(0xFF111827),
-                        modifier = Modifier.size(27.dp)
-                    )
-                }
+                EnquiryStat(summary.total, "Total", Modifier.weight(1f))
+                EnquiryStat(summary.active, "Active", Modifier.weight(1f))
+                EnquiryStat(summary.close, "Close", Modifier.weight(1f))
+                EnquiryStat(summary.followUp, "Follow up", Modifier.weight(1f))
             }
         }
     }
@@ -2015,6 +2258,313 @@ private fun EnquiryStat(value: Int, label: String, modifier: Modifier = Modifier
         )
     }
 }
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AddEnquiryDialog(
+    onDismiss: () -> Unit,
+    onSave: (name: String, phone: String, address: String, subjectName: String, enquiryDateMs: Long) -> Unit
+) {
+    var name by remember { mutableStateOf("") }
+    var phone by remember { mutableStateOf("") }
+    var address by remember { mutableStateOf("") }
+    var subjectName by remember { mutableStateOf("") }
+    var enquiryDateMs by remember { mutableStateOf(System.currentTimeMillis()) }
+    var showDatePicker by remember { mutableStateOf(false) }
+    var attemptedSubmit by remember { mutableStateOf(false) }
+
+    val nameError = attemptedSubmit && name.trim().isBlank()
+    val phoneError = attemptedSubmit && phone.trim().isBlank()
+    val subjectError = attemptedSubmit && subjectName.trim().isBlank()
+    val formValid = !nameError && !phoneError && !subjectError &&
+        name.trim().isNotBlank() && phone.trim().isNotBlank() && subjectName.trim().isNotBlank()
+    val submitEnquiry = {
+        attemptedSubmit = true
+        if (formValid) {
+            onSave(name, phone, address, subjectName, enquiryDateMs)
+        }
+    }
+
+    if (showDatePicker) {
+        val datePickerState = rememberDatePickerState(initialSelectedDateMillis = enquiryDateMs)
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        enquiryDateMs = datePickerState.selectedDateMillis ?: enquiryDateMs
+                        showDatePicker = false
+                    }
+                ) {
+                    Text("Done", color = AccentCyan, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePicker = false }) {
+                    Text("Cancel", color = TextSecondary)
+                }
+            },
+            colors = DatePickerDefaults.colors(
+                containerColor = DashboardCard,
+                titleContentColor = TextPrimary,
+                headlineContentColor = TextPrimary,
+                weekdayContentColor = TextSecondary,
+                subheadContentColor = TextSecondary,
+                yearContentColor = TextSecondary,
+                currentYearContentColor = AccentCyan,
+                selectedYearContainerColor = AccentCyan,
+                selectedDayContainerColor = AccentCyan,
+                todayContentColor = AccentCyan,
+                todayDateBorderColor = AccentCyan
+            )
+        ) {
+            DatePicker(
+                state = datePickerState,
+                colors = DatePickerDefaults.colors(
+                    containerColor = DashboardCard,
+                    titleContentColor = TextPrimary,
+                    headlineContentColor = TextPrimary,
+                    weekdayContentColor = TextSecondary,
+                    subheadContentColor = TextSecondary,
+                    yearContentColor = TextSecondary,
+                    currentYearContentColor = AccentCyan,
+                    selectedYearContainerColor = AccentCyan,
+                    selectedDayContainerColor = AccentCyan,
+                    todayContentColor = AccentCyan,
+                    todayDateBorderColor = AccentCyan
+                )
+            )
+        }
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Scaffold(
+            modifier = Modifier.fillMaxSize(),
+            containerColor = DashboardBg,
+            topBar = {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(DashboardCard)
+                        .border(1.dp, DashboardStroke.copy(alpha = 0.8f))
+                        .padding(horizontal = 8.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = onDismiss) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
+                            tint = TextPrimary,
+                            modifier = Modifier.size(26.dp)
+                        )
+                    }
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        "Add Enquiry",
+                        color = TextPrimary,
+                        fontSize = 21.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            },
+            bottomBar = {
+                Surface(color = DashboardBg) {
+                    Button(
+                        onClick = submitEnquiry,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 18.dp, vertical = 16.dp)
+                            .height(54.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = AccentCyan,
+                            contentColor = DashboardBg
+                        )
+                    ) {
+                        Text("Save Enquiry", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        ) { innerPadding ->
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(DashboardBg, DashboardCardAlt.copy(alpha = 0.96f), DashboardBg)
+                        )
+                    )
+                    .padding(innerPadding)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 18.dp, vertical = 20.dp)
+            ) {
+                Text(
+                    "Add Enquiry",
+                    color = TextPrimary,
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    "Capture the student's first contact details.",
+                    color = TextSecondary,
+                    fontSize = 14.sp
+                )
+
+                Spacer(Modifier.height(22.dp))
+
+                EnquiryTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = "Student Name",
+                    placeholder = "Enter name",
+                    icon = Icons.Filled.Person,
+                    isError = nameError,
+                    errorText = "Name is required"
+                )
+                Spacer(Modifier.height(14.dp))
+
+                EnquiryTextField(
+                    value = phone,
+                    onValueChange = { phone = it },
+                    label = "Phone Number",
+                    placeholder = "Mobile number",
+                    icon = Icons.Filled.Phone,
+                    keyboardType = KeyboardType.Phone,
+                    isError = phoneError,
+                    errorText = "Phone number is required"
+                )
+                Spacer(Modifier.height(14.dp))
+
+                EnquiryTextField(
+                    value = address,
+                    onValueChange = { address = it },
+                    label = "Address",
+                    placeholder = "Enter address",
+                    icon = Icons.Filled.Home,
+                    singleLine = false,
+                    minLines = 2
+                )
+                Spacer(Modifier.height(14.dp))
+
+                EnquiryTextField(
+                    value = subjectName,
+                    onValueChange = { subjectName = it },
+                    label = "Subject Name",
+                    placeholder = "Main subject",
+                    icon = Icons.Filled.MenuBook,
+                    isError = subjectError,
+                    errorText = "Subject name is required"
+                )
+                Spacer(Modifier.height(14.dp))
+
+                EnquiryDateField(
+                    dateMs = enquiryDateMs,
+                    onClick = { showDatePicker = true }
+                )
+                Spacer(Modifier.height(22.dp))
+                Button(
+                    onClick = submitEnquiry,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(54.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = AccentCyan,
+                        contentColor = DashboardBg
+                    )
+                ) {
+                    Text("Save Enquiry", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                }
+                Spacer(Modifier.height(18.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun EnquiryTextField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    placeholder: String,
+    icon: ImageVector,
+    keyboardType: KeyboardType = KeyboardType.Text,
+    singleLine: Boolean = true,
+    minLines: Int = 1,
+    isError: Boolean = false,
+    errorText: String? = null
+) {
+    Column {
+        OutlinedTextField(
+            value = value,
+            onValueChange = onValueChange,
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text(label) },
+            placeholder = { Text(placeholder) },
+            leadingIcon = { Icon(icon, contentDescription = null, tint = AccentCyan) },
+            singleLine = singleLine,
+            minLines = minLines,
+            isError = isError,
+            keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
+            shape = RoundedCornerShape(16.dp),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedTextColor = TextPrimary,
+                unfocusedTextColor = TextPrimary,
+                focusedContainerColor = DashboardCardAlt,
+                unfocusedContainerColor = DashboardCardAlt,
+                focusedBorderColor = AccentCyan,
+                unfocusedBorderColor = DashboardStroke,
+                errorBorderColor = AccentRed,
+                cursorColor = AccentCyan,
+                focusedLabelColor = AccentCyan,
+                unfocusedLabelColor = TextSecondary,
+                focusedPlaceholderColor = TextMuted,
+                unfocusedPlaceholderColor = TextMuted
+            )
+        )
+        if (isError && errorText != null) {
+            Spacer(Modifier.height(5.dp))
+            Text(errorText, color = AccentRed, fontSize = 11.sp, modifier = Modifier.padding(start = 4.dp))
+        }
+    }
+}
+
+@Composable
+private fun EnquiryDateField(
+    dateMs: Long,
+    onClick: () -> Unit
+) {
+    Column {
+        Text("Enquiry Date", color = TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(7.dp))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(58.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(DashboardCardAlt)
+                .border(1.dp, DashboardStroke, RoundedCornerShape(16.dp))
+                .clickable(onClick = onClick)
+                .padding(horizontal = 15.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                formatEnquiryDate(dateMs),
+                color = TextPrimary,
+                fontSize = 17.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f)
+            )
+            Icon(Icons.Filled.DateRange, contentDescription = "Pick enquiry date", tint = AccentCyan, modifier = Modifier.size(22.dp))
+        }
+    }
+}
+
+private fun formatEnquiryDate(dateMs: Long): String =
+    SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()).format(java.util.Date(dateMs))
 
 private fun formatDashboardAmount(amount: Double): String =
     java.text.NumberFormat.getNumberInstance(Locale.getDefault()).apply {

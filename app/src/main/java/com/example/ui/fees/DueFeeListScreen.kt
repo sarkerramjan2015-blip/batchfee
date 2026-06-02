@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -24,21 +26,19 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Calculate
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Groups
-import androidx.compose.material.icons.filled.Message
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.ReceiptLong
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Sms
 import androidx.compose.material.icons.filled.TableChart
 import androidx.compose.material.icons.filled.TrendingUp
 import androidx.compose.material.icons.filled.Whatsapp
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
@@ -65,6 +65,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -87,14 +88,17 @@ import java.util.Locale
 private val BgColor = Color(0xFF07111F)
 private val CardBg = Color(0xFF0F172A)
 private val CardBgAlt = Color(0xFF111827)
+private val CardHi = Color(0xFF132033)
 private val BorderSub = Color(0xFF1E293B)
 private val TextWhite = Color(0xFFF8FAFC)
 private val TextMuted = Color(0xFF94A3B8)
-private val AccentAmber = Color(0xFFF59E0B)
-private val AccentPink = Color(0xFFEF4444)
+private val AccentCyan = Color(0xFF22D3EE)
+private val SkyBlue = Color(0xFF38BDF8)
+private val ElectricBlue = Color(0xFF3B82F6)
 private val AccentRed = Color(0xFFEF4444)
-private val AccentOrange = Color(0xFFF59E0B)
 private val WAGreen = Color(0xFF25D366)
+private val SoftLine = Color(0x5522D3EE)
+private val SoftCyan = Color(0x1A22D3EE)
 
 private data class DueStudentGroup(
     val studentId: String,
@@ -104,28 +108,28 @@ private data class DueStudentGroup(
     val items: List<DueFeeDetail>
 ) {
     val totalDue: Double = items.sumOf { it.dueAmount }
+    val monthCount: Int = items.map { it.feePeriod }.distinct().size
 }
 
 private data class BatchDueStat(val batchName: String, val amount: Double)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DueFeeListScreen(db: AppDatabase, onBack: () -> Unit, onCollectPayment: (String) -> Unit) {
+fun DueFeeListScreen(db: AppDatabase, onBack: () -> Unit) {
     val viewModel: FeeViewModel = viewModel(factory = FeeViewModelFactory(db))
     val dueDetails by viewModel.dueFeesWithDetails.collectAsState()
-    val totalDue by viewModel.totalDueAmount.collectAsState()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
 
-    var searchVisible by remember { mutableStateOf(false) }
+    var searchVisible by remember { mutableStateOf(true) }
     var query by remember { mutableStateOf("") }
     var showFilter by remember { mutableStateOf(false) }
     var showChart by remember { mutableStateOf(false) }
     var showMenu by remember { mutableStateOf(false) }
     var selectedBatch by remember { mutableStateOf("All Batches") }
     var sortBy by remember { mutableStateOf("Name") }
-    var statusFilter by remember { mutableStateOf("Active") }
+    var statusFilter by remember { mutableStateOf("Any") }
 
     val batchOptions = remember(dueDetails) {
         listOf("All Batches") + dueDetails.map { it.batchName.ifBlank { "No Batch" } }.distinct().sorted()
@@ -140,13 +144,20 @@ fun DueFeeListScreen(db: AppDatabase, onBack: () -> Unit, onCollectPayment: (Str
             }
             val searchMatch = query.isBlank() ||
                 item.studentName.contains(query, ignoreCase = true) ||
+                item.studentPhone.orEmpty().contains(query, ignoreCase = true) ||
                 item.batchName.contains(query, ignoreCase = true) ||
                 item.feePeriod.contains(query, ignoreCase = true)
             batchMatch && statusMatch && searchMatch
         }
         val grouped = filtered.groupBy { it.studentId }.map { (_, list) ->
             val first = list.first()
-            DueStudentGroup(first.studentId, first.studentName, first.studentPhone, first.studentStatus, list)
+            DueStudentGroup(
+                studentId = first.studentId,
+                studentName = first.studentName,
+                studentPhone = first.studentPhone,
+                studentStatus = first.studentStatus,
+                items = list.sortedBy { it.dueDateMs }
+            )
         }
         when (sortBy) {
             "Amount" -> grouped.sortedByDescending { it.totalDue }
@@ -154,8 +165,11 @@ fun DueFeeListScreen(db: AppDatabase, onBack: () -> Unit, onCollectPayment: (Str
             else -> grouped.sortedBy { it.studentName.lowercase() }
         }
     }
+
     val visibleTotalDue = filteredDetails.sumOf { it.totalDue }
-    val visibleCount = filteredDetails.size
+    val visibleStudentCount = filteredDetails.size
+    val visibleFeeCount = filteredDetails.sumOf { it.items.size }
+    val visiblePeriodCount = filteredDetails.flatMap { group -> group.items.map { it.feePeriod } }.distinct().size
     val batchStats = remember(filteredDetails) {
         filteredDetails.flatMap { it.items }
             .groupBy { it.batchName.ifBlank { "No Batch" } }
@@ -186,6 +200,18 @@ fun DueFeeListScreen(db: AppDatabase, onBack: () -> Unit, onCollectPayment: (Str
         context.startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:")).apply { putExtra("sms_body", body) })
     }
 
+    fun sendReminder(group: DueStudentGroup, channel: String) {
+        val periods = group.items.joinToString(", ") { it.feePeriod }.ifBlank { "fee period" }
+        viewModel.sendDueNotification(
+            context = context,
+            studentName = group.studentName,
+            phone = group.studentPhone,
+            dueAmount = group.totalDue,
+            feePeriod = periods,
+            channel = channel
+        )
+    }
+
     Scaffold(
         containerColor = BgColor,
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -199,13 +225,17 @@ fun DueFeeListScreen(db: AppDatabase, onBack: () -> Unit, onCollectPayment: (Str
                 },
                 actions = {
                     IconButton(onClick = { searchVisible = !searchVisible }) {
-                        Icon(Icons.Filled.Search, contentDescription = "Search", tint = TextWhite)
+                        Icon(Icons.Filled.Search, contentDescription = "Search", tint = if (searchVisible) AccentCyan else TextWhite)
                     }
                     IconButton(onClick = { showFilter = true }) {
                         Icon(Icons.Filled.FilterList, contentDescription = "Filter", tint = TextWhite)
                     }
                     IconButton(onClick = { showChart = !showChart }) {
-                        Icon(if (showChart) Icons.Filled.TableChart else Icons.Filled.TrendingUp, contentDescription = "Chart", tint = TextWhite)
+                        Icon(
+                            if (showChart) Icons.Filled.TableChart else Icons.Filled.TrendingUp,
+                            contentDescription = "Report",
+                            tint = if (showChart) AccentCyan else TextWhite
+                        )
                     }
                     IconButton(onClick = { showMenu = true }) {
                         Icon(Icons.Filled.MoreVert, contentDescription = "Menu", tint = TextWhite)
@@ -216,41 +246,57 @@ fun DueFeeListScreen(db: AppDatabase, onBack: () -> Unit, onCollectPayment: (Str
         }
     ) { padding ->
         LazyColumn(
-            modifier = Modifier.padding(padding).fillMaxSize(),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 18.dp, bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+            modifier = Modifier
+                .padding(padding)
+                .fillMaxSize(),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             if (searchVisible) {
                 item {
-                    OutlinedTextField(
-                        value = query,
-                        onValueChange = { query = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        placeholder = { Text("Search due fees...", color = TextMuted) },
-                        colors = dueTextFieldColors(),
-                        shape = RoundedCornerShape(14.dp)
+                    DueSearchField(
+                        query = query,
+                        onQueryChange = { query = it },
+                        onClear = { query = "" }
                     )
                 }
             }
 
             item {
-                DueFeeSummaryCard(totalDue = visibleTotalDue, count = visibleCount)
+                DueFeeSummaryCard(
+                    totalDue = visibleTotalDue,
+                    studentCount = visibleStudentCount,
+                    feeCount = visibleFeeCount,
+                    periodCount = visiblePeriodCount,
+                    selectedBatch = selectedBatch
+                )
             }
 
             if (showChart) {
                 item {
                     DueFeeChartCard(stats = batchStats, totalDue = visibleTotalDue)
                 }
-            } else if (filteredDetails.isEmpty()) {
+            }
+
+            item {
+                DueListHeader(
+                    count = visibleStudentCount,
+                    sortBy = sortBy,
+                    statusFilter = statusFilter
+                )
+            }
+
+            if (filteredDetails.isEmpty()) {
                 item {
-                    Box(Modifier.fillMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) {
-                        Text("No due fees found.", color = TextMuted, fontSize = 14.sp)
-                    }
+                    DueEmptyState()
                 }
             } else {
                 items(filteredDetails, key = { it.studentId }) { group ->
-                    DueStudentCard(group = group, onClick = { group.items.firstOrNull()?.let { onCollectPayment(it.feeId) } })
+                    DueStudentCard(
+                        group = group,
+                        onSms = { sendReminder(group, "sms") },
+                        onWhatsApp = { sendReminder(group, "whatsapp") }
+                    )
                 }
             }
         }
@@ -282,85 +328,270 @@ fun DueFeeListScreen(db: AppDatabase, onBack: () -> Unit, onCollectPayment: (Str
             },
             onReminder = {
                 showMenu = false
-                scope.launch { snackbarHostState.showSnackbar("In-app reminder will be connected next.") }
+                scope.launch { snackbarHostState.showSnackbar("Use SMS or WhatsApp to send due reminders now.") }
             },
             onExport = {
                 showMenu = false
-                shareText("Due Fee Records", reportText)
+                shareText("Due Fee Report", reportText)
             }
         )
     }
 }
 
 @Composable
-private fun DueFeeSummaryCard(totalDue: Double, count: Int) {
-    Card(
+private fun DueSearchField(query: String, onQueryChange: (String) -> Unit, onClear: () -> Unit) {
+    OutlinedTextField(
+        value = query,
+        onValueChange = onQueryChange,
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = CardBg),
-        border = BorderStroke(1.dp, BorderSub)
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 22.dp, vertical = 22.dp).fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text("Viewing Summary for", color = TextMuted, fontSize = 16.sp)
-                Text(SimpleDateFormat("dd MMM", Locale.getDefault()).format(Date()), color = AccentAmber, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-            }
-            Text(formatAmount(totalDue), color = AccentPink, fontSize = 34.sp, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.width(8.dp))
-            Text("($count)", color = TextMuted, fontSize = 16.sp)
-        }
-    }
-}
-
-@Composable
-private fun DueStudentCard(group: DueStudentGroup, onClick: () -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = CardBg),
-        border = BorderStroke(1.dp, BorderSub)
-    ) {
-        Column(modifier = Modifier.padding(horizontal = 18.dp, vertical = 16.dp)) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
-                Column(Modifier.weight(1f)) {
-                    Text(group.studentName, color = TextWhite, fontSize = 20.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Spacer(Modifier.height(6.dp))
-                    if (group.items.size == 1) {
-                        val item = group.items.first()
-                        Text("${item.batchName.ifBlank { "No Batch" }} • ${item.feePeriod}", color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.Bold, lineHeight = 18.sp)
-                    } else {
-                        group.items.take(3).forEach { item ->
-                            DueFeeMiniItem(item)
-                            Spacer(Modifier.height(7.dp))
-                        }
-                    }
+        singleLine = true,
+        leadingIcon = {
+            Icon(Icons.Filled.Search, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(22.dp))
+        },
+        trailingIcon = {
+            if (query.isNotBlank()) {
+                IconButton(onClick = onClear) {
+                    Icon(Icons.Filled.Close, contentDescription = "Clear", tint = TextMuted)
                 }
-                Spacer(Modifier.width(10.dp))
-                Text(formatAmount(group.totalDue), color = TextWhite, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            }
+        },
+        placeholder = { Text("Search name, phone, batch, month", color = TextMuted) },
+        colors = dueTextFieldColors(),
+        shape = RoundedCornerShape(14.dp)
+    )
+}
+
+@Composable
+private fun DueFeeSummaryCard(
+    totalDue: Double,
+    studentCount: Int,
+    feeCount: Int,
+    periodCount: Int,
+    selectedBatch: String
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(18.dp))
+            .background(Brush.linearGradient(listOf(Color(0xFF101B2F), CardBg)))
+            .border(1.dp, SoftLine, RoundedCornerShape(18.dp))
+            .padding(16.dp)
+    ) {
+        Column {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(RoundedCornerShape(13.dp))
+                        .background(SoftCyan),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Filled.ReceiptLong, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(24.dp))
+                }
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Due Report", color = TextWhite, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        "${SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date())} / $selectedBatch",
+                        color = TextMuted,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(16.dp))
+            Text("Total Due", color = TextMuted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            Text(formatCurrency(totalDue), color = AccentRed, fontSize = 30.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(14.dp))
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                DueSummaryPill("Students", studentCount.toString(), Modifier.weight(1f))
+                DueSummaryPill("Fee Items", feeCount.toString(), Modifier.weight(1f))
+                DueSummaryPill("Months", periodCount.toString(), Modifier.weight(1f))
             }
         }
     }
 }
 
 @Composable
-private fun DueFeeMiniItem(item: DueFeeDetail) {
-    Row(
-        modifier = Modifier
-            .width(250.dp)
-            .clip(RoundedCornerShape(8.dp))
+private fun DueSummaryPill(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
             .background(CardBgAlt)
-            .padding(horizontal = 10.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.Bottom
+            .border(1.dp, BorderSub, RoundedCornerShape(12.dp))
+            .padding(horizontal = 10.dp, vertical = 10.dp)
+    ) {
+        Text(value, color = TextWhite, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+        Text(label, color = TextMuted, fontSize = 11.sp, maxLines = 1)
+    }
+}
+
+@Composable
+private fun DueListHeader(count: Int, sortBy: String, statusFilter: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
     ) {
         Column(Modifier.weight(1f)) {
-            Text(item.batchName.ifBlank { "No Batch" }, color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text("Batch Fee •", color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-            Text(item.feePeriod, color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text("Students With Due", color = TextWhite, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            Text("$count students / Sort: $sortBy / Status: $statusFilter", color = TextMuted, fontSize = 12.sp)
         }
-        Text(formatAmount(item.dueAmount), color = TextWhite, fontSize = 16.sp)
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(999.dp))
+                .background(SoftCyan)
+                .border(1.dp, SoftLine, RoundedCornerShape(999.dp))
+                .padding(horizontal = 12.dp, vertical = 7.dp)
+        ) {
+            Text("Report only", color = AccentCyan, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+private fun DueEmptyState() {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(190.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .background(CardBg)
+            .border(1.dp, BorderSub, RoundedCornerShape(18.dp))
+            .padding(20.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(
+                modifier = Modifier
+                    .size(58.dp)
+                    .clip(CircleShape)
+                    .background(SoftCyan),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Filled.ReceiptLong, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(28.dp))
+            }
+            Spacer(Modifier.height(12.dp))
+            Text("No due fees found", color = TextWhite, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            Text("Students with pending fees will appear here.", color = TextMuted, fontSize = 13.sp)
+        }
+    }
+}
+
+@Composable
+private fun DueStudentCard(group: DueStudentGroup, onSms: () -> Unit, onWhatsApp: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = CardBg),
+        border = BorderStroke(1.dp, SoftLine)
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+                Box(
+                    modifier = Modifier
+                        .size(46.dp)
+                        .clip(CircleShape)
+                        .background(Brush.linearGradient(listOf(ElectricBlue, AccentCyan))),
+                    contentAlignment = Alignment.Center
+                ) {
+                    val initial = group.studentName.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "?"
+                    Text(initial, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                }
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(group.studentName, color = TextWhite, fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Spacer(Modifier.height(3.dp))
+                    Text(group.studentPhone ?: "No phone", color = TextMuted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Spacer(Modifier.height(6.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        TinyStatusChip(if (group.studentStatus.isClosedStatus()) "Close" else "Active", if (group.studentStatus.isClosedStatus()) AccentRed else WAGreen)
+                        TinyStatusChip("${group.monthCount} month${if (group.monthCount == 1) "" else "s"}", AccentCyan)
+                    }
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(formatCurrency(group.totalDue), color = AccentRed, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    Text("${group.items.size} due item${if (group.items.size == 1) "" else "s"}", color = TextMuted, fontSize = 11.sp)
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+            HorizontalDivider(color = BorderSub)
+            Spacer(Modifier.height(10.dp))
+
+            group.items.forEach { item ->
+                DueFeeLine(item)
+                Spacer(Modifier.height(8.dp))
+            }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                DueReminderButton(Icons.Filled.Sms, "SMS", ElectricBlue, Modifier.weight(1f), onSms)
+                DueReminderButton(Icons.Filled.Whatsapp, "WhatsApp", WAGreen, Modifier.weight(1f), onWhatsApp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun TinyStatusChip(label: String, color: Color) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(color.copy(alpha = 0.12f))
+            .border(1.dp, color.copy(alpha = 0.32f), RoundedCornerShape(999.dp))
+            .padding(horizontal = 8.dp, vertical = 3.dp)
+    ) {
+        Text(label, color = color, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+private fun DueFeeLine(item: DueFeeDetail) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(CardBgAlt)
+            .border(1.dp, BorderSub, RoundedCornerShape(12.dp))
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(item.feePeriod, color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Spacer(Modifier.height(2.dp))
+            Text(item.batchName.ifBlank { "No Batch" }, color = TextMuted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Column(horizontalAlignment = Alignment.End) {
+            Text(formatCurrency(item.dueAmount), color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            Text("Due", color = AccentRed, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+        }
+    }
+}
+
+@Composable
+private fun DueReminderButton(
+    icon: ImageVector,
+    label: String,
+    color: Color,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = modifier
+            .height(42.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(color.copy(alpha = 0.12f))
+            .border(1.dp, color.copy(alpha = 0.35f), RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(icon, contentDescription = label, tint = color, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(6.dp))
+            Text(label, color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        }
     }
 }
 
@@ -368,28 +599,22 @@ private fun DueFeeMiniItem(item: DueFeeDetail) {
 private fun DueFeeChartCard(stats: List<BatchDueStat>, totalDue: Double) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = CardBg),
-        border = BorderStroke(1.dp, BorderSub)
+        border = BorderStroke(1.dp, SoftLine)
     ) {
-        Column(modifier = Modifier.padding(22.dp)) {
+        Column(modifier = Modifier.padding(18.dp)) {
+            Text("Batch Wise Due Report", color = TextWhite, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            Text("Distribution by batch", color = TextMuted, fontSize = 12.sp)
+            Spacer(Modifier.height(14.dp))
             DueDonutChart(stats = stats, totalDue = totalDue)
-            Spacer(Modifier.height(18.dp))
-            Row(Modifier.fillMaxWidth()) {
-                Text("Due Fees", color = TextWhite, fontSize = 16.sp, modifier = Modifier.weight(1f))
-                Text("৳", color = TextWhite, fontSize = 16.sp, modifier = Modifier.width(90.dp))
-                Text("%", color = TextWhite, fontSize = 16.sp, modifier = Modifier.width(56.dp))
-            }
-            HorizontalDivider(color = BorderSub, modifier = Modifier.padding(vertical = 10.dp))
-            stats.forEachIndexed { index, stat ->
-                val color = chartColors[index % chartColors.size]
-                val percent = if (totalDue <= 0.0) 0.0 else stat.amount / totalDue * 100.0
-                Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(14.dp).clip(CircleShape).background(color))
-                    Spacer(Modifier.width(8.dp))
-                    Text(stat.batchName, color = TextWhite, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                    Text(formatAmount(stat.amount), color = TextWhite, fontSize = 16.sp, modifier = Modifier.width(90.dp))
-                    Text("${"%.2f".format(percent)} %", color = TextWhite, fontSize = 16.sp, modifier = Modifier.width(70.dp))
+            Spacer(Modifier.height(14.dp))
+            if (stats.isEmpty()) {
+                Text("No due records to chart.", color = TextMuted, fontSize = 13.sp)
+            } else {
+                stats.forEachIndexed { index, stat ->
+                    DueDistributionRow(stat = stat, totalDue = totalDue, color = chartColors[index % chartColors.size])
+                    if (index != stats.lastIndex) Spacer(Modifier.height(10.dp))
                 }
             }
         }
@@ -398,19 +623,52 @@ private fun DueFeeChartCard(stats: List<BatchDueStat>, totalDue: Double) {
 
 @Composable
 private fun DueDonutChart(stats: List<BatchDueStat>, totalDue: Double) {
-    Box(modifier = Modifier.fillMaxWidth().height(260.dp), contentAlignment = Alignment.Center) {
-        Canvas(modifier = Modifier.size(210.dp)) {
-            val strokeWidth = 74f
+    Box(modifier = Modifier.fillMaxWidth().height(190.dp), contentAlignment = Alignment.Center) {
+        Canvas(modifier = Modifier.size(166.dp)) {
+            val strokeWidth = 32f
             if (stats.isEmpty() || totalDue <= 0.0) {
-                drawArc(Color(0xFF3A414C), 0f, 360f, false, style = Stroke(strokeWidth, cap = StrokeCap.Butt))
+                drawArc(Color(0xFF334155), 0f, 360f, false, style = Stroke(strokeWidth, cap = StrokeCap.Round))
             } else {
                 var start = -90f
                 stats.forEachIndexed { index, stat ->
-                    val sweep = (stat.amount / totalDue * 360.0).toFloat()
-                    drawArc(chartColors[index % chartColors.size], start, sweep, false, style = Stroke(strokeWidth, cap = StrokeCap.Butt))
+                    val sweep = (stat.amount / totalDue * 360.0).toFloat().coerceAtLeast(1f)
+                    drawArc(chartColors[index % chartColors.size], start, sweep, false, style = Stroke(strokeWidth, cap = StrokeCap.Round))
                     start += sweep
                 }
             }
+        }
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(formatCurrency(totalDue), color = TextWhite, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            Text("Total due", color = TextMuted, fontSize = 12.sp)
+        }
+    }
+}
+
+@Composable
+private fun DueDistributionRow(stat: BatchDueStat, totalDue: Double, color: Color) {
+    val percent = if (totalDue <= 0.0) 0f else (stat.amount / totalDue).toFloat().coerceIn(0f, 1f)
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(10.dp).clip(CircleShape).background(color))
+            Spacer(Modifier.width(8.dp))
+            Text(stat.batchName, color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            Text(formatCurrency(stat.amount), color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        }
+        Spacer(Modifier.height(6.dp))
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(7.dp)
+                .clip(RoundedCornerShape(999.dp))
+                .background(BorderSub)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(percent.coerceAtLeast(0.04f))
+                    .height(7.dp)
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(color)
+            )
         }
     }
 }
@@ -429,61 +687,74 @@ private fun DueFeesFilterDialog(
     var dropdownOpen by remember { mutableStateOf(false) }
     Dialog(onDismissRequest = onDismiss) {
         Card(
-            shape = RoundedCornerShape(14.dp),
-            colors = CardDefaults.cardColors(containerColor = CardBg)
+            modifier = Modifier.fillMaxWidth(0.96f),
+            shape = RoundedCornerShape(18.dp),
+            colors = CardDefaults.cardColors(containerColor = CardBg),
+            border = BorderStroke(1.dp, SoftLine)
         ) {
-            Column {
-                Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("Due Fees Filter", color = AccentAmber, fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+            Column(modifier = Modifier.padding(18.dp)) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Due Fees Filter", color = AccentCyan, fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                     IconButton(onClick = onDismiss) {
-                        Icon(Icons.Filled.Close, contentDescription = "Close", tint = AccentRed, modifier = Modifier.size(30.dp))
+                        Icon(Icons.Filled.Close, contentDescription = "Close", tint = AccentRed, modifier = Modifier.size(28.dp))
                     }
                 }
-                Column(Modifier.padding(horizontal = 18.dp)) {
-                    Text("Select Batch", color = TextWhite, fontSize = 15.sp)
-                    Box {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(62.dp)
-                                .clip(RoundedCornerShape(14.dp))
-                                .background(CardBg)
-                                .clickable { dropdownOpen = true }
-                                .padding(horizontal = 16.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(Icons.Filled.Groups, contentDescription = null, tint = TextMuted, modifier = Modifier.size(30.dp))
-                            Spacer(Modifier.width(14.dp))
-                            Text(selectedBatch, color = TextWhite, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text("▾", color = TextWhite, fontSize = 18.sp)
-                        }
-                        DropdownMenu(expanded = dropdownOpen, onDismissRequest = { dropdownOpen = false }) {
-                            batchOptions.forEach { option ->
-                                DropdownMenuItem(
-                                    text = { Text(option) },
-                                    onClick = {
-                                        onBatchChange(option)
-                                        dropdownOpen = false
-                                    }
-                                )
-                            }
-                        }
-                    }
-                    Spacer(Modifier.height(20.dp))
-                    FilterChipRow("Sort by", listOf("Name", "Amount", "Date"), sortBy, onSortChange)
-                    Spacer(Modifier.height(18.dp))
-                    FilterChipRow("Status", listOf("Any", "Active", "Close"), statusFilter, onStatusChange)
-                }
-                Spacer(Modifier.height(24.dp))
-                Box(Modifier.fillMaxWidth().background(CardBgAlt).padding(18.dp)) {
-                    Button(
-                        onClick = onDismiss,
-                        modifier = Modifier.fillMaxWidth().height(58.dp),
-                        shape = RoundedCornerShape(14.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = AccentAmber, contentColor = Color(0xFF231B02))
+                Spacer(Modifier.height(12.dp))
+                Text("Select Batch", color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(8.dp))
+                Box {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(56.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(CardBgAlt)
+                            .border(1.dp, BorderSub, RoundedCornerShape(14.dp))
+                            .clickable { dropdownOpen = true }
+                            .padding(horizontal = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Apply Filter", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                        Icon(Icons.Filled.Groups, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(24.dp))
+                        Spacer(Modifier.width(12.dp))
+                        Text(selectedBatch, color = TextWhite, fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text("v", color = TextMuted, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                     }
+                    DropdownMenu(
+                        expanded = dropdownOpen,
+                        onDismissRequest = { dropdownOpen = false },
+                        modifier = Modifier
+                            .width(280.dp)
+                            .heightIn(max = 320.dp)
+                            .background(CardBgAlt),
+                        containerColor = CardBgAlt
+                    ) {
+                        batchOptions.forEach { option ->
+                            DropdownMenuItem(
+                                text = { Text(option, color = TextWhite, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                onClick = {
+                                    onBatchChange(option)
+                                    dropdownOpen = false
+                                }
+                            )
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(18.dp))
+                FilterChipRow("Sort by", listOf("Name", "Amount", "Date"), sortBy, onSortChange)
+                Spacer(Modifier.height(16.dp))
+                FilterChipRow("Status", listOf("Any", "Active", "Close"), statusFilter, onStatusChange)
+                Spacer(Modifier.height(22.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(52.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Brush.horizontalGradient(listOf(ElectricBlue, AccentCyan)))
+                        .clickable(onClick = onDismiss),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("Apply Filter", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -492,18 +763,23 @@ private fun DueFeesFilterDialog(
 
 @Composable
 private fun FilterChipRow(label: String, options: List<String>, selected: String, onSelected: (String) -> Unit) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, color = TextWhite, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column {
+        Text(label, color = TextWhite, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             options.forEach { option ->
+                val isSelected = selected == option
                 Box(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(if (selected == option) AccentAmber.copy(alpha = 0.16f) else CardBgAlt)
-                        .clickable { onSelected(option) }
-                        .padding(horizontal = 12.dp, vertical = 7.dp)
+                        .weight(1f)
+                        .height(42.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(if (isSelected) SoftCyan else CardBgAlt)
+                        .border(1.dp, if (isSelected) SoftLine else BorderSub, RoundedCornerShape(12.dp))
+                        .clickable { onSelected(option) },
+                    contentAlignment = Alignment.Center
                 ) {
-                    Text(option, color = if (selected == option) AccentAmber else TextWhite, fontSize = 17.sp)
+                    Text(option, color = if (isSelected) AccentCyan else TextWhite, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1)
                 }
             }
         }
@@ -520,39 +796,58 @@ private fun DueFeeMenuDialog(
 ) {
     Dialog(onDismissRequest = onDismiss) {
         Card(
-            shape = RoundedCornerShape(14.dp),
+            modifier = Modifier.fillMaxWidth(0.96f),
+            shape = RoundedCornerShape(18.dp),
             colors = CardDefaults.cardColors(containerColor = CardBg),
-            border = BorderStroke(1.dp, BorderSub)
+            border = BorderStroke(1.dp, SoftLine)
         ) {
             Column {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("Due Fee Menu", color = AccentAmber, fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    Text("Due Fee Menu", color = AccentCyan, fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                     IconButton(onClick = onDismiss) {
-                        Icon(Icons.Filled.Close, contentDescription = "Close", tint = AccentRed, modifier = Modifier.size(30.dp))
+                        Icon(Icons.Filled.Close, contentDescription = "Close", tint = AccentRed, modifier = Modifier.size(28.dp))
                     }
                 }
                 HorizontalDivider(color = BorderSub)
-                MenuRow(Icons.Filled.Sms, "SMS", "You can send due fee SMS to student", onSms)
-                MenuRow(Icons.Filled.Whatsapp, "WhatsApp", "You can send due fee message to student", onWhatsApp)
-                MenuRow(Icons.Filled.Notifications, "In-App Reminder", "Send push notification to all students with dues", onReminder)
-                MenuRow(Icons.Filled.Download, "Export", "You can download due fee record here", onExport, showDivider = false)
+                MenuRow(Icons.Filled.Sms, "SMS All", "Share this due report by SMS", ElectricBlue, onSms)
+                MenuRow(Icons.Filled.Whatsapp, "WhatsApp All", "Share this due report by WhatsApp", WAGreen, onWhatsApp)
+                MenuRow(Icons.Filled.Notifications, "Reminder Note", "Use student cards for direct reminders", AccentCyan, onReminder)
+                MenuRow(Icons.Filled.Download, "Export Report", "Download or share due fee records", AccentCyan, onExport, showDivider = false)
             }
         }
     }
 }
 
 @Composable
-private fun MenuRow(icon: ImageVector, title: String, subtitle: String, onClick: () -> Unit, showDivider: Boolean = true) {
+private fun MenuRow(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    color: Color,
+    onClick: () -> Unit,
+    showDivider: Boolean = true
+) {
     Column {
         Row(
-            modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 22.dp, vertical = 18.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onClick)
+                .padding(horizontal = 18.dp, vertical = 16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(icon, contentDescription = null, tint = AccentAmber, modifier = Modifier.size(32.dp))
-            Spacer(Modifier.width(18.dp))
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(RoundedCornerShape(13.dp))
+                    .background(color.copy(alpha = 0.12f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(24.dp))
+            }
+            Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
-                Text(title, color = TextWhite, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
-                Text(subtitle, color = TextMuted, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(title, color = TextWhite, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Text(subtitle, color = TextMuted, fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
         }
         if (showDivider) HorizontalDivider(color = BorderSub)
@@ -564,14 +859,14 @@ private fun MenuRow(icon: ImageVector, title: String, subtitle: String, onClick:
 private fun dueTextFieldColors() = OutlinedTextFieldDefaults.colors(
     focusedTextColor = TextWhite,
     unfocusedTextColor = TextWhite,
-    focusedBorderColor = AccentAmber,
-    unfocusedBorderColor = BorderSub,
+    focusedBorderColor = AccentCyan,
+    unfocusedBorderColor = SoftLine,
     focusedContainerColor = CardBg,
     unfocusedContainerColor = CardBg,
-    cursorColor = AccentAmber
+    cursorColor = AccentCyan
 )
 
-private val chartColors = listOf(AccentRed, AccentAmber, Color(0xFF3B82F6), Color(0xFF14B8A6), Color(0xFF6366F1))
+private val chartColors = listOf(AccentRed, AccentCyan, ElectricBlue, WAGreen, SkyBlue, Color(0xFF8B5CF6))
 
 private fun String.isClosedStatus(): Boolean {
     val normalized = trim().lowercase()
@@ -583,17 +878,22 @@ private fun formatAmount(amount: Double): String =
         maximumFractionDigits = 0
     }.format(amount)
 
+private fun formatCurrency(amount: Double): String = "BDT ${formatAmount(amount)}"
+
 private fun buildDueFeeExportText(groups: List<DueStudentGroup>, totalDue: Double): String =
     buildString {
-        appendLine("Due Fee Records")
+        appendLine("Due Fee Report")
         appendLine("Date: ${SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date())}")
-        appendLine("Total Due: ${formatAmount(totalDue)}")
-        appendLine("Students: ${groups.size}")
+        appendLine("Total Due: ${formatCurrency(totalDue)}")
+        appendLine("Students With Due: ${groups.size}")
         appendLine()
-        groups.forEach { group ->
-            appendLine("${group.studentName} - ${formatAmount(group.totalDue)}")
+        groups.forEachIndexed { index, group ->
+            appendLine("${index + 1}. ${group.studentName} - ${formatCurrency(group.totalDue)}")
+            appendLine("Phone: ${group.studentPhone ?: "N/A"}")
+            appendLine("Status: ${if (group.studentStatus.isClosedStatus()) "Close" else "Active"}")
             group.items.forEach { item ->
-                appendLine("  ${item.batchName.ifBlank { "No Batch" }} • ${item.feePeriod}: ${formatAmount(item.dueAmount)}")
+                appendLine("  - ${item.feePeriod} | ${item.batchName.ifBlank { "No Batch" }} | Due: ${formatCurrency(item.dueAmount)}")
             }
+            appendLine()
         }
     }

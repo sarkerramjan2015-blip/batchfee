@@ -37,9 +37,10 @@ import kotlinx.coroutines.withContext
         com.example.data.models.ExamEntity::class,
         com.example.data.models.ResultEntity::class,
         com.example.data.models.AuditLogEntity::class,
-        com.example.data.models.AbsentMessageEntity::class
+        com.example.data.models.AbsentMessageEntity::class,
+        com.example.data.models.EnquiryEntity::class
     ],
-    version = 10,
+    version = 11,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -63,6 +64,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun resultDao(): com.example.data.dao.ResultDao
     abstract fun auditLogDao(): com.example.data.dao.AuditLogDao
     abstract fun absentMessageDao(): com.example.data.dao.AbsentMessageDao
+    abstract fun enquiryDao(): com.example.data.dao.EnquiryDao
 
     companion object {
         @Volatile
@@ -94,6 +96,30 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_10_11 = object : androidx.room.migration.Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS enquiries (
+                        id TEXT NOT NULL PRIMARY KEY,
+                        instituteId TEXT NOT NULL,
+                        name TEXT NOT NULL,
+                        phone TEXT NOT NULL,
+                        address TEXT,
+                        subjectName TEXT NOT NULL,
+                        enquiryDateMs INTEGER NOT NULL,
+                        status TEXT NOT NULL,
+                        createdAtMs INTEGER NOT NULL,
+                        updatedAtMs INTEGER NOT NULL,
+                        archivedAtMs INTEGER
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS idx_enquiries_institute ON enquiries(instituteId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS idx_enquiries_date ON enquiries(enquiryDateMs)")
+            }
+        }
+
         fun getDatabase(context: Context, scope: CoroutineScope): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -101,7 +127,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "batchfee_database"
                 )
-                .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10)
+                .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11)
                 .build()
                 INSTANCE = instance
                 instance

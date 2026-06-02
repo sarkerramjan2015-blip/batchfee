@@ -252,8 +252,7 @@ class MainActivity : FragmentActivity() {
                         composable<DueFeesRoute> {
                             com.example.ui.fees.DueFeeListScreen(
                                 db = appDb,
-                                onBack = { navController.popBackStack() },
-                                onCollectPayment = { feeId -> navController.navigate(CollectPaymentRoute(feeId)) }
+                                onBack = { navController.popBackStack() }
                             )
                         }
                         

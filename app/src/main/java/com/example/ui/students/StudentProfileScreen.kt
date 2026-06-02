@@ -63,6 +63,9 @@ private val TextMuted     = Color(0xFF94A3B8)
 private val WAGreen       = Color(0xFF25D366)
 private val Teal          = Color(0xFF14B8A6)
 private val AccentAmber   = Color(0xFFF59E0B)
+private val DashboardLine = Color(0x5522D3EE)
+private val DashboardSoft = Color(0x1A22D3EE)
+private val DangerRed     = Color(0xFFEF4444)
 
 // ── Screen ──────────────────────────────────────────────────────
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1357,43 +1360,62 @@ private fun StudentDashboardContent(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(54.dp)
+            .height(58.dp)
             .clip(RoundedCornerShape(16.dp))
-            .background(CardBg)
-            .border(1.dp, BorderSub, RoundedCornerShape(16.dp))
+            .background(Brush.horizontalGradient(listOf(CardBgAlt, Color(0xFF102235))))
+            .border(1.dp, DashboardLine, RoundedCornerShape(16.dp))
             .clickable(onClick = onAssignBatch)
-            .padding(horizontal = 18.dp),
+            .padding(horizontal = 16.dp),
         contentAlignment = Alignment.CenterStart
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Text("Assign Batch", color = TextWhite, fontSize = 17.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+            Box(
+                modifier = Modifier
+                    .size(38.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Cyan.copy(alpha = 0.14f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Filled.Groups, contentDescription = null, tint = Cyan, modifier = Modifier.size(21.dp))
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Assign Batch", color = TextWhite, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    if (batches.isEmpty()) "No batch selected" else "${batches.size} batch${if (batches.size == 1) "" else "es"} enrolled",
+                    color = TextMuted,
+                    fontSize = 12.sp
+                )
+            }
             Box(
                 modifier = Modifier
                     .size(34.dp)
                     .clip(CircleShape)
-                    .background(AccentAmber),
+                    .background(Brush.linearGradient(listOf(ElectricBlue, Cyan))),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(Icons.Filled.Add, contentDescription = null, tint = Color(0xFF1B1B1B), modifier = Modifier.size(22.dp))
+                Icon(Icons.Filled.Add, contentDescription = null, tint = Color.White, modifier = Modifier.size(21.dp))
             }
         }
     }
 
-    Spacer(Modifier.height(14.dp))
+    Spacer(Modifier.height(12.dp))
 
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = CardBg),
-        border = BorderStroke(1.dp, BorderSub)
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(18.dp))
+            .background(Brush.linearGradient(listOf(Color(0xFF101B2F), CardBg)))
+            .border(1.dp, DashboardLine, RoundedCornerShape(18.dp))
     ) {
         Column(modifier = Modifier.padding(18.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     modifier = Modifier
-                        .size(68.dp)
+                        .size(72.dp)
                         .clip(CircleShape)
-                        .background(Brush.linearGradient(listOf(VioletBlue, SkyBlue))),
+                        .background(Brush.linearGradient(listOf(ElectricBlue, Cyan)))
+                        .border(2.dp, SkyBlue.copy(alpha = 0.55f), CircleShape),
                     contentAlignment = Alignment.Center
                 ) {
                     if (!student.photoUri.isNullOrBlank()) {
@@ -1407,9 +1429,33 @@ private fun StudentDashboardContent(
                         Icon(Icons.Filled.School, contentDescription = null, tint = Color.White, modifier = Modifier.size(36.dp))
                     }
                 }
-                Spacer(Modifier.width(16.dp))
+                Spacer(Modifier.width(14.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(primaryBatch?.name ?: "No Batch Assigned", color = TextWhite, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            student.studentCode,
+                            color = Cyan,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Cyan.copy(alpha = 0.12f))
+                                .padding(horizontal = 8.dp, vertical = 3.dp)
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            student.status.replaceFirstChar { it.uppercase() },
+                            color = WAGreen,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(WAGreen.copy(alpha = 0.12f))
+                                .padding(horizontal = 8.dp, vertical = 3.dp)
+                        )
+                    }
+                    Spacer(Modifier.height(7.dp))
+                    Text(primaryBatch?.name ?: "No Batch Assigned", color = TextWhite, fontSize = 19.sp, fontWeight = FontWeight.Bold)
                     Text(
                         if (primaryBatch != null) "Batch Fee • Monthly • ${primaryBatch.monthlyFeeAmount.toLong()}" else "Assign a batch to see fee details",
                         color = TextMuted,
@@ -1418,9 +1464,9 @@ private fun StudentDashboardContent(
                 }
             }
 
-            Spacer(Modifier.height(20.dp))
+            Spacer(Modifier.height(18.dp))
 
-            Row(horizontalArrangement = Arrangement.spacedBy(20.dp), modifier = Modifier.fillMaxWidth()) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                 ProfileMetric(Icons.Filled.CalendarMonth, "Join Date", dateFormat.format(Date(student.admissionDateMs)), Modifier.weight(1f))
                 ProfileMetric(
                     Icons.Filled.CalendarMonth,
@@ -1429,27 +1475,35 @@ private fun StudentDashboardContent(
                     Modifier.weight(1f)
                 )
             }
-            Spacer(Modifier.height(14.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(20.dp), modifier = Modifier.fillMaxWidth()) {
+            Spacer(Modifier.height(10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                 ProfileMetric(Icons.Filled.Savings, "Collected Fees", totalPaid.toLong().toString(), Modifier.weight(1f))
                 ProfileMetric(Icons.Filled.Paid, "Due Fees", totalDue.toLong().toString(), Modifier.weight(1f))
             }
-            Spacer(Modifier.height(18.dp))
-            Button(
-                onClick = onToggleInsights,
+            Spacer(Modifier.height(16.dp))
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(46.dp),
-                shape = RoundedCornerShape(14.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = AccentAmber, contentColor = Color(0xFF201A05))
+                    .height(46.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(Brush.horizontalGradient(listOf(ElectricBlue, Cyan)))
+                    .clickable(onClick = onToggleInsights),
+                contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    if (insightsVisible) Icons.Filled.KeyboardArrowUp else Icons.Filled.Analytics,
-                    contentDescription = null,
-                    modifier = Modifier.size(20.dp)
-                )
-                Spacer(Modifier.width(8.dp))
-                Text(if (insightsVisible) "Hide Reports & Details" else "View Reports & Details", fontWeight = FontWeight.Bold)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        if (insightsVisible) Icons.Filled.KeyboardArrowUp else Icons.Filled.Analytics,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        if (insightsVisible) "Hide Reports & Details" else "View Reports & Details",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
         }
     }
@@ -1477,15 +1531,15 @@ private fun StudentDashboardContent(
 
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = CardBg),
-        border = BorderStroke(1.dp, BorderSub)
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF0B1426)),
+        border = BorderStroke(1.dp, DashboardLine)
     ) {
         Column(modifier = Modifier.padding(18.dp)) {
-            Text("Personal Info", color = TextWhite, fontSize = 20.sp, fontWeight = FontWeight.Medium)
-            Spacer(Modifier.height(18.dp))
-            TwoColumnInfo("Father name", student.guardianName ?: "N/A", "Mother name", student.emergencyContact ?: "N/A")
-            Spacer(Modifier.height(16.dp))
+            Text("Personal Info", color = TextWhite, fontSize = 19.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(14.dp))
+            TwoColumnInfo("Guardian name", student.guardianName ?: "N/A", "Mother name", student.emergencyContact ?: "N/A")
+            Spacer(Modifier.height(14.dp))
             TwoColumnInfo(
                 "Date of Birth",
                 student.dateOfBirthMs?.let { dateFormat.format(Date(it)) } ?: "N/A",
@@ -1493,31 +1547,31 @@ private fun StudentDashboardContent(
                 student.gender ?: "N/A"
             )
 
-            Spacer(Modifier.height(26.dp))
+            Spacer(Modifier.height(22.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Contact Information", color = TextWhite, fontSize = 20.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+                Text("Contact Information", color = TextWhite, fontSize = 19.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                 IconButton(onClick = {
                     student.phone?.takeIf { it.isNotBlank() }?.let { context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$it"))) }
-                }) { Icon(Icons.Filled.Phone, contentDescription = null, tint = AccentAmber) }
+                }) { Icon(Icons.Filled.Phone, contentDescription = null, tint = Cyan) }
                 IconButton(onClick = {
                     val email = student.email.orEmpty()
                     if (email.isNotBlank()) context.startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:$email")))
-                }) { Icon(Icons.Filled.Email, contentDescription = null, tint = AccentAmber) }
+                }) { Icon(Icons.Filled.Email, contentDescription = null, tint = Cyan) }
                 IconButton(onClick = {
                     if (whatsappNumber.isNotBlank()) context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(buildWhatsAppUrl(whatsappNumber, ""))))
                 }) { Icon(Icons.Filled.Whatsapp, contentDescription = null, tint = WAGreen) }
             }
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(14.dp))
             TwoColumnInfo("Phone number", student.phone ?: "N/A", "WhatsApp", whatsappNumber.ifBlank { "N/A" })
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(14.dp))
             ProfileInfoBlock("Address", student.address ?: "N/A")
 
-            Spacer(Modifier.height(26.dp))
-            Text("Academic Info", color = TextWhite, fontSize = 20.sp, fontWeight = FontWeight.Medium)
-            Spacer(Modifier.height(18.dp))
-            TwoColumnInfo("Standard", student.className ?: "N/A", "Roll number", student.studentCode)
-            Spacer(Modifier.height(16.dp))
-            ProfileInfoBlock("School name", student.schoolName ?: "N/A")
+            Spacer(Modifier.height(22.dp))
+            Text("Academic Info", color = TextWhite, fontSize = 19.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(14.dp))
+            TwoColumnInfo("Class", student.className ?: "N/A", "Student ID", student.studentCode)
+            Spacer(Modifier.height(14.dp))
+            ProfileInfoBlock("Institute name", student.schoolName ?: "N/A")
         }
     }
 
@@ -1544,12 +1598,12 @@ private fun StudentInsightsPanel(
 
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = CardBg),
-        border = BorderStroke(1.dp, BorderSub)
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF0B1426)),
+        border = BorderStroke(1.dp, DashboardLine)
     ) {
         Column(modifier = Modifier.padding(18.dp)) {
-            Text("Monthly Attendance", color = TextWhite, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            Text("Monthly Attendance", color = TextWhite, fontSize = 19.sp, fontWeight = FontWeight.Bold)
             Text(monthLabel, color = TextMuted, fontSize = 13.sp)
             Spacer(Modifier.height(14.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
@@ -1574,10 +1628,10 @@ private fun StudentInsightsPanel(
             )
 
             Spacer(Modifier.height(22.dp))
-            HorizontalDivider(color = BorderSub)
+            HorizontalDivider(color = DashboardLine)
             Spacer(Modifier.height(18.dp))
 
-            Text("Fee Details", color = TextWhite, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            Text("Fee Details", color = TextWhite, fontSize = 19.sp, fontWeight = FontWeight.Bold)
             Text("Submitted fee history", color = TextMuted, fontSize = 13.sp)
             Spacer(Modifier.height(12.dp))
             if (paymentHistory.isEmpty()) {
@@ -1611,8 +1665,8 @@ private fun InsightStat(label: String, value: Int, color: Color, modifier: Modif
     Column(
         modifier = modifier
             .clip(RoundedCornerShape(12.dp))
-            .background(CardBg)
-            .border(1.dp, BorderSub, RoundedCornerShape(12.dp))
+            .background(color.copy(alpha = 0.10f))
+            .border(1.dp, color.copy(alpha = 0.28f), RoundedCornerShape(12.dp))
             .padding(10.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -1627,12 +1681,20 @@ private fun FeePaymentRow(payment: PaymentEntity) {
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
-            .background(CardBg)
-            .border(1.dp, BorderSub, RoundedCornerShape(12.dp))
+            .background(CardBgAlt)
+            .border(1.dp, DashboardLine, RoundedCornerShape(12.dp))
             .padding(12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(Icons.Filled.ReceiptLong, contentDescription = null, tint = AccentAmber, modifier = Modifier.size(24.dp))
+        Box(
+            modifier = Modifier
+                .size(34.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(Cyan.copy(alpha = 0.12f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(Icons.Filled.ReceiptLong, contentDescription = null, tint = Cyan, modifier = Modifier.size(20.dp))
+        }
         Spacer(Modifier.width(10.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
@@ -1676,15 +1738,15 @@ private fun ReportActionButton(
         modifier = modifier
             .height(58.dp)
             .clip(RoundedCornerShape(12.dp))
-            .background(CardBg)
-            .border(1.dp, BorderSub, RoundedCornerShape(12.dp))
+            .background(DashboardSoft)
+            .border(1.dp, DashboardLine, RoundedCornerShape(12.dp))
             .clickable(onClick = onClick),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Icon(icon, contentDescription = null, tint = AccentAmber, modifier = Modifier.size(18.dp))
+        Icon(icon, contentDescription = null, tint = if (label == "WhatsApp") WAGreen else Cyan, modifier = Modifier.size(18.dp))
         Spacer(Modifier.height(3.dp))
-        Text(label, color = TextMuted, fontSize = 10.sp, maxLines = 1)
+        Text(label, color = TextWhite, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
     }
 }
 
@@ -1753,11 +1815,19 @@ private fun ProfileMetric(
     modifier: Modifier = Modifier
 ) {
     Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
-        Icon(icon, contentDescription = null, tint = AccentAmber, modifier = Modifier.size(24.dp))
-        Spacer(Modifier.width(10.dp))
+        Box(
+            modifier = Modifier
+                .size(34.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(Cyan.copy(alpha = 0.12f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(icon, contentDescription = null, tint = Cyan, modifier = Modifier.size(19.dp))
+        }
+        Spacer(Modifier.width(8.dp))
         Column {
-            Text(label, color = TextMuted, fontSize = 13.sp)
-            Text(value, color = TextWhite, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            Text(label, color = TextMuted, fontSize = 11.sp, maxLines = 1)
+            Text(value, color = TextWhite, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1)
         }
     }
 }
@@ -1766,24 +1836,32 @@ private fun ProfileMetric(
 private fun SmallDashboardTile(title: String, modifier: Modifier = Modifier) {
     Box(
         modifier = modifier
-            .height(64.dp)
+            .height(60.dp)
             .clip(RoundedCornerShape(14.dp))
-            .background(CardBg)
-            .border(1.dp, BorderSub, RoundedCornerShape(14.dp))
-            .padding(horizontal = 16.dp),
+            .background(Brush.linearGradient(listOf(CardBgAlt, Color(0xFF0C2032))))
+            .border(1.dp, DashboardLine, RoundedCornerShape(14.dp))
+            .padding(horizontal = 12.dp),
         contentAlignment = Alignment.CenterStart
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Filled.MenuBook, contentDescription = null, tint = AccentAmber, modifier = Modifier.size(28.dp))
-            Spacer(Modifier.width(10.dp))
-            Text(title, color = TextWhite, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Cyan.copy(alpha = 0.12f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Filled.MenuBook, contentDescription = null, tint = Cyan, modifier = Modifier.size(21.dp))
+            }
+            Spacer(Modifier.width(9.dp))
+            Text(title, color = TextWhite, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1)
         }
     }
 }
 
 @Composable
 private fun TwoColumnInfo(leftLabel: String, leftValue: String, rightLabel: String, rightValue: String) {
-    Row(horizontalArrangement = Arrangement.spacedBy(20.dp), modifier = Modifier.fillMaxWidth()) {
+    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
         ProfileInfoBlock(leftLabel, leftValue, Modifier.weight(1f))
         ProfileInfoBlock(rightLabel, rightValue, Modifier.weight(1f))
     }
@@ -1791,10 +1869,16 @@ private fun TwoColumnInfo(leftLabel: String, leftValue: String, rightLabel: Stri
 
 @Composable
 private fun ProfileInfoBlock(label: String, value: String, modifier: Modifier = Modifier) {
-    Column(modifier = modifier) {
-        Text(label, color = TextMuted, fontSize = 14.sp)
-        Spacer(Modifier.height(4.dp))
-        Text(value, color = TextWhite, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(CardBgAlt.copy(alpha = 0.72f))
+            .border(1.dp, BorderSub, RoundedCornerShape(12.dp))
+            .padding(12.dp)
+    ) {
+        Text(label, color = TextMuted, fontSize = 12.sp, maxLines = 1)
+        Spacer(Modifier.height(5.dp))
+        Text(value, color = TextWhite, fontSize = 15.sp, fontWeight = FontWeight.Bold)
     }
 }
 

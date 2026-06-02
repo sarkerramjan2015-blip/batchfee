@@ -48,6 +48,8 @@ private val SkyBlue       = Color(0xFF38BDF8)
 private val WAGreen       = Color(0xFF25D366)
 private val TextWhite     = Color(0xFFF8FAFC)
 private val TextMuted     = Color(0xFF94A3B8)
+private val ModalBg       = Color(0xFF0B1626)
+private val CloseSoftRed  = Color(0xFFFFA3A3)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -165,7 +167,7 @@ fun StudentListScreen(
                         Icon(Icons.Filled.MoreVert, contentDescription = "Student menu", tint = TextWhite, modifier = Modifier.size(28.dp))
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF1F1F1F))
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = BgColor)
             )
         },
         floatingActionButton = {
@@ -296,33 +298,35 @@ fun StudentListScreen(
     if (showFilterDialog) {
         AlertDialog(
             onDismissRequest = { showFilterDialog = false },
-            containerColor = Color(0xFF242C35),
-            shape = RoundedCornerShape(24.dp),
+            modifier = Modifier.fillMaxWidth(0.90f),
+            containerColor = ModalBg,
+            shape = RoundedCornerShape(22.dp),
             title = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Students Filter", color = Color(0xFFF4C542), fontSize = 24.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    Text("Students Filter", color = Cyan, fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                     IconButton(onClick = { showFilterDialog = false }) {
-                        Icon(Icons.Filled.Close, contentDescription = "Close", tint = Color(0xFFFFB4AB), modifier = Modifier.size(30.dp))
+                        Icon(Icons.Filled.Close, contentDescription = "Close", tint = CloseSoftRed, modifier = Modifier.size(28.dp))
                     }
                 }
             },
             text = {
                 Column(
                     modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(18.dp)
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
                     Text("Select Batch", color = TextMuted, fontSize = 14.sp)
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(16.dp))
-                            .border(1.dp, TextMuted.copy(alpha = 0.6f), RoundedCornerShape(16.dp))
+                            .background(CardBgAlt)
+                            .border(1.dp, Cyan.copy(alpha = 0.20f), RoundedCornerShape(16.dp))
                     ) {
                         FilterChoiceRow(Icons.Filled.Groups, "All Batches", selectedBatchId == null) {
                             selectedBatchId = null
                         }
                         batches.forEach { batch ->
-                            HorizontalDivider(color = Color(0xFF3A4652))
+                            HorizontalDivider(color = BorderSub)
                             FilterChoiceRow(Icons.Filled.Class, batch.name, selectedBatchId == batch.id) {
                                 selectedBatchId = batch.id
                             }
@@ -330,13 +334,13 @@ fun StudentListScreen(
                     }
                     DialogChipRow(
                         label = "Sort by",
-                        options = listOf("name" to "Name", "roll" to "RollNumber"),
+                        options = listOf("name" to "Name", "roll" to "Roll No."),
                         selected = sortBy,
                         onSelect = { sortBy = it }
                     )
                     DialogChipRow(
                         label = "Status",
-                        options = listOf("any" to "Any", "active" to "Active", "inactive" to "InActive"),
+                        options = listOf("any" to "Any", "active" to "Active", "inactive" to "Inactive"),
                         selected = selectedStatus,
                         onSelect = { selectedStatus = it }
                     )
@@ -345,11 +349,11 @@ fun StudentListScreen(
             confirmButton = {
                 Button(
                     onClick = { showFilterDialog = false },
-                    modifier = Modifier.fillMaxWidth().height(56.dp),
-                    shape = RoundedCornerShape(18.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF4C542), contentColor = Color(0xFF2A2212))
+                    modifier = Modifier.fillMaxWidth().height(52.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Cyan, contentColor = BgColor)
                 ) {
-                    Text("Apply Filter", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                    Text("Apply Filter", fontSize = 17.sp, fontWeight = FontWeight.Bold)
                 }
             }
         )
@@ -358,13 +362,14 @@ fun StudentListScreen(
     if (showStudentsMenu) {
         AlertDialog(
             onDismissRequest = { showStudentsMenu = false },
-            containerColor = Color(0xFF242C35),
-            shape = RoundedCornerShape(24.dp),
+            modifier = Modifier.fillMaxWidth(0.90f),
+            containerColor = ModalBg,
+            shape = RoundedCornerShape(22.dp),
             title = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Students Menu", color = Color(0xFFF4C542), fontSize = 24.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    Text("Students Menu", color = Cyan, fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                     IconButton(onClick = { showStudentsMenu = false }) {
-                        Icon(Icons.Filled.Close, contentDescription = "Close", tint = Color(0xFFFFB4AB), modifier = Modifier.size(30.dp))
+                        Icon(Icons.Filled.Close, contentDescription = "Close", tint = CloseSoftRed, modifier = Modifier.size(28.dp))
                     }
                 }
             },
@@ -374,22 +379,22 @@ fun StudentListScreen(
                         showStudentsMenu = false
                         onNavigateToIdCards()
                     }
-                    HorizontalDivider(color = Color(0xFF3A4652))
+                    HorizontalDivider(color = BorderSub.copy(alpha = 0.85f), modifier = Modifier.padding(start = 58.dp))
                     StudentMenuRow(Icons.Filled.FileUpload, "Export", "You can export student list here") {
                         showStudentsMenu = false
                         scope.launch { snackbarHostState.showSnackbar("Export is coming soon.") }
                     }
-                    HorizontalDivider(color = Color(0xFF3A4652))
+                    HorizontalDivider(color = BorderSub.copy(alpha = 0.85f), modifier = Modifier.padding(start = 58.dp))
                     StudentMenuRow(Icons.Filled.Message, "Message", "You can send message to selected students here") {
                         showStudentsMenu = false
                         showMessageDialog = true
                     }
-                    HorizontalDivider(color = Color(0xFF3A4652))
+                    HorizontalDivider(color = BorderSub.copy(alpha = 0.85f), modifier = Modifier.padding(start = 58.dp))
                     StudentMenuRow(Icons.Filled.FileDownload, "Import Students", "You can import students using file") {
                         showStudentsMenu = false
                         scope.launch { snackbarHostState.showSnackbar("Import students is coming soon.") }
                     }
-                    HorizontalDivider(color = Color(0xFF3A4652))
+                    HorizontalDivider(color = BorderSub.copy(alpha = 0.85f), modifier = Modifier.padding(start = 58.dp))
                     StudentMenuRow(Icons.Filled.Download, "Sample File For Import student", "Download sample file for import students") {
                         showStudentsMenu = false
                         scope.launch { snackbarHostState.showSnackbar("Sample file download is coming soon.") }
@@ -403,13 +408,14 @@ fun StudentListScreen(
     if (showMessageDialog) {
         AlertDialog(
             onDismissRequest = { showMessageDialog = false },
-            containerColor = Color(0xFF242C35),
-            shape = RoundedCornerShape(24.dp),
+            modifier = Modifier.fillMaxWidth(0.90f),
+            containerColor = ModalBg,
+            shape = RoundedCornerShape(22.dp),
             title = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Message", color = Color(0xFFF4C542), fontSize = 24.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    Text("Message", color = Cyan, fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                     IconButton(onClick = { showMessageDialog = false }) {
-                        Icon(Icons.Filled.Close, contentDescription = "Close", tint = Color(0xFFFFB4AB), modifier = Modifier.size(30.dp))
+                        Icon(Icons.Filled.Close, contentDescription = "Close", tint = CloseSoftRed, modifier = Modifier.size(28.dp))
                     }
                 }
             },
@@ -423,8 +429,8 @@ fun StudentListScreen(
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedTextColor = TextWhite,
                         unfocusedTextColor = TextWhite,
-                        focusedBorderColor = TextMuted,
-                        unfocusedBorderColor = TextMuted,
+                        focusedBorderColor = Cyan,
+                        unfocusedBorderColor = Cyan.copy(alpha = 0.28f),
                         focusedContainerColor = CardBgAlt,
                         unfocusedContainerColor = CardBgAlt,
                         cursorColor = Cyan
@@ -441,8 +447,8 @@ fun StudentListScreen(
                         },
                         modifier = Modifier.weight(1f).height(52.dp),
                         shape = RoundedCornerShape(16.dp),
-                        border = BorderStroke(2.dp, Color(0xFFF4C542)),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFF4C542))
+                        border = BorderStroke(1.5.dp, Cyan),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Cyan)
                     ) {
                         Text("WhatsApp", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                     }
@@ -453,7 +459,7 @@ fun StudentListScreen(
                         },
                         modifier = Modifier.weight(1f).height(52.dp),
                         shape = RoundedCornerShape(16.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF4C542), contentColor = Color(0xFF2A2212))
+                        colors = ButtonDefaults.buttonColors(containerColor = Cyan, contentColor = BgColor)
                     ) {
                         Text("SMS", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                     }
@@ -478,19 +484,19 @@ private fun FilterChoiceRow(
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(icon, contentDescription = null, tint = if (selected) Color(0xFFF4C542) else TextMuted, modifier = Modifier.size(30.dp))
+        Icon(icon, contentDescription = null, tint = if (selected) Cyan else TextMuted, modifier = Modifier.size(24.dp))
         Spacer(Modifier.width(14.dp))
         Text(
             title,
             color = if (selected) TextWhite else TextMuted,
-            fontSize = 20.sp,
+            fontSize = 17.sp,
             fontWeight = FontWeight.Bold,
             modifier = Modifier.weight(1f),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
         if (selected) {
-            Icon(Icons.Filled.Check, contentDescription = null, tint = Color(0xFFF4C542))
+            Icon(Icons.Filled.Check, contentDescription = null, tint = Cyan)
         }
     }
 }
@@ -507,23 +513,23 @@ private fun DialogChipRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        Text(label, color = TextWhite, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.width(96.dp))
+        Text(label, color = TextWhite, fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.width(82.dp))
         options.forEach { (value, title) ->
             FilterChip(
                 selected = selected == value,
                 onClick = { onSelect(value) },
-                label = { Text(title, fontSize = 16.sp) },
+                label = { Text(title, fontSize = 13.sp, maxLines = 1) },
                 colors = FilterChipDefaults.filterChipColors(
-                    selectedContainerColor = Color(0xFFF4C542).copy(alpha = 0.18f),
-                    selectedLabelColor = Color(0xFFF4C542),
-                    containerColor = Color(0xFF3A3A3A),
+                    selectedContainerColor = Cyan.copy(alpha = 0.14f),
+                    selectedLabelColor = Cyan,
+                    containerColor = CardBgAlt,
                     labelColor = TextWhite.copy(alpha = 0.82f)
                 ),
                 border = FilterChipDefaults.filterChipBorder(
                     enabled = true,
                     selected = selected == value,
                     borderColor = Color.Transparent,
-                    selectedBorderColor = Color(0xFFF4C542),
+                    selectedBorderColor = Cyan,
                     borderWidth = 1.dp,
                     selectedBorderWidth = 1.dp
                 )
@@ -542,17 +548,25 @@ private fun StudentMenuRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 82.dp)
+            .heightIn(min = 72.dp)
             .clickable(onClick = onClick)
-            .padding(horizontal = 6.dp, vertical = 12.dp),
+            .padding(horizontal = 4.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(icon, contentDescription = null, tint = Color(0xFFF4C542), modifier = Modifier.size(34.dp))
-        Spacer(Modifier.width(18.dp))
+        Box(
+            modifier = Modifier
+                .size(42.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(Cyan.copy(alpha = 0.12f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(icon, contentDescription = null, tint = Cyan, modifier = Modifier.size(22.dp))
+        }
+        Spacer(Modifier.width(14.dp))
         Column(modifier = Modifier.weight(1f)) {
-            Text(title, color = TextWhite, fontSize = 23.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Spacer(Modifier.height(4.dp))
-            Text(subtitle, color = TextMuted.copy(alpha = 0.72f), fontSize = 15.sp, lineHeight = 19.sp)
+            Text(title, color = TextWhite, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Spacer(Modifier.height(3.dp))
+            Text(subtitle, color = TextMuted.copy(alpha = 0.76f), fontSize = 13.sp, lineHeight = 17.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
     }
 }

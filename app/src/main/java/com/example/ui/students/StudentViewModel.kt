@@ -44,7 +44,10 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
         }
     }
 
-    fun generateStudentCode(): String = "STD-${UUID.randomUUID().toString().take(8)}"
+    fun generateStudentCode(): String {
+        val digits = UUID.randomUUID().toString().filter(Char::isDigit) + System.currentTimeMillis().toString()
+        return digits.take(8).padEnd(8, '0')
+    }
 
     fun addStudent(
         studentCode: String,
@@ -58,7 +61,7 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
         schoolName: String?,
         className: String?,
         address: String?,
-        notes: String?,
+        admissionDateMs: Long,
         photoUri: String?,
         onSuccess: () -> Unit,
         onError: (String) -> Unit = {}
@@ -69,9 +72,6 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
         val combinedNotes = buildString {
             if (!whatsappNumber.isNullOrBlank()) {
                 appendLine("WhatsApp: $whatsappNumber")
-            }
-            if (!notes.isNullOrBlank()) {
-                append(notes)
             }
         }.trimEnd().takeIf { it.isNotEmpty() }
 
@@ -93,7 +93,7 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
             guardianEmail = null,
             emergencyContact = motherName,
             bloodGroup = null,
-            admissionDateMs = System.currentTimeMillis(),
+            admissionDateMs = admissionDateMs,
             status = "active",
             notes = combinedNotes,
             createdAtMs = System.currentTimeMillis(),
@@ -124,7 +124,7 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
         schoolName: String?,
         className: String?,
         address: String?,
-        notes: String?,
+        admissionDateMs: Long,
         photoUri: String?,
         onSuccess: () -> Unit
     ) {
@@ -134,9 +134,6 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
             val combinedNotes = buildString {
                 if (!whatsappNumber.isNullOrBlank()) {
                     appendLine("WhatsApp: $whatsappNumber")
-                }
-                if (!notes.isNullOrBlank()) {
-                    append(notes)
                 }
             }.trimEnd().takeIf { it.isNotEmpty() }
             val updated = existing.copy(
@@ -150,6 +147,7 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
                 schoolName = schoolName,
                 className = className,
                 address = address,
+                admissionDateMs = admissionDateMs,
                 notes = combinedNotes,
                 photoUri = photoUri,
                 updatedAtMs = System.currentTimeMillis()

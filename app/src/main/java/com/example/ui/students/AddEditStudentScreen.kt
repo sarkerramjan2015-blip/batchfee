@@ -6,7 +6,19 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -14,19 +26,45 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.CalendarMonth
+import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberDatePickerState
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
@@ -34,27 +72,26 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.example.data.database.AppDatabase
-import com.example.ui.components.PhoneInputField
-import kotlinx.coroutines.launch
+import com.example.ui.components.COUNTRY_CODES
 import java.io.File
 import java.text.SimpleDateFormat
-import java.util.*
+import java.util.Date
+import java.util.Locale
+import java.util.UUID
 
-// ── Colors (matching PricingScreen) ─────────────────────────────
-private val BgColor      = Color(0xFF07111F)
-private val CardBg        = Color(0xFF0F172A)
-private val CardBgAlt     = Color(0xFF111827)
-private val BorderSub     = Color(0xFF1E293B)
-private val SkyBlue       = Color(0xFF38BDF8)
-private val Cyan          = Color(0xFF22D3EE)
-private val ElectricBlue  = Color(0xFF3B82F6)
-private val VioletBlue    = Color(0xFF6366F1)
-private val TextWhite     = Color(0xFFF8FAFC)
-private val TextMuted     = Color(0xFF94A3B8)
-private val WAGreen       = Color(0xFF25D366)
-private val Teal          = Color(0xFF14B8A6)
+private val BgColor = Color(0xFF07111F)
+private val CardBg = Color(0xFF0F172A)
+private val CardBgAlt = Color(0xFF111827)
+private val BorderSub = Color(0xFF1E293B)
+private val SkyBlue = Color(0xFF38BDF8)
+private val Cyan = Color(0xFF22D3EE)
+private val ElectricBlue = Color(0xFF3B82F6)
+private val TextWhite = Color(0xFFF8FAFC)
+private val TextMuted = Color(0xFF94A3B8)
+private val AccentRed = Color(0xFFEF4444)
 
 private val GenderOptions = listOf("Male", "Female", "Other")
+private const val DefaultCountryCode = "+880"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -65,16 +102,13 @@ fun AddEditStudentScreen(
 ) {
     val context = LocalContext.current
     val viewModel: StudentViewModel = viewModel(factory = StudentViewModelFactory(db))
-    val scope = rememberCoroutineScope()
     val isEdit = studentId != null
 
-    // ── Form state ──────────────────────────────────────────
-    val studentCode = remember { viewModel.generateStudentCode() }
+    var studentCode by remember { mutableStateOf(viewModel.generateStudentCode()) }
     var existingId by remember { mutableStateOf("") }
     var fullName by remember { mutableStateOf("") }
-    var phone by remember { mutableStateOf("") }
     var guardianName by remember { mutableStateOf("") }
-    var motherName by remember { mutableStateOf("") }
+    var phone by remember { mutableStateOf("") }
     var whatsappNumber by remember { mutableStateOf("") }
     var gender by remember { mutableStateOf<String?>(null) }
     var dateOfBirthMs by remember { mutableStateOf<Long?>(null) }
@@ -82,12 +116,13 @@ fun AddEditStudentScreen(
     var className by remember { mutableStateOf("") }
     var address by remember { mutableStateOf("") }
     var admissionDateMs by remember { mutableStateOf(System.currentTimeMillis()) }
-    var notes by remember { mutableStateOf("") }
     var photoUri by remember { mutableStateOf<Uri?>(null) }
 
     var nameError by remember { mutableStateOf(false) }
     var phoneError by remember { mutableStateOf(false) }
     var loaded by remember { mutableStateOf(!isEdit) }
+    var showDobPicker by remember { mutableStateOf(false) }
+    var showAdmissionDatePicker by remember { mutableStateOf(false) }
 
     val tempPhotoFile = remember {
         File(context.cacheDir, "student_photo_${UUID.randomUUID()}.jpg").apply { parentFile?.mkdirs() }
@@ -99,88 +134,103 @@ fun AddEditStudentScreen(
     val cameraLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.TakePicture()
     ) { success ->
-        if (success) {
-            photoUri = tempPhotoUri
-        }
+        if (success) photoUri = tempPhotoUri
     }
 
-    // ── Load existing student ────────────────────────────────
+    val galleryLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri != null) photoUri = uri
+    }
+
     LaunchedEffect(studentId) {
         if (studentId != null) {
             val student = viewModel.loadStudent(studentId)
             student?.let { s ->
                 existingId = s.id
+                studentCode = s.studentCode.filter(Char::isDigit).ifBlank { viewModel.generateStudentCode() }
                 fullName = s.fullName
-                phone = s.phone ?: ""
                 guardianName = s.guardianName ?: ""
-                motherName = s.emergencyContact ?: ""
+                phone = s.phone ?: ""
                 gender = s.gender
                 dateOfBirthMs = s.dateOfBirthMs
                 schoolName = s.schoolName ?: ""
                 className = s.className ?: ""
                 address = s.address ?: ""
                 admissionDateMs = s.admissionDateMs
-                s.notes?.let { rawNotes ->
-                    if (rawNotes.startsWith("WhatsApp: ")) {
-                        val lines = rawNotes.split("\n", limit = 2)
-                        whatsappNumber = lines[0].removePrefix("WhatsApp: ")
-                        notes = lines.getOrElse(1) { "" }
-                    } else {
-                        notes = rawNotes
-                    }
-                }
+                s.notes?.lineSequence()
+                    ?.firstOrNull { it.startsWith("WhatsApp: ") }
+                    ?.let { whatsappNumber = it.removePrefix("WhatsApp: ").trim() }
                 s.photoUri?.let { uriStr ->
-                    try { photoUri = Uri.parse(uriStr) } catch (_: Exception) {}
+                    try {
+                        photoUri = Uri.parse(uriStr)
+                    } catch (_: Exception) {
+                    }
                 }
             }
             loaded = true
         }
     }
 
-    // ── Date picker dialog ───────────────────────────────────
-    var showDatePicker by remember { mutableStateOf(false) }
-    if (showDatePicker) {
+    if (showDobPicker) {
         val datePickerState = rememberDatePickerState(
             initialSelectedDateMillis = dateOfBirthMs ?: System.currentTimeMillis()
         )
         DatePickerDialog(
-            onDismissRequest = { showDatePicker = false },
+            onDismissRequest = { showDobPicker = false },
             confirmButton = {
                 TextButton(onClick = {
                     dateOfBirthMs = datePickerState.selectedDateMillis
-                    showDatePicker = false
+                    showDobPicker = false
                 }) { Text("OK") }
             },
             dismissButton = {
-                TextButton(onClick = { showDatePicker = false }) { Text("Cancel") }
+                TextButton(onClick = { showDobPicker = false }) { Text("Cancel") }
             }
         ) {
             DatePicker(state = datePickerState)
         }
     }
 
-    val admissionDateStr = remember(admissionDateMs) {
-        SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(admissionDateMs))
+    if (showAdmissionDatePicker) {
+        val admissionPickerState = rememberDatePickerState(
+            initialSelectedDateMillis = admissionDateMs
+        )
+        DatePickerDialog(
+            onDismissRequest = { showAdmissionDatePicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    admissionDateMs = admissionPickerState.selectedDateMillis ?: admissionDateMs
+                    showAdmissionDatePicker = false
+                }) { Text("OK") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAdmissionDatePicker = false }) { Text("Cancel") }
+            }
+        ) {
+            DatePicker(state = admissionPickerState)
+        }
     }
 
+    val dateFormatter = remember { SimpleDateFormat("dd MMM yyyy", Locale.getDefault()) }
+    val admissionDateStr = remember(admissionDateMs) { dateFormatter.format(Date(admissionDateMs)) }
     val dobDisplay = remember(dateOfBirthMs) {
-        dateOfBirthMs?.let {
-            SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(it))
-        } ?: "Not set"
+        dateOfBirthMs?.let { dateFormatter.format(Date(it)) } ?: "Not set"
     }
-
     val title = if (isEdit) "Edit Student" else "Add Student"
 
     Scaffold(
         containerColor = BgColor,
         topBar = {
             TopAppBar(
-                title = {
-                    Text(title, color = TextWhite, fontWeight = FontWeight.Bold)
-                },
+                title = { Text(title, color = TextWhite, fontWeight = FontWeight.Bold) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = TextWhite)
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
+                            tint = TextWhite
+                        )
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = BgColor)
@@ -189,320 +239,386 @@ fun AddEditStudentScreen(
     ) { padding ->
         if (!loaded) {
             Box(
-                modifier = Modifier.fillMaxSize().padding(padding),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding),
                 contentAlignment = Alignment.Center
             ) {
                 CircularProgressIndicator(color = Cyan)
             }
-        } else {
-            Column(
+            return@Scaffold
+        }
+
+        Column(
+            modifier = Modifier
+                .padding(padding)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 10.dp)
+                .navigationBarsPadding()
+        ) {
+            StudentPhotoPicker(
+                photoUri = photoUri,
+                onCameraClick = {
+                    try {
+                        cameraLauncher.launch(tempPhotoUri)
+                    } catch (_: Exception) {
+                    }
+                },
+                onGalleryClick = { galleryLauncher.launch("image/*") }
+            )
+
+            Spacer(Modifier.height(14.dp))
+
+            SectionLabel("Student ID")
+            Row(
                 modifier = Modifier
-                    .padding(padding)
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 20.dp, vertical = 16.dp)
+                    .fillMaxWidth()
+                    .padding(bottom = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                // ── Photo Section ──────────────────────────────
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Center
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(100.dp)
-                            .clip(CircleShape)
-                            .background(CardBgAlt)
-                            .border(2.dp, ElectricBlue, CircleShape)
-                            .clickable {
-                                scope.launch {
-                                    try { cameraLauncher.launch(tempPhotoUri) }
-                                    catch (_: Exception) {}
-                                }
-                            },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        if (photoUri != null) {
-                            AsyncImage(
-                                model = ImageRequest.Builder(context)
-                                    .data(photoUri)
-                                    .crossfade(true)
-                                    .build(),
-                                contentDescription = "Student photo",
-                                modifier = Modifier.fillMaxSize().clip(CircleShape),
-                                contentScale = ContentScale.Crop
-                            )
-                        } else {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Icon(
-                                    Icons.Filled.CameraAlt,
-                                    contentDescription = "Add photo",
-                                    tint = TextMuted,
-                                    modifier = Modifier.size(32.dp)
-                                )
-                                Text(
-                                    "Photo",
-                                    color = TextMuted,
-                                    fontSize = 10.sp
-                                )
-                            }
-                        }
-                    }
-                }
-
-                Spacer(Modifier.height(20.dp))
-
-                // ── Student ID ─────────────────────────────────
-                SectionLabel("Student ID")
-                Spacer(Modifier.height(4.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    DarkTextField(
-                        value = studentCode,
-                        onValueChange = {},
-                        readOnly = true,
-                        enabled = false,
-                        modifier = Modifier.weight(1f),
-                        singleLine = true
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(Cyan.copy(alpha = 0.15f))
-                            .padding(horizontal = 8.dp, vertical = 4.dp)
-                    ) {
-                        Text("Auto", fontSize = 10.sp, color = Cyan, fontWeight = FontWeight.SemiBold)
-                    }
-                }
-
-                // ── Full Name ──────────────────────────────────
-                SectionLabel("Full Name *")
                 DarkTextField(
-                    value = fullName,
-                    onValueChange = { fullName = it; nameError = false },
-                    isError = nameError,
-                    supportingText = if (nameError) "Required" else null,
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
-                )
-                Spacer(Modifier.height(12.dp))
-
-                // ── Guardian Name ──────────────────────────────
-                SectionLabel("Father / Guardian Name")
-                DarkTextField(
-                    value = guardianName,
-                    onValueChange = { guardianName = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
-                )
-                Spacer(Modifier.height(12.dp))
-
-                // ── Mother Name ────────────────────────────────
-                SectionLabel("Mother Name")
-                DarkTextField(
-                    value = motherName,
-                    onValueChange = { motherName = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
-                )
-                Spacer(Modifier.height(12.dp))
-
-                // ── Phone ──────────────────────────────────────
-                SectionLabel("Phone Number *")
-                PhoneInputField(
-                    value = phone,
-                    onValueChange = { phone = it; phoneError = false },
-                    isError = phoneError,
-                    supportingText = if (phoneError) "Required" else null,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Spacer(Modifier.height(12.dp))
-
-                // ── WhatsApp ───────────────────────────────────
-                SectionLabel("WhatsApp Number")
-                PhoneInputField(
-                    value = whatsappNumber,
-                    onValueChange = { whatsappNumber = it },
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Spacer(Modifier.height(14.dp))
-
-                // ── Gender ─────────────────────────────────────
-                SectionLabel("Gender")
-                Spacer(Modifier.height(4.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    GenderOptions.forEach { option ->
-                        val isSelected = option == gender
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .then(
-                                    if (isSelected) Modifier.background(
-                                        Brush.horizontalGradient(listOf(ElectricBlue, Cyan))
-                                    )
-                                    else Modifier.background(CardBgAlt).border(1.dp, BorderSub, RoundedCornerShape(8.dp))
-                                )
-                                .clickable { gender = if (isSelected) null else option }
-                                .padding(horizontal = 16.dp, vertical = 8.dp)
-                        ) {
-                            Text(
-                                option,
-                                color = if (isSelected) Color.White else TextMuted,
-                                fontSize = 13.sp,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
-                            )
-                        }
-                    }
-                }
-                Spacer(Modifier.height(14.dp))
-
-                // ── Date of Birth ──────────────────────────────
-                SectionLabel("Date of Birth")
-                Spacer(Modifier.height(4.dp))
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(CardBgAlt)
-                        .border(1.dp, BorderSub, RoundedCornerShape(12.dp))
-                        .clickable { showDatePicker = true }
-                        .padding(horizontal = 16.dp),
-                    contentAlignment = Alignment.CenterStart
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(dobDisplay, color = TextWhite, fontSize = 14.sp)
-                        Icon(Icons.Filled.CalendarMonth, contentDescription = null, tint = Cyan, modifier = Modifier.size(20.dp))
-                    }
-                }
-                Spacer(Modifier.height(14.dp))
-
-                // ── School Name ────────────────────────────────
-                SectionLabel("School / Institute Name")
-                DarkTextField(
-                    value = schoolName,
-                    onValueChange = { schoolName = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
-                )
-                Spacer(Modifier.height(12.dp))
-
-                // ── Class ──────────────────────────────────────
-                SectionLabel("Class")
-                DarkTextField(
-                    value = className,
-                    onValueChange = { className = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
-                )
-                Spacer(Modifier.height(12.dp))
-
-                // ── Address ────────────────────────────────────
-                SectionLabel("Address")
-                DarkTextField(
-                    value = address,
-                    onValueChange = { address = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    maxLines = 2
-                )
-                Spacer(Modifier.height(12.dp))
-
-                // ── Admission Date ─────────────────────────────
-                SectionLabel("Admission Date")
-                DarkTextField(
-                    value = admissionDateStr,
+                    value = studentCode,
                     onValueChange = {},
                     readOnly = true,
-                    enabled = false,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.weight(1f),
                     singleLine = true
                 )
-                Spacer(Modifier.height(12.dp))
-
-                // ── Notes ──────────────────────────────────────
-                SectionLabel("Notes")
-                DarkTextField(
-                    value = notes,
-                    onValueChange = { notes = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    maxLines = 3
-                )
-
-                Spacer(Modifier.height(24.dp))
-
-                // ── Save Button ────────────────────────────────
+                Spacer(Modifier.width(8.dp))
                 Box(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .height(50.dp)
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(
-                            brush = Brush.horizontalGradient(listOf(ElectricBlue, Cyan))
-                        )
-                        .clickable {
-                            nameError = fullName.isBlank()
-                            phoneError = phone.isBlank()
-                            if (!nameError && !phoneError) {
-                                if (isEdit) {
-                                    viewModel.updateStudent(
-                                        id = existingId,
-                                        studentCode = studentCode,
-                                        fullName = fullName.trim(),
-                                        phone = phone.trim(),
-                                        guardianName = guardianName.trim().takeIf { it.isNotEmpty() },
-                                        motherName = motherName.trim().takeIf { it.isNotEmpty() },
-                                        whatsappNumber = whatsappNumber.trim().takeIf { it.isNotEmpty() },
-                                        gender = gender,
-                                        dateOfBirthMs = dateOfBirthMs,
-                                        schoolName = schoolName.trim().takeIf { it.isNotEmpty() },
-                                        className = className.trim().takeIf { it.isNotEmpty() },
-                                        address = address.trim().takeIf { it.isNotEmpty() },
-                                        notes = notes.trim().takeIf { it.isNotEmpty() },
-                                        photoUri = photoUri?.toString(),
-                                        onSuccess = onBack
-                                    )
-                                } else {
-                                    viewModel.addStudent(
-                                        studentCode = studentCode,
-                                        fullName = fullName.trim(),
-                                        phone = phone.trim(),
-                                        guardianName = guardianName.trim().takeIf { it.isNotEmpty() },
-                                        motherName = motherName.trim().takeIf { it.isNotEmpty() },
-                                        whatsappNumber = whatsappNumber.trim().takeIf { it.isNotEmpty() },
-                                        gender = gender,
-                                        dateOfBirthMs = dateOfBirthMs,
-                                        schoolName = schoolName.trim().takeIf { it.isNotEmpty() },
-                                        className = className.trim().takeIf { it.isNotEmpty() },
-                                        address = address.trim().takeIf { it.isNotEmpty() },
-                                        notes = notes.trim().takeIf { it.isNotEmpty() },
-                                        photoUri = photoUri?.toString(),
-                                        onSuccess = onBack
-                                    )
-                                }
-                            }
-                        },
-                    contentAlignment = Alignment.Center
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Cyan.copy(alpha = 0.14f))
+                        .border(1.dp, Cyan.copy(alpha = 0.35f), RoundedCornerShape(8.dp))
+                        .padding(horizontal = 10.dp, vertical = 7.dp)
                 ) {
-                    Text(
-                        if (isEdit) "Update" else "Save",
-                        color = Color.White,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Text("Auto", fontSize = 11.sp, color = Cyan, fontWeight = FontWeight.Bold)
                 }
+            }
 
-                Spacer(Modifier.height(32.dp))
+            SectionLabel("Student Name *")
+            DarkTextField(
+                value = fullName,
+                onValueChange = {
+                    fullName = it
+                    nameError = false
+                },
+                isError = nameError,
+                supportingText = if (nameError) "Required" else null,
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+            Spacer(Modifier.height(10.dp))
+
+            SectionLabel("Guardian Name")
+            DarkTextField(
+                value = guardianName,
+                onValueChange = { guardianName = it },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+            Spacer(Modifier.height(10.dp))
+
+            SectionLabel("Phone Number *")
+            StudentPhoneInputField(
+                value = phone,
+                onValueChange = {
+                    phone = it
+                    phoneError = false
+                },
+                isError = phoneError,
+                supportingText = if (phoneError) "Required" else null,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(Modifier.height(10.dp))
+
+            SectionLabel("WhatsApp Number")
+            StudentPhoneInputField(
+                value = whatsappNumber,
+                onValueChange = { whatsappNumber = it },
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(Modifier.height(12.dp))
+
+            SectionLabel("Gender")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                GenderOptions.forEach { option ->
+                    val isSelected = option == gender
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(42.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .then(
+                                if (isSelected) {
+                                    Modifier.background(Brush.horizontalGradient(listOf(ElectricBlue, Cyan)))
+                                } else {
+                                    Modifier
+                                        .background(CardBgAlt)
+                                        .border(1.dp, BorderSub, RoundedCornerShape(12.dp))
+                                }
+                            )
+                            .clickable { gender = if (isSelected) null else option },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            option,
+                            color = if (isSelected) Color.White else TextMuted,
+                            fontSize = 13.sp,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+
+            SectionLabel("Date of Birth")
+            DateValueField(
+                value = dobDisplay,
+                muted = dateOfBirthMs == null,
+                onClick = { showDobPicker = true }
+            )
+            Spacer(Modifier.height(10.dp))
+
+            SectionLabel("Institute Name")
+            DarkTextField(
+                value = schoolName,
+                onValueChange = { schoolName = it },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+            Spacer(Modifier.height(10.dp))
+
+            SectionLabel("Class")
+            DarkTextField(
+                value = className,
+                onValueChange = { className = it },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+            Spacer(Modifier.height(10.dp))
+
+            SectionLabel("Address")
+            DarkTextField(
+                value = address,
+                onValueChange = { address = it },
+                modifier = Modifier.fillMaxWidth(),
+                maxLines = 2
+            )
+            Spacer(Modifier.height(10.dp))
+
+            SectionLabel("Admission Date")
+            DateValueField(
+                value = admissionDateStr,
+                muted = false,
+                onClick = { showAdmissionDatePicker = true }
+            )
+
+            Spacer(Modifier.height(20.dp))
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(Brush.horizontalGradient(listOf(ElectricBlue, Cyan)))
+                    .clickable {
+                        nameError = fullName.isBlank()
+                        phoneError = phone.isBlank()
+                        if (nameError || phoneError) return@clickable
+
+                        val numericStudentCode = studentCode.filter(Char::isDigit)
+                            .ifBlank { viewModel.generateStudentCode() }
+
+                        if (isEdit) {
+                            viewModel.updateStudent(
+                                id = existingId,
+                                studentCode = numericStudentCode,
+                                fullName = fullName.trim(),
+                                phone = phone.trim(),
+                                guardianName = guardianName.trim().takeIf { it.isNotEmpty() },
+                                motherName = null,
+                                whatsappNumber = whatsappNumber.trim().takeIf { it.isNotEmpty() },
+                                gender = gender,
+                                dateOfBirthMs = dateOfBirthMs,
+                                schoolName = schoolName.trim().takeIf { it.isNotEmpty() },
+                                className = className.trim().takeIf { it.isNotEmpty() },
+                                address = address.trim().takeIf { it.isNotEmpty() },
+                                admissionDateMs = admissionDateMs,
+                                photoUri = photoUri?.toString(),
+                                onSuccess = onBack
+                            )
+                        } else {
+                            viewModel.addStudent(
+                                studentCode = numericStudentCode,
+                                fullName = fullName.trim(),
+                                phone = phone.trim(),
+                                guardianName = guardianName.trim().takeIf { it.isNotEmpty() },
+                                motherName = null,
+                                whatsappNumber = whatsappNumber.trim().takeIf { it.isNotEmpty() },
+                                gender = gender,
+                                dateOfBirthMs = dateOfBirthMs,
+                                schoolName = schoolName.trim().takeIf { it.isNotEmpty() },
+                                className = className.trim().takeIf { it.isNotEmpty() },
+                                address = address.trim().takeIf { it.isNotEmpty() },
+                                admissionDateMs = admissionDateMs,
+                                photoUri = photoUri?.toString(),
+                                onSuccess = onBack
+                            )
+                        }
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    if (isEdit) "Update" else "Save",
+                    color = Color.White,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            Spacer(Modifier.height(20.dp))
+        }
+    }
+}
+
+@Composable
+private fun StudentPhotoPicker(
+    photoUri: Uri?,
+    onCameraClick: () -> Unit,
+    onGalleryClick: () -> Unit
+) {
+    val context = LocalContext.current
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(CardBg)
+            .border(1.dp, BorderSub, RoundedCornerShape(14.dp))
+            .padding(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(82.dp)
+                .clip(CircleShape)
+                .background(Brush.linearGradient(listOf(ElectricBlue.copy(alpha = 0.85f), Cyan)))
+                .border(2.dp, SkyBlue.copy(alpha = 0.65f), CircleShape)
+                .clickable(onClick = onCameraClick),
+            contentAlignment = Alignment.Center
+        ) {
+            if (photoUri != null) {
+                AsyncImage(
+                    model = ImageRequest.Builder(context)
+                        .data(photoUri)
+                        .crossfade(true)
+                        .build(),
+                    contentDescription = "Student photo",
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clip(CircleShape),
+                    contentScale = ContentScale.Crop
+                )
+            } else {
+                Icon(
+                    Icons.Filled.CameraAlt,
+                    contentDescription = "Add photo",
+                    tint = BgColor,
+                    modifier = Modifier.size(30.dp)
+                )
+            }
+        }
+
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                "Student Photo",
+                color = TextWhite,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                PhotoActionButton(
+                    icon = Icons.Filled.CameraAlt,
+                    label = "Camera",
+                    onClick = onCameraClick,
+                    modifier = Modifier.weight(1f)
+                )
+                PhotoActionButton(
+                    icon = Icons.Filled.PhotoLibrary,
+                    label = "Gallery",
+                    onClick = onGalleryClick,
+                    modifier = Modifier.weight(1f)
+                )
             }
         }
     }
 }
 
-// ── Helper Composables ──────────────────────────────────────────
+@Composable
+private fun PhotoActionButton(
+    icon: ImageVector,
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .height(38.dp)
+            .clip(RoundedCornerShape(11.dp))
+            .background(Cyan.copy(alpha = 0.12f))
+            .border(1.dp, Cyan.copy(alpha = 0.35f), RoundedCornerShape(11.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            Icon(icon, contentDescription = label, tint = Cyan, modifier = Modifier.size(17.dp))
+            Spacer(Modifier.width(5.dp))
+            Text(label, color = TextWhite, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+private fun DateValueField(
+    value: String,
+    muted: Boolean,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(48.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(CardBgAlt)
+            .border(1.dp, BorderSub, RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp),
+        contentAlignment = Alignment.CenterStart
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                value,
+                color = if (muted) TextMuted else TextWhite,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            Icon(Icons.Filled.CalendarMonth, contentDescription = null, tint = Cyan, modifier = Modifier.size(20.dp))
+        }
+    }
+}
+
 @Composable
 private fun SectionLabel(text: String) {
     Text(
@@ -510,9 +626,148 @@ private fun SectionLabel(text: String) {
         color = TextMuted,
         fontSize = 12.sp,
         fontWeight = FontWeight.SemiBold,
-        letterSpacing = 0.5.sp
+        letterSpacing = 0.sp
     )
     Spacer(Modifier.height(4.dp))
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun StudentPhoneInputField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    isError: Boolean = false,
+    supportingText: String? = null
+) {
+    val initial = remember(value) { parseStudentPhoneNumber(value) }
+    var selectedCode by remember { mutableStateOf(initial.first) }
+    var localNumber by remember { mutableStateOf(initial.second) }
+    var showPicker by remember { mutableStateOf(false) }
+
+    LaunchedEffect(value) {
+        if (value.isBlank()) {
+            localNumber = ""
+        } else {
+            val parsed = parseStudentPhoneNumber(value)
+            selectedCode = parsed.first
+            localNumber = parsed.second
+        }
+    }
+
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.Top
+    ) {
+        Box {
+            Box(
+                modifier = Modifier
+                    .width(104.dp)
+                    .height(54.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(CardBgAlt)
+                    .border(1.dp, if (isError) AccentRed else BorderSub, RoundedCornerShape(12.dp))
+                    .clickable { showPicker = true }
+                    .padding(horizontal = 10.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        selectedCode,
+                        color = TextWhite,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(Modifier.width(2.dp))
+                    Icon(
+                        Icons.Filled.ArrowDropDown,
+                        contentDescription = "Country code",
+                        tint = TextMuted,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+
+            DropdownMenu(
+                expanded = showPicker,
+                onDismissRequest = { showPicker = false },
+                modifier = Modifier
+                    .width(270.dp)
+                    .heightIn(max = 330.dp)
+                    .background(CardBgAlt),
+                containerColor = CardBgAlt
+            ) {
+                COUNTRY_CODES.forEachIndexed { index, country ->
+                    DropdownMenuItem(
+                        text = {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(country.flag, fontSize = 17.sp)
+                                Spacer(Modifier.width(10.dp))
+                                Text(
+                                    country.name,
+                                    color = TextWhite,
+                                    fontSize = 13.sp,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Text(country.code, color = TextMuted, fontSize = 13.sp)
+                                if (country.code == selectedCode) {
+                                    Spacer(Modifier.width(8.dp))
+                                    Icon(
+                                        Icons.Filled.Check,
+                                        contentDescription = null,
+                                        tint = Cyan,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                        },
+                        onClick = {
+                            selectedCode = country.code
+                            localNumber = cleanStudentLocalNumber(localNumber, country.code)
+                            onValueChange(composeStudentPhone(country.code, localNumber))
+                            showPicker = false
+                        }
+                    )
+                    if (index != COUNTRY_CODES.lastIndex) {
+                        HorizontalDivider(color = BorderSub, thickness = 0.5.dp)
+                    }
+                }
+            }
+        }
+
+        OutlinedTextField(
+            value = localNumber,
+            onValueChange = { input ->
+                localNumber = cleanStudentLocalNumber(input, selectedCode)
+                onValueChange(composeStudentPhone(selectedCode, localNumber))
+            },
+            isError = isError,
+            supportingText = supportingText?.let { message ->
+                { Text(message, color = AccentRed, fontSize = 11.sp) }
+            },
+            modifier = Modifier.weight(1f),
+            singleLine = true,
+            placeholder = { Text("Number", color = TextMuted.copy(alpha = 0.7f), fontSize = 14.sp) },
+            textStyle = TextStyle(color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedTextColor = TextWhite,
+                unfocusedTextColor = TextWhite,
+                focusedBorderColor = Cyan,
+                unfocusedBorderColor = BorderSub,
+                errorBorderColor = AccentRed,
+                focusedContainerColor = CardBgAlt,
+                unfocusedContainerColor = CardBgAlt,
+                errorContainerColor = CardBgAlt,
+                cursorColor = Cyan
+            ),
+            shape = RoundedCornerShape(12.dp)
+        )
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -522,7 +777,6 @@ private fun DarkTextField(
     onValueChange: (String) -> Unit,
     modifier: Modifier = Modifier,
     readOnly: Boolean = false,
-    enabled: Boolean = true,
     isError: Boolean = false,
     singleLine: Boolean = false,
     maxLines: Int = if (singleLine) 1 else Int.MAX_VALUE,
@@ -533,21 +787,22 @@ private fun DarkTextField(
         value = value,
         onValueChange = onValueChange,
         readOnly = readOnly,
-        enabled = enabled,
         isError = isError,
         singleLine = singleLine,
         maxLines = maxLines,
         modifier = modifier,
         keyboardOptions = keyboardOptions,
-        supportingText = if (supportingText != null) {{ Text(supportingText, color = Color(0xFFEF4444), fontSize = 11.sp) }} else null,
+        supportingText = supportingText?.let { message ->
+            { Text(message, color = AccentRed, fontSize = 11.sp) }
+        },
         colors = OutlinedTextFieldDefaults.colors(
             focusedTextColor = TextWhite,
             unfocusedTextColor = TextWhite,
             disabledTextColor = TextWhite.copy(alpha = 0.6f),
-            focusedBorderColor = ElectricBlue,
+            focusedBorderColor = Cyan,
             unfocusedBorderColor = BorderSub,
             disabledBorderColor = BorderSub,
-            errorBorderColor = Color(0xFFEF4444),
+            errorBorderColor = AccentRed,
             focusedContainerColor = CardBgAlt,
             unfocusedContainerColor = CardBgAlt,
             disabledContainerColor = CardBg.copy(alpha = 0.5f),
@@ -556,4 +811,48 @@ private fun DarkTextField(
         ),
         shape = RoundedCornerShape(12.dp)
     )
+}
+
+private fun parseStudentPhoneNumber(full: String): Pair<String, String> {
+    if (full.isBlank()) return DefaultCountryCode to ""
+
+    val trimmed = full.trim()
+    val explicitCountry = COUNTRY_CODES
+        .sortedByDescending { it.code.length }
+        .firstOrNull { trimmed.startsWith(it.code) }
+
+    if (explicitCountry != null) {
+        return explicitCountry.code to cleanStudentLocalNumber(
+            input = trimmed.removePrefix(explicitCountry.code),
+            selectedCode = explicitCountry.code
+        )
+    }
+
+    val digits = trimmed.filter(Char::isDigit)
+    val defaultDigits = DefaultCountryCode.filter(Char::isDigit)
+    return if (digits.startsWith(defaultDigits)) {
+        DefaultCountryCode to cleanStudentLocalNumber(
+            input = digits.removePrefix(defaultDigits),
+            selectedCode = DefaultCountryCode
+        )
+    } else {
+        DefaultCountryCode to cleanStudentLocalNumber(trimmed, DefaultCountryCode)
+    }
+}
+
+private fun cleanStudentLocalNumber(input: String, selectedCode: String): String {
+    var digits = input.filter(Char::isDigit)
+    val codeDigits = selectedCode.filter(Char::isDigit)
+    if (digits.startsWith(codeDigits)) {
+        digits = digits.removePrefix(codeDigits)
+    }
+    if (selectedCode == DefaultCountryCode) {
+        digits = digits.dropWhile { it == '0' }
+    }
+    return digits.take(15)
+}
+
+private fun composeStudentPhone(countryCode: String, localNumber: String): String {
+    val clean = cleanStudentLocalNumber(localNumber, countryCode)
+    return if (clean.isBlank()) "" else "$countryCode$clean"
 }
