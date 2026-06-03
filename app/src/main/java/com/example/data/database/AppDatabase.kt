@@ -391,9 +391,27 @@ abstract class AppDatabase : RoomDatabase() {
                     assignedBatchIds = "demo_batch_1",
                     status = "active",
                     notes = null,
+                    permissions = listOf(
+                        "view_student",
+                        "view_batch",
+                        "collect_fee",
+                        "take_attendance",
+                        "view_attendance_reports"
+                    ).joinToString(","),
                     createdAtMs = now,
                     updatedAtMs = now,
                     archivedAtMs = null
+                )
+            )
+            db.userDao().insertUser(
+                UserEntity(
+                    id = "demo_staff_1",
+                    instituteId = demoInstituteId,
+                    name = "Staff Member 1",
+                    email = "STF001",
+                    passwordHash = PasswordHasher.hash("123456"),
+                    role = "Staff",
+                    createdAtMs = now
                 )
             )
 

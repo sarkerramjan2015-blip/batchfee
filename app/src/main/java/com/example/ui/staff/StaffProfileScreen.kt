@@ -20,11 +20,13 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.database.AppDatabase
 import com.example.domain.SessionManager
+import com.example.domain.StaffPermissions
 
 // ── Colors ──────────────────────────────────────────────────────
 private val BgColor      = Color(0xFF07111F)
@@ -47,6 +49,7 @@ fun StaffProfileScreen(
 ) {
     val viewModel: StaffViewModel = viewModel(factory = StaffViewModelFactory(db))
     val staff by viewModel.selectedStaff.collectAsState()
+    val batches by viewModel.batches.collectAsState()
     val isAdmin = remember { SessionManager.isAdmin() }
     var showArchiveDialog by remember { mutableStateOf(false) }
 
@@ -95,8 +98,8 @@ fun StaffProfileScreen(
                     Spacer(Modifier.width(16.dp))
                     Column {
                         Text(s.staffCode, color = Cyan, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                        Text(s.fullName, color = TextWhite, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                        Text(s.roleTitle, color = TextMuted, fontSize = 14.sp)
+                        Text(s.fullName, color = TextWhite, fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(s.roleTitle, color = TextMuted, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
 
@@ -110,6 +113,7 @@ fun StaffProfileScreen(
                     border = BorderStroke(1.dp, BorderSub)
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
+                        InfoRow("Login ID", s.staffCode)
                         InfoRow("Phone", s.phone ?: "N/A")
                         InfoRow("Salary", "BDT ${s.monthlySalary}")
                         InfoRow("Status", s.status.replaceFirstChar { it.uppercase() })
@@ -121,8 +125,40 @@ fun StaffProfileScreen(
 
                 Spacer(Modifier.height(16.dp))
 
+                val assignedIds = s.assignedBatchIds?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }?.toSet() ?: emptySet()
+                val assignedBatches = batches.filter { it.id in assignedIds }
+                Card(
+                    modifier = Modifier.fillMaxWidth().shadow(3.dp, RoundedCornerShape(14.dp), spotColor = Cyan.copy(alpha = 0.15f)),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(containerColor = CardBg),
+                    border = BorderStroke(1.dp, BorderSub)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text("Assigned Batches", color = TextWhite, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.height(8.dp))
+                        if (assignedBatches.isEmpty()) {
+                            Text("No batches assigned", color = TextMuted, fontSize = 13.sp)
+                        } else {
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                assignedBatches.forEach { batch ->
+                                    Text(
+                                        listOfNotNull(batch.name, batch.subject, batch.className).joinToString(" - "),
+                                        color = Cyan,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(16.dp))
+
                 // Permissions card
-                val perms = s.permissions?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList()
+                val perms = StaffPermissions.parse(s.permissions).toList()
                 Card(
                     modifier = Modifier.fillMaxWidth().shadow(3.dp, RoundedCornerShape(14.dp), spotColor = Cyan.copy(alpha = 0.15f)),
                     shape = RoundedCornerShape(14.dp),
@@ -135,15 +171,16 @@ fun StaffProfileScreen(
                         if (perms.isEmpty()) {
                             Text("No permissions assigned", color = TextMuted, fontSize = 13.sp)
                         } else {
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
                                 perms.forEach { p ->
                                     Box(
                                         modifier = Modifier
+                                            .fillMaxWidth()
                                             .clip(RoundedCornerShape(6.dp))
                                             .background(Cyan.copy(alpha = 0.12f))
                                             .padding(horizontal = 8.dp, vertical = 4.dp)
                                     ) {
-                                        Text(p.replace("_", " ").replaceFirstChar { it.uppercase() }, color = Cyan, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                                        Text(StaffPermissions.labelFor(p), color = Cyan, fontSize = 11.sp, fontWeight = FontWeight.Medium)
                                     }
                                 }
                             }

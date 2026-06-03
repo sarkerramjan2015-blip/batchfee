@@ -128,23 +128,24 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
         onError: (String) -> Unit
     ) {
         if (email.isBlank() || passwordHash.isBlank()) {
-            onError("Email and password are required")
+            onError("Login ID and password are required")
             return
         }
         
         viewModelScope.launch {
             try {
-                var user = db.userDao().getUserByEmail(email)
+                val loginId = email.trim()
+                var user = db.userDao().getUserByEmail(loginId)
 
                 // ── Demo account fallback: trigger seeding if user not found ──
-                if (user == null && (email == "owner@batchfee.app" || email == "admin@batchfee.app")) {
+                if (user == null && (loginId == "owner@batchfee.app" || loginId == "admin@batchfee.app" || loginId == "STF001")) {
                     try {
                         AppDatabase.ensureDemoDataSeeded(db)
                     } catch (seedEx: Exception) {
                         // Seeding failed — still try direct query in case partial data exists
                         seedEx.printStackTrace()
                     }
-                    user = db.userDao().getUserByEmail(email)
+                    user = db.userDao().getUserByEmail(loginId)
                 }
 
                 if (user == null) {
@@ -172,12 +173,29 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                 }
 
                 val instituteId = user.instituteId ?: ""
-                if (instituteId.isEmpty() && user.role == "InstituteOwner") {
+                if (instituteId.isEmpty() && user.role != "SuperAdmin") {
                     onError("Demo account not fully initialized. Please wait a moment and try again.")
                     return@launch
                 }
 
-                SessionManager.login(user.id, instituteId, user.role)
+                val staffPermissions = if (user.role == "Staff") {
+                    val staff = db.staffDao().getStaffByIdOnce(user.id, instituteId)
+                    when {
+                        staff == null -> {
+                            onError("Staff profile was not found. Contact your admin.")
+                            return@launch
+                        }
+                        staff.archivedAtMs != null || staff.status != "active" -> {
+                            onError("This staff account is inactive. Contact your admin.")
+                            return@launch
+                        }
+                        else -> staff.permissions
+                    }
+                } else {
+                    null
+                }
+
+                SessionManager.login(user.id, instituteId, user.role, staffPermissions)
                 onSuccess(user.role)
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -214,13 +232,32 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                 }
 
                 val instituteId = user.instituteId ?: ""
-                if (instituteId.isEmpty() && user.role == "InstituteOwner") {
+                if (instituteId.isEmpty() && user.role != "SuperAdmin") {
                     BiometricAuthManager.disable(appContext)
                     onError("Saved biometric account is incomplete. Log in with password again.")
                     return@launch
                 }
 
-                SessionManager.login(user.id, instituteId, user.role)
+                val staffPermissions = if (user.role == "Staff") {
+                    val staff = db.staffDao().getStaffByIdOnce(user.id, instituteId)
+                    when {
+                        staff == null -> {
+                            BiometricAuthManager.disable(appContext)
+                            onError("Saved staff profile was not found. Log in with password again.")
+                            return@launch
+                        }
+                        staff.archivedAtMs != null || staff.status != "active" -> {
+                            BiometricAuthManager.disable(appContext)
+                            onError("This staff account is inactive. Contact your admin.")
+                            return@launch
+                        }
+                        else -> staff.permissions
+                    }
+                } else {
+                    null
+                }
+
+                SessionManager.login(user.id, instituteId, user.role, staffPermissions)
                 BiometricAuthManager.refreshCurrentSession(appContext, user.email)
                 onSuccess(user.role)
             } catch (e: Exception) {
@@ -510,7 +547,7 @@ fun AuthScreen(
                     DarkTextField(
                         value = email,
                         onValueChange = { email = it },
-                        label = "Email Address",
+                        label = "Email / Staff ID",
                         leadingIcon = { Icon(Icons.Filled.Email, null, tint = AuthMuted) },
                         keyboardType = androidx.compose.ui.text.input.KeyboardType.Email
                     )
@@ -759,9 +796,9 @@ fun AuthScreen(
                             if (isLoading || loadingDemoAccount != null) return@OutlinedButton
                             errorMessage = null
                             loadingDemoAccount = "admin"
-                            viewModel.login("admin@batchfee.app", "123456", onSuccess = {
+                            viewModel.login("admin@batchfee.app", "123456", onSuccess = { role ->
                                 loadingDemoAccount = null
-                                onNavigateDashboard()
+                                if (role == "SuperAdmin") onNavigateSuperAdmin() else onNavigateDashboard()
                             }, onError = {
                                 errorMessage = it
                                 loadingDemoAccount = null
@@ -778,6 +815,33 @@ fun AuthScreen(
                             Icon(Icons.Filled.Shield, null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp))
                             Text("Enter Super Admin Account", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        }
+                    }
+
+                    OutlinedButton(
+                        onClick = {
+                            if (isLoading || loadingDemoAccount != null) return@OutlinedButton
+                            errorMessage = null
+                            loadingDemoAccount = "staff"
+                            viewModel.login("STF001", "123456", onSuccess = {
+                                loadingDemoAccount = null
+                                onNavigateDashboard()
+                            }, onError = {
+                                errorMessage = it
+                                loadingDemoAccount = null
+                            })
+                        },
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                        shape = RoundedCornerShape(14.dp),
+                        border = BorderStroke(1.dp, AuthBlue.copy(alpha = 0.5f)),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = AuthBlue.copy(alpha = 0.95f))
+                    ) {
+                        if (loadingDemoAccount == "staff") {
+                            CircularProgressIndicator(Modifier.size(20.dp), color = AuthBlue, strokeWidth = 2.dp)
+                        } else {
+                            Icon(Icons.Filled.Badge, null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Enter Demo Staff Account", fontWeight = FontWeight.Bold, fontSize = 14.sp)
                         }
                     }
                 }

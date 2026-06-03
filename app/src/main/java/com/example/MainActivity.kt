@@ -17,6 +17,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
+import com.example.domain.AccessControl
 import com.example.domain.PasswordHasher
 import com.example.domain.SessionManager
 import com.example.domain.ThemePreferences
@@ -110,10 +111,11 @@ class MainActivity : FragmentActivity() {
                             com.example.ui.dashboard.DashboardTabsScreen(
                                 db = appDb,
                                 currentRoute = currentTab,
-                                onNavigate = { route ->
+                                onNavigate = navigate@ { route ->
                                     if (route == "DashboardRoute" || route == "More") {
                                         currentTab = route
                                     } else {
+                                        if (!AccessControl.canAccessRoute(route)) return@navigate
                                         when (route) {
                                             "StudentsRoute" -> navController.navigate(StudentsRoute)
                                             "AddStudentRoute" -> navController.navigate(AddStudentRoute)
@@ -129,6 +131,7 @@ class MainActivity : FragmentActivity() {
                                             "ReminderTemplatesRoute" -> navController.navigate(com.example.ui.navigation.ReminderTemplatesRoute)
                                             "StaffRoute" -> navController.navigate(com.example.ui.navigation.StaffRoute)
                                             "AddStaffRoute" -> navController.navigate(com.example.ui.navigation.AddStaffRoute)
+                                            "StaffAttendanceRoute" -> navController.navigate(com.example.ui.navigation.StaffAttendanceRoute)
                                             "SalaryRoute" -> navController.navigate(com.example.ui.navigation.SalaryRoute)
                                             "ExpensesRoute" -> navController.navigate(com.example.ui.navigation.ExpensesRoute)
                                             "AddExpenseRoute" -> navController.navigate(com.example.ui.navigation.AddExpenseRoute)
@@ -346,6 +349,20 @@ class MainActivity : FragmentActivity() {
                                 staffId = route.staffId,
                                 onBack = { navController.popBackStack() },
                                 onEdit = { navController.navigate(EditStaffRoute(route.staffId)) }
+                            )
+                        }
+
+                        composable<StaffAttendanceRoute> {
+                            com.example.ui.staff.StaffAttendanceScreen(
+                                db = appDb,
+                                onBack = { navController.popBackStack() }
+                            )
+                        }
+
+                        composable<StaffAttendanceReportRoute> {
+                            com.example.ui.staff.StaffAttendanceScreen(
+                                db = appDb,
+                                onBack = { navController.popBackStack() }
                             )
                         }
                         

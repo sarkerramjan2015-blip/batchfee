@@ -26,6 +26,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.database.AppDatabase
 import com.example.domain.SessionManager
+import com.example.domain.StaffPermissions
 
 // ── Colors ──────────────────────────────────────────────────────
 private val BgColor      = Color(0xFF07111F)
@@ -63,7 +64,12 @@ fun StaffListScreen(
             else -> staffList
         }
         if (searchQuery.isNotBlank()) {
-            list = list.filter { it.fullName.contains(searchQuery, ignoreCase = true) || it.roleTitle.contains(searchQuery, ignoreCase = true) }
+            list = list.filter {
+                it.fullName.contains(searchQuery, ignoreCase = true) ||
+                    it.roleTitle.contains(searchQuery, ignoreCase = true) ||
+                    it.staffCode.contains(searchQuery, ignoreCase = true) ||
+                    (it.phone?.contains(searchQuery, ignoreCase = true) == true)
+            }
         }
         list
     }
@@ -108,7 +114,7 @@ fun StaffListScreen(
             OutlinedTextField(
                 value = searchQuery,
                 onValueChange = { newQ -> searchQuery = newQ; viewModel.setSearchQuery(newQ) },
-                placeholder = { Text("Search by name or role...", color = TextMuted.copy(alpha = 0.5f), fontSize = 13.sp) },
+                placeholder = { Text("Search name, role, ID, phone...", color = TextMuted.copy(alpha = 0.5f), fontSize = 13.sp) },
                 leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null, tint = TextMuted) },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
@@ -138,7 +144,8 @@ fun StaffListScreen(
             Spacer(Modifier.height(4.dp))
 
             // Count
-            Text("${displayed.size} staff", color = TextMuted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            val activeCount = staffList.count { it.status == "active" }
+            Text("${displayed.size} staff - $activeCount active", color = TextMuted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(6.dp))
 
             if (displayed.isEmpty()) {
@@ -178,21 +185,34 @@ fun StaffListScreen(
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(staff.fullName, color = TextWhite, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     Spacer(Modifier.height(2.dp))
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(staff.roleTitle, color = TextMuted, fontSize = 12.sp)
+                                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                                        Text(staff.staffCode, color = Cyan, fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1)
                                         Spacer(Modifier.width(8.dp))
-                                        Text("BDT ${staff.monthlySalary}", color = TextMuted, fontSize = 12.sp)
+                                        Text(staff.roleTitle, color = TextMuted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     }
+                                    Spacer(Modifier.height(2.dp))
+                                    val permissionCount = StaffPermissions.parse(staff.permissions).size
+                                    Text("BDT ${staff.monthlySalary.toLong()} - $permissionCount permissions", color = TextMuted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 }
-                                // Status badge
-                                val statusColor = if (staff.status == "active") WAGreen else AccentRed
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .background(statusColor.copy(alpha = 0.15f))
-                                        .padding(horizontal = 8.dp, vertical = 2.dp)
-                                ) {
-                                    Text(staff.status.replaceFirstChar { it.uppercase() }, color = statusColor, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                Column(horizontalAlignment = Alignment.End) {
+                                    val statusColor = if (staff.status == "active") WAGreen else AccentRed
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(statusColor.copy(alpha = 0.15f))
+                                            .padding(horizontal = 8.dp, vertical = 2.dp)
+                                    ) {
+                                        Text(staff.status.replaceFirstChar { it.uppercase() }, color = statusColor, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                    if (isAdmin) {
+                                        Spacer(Modifier.height(4.dp))
+                                        IconButton(
+                                            onClick = { showDeleteConfirm = staff.id },
+                                            modifier = Modifier.size(32.dp)
+                                        ) {
+                                            Icon(Icons.Filled.Delete, contentDescription = "Archive Staff", tint = AccentRed.copy(alpha = 0.85f), modifier = Modifier.size(18.dp))
+                                        }
+                                    }
                                 }
                             }
                         }

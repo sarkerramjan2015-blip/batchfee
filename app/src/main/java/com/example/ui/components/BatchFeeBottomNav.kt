@@ -21,6 +21,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.domain.AccessControl
+import com.example.domain.SessionManager
 
 // ── Premium dark theme colors (matching PricingScreen) ──────────
 private val NavBg = Color(0xFF081422)
@@ -51,6 +53,12 @@ fun BatchFeeBottomNav(
     currentRoute: String,
     onNavigate: (String) -> Unit
 ) {
+    val currentRole by SessionManager.currentUserRole.collectAsState()
+    val currentStaffPermissions by SessionManager.currentStaffPermissions.collectAsState()
+    val visibleNavItems = remember(currentRole, currentStaffPermissions) {
+        navItems.filter { AccessControl.canAccessRoute(it.route) }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -76,7 +84,7 @@ fun BatchFeeBottomNav(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            navItems.forEach { item ->
+            visibleNavItems.forEach { item ->
                 val isSelected = currentRoute == item.route
                 val isPrimaryAction = item.route == "UnifiedCollectRoute"
                 val itemColor by animateColorAsState(

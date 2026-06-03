@@ -43,6 +43,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import com.example.ui.components.BatchFeeBottomNav
+import com.example.domain.AccessControl
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.Dispatchers
@@ -428,6 +429,12 @@ fun DashboardScreen(
     val birthdayCount by viewModel.birthdayCount.collectAsState()
     val enquirySummary by viewModel.enquirySummary.collectAsState()
     var showEnquiryForm by remember { mutableStateOf(false) }
+    val currentRole by SessionManager.currentUserRole.collectAsState()
+    val currentStaffPermissions by SessionManager.currentStaffPermissions.collectAsState()
+    val hasAddActions = remember(currentRole, currentStaffPermissions) {
+        listOf("AddStudentRoute", "AddStaffRoute", "AddBatchRoute", "CreateExamRoute", "AddExpenseRoute", "UnifiedCollectRoute")
+            .any { AccessControl.canAccessRoute(it) }
+    }
 
     // ── Edit / Image / Switch state for profile popup ────────
     var showEditDialog by remember { mutableStateOf(false) }
@@ -490,11 +497,12 @@ fun DashboardScreen(
     var selectedBatchId by remember { mutableStateOf<String?>(null) }
 
     val safeNavigate: (String) -> Unit = { route ->
-        val allowedRoutes = setOf("StudentsRoute", "AddStudentRoute", "BatchesRoute", "AddBatchRoute", "FeeDashboardRoute", "DueFeesRoute", "CreateFeeRoute", "UnifiedCollectRoute", "AttendanceRoute", "AttendanceReportRoute", "ReportsRoute", "ReminderTemplatesRoute", "StaffRoute", "AddStaffRoute", "SalaryRoute", "ExpensesRoute", "AddExpenseRoute", "ProfitLossRoute", "ExamsRoute", "CreateExamRoute", "IdCardGeneratorRoute", "BirthdayReminderRoute", "SettingsRoute")
-        if (allowedRoutes.contains(route)) {
+        if (!AccessControl.isKnownRoute(route)) {
+            snappbarcoroutineScope.launch { snackbarHostState.showSnackbar("Coming soon") }
+        } else if (AccessControl.canAccessRoute(route)) {
             onNavigate(route)
         } else {
-            snappbarcoroutineScope.launch { snackbarHostState.showSnackbar("Coming soon") }
+            snappbarcoroutineScope.launch { snackbarHostState.showSnackbar("You do not have permission for this feature.") }
         }
     }
     val showComingSoon: (String) -> Unit = { label ->
@@ -509,10 +517,12 @@ fun DashboardScreen(
             snackbarHost = { SnackbarHost(snackbarHostState) },
             contentWindowInsets = WindowInsets(0.dp),
         floatingActionButton = {
-            CuteAddFab(
-                expanded = showFabMenu,
-                onClick = { showFabMenu = !showFabMenu }
-            )
+            if (hasAddActions) {
+                CuteAddFab(
+                    expanded = showFabMenu,
+                    onClick = { showFabMenu = !showFabMenu }
+                )
+            }
         }
     ) { innerPadding ->
         Column(
@@ -532,11 +542,11 @@ fun DashboardScreen(
                     currentPlan?.name ?: "Active plan"
                 },
                 onProfileClick = { showProfilePopup = true },
-                onSettingsClick = { onNavigate("SettingsRoute") }
+                onSettingsClick = { safeNavigate("SettingsRoute") }
             )
 
             Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
-                if (institute?.subscriptionStatus == "trial") {
+                if (institute?.subscriptionStatus == "trial" && AccessControl.canAccessRoute("PricingRoute")) {
                     TrialReminderCard(
                         trialDays = trialDays,
                         onUpgrade = onNavigatePricing,
@@ -592,7 +602,7 @@ fun DashboardScreen(
 
                 // Staff Logs Card
                 Card(
-                    modifier = Modifier.fillMaxWidth().clickable { safeNavigate("StaffRoute") },
+                    modifier = Modifier.fillMaxWidth().clickable { safeNavigate("StaffAttendanceRoute") },
                     colors = CardDefaults.cardColors(containerColor = DashboardCard),
                     border = borderStroke()
                 ) {
@@ -673,7 +683,7 @@ fun DashboardScreen(
                     AttendanceMiniCard("Student", Icons.Filled.School, sMarked, sTotal, AccentGreen, { safeNavigate("AttendanceRoute") }, Modifier.weight(1f))
                     val stMarked = staffSum.markedCount
                     val stTotal = staffSum.totalStaff
-                    AttendanceMiniCard("Staff", Icons.Filled.Group, stMarked, stTotal, AccentSky, { safeNavigate("StaffRoute") }, Modifier.weight(1f))
+                    AttendanceMiniCard("Staff", Icons.Filled.Group, stMarked, stTotal, AccentSky, { safeNavigate("StaffAttendanceRoute") }, Modifier.weight(1f))
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -802,29 +812,30 @@ fun DashboardScreen(
                     Triple("Attendance", Icons.Filled.HowToReg, "AttendanceRoute"),
                     Triple("Add Expense", Icons.Filled.Receipt, "AddExpenseRoute"),
                     Triple("Add Staff", Icons.Filled.PersonAddAlt1, "AddStaffRoute")
-                )
+                ).filter { AccessControl.canAccessRoute(it.third) }
                 // FIX: Replaced LazyVerticalGrid with manual Row/Column grid.
                 // LazyVerticalGrid nested inside a scrollable Column receives
                 // unbounded height constraints, causing a crash. A non-lazy
                 // Column with Row rows avoids infinite-height measurement.
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Row(
+                if (shortcuts.isEmpty()) {
+                    Text("No quick actions available for this staff account.", color = TextSecondary, fontSize = 13.sp)
+                } else {
+                    Column(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        shortcuts.take(3).forEach { (label, icon, route) ->
-                            ShortcutItem(label, icon, Modifier.weight(1f), { safeNavigate(route) })
-                        }
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        shortcuts.drop(3).forEach { (label, icon, route) ->
-                            ShortcutItem(label, icon, Modifier.weight(1f), { safeNavigate(route) })
+                        shortcuts.chunked(3).forEach { rowItems ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                rowItems.forEach { (label, icon, route) ->
+                                    ShortcutItem(label, icon, Modifier.weight(1f), { safeNavigate(route) })
+                                }
+                                repeat(3 - rowItems.size) {
+                                    Spacer(Modifier.weight(1f))
+                                }
+                            }
                         }
                     }
                 }
@@ -905,7 +916,7 @@ fun DashboardScreen(
     }
 
     androidx.compose.animation.AnimatedVisibility(
-        visible = showFabMenu,
+        visible = showFabMenu && hasAddActions,
         enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.scaleIn(initialScale = 0.94f),
         exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.scaleOut(targetScale = 0.94f),
         modifier = Modifier.fillMaxSize()
@@ -995,21 +1006,23 @@ fun DashboardScreen(
                                 Spacer(Modifier.width(4.dp))
                                 Text("Edit", color = AccentCyan, fontSize = 11.sp)
                             }
-                            Spacer(Modifier.width(6.dp))
-                            // Switch button: navigates to pricing screen to switch plans
-                            androidx.compose.material3.OutlinedButton(
-                                onClick = {
-                                    showProfilePopup = false
-                                    onNavigatePricing()
-                                },
-                                border = androidx.compose.foundation.BorderStroke(1.dp, AccentCyan),
-                                shape = RoundedCornerShape(10.dp),
-                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-                                modifier = Modifier.height(32.dp)
-                            ) {
-                                Icon(Icons.Filled.Group, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(14.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text("Switch", color = AccentCyan, fontSize = 11.sp)
+                            if (AccessControl.canAccessRoute("PricingRoute")) {
+                                Spacer(Modifier.width(6.dp))
+                                // Switch button: navigates to pricing screen to switch plans
+                                androidx.compose.material3.OutlinedButton(
+                                    onClick = {
+                                        showProfilePopup = false
+                                        onNavigatePricing()
+                                    },
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, AccentCyan),
+                                    shape = RoundedCornerShape(10.dp),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                                    modifier = Modifier.height(32.dp)
+                                ) {
+                                    Icon(Icons.Filled.Group, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(14.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Switch", color = AccentCyan, fontSize = 11.sp)
+                                }
                             }
                         }
                         
@@ -1194,9 +1207,13 @@ fun DashboardScreen(
                                     shape = RoundedCornerShape(14.dp)
                                 )
                                 .clickable {
-                                    showProfilePopup = false
-                                    try { onNavigatePricing() } catch (e: Exception) {
-                                        snappbarcoroutineScope.launch { snackbarHostState.showSnackbar("Subscription plan screen coming soon") }
+                                    if (AccessControl.canAccessRoute("PricingRoute")) {
+                                        showProfilePopup = false
+                                        try { onNavigatePricing() } catch (e: Exception) {
+                                            snappbarcoroutineScope.launch { snackbarHostState.showSnackbar("Subscription plan screen coming soon") }
+                                        }
+                                    } else {
+                                        snappbarcoroutineScope.launch { snackbarHostState.showSnackbar("Only admins can change subscription plans.") }
                                     }
                                 },
                             contentAlignment = Alignment.Center
@@ -1624,7 +1641,9 @@ private fun AddNewMenuPanel(
     onClose: () -> Unit,
     onNavigate: (String) -> Unit
 ) {
-    val addMenuItems = remember {
+    val currentRole by SessionManager.currentUserRole.collectAsState()
+    val currentStaffPermissions by SessionManager.currentStaffPermissions.collectAsState()
+    val addMenuItems = remember(currentRole, currentStaffPermissions) {
         listOf(
             AddMenuOption("Student", "Create a new student profile", Icons.Filled.School, "AddStudentRoute"),
             AddMenuOption("Staff", "Add a teacher or staff member", Icons.Filled.PersonAddAlt1, "AddStaffRoute"),
@@ -1632,7 +1651,7 @@ private fun AddNewMenuPanel(
             AddMenuOption("Exams", "Schedule an exam or result entry", Icons.Filled.Assignment, "CreateExamRoute"),
             AddMenuOption("Expense", "Record an institute expense", Icons.Filled.ReceiptLong, "AddExpenseRoute"),
             AddMenuOption("Collection Fee", "Collect student fee payment", Icons.Filled.Payments, "UnifiedCollectRoute")
-        )
+        ).filter { AccessControl.canAccessRoute(it.route) }
     }
 
     Column(
@@ -1710,16 +1729,25 @@ private fun AddNewMenuPanel(
 
         HorizontalDivider(color = DashboardStroke.copy(alpha = 0.85f))
 
-        addMenuItems.forEachIndexed { index, item ->
-            AddMenuActionRow(
-                item = item,
-                onClick = { onNavigate(item.route) }
+        if (addMenuItems.isEmpty()) {
+            Text(
+                "No create actions available for this account.",
+                color = TextSecondary,
+                fontSize = 13.sp,
+                modifier = Modifier.padding(18.dp)
             )
-            if (index != addMenuItems.lastIndex) {
-                HorizontalDivider(
-                    color = DashboardStroke.copy(alpha = 0.70f),
-                    modifier = Modifier.padding(start = 70.dp)
+        } else {
+            addMenuItems.forEachIndexed { index, item ->
+                AddMenuActionRow(
+                    item = item,
+                    onClick = { onNavigate(item.route) }
                 )
+                if (index != addMenuItems.lastIndex) {
+                    HorizontalDivider(
+                        color = DashboardStroke.copy(alpha = 0.70f),
+                        modifier = Modifier.padding(start = 70.dp)
+                    )
+                }
             }
         }
     }
@@ -2901,6 +2929,26 @@ fun MoreScreen(
     onLogout: () -> Unit,
     onNavigate: (String) -> Unit
 ) {
+    val currentRole by SessionManager.currentUserRole.collectAsState()
+    val currentStaffPermissions by SessionManager.currentStaffPermissions.collectAsState()
+    val moreItems = remember(currentRole, currentStaffPermissions) {
+        listOf(
+            "Staff Management" to "StaffRoute",
+            "Staff Attendance" to "StaffAttendanceRoute",
+            "Salary Management" to "SalaryRoute",
+            "Expenses" to "ExpensesRoute",
+            "Profit & Loss" to "ProfitLossRoute",
+            "Exams & Results" to "ExamsRoute",
+            "ID Card Generator" to "IdCardGeneratorRoute",
+            "Birthday Reminders" to "BirthdayReminderRoute",
+            "Take Attendance" to "AttendanceRoute",
+            "Attendance Reports" to "AttendanceReportRoute",
+            "Institute Reports" to "ReportsRoute",
+            "Settings" to "SettingsRoute",
+            "Reminder Templates" to "ReminderTemplatesRoute"
+        ).filter { AccessControl.canAccessRoute(it.second) }
+    }
+
     Column(modifier = Modifier.fillMaxSize().background(DashboardBg).padding(16.dp).verticalScroll(rememberScrollState())) {
         Text("More Features", style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold), color = TextPrimary)
         Spacer(Modifier.height(16.dp))
@@ -2911,31 +2959,23 @@ fun MoreScreen(
             border = borderStroke()
         ) {
             Column {
-                ListItem(headlineContent = { Text("Staff Management", color = TextPrimary) }, modifier = Modifier.fillMaxWidth().clickable { onNavigate("StaffRoute") }, colors = ListItemDefaults.colors(containerColor = Color.Transparent))
-                HorizontalDivider(color = DashboardStroke)
-                ListItem(headlineContent = { Text("Salary Management", color = TextPrimary) }, modifier = Modifier.fillMaxWidth().clickable { onNavigate("SalaryRoute") }, colors = ListItemDefaults.colors(containerColor = Color.Transparent))
-                HorizontalDivider(color = DashboardStroke)
-                ListItem(headlineContent = { Text("Expenses", color = TextPrimary) }, modifier = Modifier.fillMaxWidth().clickable { onNavigate("ExpensesRoute") }, colors = ListItemDefaults.colors(containerColor = Color.Transparent))
-                HorizontalDivider(color = DashboardStroke)
-                ListItem(headlineContent = { Text("Profit & Loss", color = TextPrimary) }, modifier = Modifier.fillMaxWidth().clickable { onNavigate("ProfitLossRoute") }, colors = ListItemDefaults.colors(containerColor = Color.Transparent))
-                HorizontalDivider(color = DashboardStroke)
-                ListItem(headlineContent = { Text("Exams & Results", color = TextPrimary) }, modifier = Modifier.fillMaxWidth().clickable { onNavigate("ExamsRoute") }, colors = ListItemDefaults.colors(containerColor = Color.Transparent))
-                HorizontalDivider(color = DashboardStroke)
-                ListItem(headlineContent = { Text("ID Card Generator", color = TextPrimary) }, modifier = Modifier.fillMaxWidth().clickable { onNavigate("IdCardGeneratorRoute") }, colors = ListItemDefaults.colors(containerColor = Color.Transparent))
-                HorizontalDivider(color = DashboardStroke)
-                ListItem(headlineContent = { Text("Birthday Reminders", color = TextPrimary) }, modifier = Modifier.fillMaxWidth().clickable { onNavigate("BirthdayReminderRoute") }, colors = ListItemDefaults.colors(containerColor = Color.Transparent))
-                HorizontalDivider(color = DashboardStroke)
-                ListItem(headlineContent = { Text("Take Attendance", color = TextPrimary) }, modifier = Modifier.fillMaxWidth().clickable { onNavigate("AttendanceRoute") }, colors = ListItemDefaults.colors(containerColor = Color.Transparent))
-                HorizontalDivider(color = DashboardStroke)
-                ListItem(headlineContent = { Text("Attendance Reports", color = TextPrimary) }, modifier = Modifier.fillMaxWidth().clickable { onNavigate("AttendanceReportRoute") }, colors = ListItemDefaults.colors(containerColor = Color.Transparent))
-                HorizontalDivider(color = DashboardStroke)
-                ListItem(headlineContent = { Text("Institute Reports", color = TextPrimary) }, modifier = Modifier.fillMaxWidth().clickable { onNavigate("ReportsRoute") }, colors = ListItemDefaults.colors(containerColor = Color.Transparent))
-                HorizontalDivider(color = DashboardStroke)
-                ListItem(headlineContent = { Text("Settings", color = TextPrimary) }, modifier = Modifier.fillMaxWidth().clickable { onNavigate("SettingsRoute") }, colors = ListItemDefaults.colors(containerColor = Color.Transparent))
-                HorizontalDivider(color = DashboardStroke)
-                ListItem(headlineContent = { Text("Reminder Templates", color = TextPrimary) }, modifier = Modifier.fillMaxWidth().clickable { onNavigate("ReminderTemplatesRoute") }, colors = ListItemDefaults.colors(containerColor = Color.Transparent))
-                HorizontalDivider(color = DashboardStroke)
-                ListItem(headlineContent = { Text("Billing & Subscription", color = TextPrimary) }, modifier = Modifier.fillMaxWidth().clickable { onNavigateBilling() }, colors = ListItemDefaults.colors(containerColor = Color.Transparent))
+                if (moreItems.isEmpty()) {
+                    Text("No extra features available for this account.", color = TextSecondary, fontSize = 13.sp, modifier = Modifier.padding(16.dp))
+                } else {
+                    moreItems.forEachIndexed { index, item ->
+                        ListItem(
+                            headlineContent = { Text(item.first, color = TextPrimary) },
+                            modifier = Modifier.fillMaxWidth().clickable { onNavigate(item.second) },
+                            colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                        )
+                        if (index != moreItems.lastIndex || AccessControl.canAccessRoute("BillingRoute")) {
+                            HorizontalDivider(color = DashboardStroke)
+                        }
+                    }
+                }
+                if (AccessControl.canAccessRoute("BillingRoute")) {
+                    ListItem(headlineContent = { Text("Billing & Subscription", color = TextPrimary) }, modifier = Modifier.fillMaxWidth().clickable { onNavigateBilling() }, colors = ListItemDefaults.colors(containerColor = Color.Transparent))
+                }
             }
         }
         Spacer(Modifier.height(24.dp))

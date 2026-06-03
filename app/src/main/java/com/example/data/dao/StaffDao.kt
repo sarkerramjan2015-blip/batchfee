@@ -25,7 +25,18 @@ interface StaffDao {
     @Query("SELECT * FROM staff WHERE id = :staffId AND instituteId = :instituteId LIMIT 1")
     suspend fun getStaffByIdOnce(staffId: String, instituteId: String): StaffEntity?
 
-    @Query("SELECT * FROM staff WHERE instituteId = :instituteId AND archivedAtMs IS NULL AND fullName LIKE '%' || :query || '%' ORDER BY fullName ASC")
+    @Query("""
+        SELECT * FROM staff
+        WHERE instituteId = :instituteId
+          AND archivedAtMs IS NULL
+          AND (
+            fullName LIKE '%' || :query || '%'
+            OR roleTitle LIKE '%' || :query || '%'
+            OR staffCode LIKE '%' || :query || '%'
+            OR phone LIKE '%' || :query || '%'
+          )
+        ORDER BY fullName ASC
+    """)
     fun searchStaff(instituteId: String, query: String): Flow<List<StaffEntity>>
 
     @Query("SELECT COUNT(*) FROM staff WHERE instituteId = :instituteId AND archivedAtMs IS NULL")

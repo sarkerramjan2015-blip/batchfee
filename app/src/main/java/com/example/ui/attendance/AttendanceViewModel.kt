@@ -107,7 +107,11 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
     private suspend fun getStaffAssignedBatchIds(): Set<String> {
         if (isAdmin()) return emptySet()
         val instId = SessionManager.currentInstituteId.value ?: return emptySet()
-        val userName = SessionManager.currentUserId.value?.let { db.userDao().getUserFlow(it).firstOrNull()?.name } ?: return emptySet()
+        val userId = SessionManager.currentUserId.value ?: return emptySet()
+        db.staffDao().getStaffByIdOnce(userId, instId)?.let { staff ->
+            return staff.assignedBatchIds?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() }?.toSet() ?: emptySet()
+        }
+        val userName = db.userDao().getUserFlow(userId).firstOrNull()?.name ?: return emptySet()
         val allStaff = db.staffDao().getStaffByInstitute(instId).firstOrNull() ?: return emptySet()
         val matched = allStaff.find { it.fullName.equals(userName, ignoreCase = true) }
         return matched?.assignedBatchIds?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() }?.toSet() ?: emptySet()

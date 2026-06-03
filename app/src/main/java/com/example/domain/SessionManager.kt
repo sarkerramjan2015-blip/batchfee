@@ -17,17 +17,21 @@ object SessionManager {
     private val _currentUserRole = MutableStateFlow<String?>(null)
     val currentUserRole: StateFlow<String?> = _currentUserRole.asStateFlow()
 
+    private val _currentStaffPermissions = MutableStateFlow<Set<String>>(emptySet())
+    val currentStaffPermissions: StateFlow<Set<String>> = _currentStaffPermissions.asStateFlow()
+
     private val _sessionNotice = MutableStateFlow<String?>(null)
     val sessionNotice: StateFlow<String?> = _sessionNotice.asStateFlow()
 
     private val _lastActivityAtMs = MutableStateFlow(System.currentTimeMillis())
     val lastActivityAtMs: StateFlow<Long> = _lastActivityAtMs.asStateFlow()
 
-    fun login(userId: String, instituteId: String?, role: String) {
+    fun login(userId: String, instituteId: String?, role: String, staffPermissions: String? = null) {
         _sessionNotice.value = null
         _currentUserId.value = userId
         _currentInstituteId.value = instituteId
         _currentUserRole.value = role
+        _currentStaffPermissions.value = parsePermissions(staffPermissions)
         _lastActivityAtMs.value = System.currentTimeMillis()
     }
 
@@ -36,6 +40,7 @@ object SessionManager {
         _currentUserId.value = null
         _currentInstituteId.value = null
         _currentUserRole.value = null
+        _currentStaffPermissions.value = emptySet()
     }
 
     fun expireSession() = logout(expired = true)
@@ -63,9 +68,27 @@ object SessionManager {
         return role == "Staff"
     }
 
+    fun updateStaffPermissions(staffPermissions: String?) {
+        _currentStaffPermissions.value = parsePermissions(staffPermissions)
+    }
+
     fun hasPermission(permission: String, staffPermissions: String? = null): Boolean {
         if (isAdmin()) return true
-        if (staffPermissions == null) return false
-        return permission in staffPermissions.split(",").map { it.trim() }.toSet()
+        val permissions = staffPermissions?.let(::parsePermissions) ?: _currentStaffPermissions.value
+        return permission in permissions
+    }
+
+    fun hasAnyPermission(vararg permissions: String): Boolean {
+        if (isAdmin()) return true
+        return permissions.any { hasPermission(it) }
+    }
+
+    private fun parsePermissions(raw: String?): Set<String> {
+        return raw
+            ?.split(",")
+            ?.map { it.trim() }
+            ?.filter { it.isNotEmpty() }
+            ?.toSet()
+            ?: emptySet()
     }
 }

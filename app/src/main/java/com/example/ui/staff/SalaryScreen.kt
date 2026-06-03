@@ -55,6 +55,7 @@ fun SalaryDashboardScreen(
 ) {
     val viewModel: SalaryViewModel = viewModel(factory = SalaryViewModelFactory(db))
     val salaries by viewModel.salaries.collectAsState()
+    val staffList by viewModel.activeStaff.collectAsState()
     val isAdmin = remember { SessionManager.isAdmin() }
 
     Scaffold(
@@ -108,6 +109,7 @@ fun SalaryDashboardScreen(
                     items(salaries, key = { it.id }) { s ->
                         val isPaid = s.status == "paid"
                         val statusColor = if (isPaid) WAGreen else AccentAmber
+                        val staff = staffList.firstOrNull { it.id == s.staffId }
                         Card(
                             modifier = Modifier.fillMaxWidth()
                                 .shadow(3.dp, RoundedCornerShape(12.dp), spotColor = statusColor.copy(alpha = 0.15f)),
@@ -121,7 +123,10 @@ fun SalaryDashboardScreen(
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text("${s.salaryMonth}", color = TextWhite, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                    Column(Modifier.weight(1f)) {
+                                        Text(staff?.fullName ?: "Staff", color = TextWhite, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                        Text(s.salaryMonth, color = TextMuted, fontSize = 12.sp)
+                                    }
                                     Box(
                                         modifier = Modifier
                                             .clip(RoundedCornerShape(6.dp))
