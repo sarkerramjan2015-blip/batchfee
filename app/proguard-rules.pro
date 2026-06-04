@@ -19,3 +19,22 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+
+# ── Firebase ──
+-keep class com.google.firebase.** { *; }
+-dontwarn com.google.firebase.**
+-keepattributes Signature
+-keepattributes *Annotation*
+
+# ── Firebase App Check ──
+-keep class com.google.firebase.appcheck.** { *; }
+
+# ── Keep serializable models (Room, Moshi) ──
+-keep class com.example.data.models.** { *; }
+-keep class com.example.ui.navigation.** { *; }
+
+# ── Keep Kotlin serialization ──
+-keepattributes *Annotation*, InnerClasses
+-dontnote kotlinx.serialization.AnnotationsKt
+-keepclassmembers class kotlinx.serialization.json.** { *** Companion; }
+-keepclasseswithmembers class kotlinx.serialization.json.** { kotlinx.serialization.KSerializer serializer(...); }

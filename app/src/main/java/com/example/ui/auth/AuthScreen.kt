@@ -43,6 +43,7 @@ import com.example.data.database.AppDatabase
 import com.example.data.models.InstituteEntity
 import com.example.data.models.UserEntity
 import com.example.domain.BiometricAuthManager
+import com.example.domain.DemoAuthRepository
 import com.example.domain.PasswordHasher
 import com.example.domain.SessionManager
 import kotlinx.coroutines.flow.first
@@ -52,6 +53,12 @@ import androidx.lifecycle.viewModelScope
 
 class AuthViewModel(private val db: AppDatabase) : ViewModel() {
     
+    fun trackDemoLogin(accountType: String) {
+        viewModelScope.launch {
+            DemoAuthRepository.trackDemoLogin(accountType)
+        }
+    }
+
     fun registerInstitute(
         instituteName: String,
         ownerName: String,
@@ -770,6 +777,7 @@ fun AuthScreen(
                             errorMessage = null
                             loadingDemoAccount = "owner"
                             viewModel.login("owner@batchfee.app", "123456", onSuccess = {
+                                viewModel.trackDemoLogin("owner")
                                 loadingDemoAccount = null
                                 onNavigateDashboard()
                             }, onError = {
@@ -797,6 +805,7 @@ fun AuthScreen(
                             errorMessage = null
                             loadingDemoAccount = "admin"
                             viewModel.login("admin@batchfee.app", "123456", onSuccess = { role ->
+                                viewModel.trackDemoLogin(if (role == "SuperAdmin") "super_admin" else "admin")
                                 loadingDemoAccount = null
                                 if (role == "SuperAdmin") onNavigateSuperAdmin() else onNavigateDashboard()
                             }, onError = {
