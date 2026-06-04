@@ -1049,7 +1049,7 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
                                 contentColor = if (canSave) Color.White else TextMuted,
                                 disabledContentColor = TextMuted
                             )
-                        ) { Text("Add Fee", fontWeight = FontWeight.Bold, fontSize = 16.sp) }
+                        ) { Text("Collect Payment", fontWeight = FontWeight.Bold, fontSize = 16.sp) }
                     }
                     Spacer(Modifier.height(12.dp))
                 }

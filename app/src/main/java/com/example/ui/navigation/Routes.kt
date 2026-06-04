@@ -67,4 +67,6 @@ object BillingRoute
 @Serializable object BirthdayReminderRoute
 @Serializable object BackupRestoreRoute
 @Serializable object AuditLogRoute
+@Serializable object EnquiryListRoute
+
 @Serializable object SettingsRoute

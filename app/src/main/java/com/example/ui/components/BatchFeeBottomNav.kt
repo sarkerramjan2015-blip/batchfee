@@ -1,7 +1,7 @@
 package com.example.ui.components
 
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -15,37 +15,37 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.domain.AccessControl
 import com.example.domain.SessionManager
 
-// ── Premium dark theme colors (matching PricingScreen) ──────────
 private val NavBg = Color(0xFF081422)
-private val NavSurface = NavBg
 private val BorderSub = Color(0xFF1E293B)
 private val Cyan = Color(0xFF22D3EE)
 private val ElectricBlue = Color(0xFF3B82F6)
 private val TextMuted = Color(0xFF94A3B8)
 private val TextWhite = Color(0xFFF8FAFC)
 
-// ── Data class for nav items ────────────────────────────────────
 private data class NavItem(
     val route: String,
     val label: String,
     val icon: ImageVector,
+    val isFeeAction: Boolean = false
 )
 
 private val navItems = listOf(
-    NavItem("DashboardRoute",  "Home",      Icons.Filled.Home),
-    NavItem("StudentsRoute",    "Students",  Icons.Default.Person),
-    NavItem("UnifiedCollectRoute", "Fee",    Icons.Filled.Payments),
-    NavItem("BatchesRoute",     "Batches",   Icons.AutoMirrored.Filled.List),
-    NavItem("More",             "More",      Icons.Default.Menu)
+    NavItem("DashboardRoute", "Home", Icons.Filled.Home),
+    NavItem("StudentsRoute", "Students", Icons.Default.Person),
+    NavItem("UnifiedCollectRoute", "Fee", Icons.Filled.Payments, isFeeAction = true),
+    NavItem("BatchesRoute", "Batches", Icons.AutoMirrored.Filled.List),
+    NavItem("More", "More", Icons.Default.Menu)
 )
 
 @Composable
@@ -78,26 +78,42 @@ fun BatchFeeBottomNav(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(68.dp)
-                .background(NavSurface)
-                .padding(horizontal = 10.dp, vertical = 7.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                .height(72.dp)
+                .background(NavBg)
+                .padding(horizontal = 8.dp, vertical = 5.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             visibleNavItems.forEach { item ->
+                val isFee = item.isFeeAction
                 val isSelected = currentRoute == item.route
-                val isPrimaryAction = item.route == "UnifiedCollectRoute"
-                val itemColor by animateColorAsState(
-                    targetValue = if (isSelected || isPrimaryAction) Cyan else TextMuted.copy(alpha = 0.68f),
+
+                val textColor by animateColorAsState(
+                    targetValue = when {
+                        isFee -> Cyan
+                        isSelected -> Cyan
+                        else -> TextMuted.copy(alpha = 0.68f)
+                    },
                     animationSpec = tween(220),
-                    label = "navItemColor"
+                    label = "textColor"
                 )
+                val iconTint by animateColorAsState(
+                    targetValue = when {
+                        isFee -> TextWhite
+                        isSelected -> Cyan.copy(alpha = 0.85f)
+                        else -> TextMuted.copy(alpha = 0.68f)
+                    },
+                    animationSpec = tween(220),
+                    label = "iconTint"
+                )
+
                 BottomNavItem(
                     item = item,
-                    selected = isSelected,
-                    primaryAction = isPrimaryAction,
-                    color = itemColor,
-                    modifier = Modifier.weight(if (isPrimaryAction) 1.16f else 1f),
+                    isSelected = isSelected,
+                    isFeeAction = isFee,
+                    textColor = textColor,
+                    iconTint = iconTint,
+                    modifier = Modifier.weight(1f),
                     onClick = { onNavigate(item.route) }
                 )
             }
@@ -108,42 +124,67 @@ fun BatchFeeBottomNav(
 @Composable
 private fun BottomNavItem(
     item: NavItem,
-    selected: Boolean,
-    primaryAction: Boolean,
-    color: Color,
+    isSelected: Boolean,
+    isFeeAction: Boolean,
+    textColor: Color,
+    iconTint: Color,
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
-    val activeVisual = selected || primaryAction
-    val backgroundBrush =
-        if (selected) {
-            Brush.verticalGradient(
-                listOf(ElectricBlue.copy(alpha = 0.34f), Cyan.copy(alpha = 0.18f))
-            )
-        } else if (primaryAction) {
-            Brush.verticalGradient(
-                listOf(ElectricBlue.copy(alpha = 0.18f), Cyan.copy(alpha = 0.10f))
-            )
-        } else {
-            Brush.verticalGradient(listOf(Color.Transparent, Color.Transparent))
-        }
+    // Pulsing glow alpha for the Fee button border
+    val infiniteTransition = rememberInfiniteTransition(label = "feeGlow")
+    val glowAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.35f,
+        targetValue = 0.70f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1800, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "glowAlpha"
+    )
+
+    val bgBrush = if (isFeeAction) {
+        Brush.verticalGradient(
+            listOf(ElectricBlue.copy(alpha = 0.10f), Cyan.copy(alpha = 0.05f))
+        )
+    } else {
+        Brush.verticalGradient(listOf(Color.Transparent, Color.Transparent))
+    }
+
+    val borderMod = when {
+        isFeeAction -> Modifier.border(
+            width = 1.5.dp,
+            brush = Brush.horizontalGradient(
+                listOf(
+                    ElectricBlue.copy(alpha = glowAlpha),
+                    Cyan.copy(alpha = glowAlpha * 1.1f),
+                    Color(0xFF67E8F9).copy(alpha = glowAlpha * 0.6f),
+                    Cyan.copy(alpha = glowAlpha * 1.1f),
+                    ElectricBlue.copy(alpha = glowAlpha)
+                )
+            ),
+            shape = RoundedCornerShape(17.dp)
+        )
+        isSelected -> Modifier.border(1.dp, Cyan.copy(alpha = 0.22f), RoundedCornerShape(17.dp))
+        else -> Modifier
+    }
+
+    val itemShadow = if (isFeeAction) {
+        Modifier.shadow(
+            elevation = 6.dp,
+            shape = RoundedCornerShape(17.dp),
+            spotColor = Cyan.copy(alpha = 0.16f),
+            ambientColor = ElectricBlue.copy(alpha = 0.06f)
+        )
+    } else Modifier
 
     Column(
         modifier = modifier
             .fillMaxHeight()
-            .clip(RoundedCornerShape(16.dp))
-            .background(backgroundBrush)
-            .then(
-                if (activeVisual) {
-                    Modifier.border(
-                        1.dp,
-                        Cyan.copy(alpha = if (selected) 0.30f else 0.20f),
-                        RoundedCornerShape(16.dp)
-                    )
-                } else {
-                    Modifier
-                }
-            )
+            .then(itemShadow)
+            .clip(RoundedCornerShape(17.dp))
+            .background(bgBrush)
+            .then(borderMod)
             .clickable(onClick = onClick)
             .padding(vertical = 5.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -151,22 +192,12 @@ private fun BottomNavItem(
     ) {
         Box(
             modifier = Modifier
-                .size(
-                    when {
-                        primaryAction -> 36.dp
-                        selected -> 30.dp
-                        else -> 28.dp
-                    }
-                )
-                .clip(RoundedCornerShape(if (primaryAction) 13.dp else 11.dp))
+                .size(30.dp)
+                .clip(RoundedCornerShape(12.dp))
                 .background(
-                    if (activeVisual) {
+                    if (isFeeAction) {
                         Brush.horizontalGradient(
-                            listOf(
-                                ElectricBlue,
-                                Cyan,
-                                if (primaryAction) Color(0xFF67E8F9) else Cyan
-                            )
+                            listOf(ElectricBlue.copy(alpha = 0.22f), Cyan.copy(alpha = 0.16f))
                         )
                     } else {
                         Brush.verticalGradient(listOf(Color.Transparent, Color.Transparent))
@@ -177,24 +208,19 @@ private fun BottomNavItem(
             Icon(
                 item.icon,
                 contentDescription = item.label,
-                tint = if (activeVisual) TextWhite else color,
-                modifier = Modifier.size(
-                    when {
-                        primaryAction -> 20.dp
-                        selected -> 17.dp
-                        else -> 21.dp
-                    }
-                )
+                tint = iconTint,
+                modifier = Modifier.size(18.dp)
             )
         }
-        Spacer(Modifier.height(if (primaryAction) 3.dp else 4.dp))
+        Spacer(Modifier.height(4.dp))
         Text(
             item.label,
-            fontSize = if (primaryAction) 10.5.sp else 10.sp,
-            lineHeight = 11.sp,
-            fontWeight = if (selected || primaryAction) FontWeight.Bold else FontWeight.Medium,
-            color = if (activeVisual) Cyan else color,
-            maxLines = 1
+            fontSize = 10.5.sp,
+            lineHeight = 12.sp,
+            fontWeight = if (isSelected || isFeeAction) FontWeight.SemiBold else FontWeight.Medium,
+            color = textColor,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
         )
     }
 }

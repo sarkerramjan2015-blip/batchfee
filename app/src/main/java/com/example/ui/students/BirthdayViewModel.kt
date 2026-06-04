@@ -12,6 +12,9 @@ import kotlinx.coroutines.launch
 import java.util.Calendar
 
 class BirthdayViewModel(private val db: AppDatabase) : ViewModel() {
+    private val _todayBirthdays = MutableStateFlow<List<StudentEntity>>(emptyList())
+    val todayBirthdays = _todayBirthdays.asStateFlow()
+
     private val _upcomingBirthdays = MutableStateFlow<List<StudentEntity>>(emptyList())
     val upcomingBirthdays = _upcomingBirthdays.asStateFlow()
 
@@ -24,17 +27,36 @@ class BirthdayViewModel(private val db: AppDatabase) : ViewModel() {
         viewModelScope.launch {
             db.studentDao().getStudentsByInstitute(instId).collect { students ->
                 val today = Calendar.getInstance()
-                val upcoming = students.filter { student ->
-                    student.dateOfBirthMs?.let { dob ->
-                        val diff = daysUntilNextBirthday(dob, today)
-                        diff in 0..30
-                    } ?: false
-                }.sortedBy {
-                    daysUntilNextBirthday(it.dateOfBirthMs!!, today)
-                }
-                _upcomingBirthdays.value = upcoming
+                val withDays = students
+                    .filter { it.dateOfBirthMs != null }
+                    .map { student ->
+                        val diff = daysUntilNextBirthday(student.dateOfBirthMs!!, today)
+                        student to diff
+                    }
+                    .filter { it.second in 0..30 }
+                    .sortedBy { it.second }
+
+                _todayBirthdays.value = withDays
+                    .filter { it.second == 0 }
+                    .map { it.first }
+
+                _upcomingBirthdays.value = withDays
+                    .filter { it.second > 0 }
+                    .map { it.first }
             }
         }
+    }
+
+    fun daysUntil(dobMs: Long): Int {
+        return daysUntilNextBirthday(dobMs, Calendar.getInstance())
+    }
+
+    fun calculateAge(dobMs: Long): Int {
+        val dob = Calendar.getInstance().apply { timeInMillis = dobMs }
+        val today = Calendar.getInstance()
+        var age = today.get(Calendar.YEAR) - dob.get(Calendar.YEAR)
+        if (today.get(Calendar.DAY_OF_YEAR) < dob.get(Calendar.DAY_OF_YEAR)) age--
+        return age.coerceAtLeast(0)
     }
 
     private fun daysUntilNextBirthday(dobMs: Long, today: Calendar): Int {

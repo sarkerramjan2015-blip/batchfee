@@ -191,53 +191,52 @@ private fun BatchCard(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .shadow(4.dp, RoundedCornerShape(14.dp), spotColor = Cyan.copy(alpha = 0.25f)),
+            .shadow(3.dp, RoundedCornerShape(14.dp), spotColor = Cyan.copy(alpha = 0.18f)),
         shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = CardBg),
         border = BorderStroke(1.dp, BorderSub),
         onClick = onClick
     ) {
-        Column(modifier = Modifier.padding(14.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier
-                        .size(48.dp)
-                        .clip(CircleShape)
-                        .background(brush = Brush.horizontalGradient(listOf(ElectricBlue, Cyan))),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        batch.name.take(1).uppercase(),
-                        color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold
-                    )
-                }
-                Spacer(Modifier.width(14.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(batch.name, color = TextWhite, fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Spacer(Modifier.height(2.dp))
-                    Text("BDT ${"%.0f".format(batch.monthlyFeeAmount)}/mo", color = TextMuted, fontSize = 12.sp)
-                }
-                // Right arrow indicator
-                Icon(Icons.Filled.ChevronRight, null, tint = TextMuted, modifier = Modifier.size(20.dp))
-            }
-            Spacer(Modifier.height(10.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly
+        Row(
+            modifier = Modifier.padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(brush = Brush.horizontalGradient(listOf(ElectricBlue, Cyan))),
+                contentAlignment = Alignment.Center
             ) {
-                StatChip("Enrolled", "$enrolled", SkyBlue)
-                StatChip("Paid (this month)", "$paidThisMonth", WAGreen)
-                StatChip("Due (this month)", "$dueThisMonth", if (dueThisMonth > 0) AccentRed else TextMuted)
+                Text(
+                    batch.name.take(1).uppercase(),
+                    color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold
+                )
             }
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    batch.name, color = TextWhite, fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis
+                )
+                Text("BDT ${"%.0f".format(batch.monthlyFeeAmount)}/mo · $enrolled students", color = TextMuted, fontSize = 12.sp)
+            }
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                StatChip("Paid", "$paidThisMonth", WAGreen)
+                StatChip("Due", "$dueThisMonth", if (dueThisMonth > 0) AccentRed else TextMuted)
+            }
+            Icon(Icons.Filled.ChevronRight, null, tint = TextMuted.copy(alpha = 0.4f), modifier = Modifier.size(18.dp))
         }
     }
 }
 
 @Composable
 private fun StatChip(label: String, value: String, color: Color) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(value, color = color, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(value, color = color, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.width(3.dp))
         Text(label, color = TextMuted, fontSize = 10.sp)
     }
 }

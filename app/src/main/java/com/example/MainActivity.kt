@@ -141,6 +141,7 @@ class MainActivity : FragmentActivity() {
                                             "IdCardGeneratorRoute" -> navController.navigate(com.example.ui.navigation.IdCardGeneratorRoute)
                                             "BirthdayReminderRoute" -> navController.navigate(com.example.ui.navigation.BirthdayReminderRoute)
                                             "SettingsRoute" -> navController.navigate(com.example.ui.navigation.SettingsRoute)
+                                            "EnquiryListRoute" -> navController.navigate(com.example.ui.navigation.EnquiryListRoute)
                                             else -> {
                                                 if (route.startsWith("TakeAttendanceRoute:")) {
                                                     route.substringAfter(":").takeIf { it.isNotBlank() }?.let { batchId ->
@@ -401,6 +402,7 @@ class MainActivity : FragmentActivity() {
                                 db = appDb,
                                 onBack = { navController.popBackStack() },
                                 onAddExam = { navController.navigate(CreateExamRoute) },
+                                onNavigateToDetail = { examId -> navController.navigate(ExamDetailRoute(examId)) },
                                 onNavigateToPricing = { navController.navigate(PricingRoute) }
                             )
                         }
@@ -409,6 +411,15 @@ class MainActivity : FragmentActivity() {
                             com.example.ui.exams.CreateExamScreen(db = appDb, onBack = { navController.popBackStack() })
                         }
                         
+
+                        composable<ExamDetailRoute> { backStackEntry ->
+                            val route = backStackEntry.toRoute<ExamDetailRoute>()
+                            com.example.ui.exams.ExamDetailScreen(
+                                db = appDb,
+                                examId = route.examId,
+                                onBack = { navController.popBackStack() }
+                            )
+                        }
                         composable<IdCardGeneratorRoute> {
                             com.example.ui.students.IdCardGeneratorScreen(
                                 db = appDb,
@@ -427,6 +438,14 @@ class MainActivity : FragmentActivity() {
                             com.example.ui.students.BirthdayReminderScreen(db = appDb, onBack = { navController.popBackStack() }, onNavigateToPricing = { navController.navigate(PricingRoute) })
                         }
                         
+                        composable<EnquiryListRoute> {
+                            com.example.ui.enquiries.EnquiryListScreen(
+                                db = appDb,
+                                onBack = { navController.popBackStack() },
+                                onAddEnquiry = { /* handled by Dashboard dialog */ }
+                            )
+                        }
+
                         composable<BackupRestoreRoute> {
                             com.example.ui.dashboard.BackupRestoreScreen(onBack = { navController.popBackStack() }, onNavigateToPricing = { navController.navigate(PricingRoute) })
                         }

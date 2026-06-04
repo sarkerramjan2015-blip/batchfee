@@ -290,8 +290,7 @@ fun BatchDetailScreen(
             BatchDashboardSummary(
                 batchName = batch?.name ?: "Batch",
                 studentCount = totalEnrolled,
-                activeStudentCount = totalEnrolled,
-                closeStudentCount = 0,
+                paidCount = paidCount,
                 dueCount = dueCount,
                 totalDue = (totalExpected - totalCollected).coerceAtLeast(0.0),
                 paidThisMonth = paidThisMonth,
@@ -311,48 +310,6 @@ fun BatchDetailScreen(
                     )
                 }
             )
-
-            if (false) {
-            Card(
-                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
-                    .shadow(4.dp, RoundedCornerShape(14.dp), spotColor = Cyan.copy(alpha = 0.2f)),
-                shape = RoundedCornerShape(14.dp),
-                colors = CardDefaults.cardColors(containerColor = CardBg),
-                border = BorderStroke(1.dp, BorderSub)
-            ) {
-                Column(modifier = Modifier.padding(14.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Filled.Payments, null, tint = Cyan, modifier = Modifier.size(20.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("BDT ${"%.0f".format(monthlyFee)}/mo", color = TextWhite, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                    }
-                    Spacer(Modifier.height(10.dp))
-                    // Total stats row
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                        SummaryStat("Students", "$totalEnrolled", SkyBlue)
-                        SummaryStat("Paid", "$paidCount", WAGreen)
-                        SummaryStat("Due", "$dueCount", if (dueCount > 0) AccentRed else TextMuted)
-                    }
-                    Spacer(Modifier.height(6.dp))
-                    // This-month stats row
-                    Text("This Month (${currentMonthPeriod()})", color = TextMuted, fontSize = 11.sp)
-                    Spacer(Modifier.height(4.dp))
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                        SummaryStatSmall("Paid", "$paidThisMonth", WAGreen)
-                        SummaryStatSmall("Due", "$dueThisMonth", if (dueThisMonth > 0) AccentRed else TextMuted)
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    HorizontalDivider(color = BorderSub)
-                    Spacer(Modifier.height(8.dp))
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("Expected: BDT ${"%.0f".format(totalExpected)}", color = TextMuted, fontSize = 12.sp)
-                        Text("Collected: BDT ${"%.0f".format(totalCollected)}", color = WAGreen, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                    }
-                }
-            }
-
-            // ── Action bar ────────────────────────────────
-            }
 
             Row(
                 modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
@@ -688,8 +645,7 @@ private fun BatchMenuItem(
 private fun BatchDashboardSummary(
     batchName: String,
     studentCount: Int,
-    activeStudentCount: Int,
-    closeStudentCount: Int,
+    paidCount: Int,
     dueCount: Int,
     totalDue: Double,
     paidThisMonth: Int,
@@ -704,75 +660,201 @@ private fun BatchDashboardSummary(
     onNextMonth: () -> Unit,
     onReport: () -> Unit
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.fillMaxWidth()) {
-        DashboardCard {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Filled.Groups, contentDescription = null, tint = AccentAmber, modifier = Modifier.size(26.dp))
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+        // ── Batch header card ────────────────────────
+        Card(
+            modifier = Modifier.fillMaxWidth()
+                .shadow(4.dp, RoundedCornerShape(14.dp), spotColor = Cyan.copy(alpha = 0.20f)),
+            shape = RoundedCornerShape(14.dp),
+            colors = CardDefaults.cardColors(containerColor = CardBg),
+            border = BorderStroke(1.dp, BorderSub)
+        ) {
+            Row(
+                modifier = Modifier.padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Brush.linearGradient(listOf(ElectricBlue, Cyan))),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        batchName.take(1).uppercase(),
+                        color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold
+                    )
+                }
                 Spacer(Modifier.width(12.dp))
-                Text("Students Summary", color = TextWhite, fontSize = 19.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                Row(modifier = Modifier.clip(RoundedCornerShape(12.dp)).background(WAGreen.copy(alpha = 0.86f))) {
-                    Text(activeStudentCount.toString(), color = TextWhite, fontSize = 15.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 14.dp, vertical = 5.dp))
-                    Box(Modifier.width(1.dp).height(30.dp).background(TextWhite.copy(alpha = 0.18f)))
-                    Text(closeStudentCount.toString(), color = TextWhite, fontSize = 15.sp, fontWeight = FontWeight.Bold, modifier = Modifier.background(AccentRed.copy(alpha = 0.72f)).padding(horizontal = 14.dp, vertical = 5.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        batchName,
+                        color = TextWhite, fontSize = 17.sp, fontWeight = FontWeight.Bold,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis
+                    )
+                    Text("$studentCount students", color = TextMuted, fontSize = 13.sp)
                 }
             }
         }
 
-        DashboardCard {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Filled.Calculate, contentDescription = null, tint = AccentAmber, modifier = Modifier.size(25.dp))
-                Spacer(Modifier.width(10.dp))
-                Text("Due Fees", color = TextWhite, fontSize = 19.sp, fontWeight = FontWeight.Bold)
-            }
-            Spacer(Modifier.height(18.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(22.dp)) {
-                FeeStateBlock("($dueCount) ${money(totalDue)}", "Active", Modifier.weight(1f))
-                FeeStateBlock("(0) 0", "Close", Modifier.weight(1f))
+        // ── Key metrics row ──────────────────────────
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            MetricCard("Students", "$studentCount", "Enrolled", SkyBlue, Modifier.weight(1f))
+            MetricCard("Paid", "$paidCount", "This month", WAGreen, Modifier.weight(1f))
+            MetricCard("Due", "$dueCount", "Total due", if (dueCount > 0) AccentRed else TextMuted, Modifier.weight(1f))
+        }
+
+        // ── Collections card ──────────────────────────
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(14.dp),
+            colors = CardDefaults.cardColors(containerColor = CardBg),
+            border = BorderStroke(1.dp, BorderSub)
+        ) {
+            Column(modifier = Modifier.padding(14.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Collections", color = TextWhite, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = onPreviousMonth, modifier = Modifier.size(28.dp)) {
+                            Icon(Icons.Filled.KeyboardArrowLeft, null, tint = TextMuted, modifier = Modifier.size(18.dp))
+                        }
+                        Text(monthLabel, color = Cyan, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        IconButton(onClick = onNextMonth, modifier = Modifier.size(28.dp)) {
+                            Icon(Icons.Filled.KeyboardArrowRight, null, tint = TextMuted, modifier = Modifier.size(18.dp))
+                        }
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                    StatItem("Today", money(todayCollected), Cyan)
+                    StatItem(monthLabel, money(monthCollected), WAGreen)
+                    StatItem("All Time", money(totalCollected), SkyBlue)
+                }
             }
         }
 
-        DashboardCard {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Text("Collected Fees", color = TextWhite, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                MonthSwitcher(monthLabel, onPreviousMonth, onNextMonth)
-            }
-            Spacer(Modifier.height(18.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                CollectedMetric(money(todayCollected, decimals = true), "Today")
-                CollectedMetric(money(monthCollected, decimals = true), monthLabel)
-                CollectedMetric(money(totalCollected, decimals = true), "All Time")
-            }
-        }
-
-        DashboardCard {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Text("Attendance Summary", color = TextWhite, fontSize = 20.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
-                MonthSwitcher(monthLabel, onPreviousMonth, onNextMonth)
-            }
-            Spacer(Modifier.height(18.dp))
-            AttendanceMiniChart(attendance)
-            Spacer(Modifier.height(16.dp))
-            AttendanceLegend()
-            Spacer(Modifier.height(14.dp))
-            OutlinedButton(
-                onClick = onReport,
-                modifier = Modifier.fillMaxWidth().height(50.dp),
+        // ── Attendance summary ────────────────────────
+        if (attendance.isNotEmpty()) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(14.dp),
-                border = BorderStroke(1.dp, BorderSub),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentAmber)
+                colors = CardDefaults.cardColors(containerColor = CardBg),
+                border = BorderStroke(1.dp, BorderSub)
             ) {
-                Icon(Icons.Filled.Download, contentDescription = null, tint = AccentAmber, modifier = Modifier.size(24.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("$monthLabel Report", color = TextWhite, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Attendance", color = TextWhite, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                        Text(monthLabel, color = Cyan, fontSize = 12.sp)
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    AttendanceMiniChart(attendance)
+                    Spacer(Modifier.height(10.dp))
+                    AttendanceLegend()
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedButton(
+                        onClick = onReport,
+                        modifier = Modifier.fillMaxWidth().height(42.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.dp, Cyan),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Cyan)
+                    ) {
+                        Icon(Icons.Filled.IosShare, null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Share Report", fontSize = 13.sp)
+                    }
+                }
             }
         }
 
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-            BatchSmallTile("Class works (0)", Modifier.weight(1f))
-            BatchSmallTile("Home works (0)", Modifier.weight(1f))
+        // ── Allowed staff ─────────────────────────────
+        if (allowedStaff.isNotEmpty()) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = CardBg),
+                border = BorderStroke(1.dp, BorderSub)
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Assigned Staff", color = TextWhite, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                        Text("${allowedStaff.size}", color = Cyan, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    allowedStaff.take(3).forEach { member ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(34.dp)
+                                    .clip(CircleShape)
+                                    .background(ElectricBlue.copy(alpha = 0.15f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    member.fullName.take(1).uppercase(),
+                                    color = Cyan, fontSize = 13.sp, fontWeight = FontWeight.Bold
+                                )
+                            }
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(member.fullName, color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                                Text(member.roleTitle, color = TextMuted, fontSize = 12.sp)
+                            }
+                        }
+                    }
+                }
+            }
         }
+    }
+}
 
-        AllowedStaffCard(allowedStaff)
+@Composable
+private fun MetricCard(
+    label: String,
+    value: String,
+    subtitle: String,
+    accent: Color,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier,
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = CardBg),
+        border = BorderStroke(1.dp, BorderSub)
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(value, color = accent, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            Text(label, color = TextWhite, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+            Text(subtitle, color = TextMuted, fontSize = 10.sp)
+        }
+    }
+}
+
+@Composable
+private fun StatItem(label: String, value: String, color: Color) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(value, color = color, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        Text(label, color = TextMuted, fontSize = 11.sp)
     }
 }
 

@@ -21,9 +21,12 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -32,6 +35,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.History
@@ -47,6 +51,8 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
@@ -69,6 +75,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -83,6 +93,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.layout.Row
 import com.example.data.database.AppDatabase
 import com.example.data.models.BatchEntity
 import com.example.data.models.FeeEntity
@@ -171,7 +182,8 @@ fun UnifiedCollectScreen(
     var selectedDueId by remember { mutableStateOf<String?>(null) }
     var selectedBatchId by remember { mutableStateOf<String?>(null) }
     var feePeriod by remember { mutableStateOf(monthLabelForOffset(0)) }
-    var advanceOffset by remember { mutableIntStateOf(1) }
+    var startMonthIdx by remember { mutableIntStateOf(0) }
+    var endMonthIdx by remember { mutableIntStateOf(0) }
     var baseAmount by remember { mutableStateOf("") }
     var discountPercent by remember { mutableDoubleStateOf(0.0) }
     var collectAmount by remember { mutableStateOf("") }
@@ -180,19 +192,28 @@ fun UnifiedCollectScreen(
     var collectError by remember { mutableStateOf<String?>(null) }
     var editingHistoryItem by remember { mutableStateOf<StudentPaymentHistory?>(null) }
 
+    val monthOptions = remember { generateMonthOptions() }
+    val currentMonthIdx = remember { monthOptions.indexOfFirst { it.label == monthLabelForOffset(0) }.coerceAtLeast(0) }
+
     val selectedBatch = studentBatches.firstOrNull { it.id == selectedBatchId }
     val selectedDue = studentDues.firstOrNull { it.fee.id == selectedDueId } ?: studentDues.firstOrNull()
 
     fun amountText(value: Double): String =
         if (value <= 0.0) "" else "%.0f".format(value)
 
-    fun newFeeBaseFor(mode: PaymentMode, batch: BatchEntity? = selectedBatch, months: Int = advanceOffset): Double {
+    fun newFeeBaseFor(mode: PaymentMode, batch: BatchEntity? = selectedBatch, months: Int = 1): Double {
         val monthlyFee = batch?.monthlyFeeAmount ?: 0.0
         return when (mode) {
             PaymentMode.Advance -> monthlyFee * months.coerceAtLeast(1)
             PaymentMode.Running -> monthlyFee
             PaymentMode.Due -> 0.0
         }
+    }
+
+    fun numSelectedMonths(): Int {
+        val realStart = if (startMonthIdx >= 0) startMonthIdx else currentMonthIdx
+        val realEnd = if (endMonthIdx >= 0) endMonthIdx else currentMonthIdx
+        return if (realEnd >= realStart) realEnd - realStart + 1 else 1
     }
 
     fun setModeDefaults(mode: PaymentMode) {
@@ -210,14 +231,18 @@ fun UnifiedCollectScreen(
             }
             PaymentMode.Running -> {
                 selectedDueId = null
-                feePeriod = monthLabelForOffset(0)
+                startMonthIdx = currentMonthIdx
+                endMonthIdx = currentMonthIdx
+                feePeriod = monthOptions.getOrNull(currentMonthIdx)?.label ?: monthLabelForOffset(0)
                 baseAmount = amountText(newFeeBaseFor(mode))
                 discountPercent = 0.0
                 collectAmount = amountText(newFeeBaseFor(mode))
             }
             PaymentMode.Advance -> {
                 selectedDueId = null
-                feePeriod = advancePeriodLabel(advanceOffset)
+                startMonthIdx = currentMonthIdx
+                endMonthIdx = currentMonthIdx
+                feePeriod = monthOptions.getOrNull(currentMonthIdx)?.label ?: monthLabelForOffset(0)
                 baseAmount = amountText(newFeeBaseFor(mode))
                 discountPercent = 0.0
                 collectAmount = amountText(newFeeBaseFor(mode))
@@ -376,7 +401,7 @@ fun UnifiedCollectScreen(
                     else -> feePeriod.isNotBlank() && base > 0.0 && discountPercent in 0.0..100.0
                 }
 
-                LaunchedEffect(paymentMode, baseAmount, discountPercent, advanceOffset, selectedBatchId) {
+                LaunchedEffect(paymentMode, baseAmount, discountPercent, startMonthIdx, endMonthIdx, selectedBatchId) {
                     if (paymentMode != PaymentMode.Due) {
                         collectAmount = amountText(payable)
                     }
@@ -444,7 +469,9 @@ fun UnifiedCollectScreen(
                                     batches = studentBatches,
                                     selectedBatchId = selectedBatchId,
                                     feePeriod = feePeriod,
-                                    advanceOffset = advanceOffset,
+                                    startMonthIdx = startMonthIdx,
+                                    endMonthIdx = endMonthIdx,
+                                    monthOptions = monthOptions,
                                     baseAmount = baseAmount,
                                     discountPercent = discountPercent,
                                     onBatchSelected = { batch ->
@@ -454,10 +481,21 @@ fun UnifiedCollectScreen(
                                         collectAmount = amountText(nextBase)
                                     },
                                     onFeePeriodChange = { feePeriod = it },
-                                    onAdvanceOffsetChange = {
-                                        advanceOffset = it
-                                        feePeriod = advancePeriodLabel(it)
-                                        val nextBase = newFeeBaseFor(PaymentMode.Advance, selectedBatch, it)
+                                    onStartMonthIdxChange = { idx ->
+                                        startMonthIdx = idx
+                                        if (idx > endMonthIdx) endMonthIdx = idx
+                                        val months = if (endMonthIdx >= startMonthIdx) endMonthIdx - startMonthIdx + 1 else 1
+                                        feePeriod = buildFeePeriodLabel(startMonthIdx, endMonthIdx, monthOptions)
+                                        val nextBase = newFeeBaseFor(paymentMode, selectedBatch, months)
+                                        baseAmount = amountText(nextBase)
+                                        collectAmount = amountText(nextBase)
+                                    },
+                                    onEndMonthIdxChange = { idx ->
+                                        endMonthIdx = idx
+                                        if (idx < startMonthIdx) startMonthIdx = idx
+                                        val months = if (endMonthIdx >= startMonthIdx) endMonthIdx - startMonthIdx + 1 else 1
+                                        feePeriod = buildFeePeriodLabel(startMonthIdx, endMonthIdx, monthOptions)
+                                        val nextBase = newFeeBaseFor(paymentMode, selectedBatch, months)
                                         baseAmount = amountText(nextBase)
                                         collectAmount = amountText(nextBase)
                                     },
@@ -1107,12 +1145,15 @@ private fun NewFeeForm(
     batches: List<BatchEntity>,
     selectedBatchId: String?,
     feePeriod: String,
-    advanceOffset: Int,
+    startMonthIdx: Int = 0,
+    endMonthIdx: Int = 0,
+    monthOptions: List<UcMonthYear> = emptyList(),
     baseAmount: String,
     discountPercent: Double,
     onBatchSelected: (BatchEntity?) -> Unit,
     onFeePeriodChange: (String) -> Unit,
-    onAdvanceOffsetChange: (Int) -> Unit,
+    onStartMonthIdxChange: (Int) -> Unit,
+    onEndMonthIdxChange: (Int) -> Unit,
     onBaseAmountChange: (String) -> Unit,
     onDiscountChange: (Double) -> Unit
 ) {
@@ -1123,7 +1164,12 @@ private fun NewFeeForm(
         border = BorderStroke(1.dp, BorderSub)
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(if (mode == PaymentMode.Advance) "Advance Fee Details" else "Running Month Details", color = TextWhite, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            val title = when (mode) {
+                PaymentMode.Advance -> "Advance Fee Details"
+                PaymentMode.Running -> "Running Month Details"
+                PaymentMode.Due -> "Due Payment Details"
+            }
+            Text(title, color = TextWhite, fontSize = 15.sp, fontWeight = FontWeight.Bold)
 
             if (batches.isNotEmpty()) {
                 Text("Batch", color = TextMuted, fontSize = 12.sp)
@@ -1141,26 +1187,29 @@ private fun NewFeeForm(
                 Text("No active batch assigned. This will be saved as a direct student fee.", color = TextMuted, fontSize = 12.sp)
             }
 
-            if (mode == PaymentMode.Advance) {
-                Text("Advance Month", color = TextMuted, fontSize = 12.sp)
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(listOf(1, 2, 3, 6, 12)) { offset ->
-                        FilterChip(
-                            selected = advanceOffset == offset,
-                            onClick = { onAdvanceOffsetChange(offset) },
-                            label = { Text("+$offset month${if (offset > 1) "s" else ""}") },
-                            colors = smartChipColors()
-                        )
+            if (mode != PaymentMode.Due) {
+                Text("Fee Period", color = TextMuted, fontSize = 12.sp)
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Box(Modifier.weight(1f)) {
+                        PremiumMonthDropdown("Start Month", monthOptions, monthOptions.getOrNull(startMonthIdx),
+                            onOptionSelected = { onStartMonthIdxChange(monthOptions.indexOf(it)) },
+                            optionLabel = { it.label })
+                    }
+                    Box(Modifier.weight(1f)) {
+                        PremiumMonthDropdown("End Month", monthOptions, monthOptions.getOrNull(endMonthIdx),
+                            onOptionSelected = { onEndMonthIdxChange(monthOptions.indexOf(it)) },
+                            optionLabel = { it.label })
                     }
                 }
+            } else {
+                SmartTextField(
+                    value = feePeriod,
+                    onValueChange = onFeePeriodChange,
+                    placeholder = "e.g. January 2025",
+                    leadingIcon = Icons.Filled.CalendarMonth
+                )
             }
 
-            SmartTextField(
-                value = feePeriod,
-                onValueChange = onFeePeriodChange,
-                placeholder = "e.g. ${if (mode == PaymentMode.Advance) advancePeriodLabel(advanceOffset) else monthLabelForOffset(0)}",
-                leadingIcon = Icons.Filled.CalendarMonth
-            )
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                 SmartTextField(
                     value = baseAmount,
@@ -1263,6 +1312,55 @@ private fun SummaryLine(label: String, value: String, color: Color = TextWhite) 
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
+private fun <T> PremiumMonthDropdown(
+    label: String,
+    options: List<T>,
+    selectedOption: T?,
+    onOptionSelected: (T) -> Unit,
+    optionLabel: (T) -> String,
+    enabled: Boolean = true
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        OutlinedTextField(
+            value = selectedOption?.let(optionLabel) ?: "",
+            onValueChange = {},
+            readOnly = true,
+            enabled = enabled,
+            label = { Text(label, color = TextMuted) },
+            trailingIcon = { Icon(Icons.Filled.ArrowDropDown, null, tint = TextMuted) },
+            modifier = Modifier.fillMaxWidth(),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedContainerColor = CardBg, unfocusedContainerColor = CardBg,
+                focusedTextColor = TextWhite, unfocusedTextColor = TextWhite,
+                focusedBorderColor = Cyan, unfocusedBorderColor = BorderSub
+            ),
+            shape = RoundedCornerShape(12.dp)
+        )
+        if (enabled) {
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .clickable { expanded = !expanded }
+            )
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            modifier = Modifier.background(CardBg).heightIn(max = 280.dp)
+        ) {
+            options.forEach { option ->
+                DropdownMenuItem(
+                    text = { Text(optionLabel(option), color = if (option == selectedOption) Cyan else TextWhite) },
+                    onClick = { onOptionSelected(option); expanded = false }
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
 private fun SmartTextField(
     value: String,
     onValueChange: (String) -> Unit,
@@ -1319,6 +1417,24 @@ private fun smartChipColors() = FilterChipDefaults.filterChipColors(
 
 private fun moneyInput(value: String): String =
     value.filter { it.isDigit() || it == '.' }
+
+// ── Month dropdown helpers ──
+private data class UcMonthYear(val month: Int, val year: Int, val label: String)
+
+private fun generateMonthOptions(): List<UcMonthYear> {
+    val names = listOf("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+    val currentYear = Calendar.getInstance().get(Calendar.YEAR)
+    return (currentYear - 1..currentYear + 2).flatMap { year ->
+        (1..12).map { month -> UcMonthYear(month, year, "${names[month - 1]} $year") }
+    }
+}
+
+private fun buildFeePeriodLabel(startIdx: Int, endIdx: Int, options: List<UcMonthYear>): String {
+    if (startIdx == endIdx) return options.getOrNull(startIdx)?.label ?: ""
+    val s = options.getOrNull(startIdx)?.label ?: return ""
+    val e = options.getOrNull(endIdx)?.label ?: return ""
+    return "$s - $e"
+}
 
 private fun monthLabelForOffset(offset: Int): String {
     val calendar = Calendar.getInstance()

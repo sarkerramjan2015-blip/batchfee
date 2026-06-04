@@ -109,7 +109,8 @@ object AccessControl {
         "ResultReportRoute" to setOf(StaffPermissions.MANAGE_EXAMS, StaffPermissions.VIEW_REPORTS),
         "IdCardGeneratorRoute" to setOf(StaffPermissions.GENERATE_ID_CARDS),
         "IdCardPreviewRoute" to setOf(StaffPermissions.GENERATE_ID_CARDS),
-        "BirthdayReminderRoute" to setOf(StaffPermissions.BIRTHDAY_REMINDERS)
+        "BirthdayReminderRoute" to setOf(StaffPermissions.BIRTHDAY_REMINDERS),
+        "EnquiryListRoute" to setOf(StaffPermissions.VIEW_REPORTS)
     )
 
     fun isKnownRoute(route: String): Boolean {

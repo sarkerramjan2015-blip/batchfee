@@ -776,18 +776,9 @@ fun DashboardScreen(
                                 modifier = Modifier.weight(1f)
                             )
                         }
-                        /*
-                        Text("View →", color = AccentCyan, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+
                     }
                 }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // ── Shortcut Grid ──────────────────────────────
-                        */
-                    }
-                }
-
                 Spacer(modifier = Modifier.height(16.dp))
                 SectionHeader(title = "Tools & reminders")
                 Spacer(modifier = Modifier.height(10.dp))
@@ -797,7 +788,7 @@ fun DashboardScreen(
                     enquirySummary = enquirySummary,
                     onOpenExams = { safeNavigate("ExamsRoute") },
                     onOpenBirthdays = { safeNavigate("BirthdayReminderRoute") },
-                    onOpenEnquiry = { showEnquiryForm = true },
+                    onOpenEnquiry = { safeNavigate("EnquiryListRoute") },
                     onComingSoon = showComingSoon
                 )
 
