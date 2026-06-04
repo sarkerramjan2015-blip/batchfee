@@ -6,6 +6,7 @@ plugins {
   alias(libs.plugins.roborazzi)
   alias(libs.plugins.secrets)
   alias(libs.plugins.google.services)
+  alias(libs.plugins.firebase.crashlytics)
   kotlin("plugin.serialization") version "2.2.10"
 }
 
@@ -25,11 +26,10 @@ android {
 
   signingConfigs {
     create("release") {
-      val keystorePath = System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks"
-      storeFile = file(keystorePath)
-      storePassword = System.getenv("STORE_PASSWORD")
-      keyAlias = "upload"
-      keyPassword = System.getenv("KEY_PASSWORD")
+      storeFile = file("batchfee-release.jks")
+      storePassword = "batchfee123"
+      keyAlias = "batchfee"
+      keyPassword = "batchfee123"
     }
     create("debugConfig") {
       storeFile = file("${rootDir}/debug.keystore")
@@ -83,6 +83,7 @@ dependencies {
   implementation(libs.firebase.appcheck.playintegrity)
   implementation(libs.firebase.auth)
   implementation(libs.firebase.firestore)
+  implementation(libs.firebase.crashlytics)
   // implementation(libs.accompanist.permissions)
   implementation(libs.androidx.activity.compose)
   implementation(libs.androidx.biometric)

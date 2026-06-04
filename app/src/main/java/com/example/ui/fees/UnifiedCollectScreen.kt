@@ -182,8 +182,15 @@ fun UnifiedCollectScreen(
     var selectedDueId by remember { mutableStateOf<String?>(null) }
     var selectedBatchId by remember { mutableStateOf<String?>(null) }
     var feePeriod by remember { mutableStateOf(monthLabelForOffset(0)) }
-    var startMonthIdx by remember { mutableIntStateOf(0) }
-    var endMonthIdx by remember { mutableIntStateOf(0) }
+    val monthOptions = remember { generateMonthOptions() }
+    val currentMonthIdx = remember {
+        val cal = Calendar.getInstance()
+        val curMonth = cal.get(Calendar.MONTH) + 1
+        val curYear = cal.get(Calendar.YEAR)
+        monthOptions.indexOfFirst { it.month == curMonth && it.year == curYear }.coerceAtLeast(0)
+    }
+    var startMonthIdx by remember { mutableIntStateOf(currentMonthIdx) }
+    var endMonthIdx by remember { mutableIntStateOf(currentMonthIdx) }
     var baseAmount by remember { mutableStateOf("") }
     var discountPercent by remember { mutableDoubleStateOf(0.0) }
     var collectAmount by remember { mutableStateOf("") }
@@ -191,9 +198,6 @@ fun UnifiedCollectScreen(
     var note by remember { mutableStateOf("") }
     var collectError by remember { mutableStateOf<String?>(null) }
     var editingHistoryItem by remember { mutableStateOf<StudentPaymentHistory?>(null) }
-
-    val monthOptions = remember { generateMonthOptions() }
-    val currentMonthIdx = remember { monthOptions.indexOfFirst { it.label == monthLabelForOffset(0) }.coerceAtLeast(0) }
 
     val selectedBatch = studentBatches.firstOrNull { it.id == selectedBatchId }
     val selectedDue = studentDues.firstOrNull { it.fee.id == selectedDueId } ?: studentDues.firstOrNull()
@@ -1201,6 +1205,13 @@ private fun NewFeeForm(
                             optionLabel = { it.label })
                     }
                 }
+                val monthCount = (endMonthIdx - startMonthIdx + 1).coerceAtLeast(1)
+                Text(
+                    text = "Duration: $monthCount Month${if (monthCount > 1) "s" else ""}",
+                    color = TextMuted,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium
+                )
             } else {
                 SmartTextField(
                     value = feePeriod,

@@ -46,9 +46,14 @@ import com.example.domain.BiometricAuthManager
 import com.example.domain.DemoAuthRepository
 import com.example.domain.PasswordHasher
 import com.example.domain.SessionManager
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.FirebaseAuthException
+import com.google.firebase.firestore.FirebaseFirestore
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import java.util.UUID
+import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withContext
 import androidx.lifecycle.viewModelScope
 
 class AuthViewModel(private val db: AppDatabase) : ViewModel() {
@@ -59,71 +64,172 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
         }
     }
 
+    private suspend fun tryFirebaseLogin(email: String, password: String): UserEntity? {
+        return withContext(Dispatchers.IO) {
+            try {
+                val authResult = FirebaseAuth.getInstance()
+                    .signInWithEmailAndPassword(email, password)
+                    .await()
+                val uid = authResult.user?.uid ?: return@withContext null
+
+                val firestoreUser = FirebaseFirestore.getInstance()
+                    .collection("Institutes").document(uid).get().await()
+
+                val existingPlans = db.subscriptionPlanDao().getAllPlans().first()
+                if (existingPlans.isEmpty()) {
+                    AppDatabase.ensureDemoDataSeeded(db)
+                }
+
+                if (firestoreUser.exists()) {
+                    val data = firestoreUser.data ?: return@withContext null
+                    val instituteName = data["instituteName"] as? String ?: "Institute"
+                    val ownerName = data["ownerName"] as? String ?: instituteName
+                    val role = data["role"] as? String ?: "InstituteOwner"
+                    val createdAt = data["createdAt"] as? Long ?: System.currentTimeMillis()
+
+                    val institute = InstituteEntity(
+                        id = uid, name = instituteName,
+                        currentPlanId = "plan_free_trial",
+                        subscriptionStatus = "trial",
+                        trialStartDateMs = createdAt,
+                        trialEndDateMs = createdAt + (15L * 24 * 60 * 60 * 1000),
+                        currentPeriodEndMs = createdAt + (15L * 24 * 60 * 60 * 1000),
+                        createdAtMs = createdAt
+                    )
+
+                    val mappedRole = when (role) {
+                        "owner" -> "InstituteOwner"
+                        "superAdmin", "super_admin" -> "SuperAdmin"
+                        else -> role
+                    }
+
+                    val user = UserEntity(
+                        id = uid, instituteId = uid, name = ownerName,
+                        email = email, passwordHash = PasswordHasher.hash(password),
+                        role = mappedRole, createdAtMs = createdAt
+                    )
+
+                    db.instituteDao().insertInstitute(institute)
+                    db.userDao().insertUser(user)
+                    return@withContext user
+                }
+
+                val user = UserEntity(
+                    id = uid, instituteId = uid, name = email.substringBefore("@"),
+                    email = email, passwordHash = PasswordHasher.hash(password),
+                    role = "SuperAdmin", createdAtMs = System.currentTimeMillis()
+                )
+
+                val institute = InstituteEntity(
+                    id = uid, name = email.substringBefore("@"),
+                    currentPlanId = "plan_free_trial", subscriptionStatus = "trial",
+                    trialStartDateMs = System.currentTimeMillis(),
+                    trialEndDateMs = System.currentTimeMillis() + (15L * 24 * 60 * 60 * 1000),
+                    currentPeriodEndMs = System.currentTimeMillis() + (15L * 24 * 60 * 60 * 1000),
+                    createdAtMs = System.currentTimeMillis()
+                )
+
+                db.instituteDao().insertInstitute(institute)
+                db.userDao().insertUser(user)
+                return@withContext user
+            } catch (_: FirebaseAuthException) {
+                null
+            }
+        }
+    }
+
     fun registerInstitute(
         instituteName: String,
         ownerName: String,
         email: String,
-        passwordHash: String,
+        password: String,
+        whatsappNumber: String,
         onSuccess: () -> Unit,
         onError: (String) -> Unit
     ) {
-        if (instituteName.isBlank() || ownerName.isBlank() || email.isBlank() || passwordHash.isBlank()) {
+        if (instituteName.isBlank() || ownerName.isBlank() || email.isBlank() || password.isBlank()) {
             onError("All fields are required")
             return
         }
 
-        val instituteId = UUID.randomUUID().toString()
-        val userId = UUID.randomUUID().toString()
-        val now = System.currentTimeMillis()
-        val thirtyDaysMs = 30L * 24 * 60 * 60 * 1000
-
-        val institute = InstituteEntity(
-            id = instituteId,
-            name = instituteName,
-            currentPlanId = "plan_pro",
-            subscriptionStatus = "trial",
-            trialStartDateMs = now,
-            trialEndDateMs = now + thirtyDaysMs,
-            currentPeriodEndMs = now + thirtyDaysMs,
-            createdAtMs = now
-        )
-
-        val user = UserEntity(
-            id = userId,
-            instituteId = instituteId,
-            name = ownerName,
-            email = email,
-            passwordHash = PasswordHasher.hash(passwordHash),
-            role = "InstituteOwner",
-            createdAtMs = now
-        )
-
         viewModelScope.launch {
             try {
-                // Ensure initial plans are loaded before registration to avoid foreign key issues
-                val existingPlans = db.subscriptionPlanDao().getAllPlans().first()
-                if (existingPlans.isEmpty()) {
-                     AppDatabase.ensureDemoDataSeeded(db)
-                     val doubleCheckPlans = db.subscriptionPlanDao().getAllPlans().first()
-                     if (doubleCheckPlans.isEmpty()) {
-                         onError("Database initialization in progress. Please try again in a moment.")
-                         return@launch
-                     }
-                }
-
                 val existing = db.userDao().getUserByEmail(email)
                 if (existing != null) {
                     onError("Email already exists")
                     return@launch
                 }
 
+                val authResult = withContext(Dispatchers.IO) {
+                    FirebaseAuth.getInstance()
+                        .createUserWithEmailAndPassword(email, password)
+                        .await()
+                }
+
+                val uid = authResult.user?.uid
+                    ?: throw IllegalStateException("Firebase Auth succeeded but returned null UID")
+
+                val now = System.currentTimeMillis()
+                val fifteenDaysMs = 15L * 24 * 60 * 60 * 1000
+
+                withContext(Dispatchers.IO) {
+                    val firestore = FirebaseFirestore.getInstance()
+                    firestore.collection("Institutes").document(uid).set(
+                        mapOf(
+                            "instituteName" to instituteName,
+                            "ownerName" to ownerName,
+                            "email" to email,
+                            "whatsappNumber" to whatsappNumber,
+                            "role" to "owner",
+                            "createdAt" to now,
+                            "isActive" to true,
+                            "trialEndDate" to (now + fifteenDaysMs)
+                        )
+                    ).await()
+                }
+
+                val institute = InstituteEntity(
+                    id = uid,
+                    name = instituteName,
+                    currentPlanId = "plan_free_trial",
+                    subscriptionStatus = "trial",
+                    trialStartDateMs = now,
+                    trialEndDateMs = now + fifteenDaysMs,
+                    currentPeriodEndMs = now + fifteenDaysMs,
+                    createdAtMs = now,
+                    whatsappNumber = whatsappNumber.ifBlank { null }
+                )
+
+                val user = UserEntity(
+                    id = uid,
+                    instituteId = uid,
+                    name = ownerName,
+                    email = email,
+                    passwordHash = PasswordHasher.hash(password),
+                    role = "InstituteOwner",
+                    createdAtMs = now
+                )
+
+                val existingPlans = db.subscriptionPlanDao().getAllPlans().first()
+                if (existingPlans.isEmpty()) {
+                    AppDatabase.ensureDemoDataSeeded(db)
+                }
+
                 db.instituteDao().insertInstitute(institute)
                 db.userDao().insertUser(user)
-                
-                SessionManager.login(userId, instituteId, user.role)
+
+                SessionManager.login(uid, uid, user.role)
                 onSuccess()
+            } catch (e: FirebaseAuthException) {
+                val message = when (e.errorCode) {
+                    "ERROR_EMAIL_ALREADY_IN_USE" -> "An account with this email already exists"
+                    "ERROR_INVALID_EMAIL" -> "Please enter a valid email address"
+                    "ERROR_WEAK_PASSWORD" -> "Password should be at least 6 characters"
+                    else -> e.localizedMessage ?: "Authentication failed"
+                }
+                onError(message)
             } catch (e: Exception) {
-                onError("Registration failed: ${e.message}")
+                onError(e.localizedMessage ?: "Registration failed")
             }
         }
     }
@@ -144,12 +250,14 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                 val loginId = email.trim()
                 var user = db.userDao().getUserByEmail(loginId)
 
-                // ── Demo account fallback: trigger seeding if user not found ──
+                if (user == null) {
+                    user = tryFirebaseLogin(loginId, passwordHash)
+                }
+
                 if (user == null && (loginId == "owner@batchfee.app" || loginId == "admin@batchfee.app" || loginId == "STF001")) {
                     try {
                         AppDatabase.ensureDemoDataSeeded(db)
                     } catch (seedEx: Exception) {
-                        // Seeding failed — still try direct query in case partial data exists
                         seedEx.printStackTrace()
                     }
                     user = db.userDao().getUserByEmail(loginId)
@@ -420,6 +528,7 @@ fun AuthScreen(
     var password by remember { mutableStateOf("") }
     var instituteName by remember { mutableStateOf("") }
     var ownerName by remember { mutableStateOf("") }
+    var whatsappNumber by remember { mutableStateOf("") }
 
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var isLoading by remember { mutableStateOf(false) }
@@ -519,15 +628,6 @@ fun AuthScreen(
                     color = AuthCyan,
                     textAlign = TextAlign.Center
                 )
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    text = "Manage students, batches, fees, attendance, and reports from one beautiful app.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = AuthMuted,
-                    textAlign = TextAlign.Center,
-                    lineHeight = androidx.compose.ui.unit.TextUnit(18f, androidx.compose.ui.unit.TextUnitType.Sp)
-                )
-
                 Spacer(Modifier.height(32.dp))
 
                 // ═════════════════════════════════════════════════
@@ -547,6 +647,18 @@ fun AuthScreen(
                             onValueChange = { ownerName = it },
                             label = "Your Name",
                             leadingIcon = { Icon(Icons.Filled.Person, null, tint = AuthMuted) }
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        DarkTextField(
+                            value = whatsappNumber,
+                            onValueChange = { whatsappNumber = it },
+                            label = "WhatsApp Number",
+                            leadingIcon = {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("+880 ", color = AuthMuted, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                                }
+                            },
+                            keyboardType = androidx.compose.ui.text.input.KeyboardType.Phone
                         )
                         Spacer(Modifier.height(12.dp))
                     }
@@ -639,7 +751,7 @@ fun AuthScreen(
                                 })
                             } else {
                                 viewModel.registerInstitute(
-                                    instituteName, ownerName, email, password,
+                                    instituteName, ownerName, email, password, whatsappNumber,
                                     onSuccess = {
                                         isLoading = false
                                         BiometricAuthManager.refreshCurrentSession(context, email)
@@ -747,115 +859,8 @@ fun AuthScreen(
                     )
                 }
 
-                Spacer(Modifier.height(8.dp))
-
-                // Divider
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    HorizontalDivider(modifier = Modifier.weight(1f), color = AuthBorder)
-                    Text(
-                        "or try demo access",
-                        color = AuthMuted,
-                        fontSize = 13.sp,
-                        modifier = Modifier.padding(horizontal = 14.dp)
-                    )
-                    HorizontalDivider(modifier = Modifier.weight(1f), color = AuthBorder)
-                }
-
                 Spacer(Modifier.height(16.dp))
 
-                // Demo access buttons
-                Column(
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    OutlinedButton(
-                        onClick = {
-                            if (isLoading || loadingDemoAccount != null) return@OutlinedButton
-                            errorMessage = null
-                            loadingDemoAccount = "owner"
-                            viewModel.login("owner@batchfee.app", "123456", onSuccess = {
-                                viewModel.trackDemoLogin("owner")
-                                loadingDemoAccount = null
-                                onNavigateDashboard()
-                            }, onError = {
-                                errorMessage = it
-                                loadingDemoAccount = null
-                            })
-                        },
-                        modifier = Modifier.fillMaxWidth().height(48.dp),
-                        shape = RoundedCornerShape(14.dp),
-                        border = BorderStroke(1.dp, AuthCyan.copy(alpha = 0.5f)),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = AuthCyan)
-                    ) {
-                        if (loadingDemoAccount == "owner") {
-                            CircularProgressIndicator(Modifier.size(20.dp), color = AuthCyan, strokeWidth = 2.dp)
-                        } else {
-                            Icon(Icons.Filled.PlayArrow, null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Enter Demo Owner Account", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                        }
-                    }
-
-                    OutlinedButton(
-                        onClick = {
-                            if (isLoading || loadingDemoAccount != null) return@OutlinedButton
-                            errorMessage = null
-                            loadingDemoAccount = "admin"
-                            viewModel.login("admin@batchfee.app", "123456", onSuccess = { role ->
-                                viewModel.trackDemoLogin(if (role == "SuperAdmin") "super_admin" else "admin")
-                                loadingDemoAccount = null
-                                if (role == "SuperAdmin") onNavigateSuperAdmin() else onNavigateDashboard()
-                            }, onError = {
-                                errorMessage = it
-                                loadingDemoAccount = null
-                            })
-                        },
-                        modifier = Modifier.fillMaxWidth().height(48.dp),
-                        shape = RoundedCornerShape(14.dp),
-                        border = BorderStroke(1.dp, AuthViolet.copy(alpha = 0.5f)),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = AuthViolet.copy(alpha = 0.9f))
-                    ) {
-                        if (loadingDemoAccount == "admin") {
-                            CircularProgressIndicator(Modifier.size(20.dp), color = AuthViolet, strokeWidth = 2.dp)
-                        } else {
-                            Icon(Icons.Filled.Shield, null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Enter Super Admin Account", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                        }
-                    }
-
-                    OutlinedButton(
-                        onClick = {
-                            if (isLoading || loadingDemoAccount != null) return@OutlinedButton
-                            errorMessage = null
-                            loadingDemoAccount = "staff"
-                            viewModel.login("STF001", "123456", onSuccess = {
-                                loadingDemoAccount = null
-                                onNavigateDashboard()
-                            }, onError = {
-                                errorMessage = it
-                                loadingDemoAccount = null
-                            })
-                        },
-                        modifier = Modifier.fillMaxWidth().height(48.dp),
-                        shape = RoundedCornerShape(14.dp),
-                        border = BorderStroke(1.dp, AuthBlue.copy(alpha = 0.5f)),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = AuthBlue.copy(alpha = 0.95f))
-                    ) {
-                        if (loadingDemoAccount == "staff") {
-                            CircularProgressIndicator(Modifier.size(20.dp), color = AuthBlue, strokeWidth = 2.dp)
-                        } else {
-                            Icon(Icons.Filled.Badge, null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Enter Demo Staff Account", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                        }
-                    }
-                }
-
-                Spacer(Modifier.height(16.dp))
                 Text(
                     text = "v1.0 — BatchFee",
                     style = MaterialTheme.typography.labelSmall,

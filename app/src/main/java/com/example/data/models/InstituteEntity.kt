@@ -15,5 +15,6 @@ data class InstituteEntity(
     val createdAtMs: Long,
     val phone: String? = null,
     val address: String? = null,
+    val whatsappNumber: String? = null,
     val profilePhotoUri: String? = null
 )

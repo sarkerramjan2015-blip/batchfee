@@ -165,7 +165,6 @@ private fun BottomNavItem(
             ),
             shape = RoundedCornerShape(17.dp)
         )
-        isSelected -> Modifier.border(1.dp, Cyan.copy(alpha = 0.22f), RoundedCornerShape(17.dp))
         else -> Modifier
     }
 

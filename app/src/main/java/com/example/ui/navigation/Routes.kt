@@ -12,6 +12,9 @@ object DashboardRoute
 object SuperAdminRoute
 
 @Serializable
+object SubscriptionExpiredRoute
+
+@Serializable
 object PricingRoute
 
 @Serializable

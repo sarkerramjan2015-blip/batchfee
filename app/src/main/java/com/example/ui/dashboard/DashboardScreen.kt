@@ -3,6 +3,7 @@ package com.example.ui.dashboard
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -37,7 +38,9 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.database.AppDatabase
+import com.example.data.database.DemoDataSeeder
 import com.example.data.models.InstituteEntity
+
 import com.example.domain.SessionManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.sp
@@ -46,6 +49,7 @@ import com.example.ui.components.BatchFeeBottomNav
 import com.example.domain.AccessControl
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -394,7 +398,7 @@ fun DashboardTabsScreen(
         ) {
             when (currentRoute) {
                 "DashboardRoute" -> DashboardScreen(db, onNavigatePricing, onNavigateBilling, onLogout, onNavigate)
-                "More" -> MoreScreen(onNavigateBilling, onLogout, onNavigate)
+                "More" -> MoreScreen(db, onNavigateBilling, onLogout, onNavigate)
             }
         }
     }
@@ -546,14 +550,6 @@ fun DashboardScreen(
             )
 
             Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
-                if (institute?.subscriptionStatus == "trial" && AccessControl.canAccessRoute("PricingRoute")) {
-                    TrialReminderCard(
-                        trialDays = trialDays,
-                        onUpgrade = onNavigatePricing,
-                        modifier = Modifier.padding(bottom = 12.dp)
-                    )
-                }
-
                 // Overview Card
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -1940,45 +1936,6 @@ private fun DashboardHeaderPill(
 }
 
 @Composable
-private fun TrialReminderCard(
-    trialDays: Int,
-    onUpgrade: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = DashboardCard),
-        border = borderStroke()
-    ) {
-        Row(
-            modifier = Modifier
-                .padding(horizontal = 14.dp, vertical = 12.dp)
-                .fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(36.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(AccentCyan.copy(alpha = 0.12f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Filled.Info, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(20.dp))
-            }
-            Spacer(Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text("Free Trial", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                Text("$trialDays days left", color = TextSecondary, fontSize = 12.sp)
-            }
-            TextButton(onClick = onUpgrade, contentPadding = PaddingValues(horizontal = 8.dp)) {
-                Text("Upgrade", color = AccentCyan, fontWeight = FontWeight.SemiBold)
-            }
-        }
-    }
-}
-
-@Composable
 private fun SectionHeader(title: String, modifier: Modifier = Modifier) {
     Row(
         modifier = modifier.fillMaxWidth(),
@@ -2078,21 +2035,6 @@ private fun HomeEngagementSection(
             )
         }
 
-        HomeFullActionTile(
-            title = "Announcements",
-            icon = Icons.Filled.Campaign,
-            onClick = { onComingSoon("Announcements") }
-        )
-        HomeFullActionTile(
-            title = "Messages",
-            icon = Icons.Filled.Message,
-            onClick = { onComingSoon("Messages") }
-        )
-        HomeFullActionTile(
-            title = "Online Lectures",
-            icon = Icons.Filled.VideoLibrary,
-            onClick = { onComingSoon("Online Lectures") }
-        )
         EnquirySummaryCard(
             summary = enquirySummary,
             onClick = onOpenEnquiry
@@ -2916,6 +2858,7 @@ private fun AnimatedCounter(
 
 @Composable
 fun MoreScreen(
+    db: AppDatabase,
     onNavigateBilling: () -> Unit,
     onLogout: () -> Unit,
     onNavigate: (String) -> Unit
@@ -2970,6 +2913,42 @@ fun MoreScreen(
             }
         }
         Spacer(Modifier.height(24.dp))
+        // Secret Demo Data button — only visible for specific admin account
+        val currentUserEmail by SessionManager.currentUserId.collectAsState()
+        var userEmail by remember { mutableStateOf<String?>(null) }
+        val scope = rememberCoroutineScope()
+        var isSeeding by remember { mutableStateOf(false) }
+        LaunchedEffect(currentUserEmail) {
+            if (currentUserEmail != null) {
+                val user = db.userDao().getUserFlow(currentUserEmail!!).first()
+                userEmail = user?.email
+            }
+        }
+        if (userEmail == "mohammad.ramjan.sarker1999@gmail.com") {
+            OutlinedButton(
+                onClick = {
+                    isSeeding = true
+                    scope.launch {
+                        val instId = SessionManager.currentInstituteId.value ?: return@launch
+                        val userId = currentUserEmail ?: return@launch
+                        DemoDataSeeder.seed(db, instId, userId)
+                        isSeeding = false
+                    }
+                },
+                modifier = Modifier.fillMaxWidth().height(40.dp),
+                enabled = !isSeeding,
+                shape = RoundedCornerShape(10.dp),
+                border = BorderStroke(1.dp, AccentViolet.copy(alpha = 0.35f)),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentViolet.copy(alpha = 0.6f))
+            ) {
+                if (isSeeding) {
+                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = AccentViolet)
+                    Spacer(Modifier.width(8.dp))
+                }
+                Text("Load Demo Data", fontSize = 11.sp)
+            }
+            Spacer(Modifier.height(12.dp))
+        }
         Button(
             onClick = onLogout, 
             modifier = Modifier.fillMaxWidth().height(48.dp),

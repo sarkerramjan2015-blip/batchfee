@@ -6,6 +6,7 @@ import com.example.domain.ThemePreferences
 import com.google.firebase.FirebaseApp
 import com.google.firebase.appcheck.FirebaseAppCheck
 import com.google.firebase.appcheck.playintegrity.PlayIntegrityAppCheckProviderFactory
+import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreSettings
 import kotlinx.coroutines.CoroutineScope
@@ -22,6 +23,8 @@ class BatchFeeApp : Application() {
         ThemePreferences.init(this)
 
         FirebaseApp.initializeApp(this)
+
+        FirebaseCrashlytics.getInstance().setCrashlyticsCollectionEnabled(true)
 
         FirebaseAppCheck.getInstance().apply {
             installAppCheckProviderFactory(

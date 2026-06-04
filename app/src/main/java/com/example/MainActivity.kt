@@ -28,9 +28,13 @@ import com.example.ui.dashboard.DashboardScreen
 import com.example.ui.navigation.*
 import com.example.ui.pricing.PricingScreen
 import com.example.ui.superadmin.SuperAdminScreen
+import com.example.ui.subscription.SubscriptionExpiredScreen
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.update.ForceUpdateScreen
+import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
 
 class MainActivity : FragmentActivity() {
     override fun onUserInteraction() {
@@ -115,18 +119,32 @@ private fun MainAppContent(appDb: com.example.data.database.AppDatabase) {
 
     NavHost(navController = navController, startDestination = AuthRoute) {
         composable<AuthRoute> {
+            val scope = rememberCoroutineScope()
             AuthScreen(
                 db = appDb,
                 sessionNotice = sessionNotice,
-                onNavigateDashboard = { 
-                    navController.navigate(DashboardRoute) {
-                        popUpTo(navController.graph.id) { inclusive = true }
-                    } 
+                onNavigateDashboard = {
+                    scope.launch {
+                        val instituteId = SessionManager.currentInstituteId.value
+                        val role = SessionManager.currentUserRole.value
+                        if (role != "SuperAdmin" && instituteId != null) {
+                            val isExpired = checkSubscriptionExpired(instituteId)
+                            if (isExpired) {
+                                navController.navigate(SubscriptionExpiredRoute) {
+                                    popUpTo(navController.graph.id) { inclusive = true }
+                                }
+                                return@launch
+                            }
+                        }
+                        navController.navigate(DashboardRoute) {
+                            popUpTo(navController.graph.id) { inclusive = true }
+                        }
+                    }
                 },
-                onNavigateSuperAdmin = { 
+                onNavigateSuperAdmin = {
                     navController.navigate(SuperAdminRoute) {
                         popUpTo(navController.graph.id) { inclusive = true }
-                    } 
+                    }
                 }
             )
         }
@@ -518,5 +536,27 @@ private fun MainAppContent(appDb: com.example.data.database.AppDatabase) {
                 }
             )
         }
+
+        composable<SubscriptionExpiredRoute> {
+            SubscriptionExpiredScreen(
+                onLogout = {
+                    navController.navigate(AuthRoute) {
+                        popUpTo(navController.graph.id) { inclusive = true }
+                    }
+                }
+            )
+        }
+    }
+}
+
+private suspend fun checkSubscriptionExpired(instituteId: String): Boolean {
+    return try {
+        val doc = FirebaseFirestore.getInstance()
+            .collection("Institutes").document(instituteId)
+            .get().await()
+        val trialEnd = doc.getLong("trialEndDate") ?: return false
+        System.currentTimeMillis() > trialEnd
+    } catch (_: Exception) {
+        false
     }
 }

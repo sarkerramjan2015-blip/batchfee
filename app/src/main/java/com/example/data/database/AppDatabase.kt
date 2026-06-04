@@ -40,7 +40,7 @@ import kotlinx.coroutines.withContext
         com.example.data.models.AbsentMessageEntity::class,
         com.example.data.models.EnquiryEntity::class
     ],
-    version = 11,
+    version = 12,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -120,6 +120,12 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_11_12 = object : androidx.room.migration.Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE institutes ADD COLUMN whatsappNumber TEXT")
+            }
+        }
+
         fun getDatabase(context: Context, scope: CoroutineScope): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -127,7 +133,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "batchfee_database"
                 )
-                .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11)
+                .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12)
                 .build()
                 INSTANCE = instance
                 instance
@@ -156,7 +162,7 @@ abstract class AppDatabase : RoomDatabase() {
                      name = "Free Trial",
                      description = "30-day full access free trial",
                      priceBdt = 0.0, priceInr = 0.0,
-                     maxStudents = 100, maxBatches = 5, maxUsers = 1, maxBranches = 1,
+                     maxStudents = 50, maxBatches = 5, maxUsers = 1, maxBranches = 1,
                      tag = "Trial", tierLevel = 0
                  ),
                  SubscriptionPlanEntity(
