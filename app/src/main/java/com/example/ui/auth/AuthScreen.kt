@@ -114,25 +114,11 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                     return@withContext user
                 }
 
-                val user = UserEntity(
-                    id = uid, instituteId = uid, name = email.substringBefore("@"),
-                    email = email, passwordHash = PasswordHasher.hash(password),
-                    role = "SuperAdmin", createdAtMs = System.currentTimeMillis()
-                )
-
-                val institute = InstituteEntity(
-                    id = uid, name = email.substringBefore("@"),
-                    currentPlanId = "plan_free_trial", subscriptionStatus = "trial",
-                    trialStartDateMs = System.currentTimeMillis(),
-                    trialEndDateMs = System.currentTimeMillis() + (15L * 24 * 60 * 60 * 1000),
-                    currentPeriodEndMs = System.currentTimeMillis() + (15L * 24 * 60 * 60 * 1000),
-                    createdAtMs = System.currentTimeMillis()
-                )
-
-                db.instituteDao().insertInstitute(institute)
-                db.userDao().insertUser(user)
-                return@withContext user
-            } catch (_: FirebaseAuthException) {
+                // Firestore document missing — account exists in Auth but was never
+                // fully provisioned. Return null to avoid privilege escalation.
+                null
+            } catch (e: Exception) {
+                e.printStackTrace()
                 null
             }
         }
