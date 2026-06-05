@@ -73,3 +73,5 @@ object BillingRoute
 @Serializable object EnquiryListRoute
 
 @Serializable object SettingsRoute
+
+@Serializable object StudentRegistrationRoute

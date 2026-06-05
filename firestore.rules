@@ -1,0 +1,28 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Allow the Android app and web form to read/write pending registrations
+    match /registrations/{instituteId}/pending/{requestId} {
+      allow read, write: if true;
+    }
+    match /registrations/{instituteId} {
+      allow read, write: if true;
+    }
+
+    // Allow institute info sync (so web form header shows institute name)
+    match /institutes/{document=**} {
+      allow read, write: if true;
+    }
+
+    // Preserve existing demo visitor tracking
+    match /Demo_Visitors/{document=**} {
+      allow read, write: if true;
+    }
+
+    // Block everything else
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

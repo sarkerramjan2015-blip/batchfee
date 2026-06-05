@@ -94,6 +94,8 @@ fun SettingsScreen(
                     HorizontalDivider(color = BorderSub)
                     SettingsRow("Backup & Restore", Icons.Filled.Backup, onClick = { onNavigate("BackupRestoreRoute") })
                     HorizontalDivider(color = BorderSub)
+                    SettingsRow("Student Registration", Icons.Filled.PersonAdd, onClick = { onNavigate("StudentRegistrationRoute") })
+                    HorizontalDivider(color = BorderSub)
                     SettingsRow("Export All Data", Icons.Filled.FileDownload, onClick = {
                         scope.launch(Dispatchers.IO) {
                             DataExporter.exportAllToCsv(context, db)

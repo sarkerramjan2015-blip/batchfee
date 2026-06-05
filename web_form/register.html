@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Student Registration</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #07111F;
+            color: #F8FAFC;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            padding: 20px;
+        }
+        .container {
+            width: 100%;
+            max-width: 480px;
+            padding-top: 20px;
+        }
+        .header-card {
+            background: #0F172A;
+            border: 1px solid #1E293B;
+            border-radius: 14px;
+            padding: 24px;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .header-card h2 {
+            font-size: 20px;
+            font-weight: 700;
+            color: #F8FAFC;
+        }
+        .header-card .phone {
+            font-size: 13px;
+            color: #22D3EE;
+            margin-top: 6px;
+        }
+        .instruction {
+            font-size: 13px;
+            color: #94A3B8;
+            text-align: center;
+            margin-bottom: 20px;
+            padding: 12px;
+            background: #0F172A;
+            border-radius: 10px;
+            border: 1px solid #1E293B;
+        }
+        .form-card {
+            background: #0F172A;
+            border: 1px solid #1E293B;
+            border-radius: 14px;
+            padding: 24px;
+        }
+        .form-group {
+            margin-bottom: 16px;
+        }
+        .form-group label {
+            display: block;
+            font-size: 12px;
+            font-weight: 600;
+            color: #94A3B8;
+            margin-bottom: 6px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .form-group label .required {
+            color: #EF4444;
+        }
+        .form-group input,
+        .form-group select,
+        .form-group textarea {
+            width: 100%;
+            padding: 12px 14px;
+            background: #07111F;
+            border: 1px solid #1E293B;
+            border-radius: 10px;
+            color: #F8FAFC;
+            font-size: 15px;
+            font-family: inherit;
+            transition: border-color 0.2s;
+        }
+        .form-group input:focus,
+        .form-group select:focus,
+        .form-group textarea:focus {
+            outline: none;
+            border-color: #22D3EE;
+            box-shadow: 0 0 0 2px rgba(34, 211, 238, 0.15);
+        }
+        .form-group textarea {
+            resize: vertical;
+            min-height: 70px;
+        }
+        .form-group select {
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M6 8L1 3h10z' fill='%2394A3B8'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 14px center;
+        }
+        .phone-row {
+            display: flex;
+            gap: 8px;
+        }
+        .phone-code {
+            width: 90px !important;
+            flex-shrink: 0;
+        }
+        .submit-btn {
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(135deg, #3B82F6, #22D3EE);
+            border: none;
+            border-radius: 12px;
+            color: white;
+            font-size: 16px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: opacity 0.2s, transform 0.1s;
+            margin-top: 8px;
+        }
+        .submit-btn:hover { opacity: 0.9; }
+        .submit-btn:active { transform: scale(0.98); }
+        .submit-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .error-msg {
+            color: #EF4444;
+            font-size: 12px;
+            margin-top: 4px;
+            display: none;
+        }
+        .error-msg.visible { display: block; }
+        .success-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(7, 17, 31, 0.95);
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+        }
+        .success-overlay.show {
+            display: flex;
+        }
+        .success-card {
+            background: #0F172A;
+            border: 1px solid #1E293B;
+            border-radius: 20px;
+            padding: 40px 32px;
+            text-align: center;
+            max-width: 360px;
+            width: 90%;
+        }
+        .success-card .check {
+            width: 64px;
+            height: 64px;
+            background: rgba(34, 197, 94, 0.15);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 16px;
+            font-size: 32px;
+        }
+        .success-card h3 {
+            font-size: 20px;
+            color: #F8FAFC;
+            margin-bottom: 8px;
+        }
+        .success-card p {
+            font-size: 14px;
+            color: #94A3B8;
+            line-height: 1.5;
+        }
+        .error-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(7, 17, 31, 0.95);
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+        }
+        .error-overlay.show {
+            display: flex;
+        }
+        .error-card {
+            background: #0F172A;
+            border: 1px solid #EF4444;
+            border-radius: 20px;
+            padding: 40px 32px;
+            text-align: center;
+            max-width: 360px;
+            width: 90%;
+        }
+        .error-card .xmark {
+            width: 64px;
+            height: 64px;
+            background: rgba(239, 68, 68, 0.15);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 16px;
+            font-size: 32px;
+        }
+        .error-card h3 { font-size: 20px; color: #F8FAFC; margin-bottom: 8px; }
+        .error-card p { font-size: 14px; color: #94A3B8; line-height: 1.5; margin-bottom: 20px; }
+        .error-card button {
+            padding: 12px 28px;
+            background: #3B82F6;
+            border: none;
+            border-radius: 10px;
+            color: white;
+            font-weight: 600;
+            font-size: 14px;
+            cursor: pointer;
+        }
+        .loading-spinner {
+            display: inline-block;
+            width: 18px;
+            height: 18px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+            vertical-align: middle;
+            margin-right: 8px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header-card">
+            <h2 id="instituteName">Loading...</h2>
+            <div class="phone" id="institutePhone"></div>
+        </div>
+
+        <!-- Instruction -->
+        <div class="instruction">
+            ⚠️ Please fill out the form carefully in English. All fields marked with * are required.
+        </div>
+
+        <!-- Form -->
+        <div class="form-card">
+            <form id="registrationForm">
+                <div class="form-group">
+                    <label>Student Name <span class="required">*</span></label>
+                    <input type="text" id="fullName" placeholder="Enter full name" required>
+                    <div class="error-msg" id="fullNameError">Student name is required.</div>
+                </div>
+
+                <div class="form-group">
+                    <label>Phone Number <span class="required">*</span></label>
+                    <div class="phone-row">
+                        <input type="text" class="phone-code" value="+880" readonly>
+                        <input type="tel" id="phone" placeholder="1XXXXXXXXX" required style="flex:1">
+                    </div>
+                    <div class="error-msg" id="phoneError">Phone number is required.</div>
+                </div>
+
+                <div class="form-group">
+                    <label>Guardian Name</label>
+                    <input type="text" id="guardianName" placeholder="Enter guardian's full name">
+                </div>
+
+                <div class="form-group">
+                    <label>WhatsApp Number</label>
+                    <div class="phone-row">
+                        <input type="text" class="phone-code" value="+880" readonly>
+                        <input type="tel" id="whatsappNumber" placeholder="1XXXXXXXXX" style="flex:1">
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>Gender</label>
+                    <select id="gender">
+                        <option value="">Select gender</option>
+                        <option value="Male">Male</option>
+                        <option value="Female">Female</option>
+                        <option value="Other">Other</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label>Date of Birth</label>
+                    <input type="date" id="dateOfBirth">
+                </div>
+
+                <div class="form-group">
+                    <label>Institute / School Name</label>
+                    <input type="text" id="schoolName" placeholder="Enter school or institute name">
+                </div>
+
+                <div class="form-group">
+                    <label>Class</label>
+                    <input type="text" id="className" placeholder="e.g. Class 10, HSC 1st Year">
+                </div>
+
+                <div class="form-group">
+                    <label>Address</label>
+                    <textarea id="address" placeholder="Enter full address" rows="2"></textarea>
+                </div>
+
+                <button type="submit" class="submit-btn" id="submitBtn">
+                    <span id="submitText">Submit Registration</span>
+                    <span id="submitLoader" style="display:none"><span class="loading-spinner"></span>Submitting...</span>
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Success Overlay -->
+    <div class="success-overlay" id="successOverlay">
+        <div class="success-card">
+            <div class="check">✅</div>
+            <h3>Registration Submitted!</h3>
+            <p>Your registration has been sent to the institute. You will be contacted once approved.</p>
+        </div>
+    </div>
+
+    <!-- Error Overlay -->
+    <div class="error-overlay" id="errorOverlay">
+        <div class="error-card">
+            <div class="xmark">❌</div>
+            <h3>Submission Failed</h3>
+            <p id="errorMessage">Something went wrong. Please try again.</p>
+            <button onclick="document.getElementById('errorOverlay').classList.remove('show')">Try Again</button>
+        </div>
+    </div>
+
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore-compat.js"></script>
+
+    <script>
+        const firebaseConfig = {
+            apiKey: "AIzaSyD5Ksi9vr0jJjD5cKZ4okpEKmBgK2OVzTI",
+            authDomain: "batchfee-477b8.firebaseapp.com",
+            projectId: "batchfee-477b8",
+            storageBucket: "batchfee-477b8.firebasestorage.app",
+            messagingSenderId: "632446580863",
+            appId: "1:632446580863:web:61dc55d96ede0dca3c674a"
+        };
+
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.firestore();
+
+        function getInstituteId() {
+            const params = new URLSearchParams(window.location.search);
+            return params.get('instituteId');
+        }
+
+        async function loadInstituteInfo() {
+            const instituteId = getInstituteId();
+            if (!instituteId) {
+                document.getElementById('instituteName').textContent = 'Institute Not Found';
+                document.getElementById('institutePhone').textContent = 'Missing institute identifier in URL.';
+                return;
+            }
+
+            try {
+                const doc = await db.collection('institutes').doc(instituteId).get();
+                if (doc.exists) {
+                    const data = doc.data();
+                    document.getElementById('instituteName').textContent = data.name || 'Institute';
+                    if (data.phone) {
+                        document.getElementById('institutePhone').textContent = '📞 ' + data.phone;
+                    }
+                } else {
+                    document.getElementById('instituteName').textContent = 'Institute';
+                    document.getElementById('institutePhone').textContent = '';
+                }
+            } catch (e) {
+                console.error('Failed to load institute:', e);
+                document.getElementById('instituteName').textContent = 'Institute';
+                document.getElementById('institutePhone').textContent = '';
+            }
+        }
+
+        function generateRequestId() {
+            return 'reg_' + Date.now() + '_' + Math.random().toString(36).substring(2, 10);
+        }
+
+        function showError(id, msg) {
+            const el = document.getElementById(id + 'Error');
+            if (el) {
+                el.textContent = msg;
+                el.classList.add('visible');
+            }
+        }
+
+        function clearErrors() {
+            document.querySelectorAll('.error-msg').forEach(el => el.classList.remove('visible'));
+        }
+
+        function setLoading(loading) {
+            const btn = document.getElementById('submitBtn');
+            const text = document.getElementById('submitText');
+            const loader = document.getElementById('submitLoader');
+            btn.disabled = loading;
+            text.style.display = loading ? 'none' : 'inline';
+            loader.style.display = loading ? 'inline' : 'none';
+        }
+
+        document.getElementById('registrationForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            clearErrors();
+            setLoading(true);
+
+            const instituteId = getInstituteId();
+            if (!instituteId) {
+                document.getElementById('errorMessage').textContent = 'Invalid registration link. Missing institute identifier.';
+                document.getElementById('errorOverlay').classList.add('show');
+                setLoading(false);
+                return;
+            }
+
+            const fullName = document.getElementById('fullName').value.trim();
+            const phoneRaw = document.getElementById('phone').value.trim();
+            const phone = '+880' + phoneRaw.replace(/^0+/, '');
+            const guardianName = document.getElementById('guardianName').value.trim() || null;
+            const whatsappRaw = document.getElementById('whatsappNumber').value.trim();
+            const whatsappNumber = whatsappRaw ? '+880' + whatsappRaw.replace(/^0+/, '') : null;
+            const gender = document.getElementById('gender').value || null;
+            const dobInput = document.getElementById('dateOfBirth').value;
+            const dateOfBirthMs = dobInput ? new Date(dobInput).getTime() : null;
+            const schoolName = document.getElementById('schoolName').value.trim() || null;
+            const className = document.getElementById('className').value.trim() || null;
+            const address = document.getElementById('address').value.trim() || null;
+
+            let hasError = false;
+            if (!fullName) { showError('fullName', 'Student name is required.'); hasError = true; }
+            if (!phoneRaw) { showError('phone', 'Phone number is required.'); hasError = true; }
+            if (hasError) { setLoading(false); return; }
+
+            const requestId = generateRequestId();
+            const registration = {
+                requestId: requestId,
+                instituteId: instituteId,
+                fullName: fullName,
+                phone: phone,
+                guardianName: guardianName,
+                whatsappNumber: whatsappNumber,
+                gender: gender,
+                dateOfBirthMs: dateOfBirthMs,
+                schoolName: schoolName,
+                className: className,
+                address: address,
+                submittedAt: Date.now(),
+                status: 'pending'
+            };
+
+            try {
+                await db.collection('registrations')
+                    .doc(instituteId)
+                    .collection('pending')
+                    .doc(requestId)
+                    .set(registration);
+
+                document.getElementById('registrationForm').reset();
+                document.getElementById('successOverlay').classList.add('show');
+            } catch (err) {
+                console.error('Submission error:', err);
+                document.getElementById('errorMessage').textContent =
+                    'Could not submit registration. Please check your internet connection and try again.';
+                document.getElementById('errorOverlay').classList.add('show');
+            } finally {
+                setLoading(false);
+            }
+        });
+
+        loadInstituteInfo();
+    </script>
+</body>
+</html>

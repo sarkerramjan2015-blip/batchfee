@@ -502,8 +502,16 @@ private fun MainAppContent(appDb: com.example.data.database.AppDatabase) {
                         "BillingRoute" -> navController.navigate(BillingRoute)
                         "ReminderTemplatesRoute" -> navController.navigate(com.example.ui.navigation.ReminderTemplatesRoute)
                         "BackupRestoreRoute" -> navController.navigate(com.example.ui.navigation.BackupRestoreRoute)
+                        "StudentRegistrationRoute" -> navController.navigate(com.example.ui.navigation.StudentRegistrationRoute)
                     }
                 }
+            )
+        }
+        
+        composable<StudentRegistrationRoute> {
+            com.example.ui.registrations.RegistrationListScreen(
+                db = appDb,
+                onBack = { navController.popBackStack() }
             )
         }
         
