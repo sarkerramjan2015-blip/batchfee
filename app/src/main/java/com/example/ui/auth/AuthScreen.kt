@@ -35,6 +35,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.BuildConfig
 import com.example.R
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -73,7 +74,7 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                 val uid = authResult.user?.uid ?: return@withContext null
 
                 val firestoreUser = FirebaseFirestore.getInstance()
-                    .collection("Institutes").document(uid).get().await()
+                    .collection("institutes").document(uid).get().await()
 
                 val existingPlans = db.subscriptionPlanDao().getAllPlans().first()
                 if (existingPlans.isEmpty()) {
@@ -114,8 +115,6 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                     return@withContext user
                 }
 
-                // Firestore document missing — account exists in Auth but was never
-                // fully provisioned. Return null to avoid privilege escalation.
                 null
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -160,7 +159,7 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
 
                 withContext(Dispatchers.IO) {
                     val firestore = FirebaseFirestore.getInstance()
-                    firestore.collection("Institutes").document(uid).set(
+                    firestore.collection("institutes").document(uid).set(
                         mapOf(
                             "instituteName" to instituteName,
                             "ownerName" to ownerName,
@@ -254,12 +253,21 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                     return@launch
                 }
 
-                // ── Password verification with backward compatibility ──
+                // Check lockout before password verification
+                val nowMs = System.currentTimeMillis()
+                val lockedUntil = user.lockedUntilMs
+                if (lockedUntil != null && lockedUntil > nowMs) {
+                    val remainingMins = ((lockedUntil - nowMs) / 60_000).toInt() + 1
+                    onError("Account locked. Try again in $remainingMins min or use Forgot Password.")
+                    return@launch
+                }
+
+                // Password verification with backward compatibility
                 val storedHash = user.passwordHash
                 val passwordValid = if (PasswordHasher.isHashed(storedHash)) {
                     PasswordHasher.verify(passwordHash, storedHash)
                 } else {
-                    // Legacy plain-text password — auto-upgrade to hashed
+                    // Legacy plain-text password - auto-upgrade to hashed
                     if (storedHash == passwordHash) {
                         db.userDao().updateUser(user.copy(passwordHash = PasswordHasher.hash(passwordHash)))
                         true
@@ -269,8 +277,22 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                 }
 
                 if (!passwordValid) {
-                    onError("Invalid credentials")
+                    val newAttempts = user.failedAttempts + 1
+                    if (newAttempts >= 3) {
+                        val lockUntil = System.currentTimeMillis() + (15 * 60 * 1000L)
+                        db.userDao().updateFailedAttempts(loginId, newAttempts, lockUntil)
+                        onError("Account locked for 15 min after 3 failed attempts. Use Forgot Password to reset.")
+                    } else {
+                        db.userDao().updateFailedAttempts(loginId, newAttempts, null)
+                        val remaining = 3 - newAttempts
+                        onError("Wrong password. $remaining attempt" + (if (remaining > 1) "s" else "") + " remaining.")
+                    }
                     return@launch
+                }
+
+                // Success - reset failed attempts
+                if (user.failedAttempts > 0 || user.lockedUntilMs != null) {
+                    db.userDao().resetFailedAttempts(loginId)
                 }
 
                 val instituteId = user.instituteId ?: ""
@@ -379,7 +401,7 @@ class AuthViewModelFactory(private val db: AppDatabase) : ViewModelProvider.Fact
     }
 }
 
-// ── Dark premium palette shared with FeeDashboard ──────────
+// Dark premium palette shared with FeeDashboard
 private val AuthBg       = Color(0xFF0F0C29)
 private val AuthBgMid    = Color(0xFF302B63)
 private val AuthBgEnd    = Color(0xFF24243E)
@@ -393,7 +415,7 @@ private val AuthWhite    = Color(0xFFF8FAFC)
 private val AuthMuted    = Color(0xFF94A3B8)
 private val AuthErrorBg  = Color(0x33EF4444)
 
-// ── Animated, floating logo composable ──────────────────────
+// Animated, floating logo composable
 @Composable
 private fun AnimatedLogo(modifier: Modifier = Modifier) {
     var startAnim by remember { mutableStateOf(false) }
@@ -438,7 +460,7 @@ private fun AnimatedLogo(modifier: Modifier = Modifier) {
     }
 }
 
-// ── Glass card for input fields ─────────────────────────────
+// Glass card for input fields
 @Composable
 private fun GlassCard(content: @Composable ColumnScope.() -> Unit) {
     Card(
@@ -453,7 +475,7 @@ private fun GlassCard(content: @Composable ColumnScope.() -> Unit) {
     }
 }
 
-// ── Styled text field for dark theme ────────────────────────
+// Styled text field for dark theme
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun DarkTextField(
@@ -522,6 +544,8 @@ fun AuthScreen(
     var passwordVisible by remember { mutableStateOf(false) }
     var contentVisible by remember { mutableStateOf(false) }
     var biometricLoginAvailable by remember { mutableStateOf(false) }
+    var showForgotDialog by remember { mutableStateOf(false) }
+    var forgotEmail by remember { mutableStateOf("") }
 
     LaunchedEffect(Unit) { contentVisible = true }
     LaunchedEffect(sessionNotice, isLoginMode) {
@@ -589,16 +613,12 @@ fun AuthScreen(
             ) {
                 Spacer(Modifier.height(16.dp))
 
-                // ═════════════════════════════════════════════════
-                //  Animated Logo
-                // ═════════════════════════════════════════════════
+                // Animated Logo
                 AnimatedLogo()
 
                 Spacer(Modifier.height(24.dp))
 
-                // ═════════════════════════════════════════════════
-                //  App Name + Tagline
-                // ═════════════════════════════════════════════════
+                // App Name + Tagline
                 Text(
                     text = "BatchFee",
                     style = MaterialTheme.typography.headlineLarge.copy(
@@ -616,9 +636,7 @@ fun AuthScreen(
                 )
                 Spacer(Modifier.height(32.dp))
 
-                // ═════════════════════════════════════════════════
-                //  Login / Register Form Card
-                // ═════════════════════════════════════════════════
+                // Login / Register Form Card
                 GlassCard {
                     if (!isLoginMode) {
                         DarkTextField(
@@ -676,6 +694,17 @@ fun AuthScreen(
                             }
                         }
                     )
+
+                    // Forgot Password link (login mode only)
+                    if (isLoginMode) {
+                        Spacer(Modifier.height(4.dp))
+                        TextButton(
+                            onClick = { forgotEmail = email; showForgotDialog = true },
+                            modifier = Modifier.align(Alignment.End)
+                        ) {
+                            Text("Forgot Password?", color = AuthMuted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                        }
+                    }
 
                     if (errorMessage != null) {
                         Spacer(Modifier.height(12.dp))
@@ -834,6 +863,47 @@ fun AuthScreen(
                     }
                 }
 
+                // Forgot Password Dialog
+                if (showForgotDialog) {
+                    AlertDialog(
+                        onDismissRequest = { showForgotDialog = false },
+                        title = { Text("Reset Password", fontWeight = FontWeight.Bold, color = AuthWhite) },
+                        text = {
+                            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                Text("Enter your email to receive a password reset link.", color = AuthMuted, fontSize = 14.sp)
+                                DarkTextField(
+                                    value = forgotEmail,
+                                    onValueChange = { forgotEmail = it },
+                                    label = "Email Address",
+                                    leadingIcon = { Icon(Icons.Filled.Email, null, tint = AuthMuted) }
+                                )
+                            }
+                        },
+                        confirmButton = {
+                            TextButton(
+                                onClick = {
+                                    if (forgotEmail.isNotBlank()) {
+                                        FirebaseAuth.getInstance().sendPasswordResetEmail(forgotEmail.trim())
+                                            .addOnSuccessListener {
+                                                errorMessage = "Password reset link sent to " + forgotEmail
+                                                showForgotDialog = false
+                                            }
+                                            .addOnFailureListener { e ->
+                                                errorMessage = "Failed: " + (e.localizedMessage ?: "Unknown error")
+                                                showForgotDialog = false
+                                            }
+                                    }
+                                }
+                            ) { Text("Send Reset Link", color = AuthCyan, fontWeight = FontWeight.Bold) }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showForgotDialog = false }) { Text("Cancel", color = AuthMuted) }
+                        },
+                        containerColor = AuthCardBg,
+                        shape = RoundedCornerShape(16.dp)
+                    )
+                }
+
                 Spacer(Modifier.height(16.dp))
 
                 // Toggle login/register
@@ -848,9 +918,16 @@ fun AuthScreen(
                 Spacer(Modifier.height(16.dp))
 
                 Text(
-                    text = "v1.0 — BatchFee",
+                    text = "v" + BuildConfig.VERSION_NAME + " . BatchFee",
                     style = MaterialTheme.typography.labelSmall,
                     color = AuthMuted.copy(alpha = 0.5f),
+                    textAlign = TextAlign.Center
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "Queries? Contact developer",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = AuthMuted.copy(alpha = 0.4f),
                     textAlign = TextAlign.Center
                 )
 

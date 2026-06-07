@@ -10,11 +10,14 @@ import com.example.data.models.UserEntity
 import com.example.domain.PasswordHasher
 import com.example.domain.SessionManager
 import com.example.domain.StaffPermissions
+import com.example.data.firestore.InstituteSyncHelper
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.UUID
 
 class StaffViewModel(private val db: AppDatabase) : ViewModel() {
@@ -160,6 +163,12 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
                         createdAtMs = now
                     )
                 )
+                try {
+                    val count = withContext(Dispatchers.IO) {
+                        db.staffDao().getStaffByInstituteAsList(instId).size
+                    }
+                    InstituteSyncHelper.updateStaffCount(instId, count)
+                } catch (_: Exception) { }
                 onSuccess()
             }
         }
@@ -269,6 +278,12 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
         viewModelScope.launch {
             val instId = SessionManager.currentInstituteId.value ?: return@launch
             db.staffDao().archiveStaff(instId, staffId, System.currentTimeMillis())
+            try {
+                val count = withContext(Dispatchers.IO) {
+                    db.staffDao().getStaffByInstituteAsList(instId).size
+                }
+                InstituteSyncHelper.updateStaffCount(instId, count)
+            } catch (_: Exception) { }
             onSuccess()
         }
     }

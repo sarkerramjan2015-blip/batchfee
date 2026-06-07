@@ -2,20 +2,33 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Allow the Android app and web form to read/write pending registrations
+    // Web form registrations — public create, authenticated read/manage
     match /registrations/{instituteId}/pending/{requestId} {
-      allow read, write: if true;
+      allow read: if request.auth != null;
+      allow create: if true;
+      allow delete: if request.auth != null;
     }
     match /registrations/{instituteId} {
-      allow read, write: if true;
+      allow read, write: if request.auth != null;
     }
 
-    // Allow institute info sync (so web form header shows institute name)
+    // Institutes — public read (web form header), authenticated write
     match /institutes/{document=**} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write, update, delete: if request.auth != null;
     }
 
-    // Preserve existing demo visitor tracking
+    // Global notifications — authenticated users can read/write
+    match /Global_Notifications/{document=**} {
+      allow read, write: if request.auth != null;
+    }
+
+    // SuperAdmin stats — authenticated read/write
+    match /SuperAdmin/{document=**} {
+      allow read, write: if request.auth != null;
+    }
+
+    // Demo visitor tracking — open
     match /Demo_Visitors/{document=**} {
       allow read, write: if true;
     }

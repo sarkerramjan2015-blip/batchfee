@@ -26,4 +26,10 @@ interface UserDao {
 
     @androidx.room.Update
     suspend fun updateUser(user: UserEntity)
+
+    @Query("UPDATE users SET failedAttempts = :attempts, lockedUntilMs = :lockedUntilMs WHERE email = :email COLLATE NOCASE")
+    suspend fun updateFailedAttempts(email: String, attempts: Int, lockedUntilMs: Long?)
+
+    @Query("UPDATE users SET failedAttempts = 0, lockedUntilMs = NULL WHERE email = :email COLLATE NOCASE")
+    suspend fun resetFailedAttempts(email: String)
 }

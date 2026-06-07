@@ -11,5 +11,7 @@ data class UserEntity(
     val email: String,
     val passwordHash: String, // In a real app, hash!
     val role: String, // SuperAdmin, InstituteOwner, InstituteAdmin, Teacher, Accountant, Student, Parent, Staff
-    val createdAtMs: Long
+    val createdAtMs: Long,
+    val failedAttempts: Int = 0,
+    val lockedUntilMs: Long? = null
 )

@@ -17,6 +17,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.tasks.await
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -45,7 +46,7 @@ import java.util.Locale
         com.example.data.models.AbsentMessageEntity::class,
         com.example.data.models.EnquiryEntity::class
     ],
-    version = 12,
+    version = 15,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -131,6 +132,27 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_12_13 = object : androidx.room.migration.Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE institutes ADD COLUMN ownerName TEXT")
+                db.execSQL("ALTER TABLE institutes ADD COLUMN email TEXT")
+            }
+        }
+
+        private val MIGRATION_13_14 = object : androidx.room.migration.Migration(13, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE institutes ADD COLUMN instituteCode TEXT")
+                db.execSQL("ALTER TABLE institutes ADD COLUMN securityPin TEXT")
+            }
+        }
+
+        private val MIGRATION_14_15 = object : androidx.room.migration.Migration(14, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE users ADD COLUMN failedAttempts INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE users ADD COLUMN lockedUntilMs INTEGER")
+            }
+        }
+
         fun getDatabase(context: Context, scope: CoroutineScope): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val builder = Room.databaseBuilder(
@@ -138,7 +160,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "batchfee_database"
                 )
-                .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12)
+                .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15)
 
                 if (BuildConfig.DEBUG) {
                     builder.fallbackToDestructiveMigration()
@@ -241,7 +263,11 @@ abstract class AppDatabase : RoomDatabase() {
                     phone = "+8801712345678",
                     address = "Mirpur-10, Dhaka-1216",
                     whatsappNumber = "+8801712345678",
-                    profilePhotoUri = null
+                    profilePhotoUri = null,
+                    ownerName = "Demo Owner",
+                    email = "owner@batchfee.app",
+                    instituteCode = "BGS-100",
+                    securityPin = null
                 )
             )
             
@@ -814,6 +840,30 @@ abstract class AppDatabase : RoomDatabase() {
                     isDefault = false, createdAtMs = now, updatedAtMs = now
                 )
             )
+
+            try {
+                val firestore = com.google.firebase.firestore.FirebaseFirestore.getInstance()
+                val studentCount = db.studentDao().getStudentsByInstituteOnce(demoInstituteId).size
+                val staffCount = db.staffDao().getStaffByInstituteAsList(demoInstituteId).size
+                firestore.collection("institutes").document(demoInstituteId).set(
+                    mapOf(
+                        "instituteName" to "BatchFee Demo Institute",
+                        "instituteCode" to "BGS-100",
+                        "ownerName" to "Demo Owner",
+                        "email" to "owner@batchfee.app",
+                        "phone" to "+8801712345678",
+                        "whatsappNumber" to "+8801712345678",
+                        "role" to "owner",
+                        "createdAt" to now,
+                        "isActive" to true,
+                        "trialEndDate" to (now + 30L * 24 * 60 * 60 * 1000),
+                        "studentCount" to studentCount,
+                        "staffCount" to staffCount,
+                        "lastActiveAt" to now
+                    ),
+                    com.google.firebase.firestore.SetOptions.merge()
+                ).await()
+            } catch (_: Exception) { }
         }
     }
 }

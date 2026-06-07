@@ -16,5 +16,9 @@ data class InstituteEntity(
     val phone: String? = null,
     val address: String? = null,
     val whatsappNumber: String? = null,
-    val profilePhotoUri: String? = null
+    val profilePhotoUri: String? = null,
+    val ownerName: String? = null,
+    val email: String? = null,
+    val instituteCode: String? = null,
+    val securityPin: String? = null
 )

@@ -7,10 +7,13 @@ import com.example.data.database.AppDatabase
 import com.example.data.models.BatchEntity
 import com.example.data.models.StudentEntity
 import com.example.domain.SessionManager
+import com.example.data.firestore.InstituteSyncHelper
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -102,6 +105,12 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
         )
         viewModelScope.launch {
             db.studentDao().insertStudent(student)
+            try {
+                val count = withContext(Dispatchers.IO) {
+                    db.studentDao().getStudentsByInstituteOnce(instId).size
+                }
+                InstituteSyncHelper.updateStudentCount(instId, count)
+            } catch (_: Exception) { }
             onSuccess()
         }
     }

@@ -42,8 +42,11 @@ import com.example.data.models.PaymentEntity
 import com.example.data.models.StudentEntity
 import com.example.data.repository.FeeCollectionRepository
 import com.example.domain.SessionManager
+import com.example.data.firestore.InstituteSyncHelper
 import com.example.ui.components.buildWhatsAppUrl
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.net.URLEncoder
 import java.text.SimpleDateFormat
@@ -1081,6 +1084,12 @@ fun StudentProfileScreen(
                                         StudentMenuConfirmAction.Delete -> currentStudent.copy(archivedAtMs = System.currentTimeMillis(), updatedAtMs = System.currentTimeMillis())
                                     }
                                     db.studentDao().updateStudent(updated)
+                                    try {
+                                        val count = withContext(Dispatchers.IO) {
+                                            db.studentDao().getStudentsByInstituteOnce(instId ?: "").size
+                                        }
+                                        InstituteSyncHelper.updateStudentCount(instId ?: "", count)
+                                    } catch (_: Exception) { }
                                     pendingConfirmAction = null
                                     if (action == StudentMenuConfirmAction.Delete) onBack()
                                 }

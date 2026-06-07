@@ -3,6 +3,7 @@ package com.example.ui.superadmin
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -30,6 +31,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.database.AppDatabase
 import com.example.data.models.InstituteEntity
 import com.example.domain.SessionManager
+import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -61,7 +63,9 @@ private const val STANDARD_MONTHLY_FEE = 500.0
 data class SuperAdminStats(
     val totalInstitutes: Int = 0,
     val activeSubscriptions: Int = 0,
-    val totalRevenue: Double = 0.0
+    val totalRevenue: Double = 0.0,
+    val totalStudents: Int = 0,
+    val totalStaff: Int = 0
 )
 
 class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
@@ -86,57 +90,96 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
         get() = _stats.value.activeSubscriptions * STANDARD_MONTHLY_FEE
 
     init {
-        viewModelScope.launch {
-            db.instituteDao().getAllInstitutes().collect { list ->
-                _institutes.value = list
-            }
-        }
-        loadFirestoreStats()
-        loadActivityTimestamps()
+        loadInstitutesRealtime()
     }
 
     fun clearOperationMsg() { _operationMsg.value = null }
 
-    private fun loadFirestoreStats() {
-        viewModelScope.launch {
-            try {
-                withContext(Dispatchers.IO) {
-                    val doc = firestore.collection("SuperAdmin").document("stats").get().await()
-                    _stats.value = SuperAdminStats(
-                        totalInstitutes = doc.getLong("totalInstitutes")?.toInt() ?: 0,
-                        activeSubscriptions = doc.getLong("activeSubscriptions")?.toInt() ?: 0,
-                        totalRevenue = doc.getDouble("totalRevenue") ?: 0.0
+    private fun loadInstitutesRealtime() {
+        firestore.collection("institutes")
+            .addSnapshotListener { snapshot, error ->
+                if (error != null || snapshot == null) {
+                    _isLoading.value = false
+                    return@addSnapshotListener
+                }
+
+                val list = mutableListOf<InstituteEntity>()
+                val activeMap = mutableMapOf<String, Long>()
+                var activeCount = 0
+                val now = System.currentTimeMillis()
+                val trialWindow = 15L * 24 * 60 * 60 * 1000
+
+                snapshot.documents.forEach { doc ->
+                    val data = doc.data ?: return@forEach
+                    val uid = doc.id
+
+                    val isActive = data["isActive"] as? Boolean ?: true
+                    val trialEnd = data["trialEndDate"] as? Long ?: now
+                    val createdAt = data["createdAt"] as? Long ?: now
+                    val lastActive = data["lastActiveAt"] as? Long
+                    val studentCount = (data["studentCount"] as? Long)?.toInt() ?: 0
+                    val staffCount = (data["staffCount"] as? Long)?.toInt() ?: 0
+
+                    if (lastActive != null) activeMap[uid] = lastActive
+
+                    val status = when {
+                        !isActive -> "blocked"
+                        trialEnd < now -> "expired"
+                        (now - createdAt) < trialWindow -> "trial"
+                        else -> "active"
+                    }
+
+                    if (isActive && trialEnd > now) activeCount++
+
+                    list.add(
+                        InstituteEntity(
+                            id = uid,
+                            name = data["instituteName"] as? String ?: "Institute",
+                            currentPlanId = "plan_free_trial",
+                            subscriptionStatus = status,
+                            trialStartDateMs = createdAt,
+                            trialEndDateMs = trialEnd,
+                            currentPeriodEndMs = trialEnd,
+                            createdAtMs = createdAt,
+                            phone = data["phone"] as? String,
+                            whatsappNumber = data["whatsappNumber"] as? String,
+                            ownerName = data["ownerName"] as? String,
+                            email = data["email"] as? String,
+                            instituteCode = data["instituteCode"] as? String,
+                            securityPin = data["securityPin"] as? String
+                        )
                     )
                 }
-            } catch (_: Exception) { } finally { _isLoading.value = false }
-        }
-    }
 
-    private fun loadActivityTimestamps() {
-        viewModelScope.launch {
-            try {
-                withContext(Dispatchers.IO) {
-                    val snapshot = firestore.collection("Institutes").get().await()
-                    val map = mutableMapOf<String, Long>()
-                    snapshot.documents.forEach { doc ->
-                        val ts = doc.getLong("lastActiveAt")
-                        if (ts != null) map[doc.id] = ts
-                    }
-                    _lastActiveMap.value = map
+                val totalStudents = snapshot.documents.sumOf {
+                    ((it.data?.get("studentCount") as? Long) ?: 0L).toInt()
                 }
-            } catch (_: Exception) { }
-        }
+                val totalStaff = snapshot.documents.sumOf {
+                    ((it.data?.get("staffCount") as? Long) ?: 0L).toInt()
+                }
+
+                _institutes.value = list
+                _lastActiveMap.value = activeMap
+                _stats.value = SuperAdminStats(
+                    totalInstitutes = list.size,
+                    activeSubscriptions = activeCount,
+                    totalRevenue = activeCount * STANDARD_MONTHLY_FEE,
+                    totalStudents = totalStudents,
+                    totalStaff = totalStaff
+                )
+                _isLoading.value = false
+            }
     }
 
     fun extendSubscription(instituteId: String, daysToAdd: Int) {
         viewModelScope.launch {
             try {
                 withContext(Dispatchers.IO) {
-                    val docRef = firestore.collection("Institutes").document(instituteId)
+                    val docRef = firestore.collection("institutes").document(instituteId)
                     val snapshot = docRef.get().await()
-                    val currentEnd = snapshot.getLong("subscriptionEndMs") ?: System.currentTimeMillis()
+                    val currentEnd = snapshot.getLong("trialEndDate") ?: System.currentTimeMillis()
                     val newEnd = currentEnd + (daysToAdd * 24L * 60 * 60 * 1000)
-                    docRef.update("subscriptionEndMs", newEnd).await()
+                    docRef.update("trialEndDate", newEnd).await()
                 }
                 _operationMsg.value = "Subscription extended by $daysToAdd days"
             } catch (e: Exception) {
@@ -149,7 +192,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
         viewModelScope.launch {
             try {
                 withContext(Dispatchers.IO) {
-                    firestore.collection("Institutes").document(instituteId)
+                    firestore.collection("institutes").document(instituteId)
                         .update("isActive", !currentBlocked).await()
                 }
                 _operationMsg.value = if (currentBlocked) "Institute unblocked" else "Institute blocked"
@@ -163,16 +206,20 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
         instituteId: String,
         newExpiryMs: Long,
         studentLimit: Int,
+        staffLimit: Int,
+        planId: String,
         isActive: Boolean,
         onDone: () -> Unit
     ) {
         viewModelScope.launch {
             try {
                 withContext(Dispatchers.IO) {
-                    firestore.collection("Institutes").document(instituteId).update(
+                    firestore.collection("institutes").document(instituteId).update(
                         mapOf(
                             "trialEndDate" to newExpiryMs,
                             "studentLimit" to studentLimit,
+                            "staffLimit" to staffLimit,
+                            "currentPlanId" to planId,
                             "isActive" to isActive
                         )
                     ).await()
@@ -220,6 +267,38 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
             diff < 86_400_000 -> "${diff / 3_600_000}h ago"
             diff < 2_592_000_000 -> "${diff / 86_400_000}d ago"
             else -> SimpleDateFormat("MMM dd", Locale.getDefault()).format(Date(ts))
+        }
+    }
+
+    fun sendPasswordReset(email: String?) {
+        if (email.isNullOrBlank()) {
+            _operationMsg.value = "No email on file for this institute."
+            return
+        }
+        FirebaseAuth.getInstance().sendPasswordResetEmail(email)
+            .addOnSuccessListener {
+                _operationMsg.value = "Password reset email sent to $email"
+            }
+            .addOnFailureListener { e ->
+                _operationMsg.value = "Failed: ${e.message}"
+            }
+    }
+
+    fun setSecurityPin(instituteId: String, pin: String) {
+        if (pin.isBlank() || !pin.matches(Regex("^\\d{4,6}$"))) {
+            _operationMsg.value = "PIN must be 4-6 digits."
+            return
+        }
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    firestore.collection("institutes").document(instituteId)
+                        .update("securityPin", pin).await()
+                }
+                _operationMsg.value = "Security PIN updated to $pin"
+            } catch (e: Exception) {
+                _operationMsg.value = "Failed: ${e.message}"
+            }
         }
     }
 }
@@ -289,6 +368,11 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     StatCard("Registered\nInstitutes", if (isLoading) "..." else stats.totalInstitutes.toString(), AccentCyan, Icons.Filled.Business, Modifier.weight(1f))
                     StatCard("Active\nSubscriptions", if (isLoading) "..." else stats.activeSubscriptions.toString(), AccentGreen, Icons.Filled.Verified, Modifier.weight(1f))
+                }
+                Spacer(Modifier.height(10.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    StatCard("Total\nStudents", if (isLoading) "..." else stats.totalStudents.toString(), AccentViolet, Icons.Filled.People, Modifier.weight(1f))
+                    StatCard("Total\nStaff", if (isLoading) "..." else stats.totalStaff.toString(), AccentPink, Icons.Filled.Badge, Modifier.weight(1f))
                 }
             }
 
@@ -493,6 +577,13 @@ private fun InstituteCard(inst: InstituteEntity, viewModel: SuperAdminViewModel)
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text(inst.name, color = TextWhite, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                    if (!inst.instituteCode.isNullOrBlank()) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Filled.Tag, null, tint = AccentViolet.copy(alpha = 0.7f), modifier = Modifier.size(14.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text(inst.instituteCode, color = AccentViolet.copy(alpha = 0.8f), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
                     Text("Plan: ${inst.currentPlanId} · Joined ${dateFormat.format(Date(inst.createdAtMs))}", color = TextMuted, fontSize = 12.sp)
                 }
                 Box(Modifier.clip(RoundedCornerShape(8.dp)).background(statusColor.copy(alpha = 0.15f)).padding(horizontal = 10.dp, vertical = 4.dp)) {
@@ -500,21 +591,74 @@ private fun InstituteCard(inst: InstituteEntity, viewModel: SuperAdminViewModel)
                 }
             }
 
-            // Last Active row
-            Spacer(Modifier.height(4.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Spacer(Modifier.width(56.dp))
-                Icon(Icons.Filled.AccessTime, null, tint = TextMuted.copy(alpha = 0.6f), modifier = Modifier.size(13.dp))
-                Spacer(Modifier.width(4.dp))
-                Text("Last active: $lastActive", color = TextMuted.copy(alpha = 0.6f), fontSize = 11.sp)
-                if (lastActive == "Never" || lastActive.contains("d ago") && lastActive.substringBefore("d").toIntOrNull()?.let { it > 7 } == true) {
-                    Spacer(Modifier.width(6.dp))
-                    Box(Modifier.size(6.dp).clip(RoundedCornerShape(3.dp)).background(AccentRed.copy(alpha = 0.6f)))
-                    Text(" Inactive", color = AccentRed.copy(alpha = 0.7f), fontSize = 10.sp)
+            // Contact Info + Subscription
+            Spacer(Modifier.height(10.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    if (!inst.ownerName.isNullOrBlank()) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Filled.Person, null, tint = TextMuted.copy(alpha = 0.6f), modifier = Modifier.size(14.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text(inst.ownerName, color = TextMuted, fontSize = 12.sp, maxLines = 1)
+                        }
+                    }
+                    if (!inst.email.isNullOrBlank()) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Filled.Email, null, tint = TextMuted.copy(alpha = 0.6f), modifier = Modifier.size(14.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text(inst.email, color = AccentCyan, fontSize = 11.sp, maxLines = 1)
+                        }
+                    }
+                    if (!inst.phone.isNullOrBlank()) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Filled.Phone, null, tint = TextMuted.copy(alpha = 0.6f), modifier = Modifier.size(14.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text(inst.phone, color = TextMuted, fontSize = 12.sp)
+                        }
+                    }
+                    if (!inst.whatsappNumber.isNullOrBlank()) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Filled.Chat, null, tint = AccentGreen.copy(alpha = 0.7f), modifier = Modifier.size(14.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text(inst.whatsappNumber, color = AccentGreen.copy(alpha = 0.8f), fontSize = 12.sp)
+                        }
+                    }
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.CalendarMonth, null, tint = TextMuted.copy(alpha = 0.6f), modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Until ${dateFormat.format(Date(inst.trialEndDateMs))}", color = TextMuted, fontSize = 11.sp)
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.AccessTime, null, tint = TextMuted.copy(alpha = 0.6f), modifier = Modifier.size(13.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Last active: $lastActive", color = TextMuted.copy(alpha = 0.6f), fontSize = 11.sp)
+                    }
+                    if (lastActive == "Never" || lastActive.contains("d ago") && lastActive.substringBefore("d").toIntOrNull()?.let { it > 7 } == true) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Spacer(Modifier.width(18.dp))
+                            Box(Modifier.size(6.dp).clip(RoundedCornerShape(3.dp)).background(AccentRed.copy(alpha = 0.6f)))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Inactive", color = AccentRed.copy(alpha = 0.7f), fontSize = 10.sp)
+                        }
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.Visibility, null, tint = TextMuted.copy(alpha = 0.5f), modifier = Modifier.size(13.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("ID: ${inst.id.take(8)}...", color = TextMuted.copy(alpha = 0.5f), fontSize = 10.sp)
+                    }
+                    if (!inst.securityPin.isNullOrBlank()) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Filled.Key, null, tint = AccentAmber.copy(alpha = 0.7f), modifier = Modifier.size(13.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("PIN: ${inst.securityPin}", color = AccentAmber.copy(alpha = 0.7f), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
                 }
             }
 
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(10.dp))
             HorizontalDivider(color = BorderSub, modifier = Modifier.padding(horizontal = 4.dp))
             Spacer(Modifier.height(10.dp))
 
@@ -557,6 +701,66 @@ private fun InstituteCard(inst: InstituteEntity, viewModel: SuperAdminViewModel)
                     Text("Manage", fontSize = 13.sp)
                 }
             }
+
+            Spacer(Modifier.height(6.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = { viewModel.sendPasswordReset(inst.email) },
+                    modifier = Modifier.weight(1f).height(38.dp),
+                    shape = RoundedCornerShape(10.dp),
+                    border = ButtonDefaults.outlinedButtonBorder,
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentAmber)
+                ) {
+                    Icon(Icons.Filled.Password, null, modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Reset Pwd", fontSize = 12.sp)
+                }
+
+                var editPin by remember { mutableStateOf(inst.securityPin ?: "") }
+                var showPinDialog by remember { mutableStateOf(false) }
+
+                if (showPinDialog) {
+                    AlertDialog(
+                        onDismissRequest = { showPinDialog = false },
+                        title = { Text("Set Security PIN", fontWeight = FontWeight.Bold) },
+                        text = {
+                            Column {
+                                Text("4-6 digit PIN for ${inst.name}:", color = TextMuted, fontSize = 14.sp)
+                                Spacer(Modifier.height(10.dp))
+                                OutlinedTextField(
+                                    value = editPin,
+                                    onValueChange = { if (it.isEmpty() || it.matches(Regex("^\\d{0,6}$"))) editPin = it },
+                                    label = { Text("PIN") },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    singleLine = true,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+                        },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                viewModel.setSecurityPin(inst.id, editPin)
+                                showPinDialog = false
+                            }) { Text("Save", color = AccentCyan, fontWeight = FontWeight.Bold) }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showPinDialog = false }) { Text("Cancel", color = TextMuted) }
+                        }
+                    )
+                }
+
+                OutlinedButton(
+                    onClick = { editPin = inst.securityPin ?: ""; showPinDialog = true },
+                    modifier = Modifier.weight(1f).height(38.dp),
+                    shape = RoundedCornerShape(10.dp),
+                    border = ButtonDefaults.outlinedButtonBorder,
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentPink)
+                ) {
+                    Icon(Icons.Filled.Pin, null, modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text(if (inst.securityPin.isNullOrBlank()) "Set PIN" else "Edit PIN", fontSize = 12.sp)
+                }
+            }
         }
     }
 
@@ -595,8 +799,19 @@ private fun InstituteCard(inst: InstituteEntity, viewModel: SuperAdminViewModel)
         var editMonth by remember { mutableIntStateOf(cal.get(Calendar.MONTH)) }
         var editDay by remember { mutableIntStateOf(cal.get(Calendar.DAY_OF_MONTH)) }
         var editStudentLimit by remember { mutableStateOf("50") }
+        var editStaffLimit by remember { mutableStateOf("10") }
         var editIsActive by remember { mutableStateOf(inst.subscriptionStatus != "blocked") }
         var editAddMonths by remember { mutableStateOf("0") }
+
+        val planOptions = remember { mapOf(
+            "plan_free_trial" to "Free Trial",
+            "plan_starter" to "Starter",
+            "plan_growth" to "Growth",
+            "plan_pro" to "Pro",
+            "plan_institute" to "Institute"
+        )}
+        var selectedPlanId by remember { mutableStateOf(inst.currentPlanId) }
+        var selectedPlanName by remember { mutableStateOf(planOptions[inst.currentPlanId] ?: "Default") }
 
         fun computedExpiryMs(): Long {
             val c = Calendar.getInstance()
@@ -611,6 +826,27 @@ private fun InstituteCard(inst: InstituteEntity, viewModel: SuperAdminViewModel)
             title = { Text("Manage ${inst.name}", fontWeight = FontWeight.Bold, color = TextWhite) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("Plan", color = TextMuted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    var editPlanDropdown by remember { mutableStateOf(false) }
+                    Box {
+                        OutlinedTextField(
+                            value = selectedPlanName,
+                            onValueChange = { },
+                            readOnly = true,
+                            trailingIcon = { Icon(if (editPlanDropdown) Icons.Filled.ArrowDropUp else Icons.Filled.ArrowDropDown, null, modifier = Modifier.clickable { editPlanDropdown = !editPlanDropdown }) },
+                            modifier = Modifier.fillMaxWidth().clickable { editPlanDropdown = !editPlanDropdown },
+                            shape = RoundedCornerShape(12.dp)
+                        )
+                        DropdownMenu(expanded = editPlanDropdown, onDismissRequest = { editPlanDropdown = false }) {
+                            planOptions.forEach { (id, name) ->
+                                DropdownMenuItem(
+                                    text = { Text(name) },
+                                    onClick = { selectedPlanId = id; selectedPlanName = name; editPlanDropdown = false }
+                                )
+                            }
+                        }
+                    }
+
                     Text("Expiry Date", color = TextMuted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         OutlinedTextField(
@@ -664,6 +900,18 @@ private fun InstituteCard(inst: InstituteEntity, viewModel: SuperAdminViewModel)
 
                     HorizontalDivider(color = BorderSub, modifier = Modifier.padding(vertical = 4.dp))
 
+                    Text("Staff Limit", color = TextMuted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    OutlinedTextField(
+                        value = editStaffLimit,
+                        onValueChange = { if (it.isEmpty() || it.matches(Regex("^\\d+$"))) editStaffLimit = it },
+                        label = { Text("Max Staff", fontSize = 11.sp) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    HorizontalDivider(color = BorderSub, modifier = Modifier.padding(vertical = 4.dp))
+
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Text("Account Active", color = TextMuted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
                         Switch(
@@ -681,8 +929,9 @@ private fun InstituteCard(inst: InstituteEntity, viewModel: SuperAdminViewModel)
             },
             confirmButton = {
                 TextButton(onClick = {
-                    val limit = editStudentLimit.toIntOrNull()?.coerceAtLeast(1) ?: 50
-                    viewModel.manageInstitute(inst.id, computedExpiryMs(), limit, editIsActive) {
+                    val studentLimit = editStudentLimit.toIntOrNull()?.coerceAtLeast(1) ?: 50
+                    val staffLimit = editStaffLimit.toIntOrNull()?.coerceAtLeast(1) ?: 10
+                    viewModel.manageInstitute(inst.id, computedExpiryMs(), studentLimit, staffLimit, selectedPlanId, editIsActive) {
                         showManageDialog = false
                     }
                 }) { Text("Save", color = AccentCyan, fontWeight = FontWeight.Bold) }

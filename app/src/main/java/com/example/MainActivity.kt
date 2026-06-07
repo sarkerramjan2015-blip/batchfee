@@ -32,9 +32,11 @@ import com.example.ui.subscription.SubscriptionExpiredScreen
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.update.ForceUpdateScreen
 import com.google.firebase.firestore.FirebaseFirestore
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withContext
 
 class MainActivity : FragmentActivity() {
     override fun onUserInteraction() {
@@ -105,6 +107,32 @@ private fun MainAppContent(appDb: com.example.data.database.AppDatabase) {
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    LaunchedEffect(isLoggedIn) {
+        val uid = isLoggedIn ?: return@LaunchedEffect
+        val role = SessionManager.currentUserRole.value ?: return@LaunchedEffect
+        if (role == "SuperAdmin") return@LaunchedEffect
+        withContext(Dispatchers.IO) {
+            try {
+                FirebaseFirestore.getInstance()
+                    .collection("institutes").document(uid)
+                    .update("lastActiveAt", System.currentTimeMillis())
+                    .await()
+            } catch (_: Exception) { }
+        }
+        while (true) {
+            delay(5 * 60 * 1000L)
+            if (SessionManager.currentUserId.value != uid) break
+            withContext(Dispatchers.IO) {
+                try {
+                    FirebaseFirestore.getInstance()
+                        .collection("institutes").document(uid)
+                        .update("lastActiveAt", System.currentTimeMillis())
+                        .await()
+                } catch (_: Exception) { }
+            }
+        }
     }
 
     LaunchedEffect(isLoggedIn, lastActivityAtMs) {
@@ -560,7 +588,7 @@ private fun MainAppContent(appDb: com.example.data.database.AppDatabase) {
 private suspend fun checkSubscriptionExpired(instituteId: String): Boolean {
     return try {
         val doc = FirebaseFirestore.getInstance()
-            .collection("Institutes").document(instituteId)
+            .collection("institutes").document(instituteId)
             .get().await()
         val trialEnd = doc.getLong("trialEndDate") ?: return false
         System.currentTimeMillis() > trialEnd

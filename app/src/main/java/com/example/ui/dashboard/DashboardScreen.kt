@@ -42,6 +42,7 @@ import com.example.data.database.DemoDataSeeder
 import com.example.data.models.InstituteEntity
 
 import com.example.domain.SessionManager
+import com.google.firebase.firestore.FirebaseFirestore
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -550,6 +551,7 @@ fun DashboardScreen(
             )
 
             Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+                GlobalNotificationCard()
                 // Overview Card
                 Card(
                     modifier = Modifier.fillMaxWidth(),
