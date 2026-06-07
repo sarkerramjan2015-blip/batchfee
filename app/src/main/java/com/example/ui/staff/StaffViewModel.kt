@@ -10,7 +10,9 @@ import com.example.data.models.UserEntity
 import com.example.domain.PasswordHasher
 import com.example.domain.SessionManager
 import com.example.domain.StaffPermissions
+import com.example.data.firebase.FirebaseAuthApi
 import com.example.data.firestore.InstituteSyncHelper
+import com.example.data.firestore.StaffSyncHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -112,34 +114,47 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
         val loginId = staffCode.trim().uppercase()
         val name = fullName.trim()
         val role = roleTitle.trim()
+        val staffEmail = email?.trim()?.takeIf { it.isNotBlank() }
         val cleanPassword = password.trim()
 
         when {
             name.isBlank() -> onError("Staff name is required.")
             loginId.isBlank() -> onError("Staff login ID is required.")
+            staffEmail == null -> onError("Email is required.")
             role.isBlank() -> onError("Role title is required.")
             monthlySalary < 0 -> onError("Monthly salary cannot be negative.")
             cleanPassword.length < 4 -> onError("Password must be at least 4 characters.")
             else -> viewModelScope.launch {
-                val existingLogin = db.userDao().getUserByEmail(loginId)
+                val existingLogin = db.userDao().getUserByEmail(staffEmail)
                 if (existingLogin != null) {
-                    onError("This staff login ID is already used.")
+                    onError("A staff account with this email already exists.")
                     return@launch
                 }
 
-                val staffId = UUID.randomUUID().toString()
+                // Create Firebase Auth account via REST API (does NOT sign anyone out)
+                val firebaseUid: String
+                try {
+                    firebaseUid = FirebaseAuthApi.createUser(staffEmail, cleanPassword)
+                } catch (e: FirebaseAuthApi.SignUpException) {
+                    onError(e.firebaseMessage)
+                    return@launch
+                } catch (e: Exception) {
+                    onError("Failed to create staff account. Check connection and try again.")
+                    return@launch
+                }
+
                 val now = System.currentTimeMillis()
                 val permissionCsv = StaffPermissions.toCsv(permissions)
                 val batchCsv = assignedBatchIds.sorted().joinToString(",").takeIf { it.isNotBlank() }
                 val staff = StaffEntity(
-                    id = staffId,
+                    id = firebaseUid,
                     instituteId = instId,
                     staffCode = loginId,
                     fullName = name,
                     photoUri = null,
                     roleTitle = role,
                     phone = phone.trim().takeIf { it.isNotBlank() },
-                    email = email?.trim()?.takeIf { it.isNotBlank() },
+                    email = staffEmail,
                     address = null,
                     joiningDateMs = now,
                     monthlySalary = monthlySalary,
@@ -154,21 +169,25 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
                 db.staffDao().insertStaff(staff)
                 db.userDao().insertUser(
                     UserEntity(
-                        id = staffId,
+                        id = firebaseUid,
                         instituteId = instId,
                         name = name,
-                        email = loginId,
+                        email = staffEmail,
                         passwordHash = PasswordHasher.hash(cleanPassword),
                         role = "Staff",
                         createdAtMs = now
                     )
                 )
-                try {
-                    val count = withContext(Dispatchers.IO) {
-                        db.staffDao().getStaffByInstituteAsList(instId).size
-                    }
-                    InstituteSyncHelper.updateStaffCount(instId, count)
-                } catch (_: Exception) { }
+                // Sync to Firestore (non-blocking — best-effort)
+                launch { StaffSyncHelper.createStaff(staff) }
+                launch {
+                    try {
+                        val count = withContext(Dispatchers.IO) {
+                            db.staffDao().getStaffByInstituteAsList(instId).size
+                        }
+                        InstituteSyncHelper.updateStaffCount(instId, count)
+                    } catch (_: Exception) { }
+                }
                 onSuccess()
             }
         }
@@ -197,6 +216,7 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
         val loginId = staffCode.trim().uppercase()
         val name = fullName.trim()
         val role = roleTitle.trim()
+        val staffEmail = email?.trim()?.takeIf { it.isNotBlank() }
         val cleanPassword = password?.trim().orEmpty()
 
         when {
@@ -214,10 +234,12 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
                     onError("Staff profile was not found.")
                     return@launch
                 }
-                val existingLogin = db.userDao().getUserByEmail(loginId)
-                if (existingLogin != null && existingLogin.id != staffId) {
-                    onError("This staff login ID is already used.")
-                    return@launch
+                if (staffEmail != null && staffEmail != existing.email) {
+                    val existingLogin = db.userDao().getUserByEmail(staffEmail)
+                    if (existingLogin != null && existingLogin.id != staffId) {
+                        onError("A staff account with this email already exists.")
+                        return@launch
+                    }
                 }
 
                 val permissionCsv = StaffPermissions.toCsv(permissions)
@@ -227,7 +249,7 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
                     fullName = name,
                     roleTitle = role,
                     phone = phone.trim().takeIf { it.isNotBlank() },
-                    email = email?.trim()?.takeIf { it.isNotBlank() },
+                    email = staffEmail,
                     monthlySalary = monthlySalary,
                     assignedBatchIds = batchCsv,
                     permissions = permissionCsv,
@@ -247,7 +269,7 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
                             id = staffId,
                             instituteId = instId,
                             name = name,
-                            email = loginId,
+                            email = staffEmail ?: loginId,
                             passwordHash = PasswordHasher.hash(cleanPassword),
                             role = "Staff",
                             createdAtMs = System.currentTimeMillis()
@@ -258,7 +280,7 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
                         currentUser.copy(
                             instituteId = instId,
                             name = name,
-                            email = loginId,
+                            email = staffEmail ?: currentUser.email,
                             passwordHash = if (cleanPassword.isBlank()) currentUser.passwordHash else PasswordHasher.hash(cleanPassword),
                             role = "Staff"
                         )
@@ -268,6 +290,8 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
                 if (SessionManager.currentUserId.value == staffId) {
                     SessionManager.updateStaffPermissions(permissionCsv)
                 }
+                // Sync to Firestore (non-blocking)
+                launch { StaffSyncHelper.updateStaff(updated) }
                 onSuccess()
             }
         }

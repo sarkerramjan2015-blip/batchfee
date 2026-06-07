@@ -1,5 +1,6 @@
 package com.example.data.firestore
 
+import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
@@ -14,7 +15,9 @@ object InstituteSyncHelper {
             try {
                 firestore.collection("institutes").document(instituteId)
                     .update("studentCount", count).await()
-            } catch (_: Exception) { }
+            } catch (e: Exception) {
+                FirebaseCrashlytics.getInstance().recordException(e)
+            }
         }
     }
 
@@ -23,7 +26,20 @@ object InstituteSyncHelper {
             try {
                 firestore.collection("institutes").document(instituteId)
                     .update("staffCount", count).await()
-            } catch (_: Exception) { }
+            } catch (e: Exception) {
+                FirebaseCrashlytics.getInstance().recordException(e)
+            }
+        }
+    }
+
+    suspend fun updateBatchCount(instituteId: String, count: Int) {
+        withContext(Dispatchers.IO) {
+            try {
+                firestore.collection("institutes").document(instituteId)
+                    .update("batchCount", count).await()
+            } catch (e: Exception) {
+                FirebaseCrashlytics.getInstance().recordException(e)
+            }
         }
     }
 }

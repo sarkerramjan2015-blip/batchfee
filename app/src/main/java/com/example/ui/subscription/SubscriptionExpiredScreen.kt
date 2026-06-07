@@ -31,11 +31,13 @@ private val AccentRed = Color(0xFFF87171)
 private val AccentCyan = Color(0xFF22D3EE)
 private val AccentViolet = Color(0xFFA855F7)
 private val ElectricBlue = Color(0xFF3B82F6)
+private val WAGreen = Color(0xFF25D366)
+private val Teal = Color(0xFF14B8A6)
 
 private const val SUPPORT_WHATSAPP = "+8801518657869"
 
 @Composable
-fun SubscriptionExpiredScreen(onLogout: () -> Unit) {
+fun SubscriptionExpiredScreen(onRenew: () -> Unit, onLogout: () -> Unit) {
     val context = LocalContext.current
 
     BackHandler(enabled = true) {}
@@ -110,6 +112,31 @@ fun SubscriptionExpiredScreen(onLogout: () -> Unit) {
 
             Spacer(Modifier.height(28.dp))
 
+            // Renew Now button
+            Button(
+                onClick = onRenew,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp),
+                shape = RoundedCornerShape(14.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent),
+                contentPadding = PaddingValues()
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Brush.horizontalGradient(listOf(AccentCyan, ElectricBlue))),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Filled.Refresh, null, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(10.dp))
+                    Text("Renew Now", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                }
+            }
+
+            Spacer(Modifier.height(14.dp))
+
             Button(
                 onClick = {
                     val url = "https://wa.me/$SUPPORT_WHATSAPP?text=Hello%2C+I+need+to+extend+my+BatchFee+subscription."
@@ -128,7 +155,7 @@ fun SubscriptionExpiredScreen(onLogout: () -> Unit) {
                     modifier = Modifier
                         .fillMaxSize()
                         .clip(RoundedCornerShape(14.dp))
-                        .background(Brush.horizontalGradient(listOf(AccentCyan, ElectricBlue))),
+                        .background(Brush.horizontalGradient(listOf(WAGreen, Teal))),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(Icons.Filled.WarningAmber, null, modifier = Modifier.size(20.dp))

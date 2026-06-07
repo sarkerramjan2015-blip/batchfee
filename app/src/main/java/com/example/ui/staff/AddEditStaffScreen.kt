@@ -184,7 +184,7 @@ fun AddEditStaffScreen(
             )
             Spacer(Modifier.height(12.dp))
 
-            SectionLabel("Email (Optional)")
+            SectionLabel("Email (Required)")
             DarkTextField(
                 value = email,
                 onValueChange = { email = it },
@@ -265,6 +265,7 @@ fun AddEditStaffScreen(
             val salary = monthlySalary.toDoubleOrNull()
             val canSave = fullName.isNotBlank() &&
                 loginId.isNotBlank() &&
+                email.isNotBlank() &&
                 roleTitle.isNotBlank() &&
                 salary != null &&
                 salary >= 0 &&

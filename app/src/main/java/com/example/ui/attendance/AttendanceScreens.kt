@@ -159,6 +159,154 @@ private fun miniChip(label: String, value: String, color: Color) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  DateStrip
+// ═══════════════════════════════════════════════════════════════
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DateStrip(
+    selectedDateMs: Long,
+    onDateSelected: (Long) -> Unit,
+    isDateToday: (Long) -> Boolean
+) {
+    val dateFormat = SimpleDateFormat("MMM dd", Locale.getDefault())
+    val dayFormat = SimpleDateFormat("EEE", Locale.getDefault())
+    val monthYearFormat = SimpleDateFormat("MMMM yyyy", Locale.getDefault())
+    val cal = Calendar.getInstance()
+
+    val todayMs = startOfDay(System.currentTimeMillis())
+    val dates = remember(selectedDateMs) {
+        val c = Calendar.getInstance().apply { timeInMillis = selectedDateMs }
+        val list = mutableListOf<Long>()
+        for (i in -4..4) {
+            val clone = c.clone() as Calendar
+            clone.add(Calendar.DAY_OF_YEAR, i)
+            list.add(startOfDay(clone.timeInMillis))
+        }
+        list
+    }
+
+    var showDatePicker by remember { mutableStateOf(false) }
+
+    Column {
+        // Month/Year label
+        Text(
+            monthYearFormat.format(Date(selectedDateMs)),
+            color = TextMuted,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.padding(bottom = 6.dp)
+        )
+
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            // Left arrow
+            IconButton(
+                onClick = {
+                    val c = Calendar.getInstance().apply { timeInMillis = selectedDateMs }
+                    c.add(Calendar.DAY_OF_YEAR, -1)
+                    onDateSelected(c.timeInMillis)
+                },
+                modifier = Modifier.size(28.dp)
+            ) {
+                Icon(Icons.Filled.ChevronLeft, null, tint = TextMuted, modifier = Modifier.size(18.dp))
+            }
+
+            // Date chips
+            dates.forEach { dateMs ->
+                val isToday = isDateToday(dateMs)
+                val isSelected = dateMs == selectedDateMs
+                val dayLabel = if (isToday) "Today" else dayFormat.format(Date(dateMs))
+                val dateLabel = dateFormat.format(Date(dateMs))
+
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(10.dp))
+                        .then(
+                            if (isSelected && isToday) Modifier.background(
+                                Brush.horizontalGradient(listOf(Cyan, ElectricBlue)),
+                                RoundedCornerShape(10.dp)
+                            ) else if (isSelected) Modifier.background(
+                                Cyan.copy(alpha = 0.25f), RoundedCornerShape(10.dp)
+                            ) else Modifier.background(CardBg, RoundedCornerShape(10.dp))
+                        )
+                        .border(
+                            width = if (isSelected) 1.5.dp else 1.dp,
+                            color = when {
+                                isSelected -> Cyan.copy(alpha = 0.7f)
+                                isToday -> Cyan.copy(alpha = 0.3f)
+                                else -> BorderSub
+                            },
+                            shape = RoundedCornerShape(10.dp)
+                        )
+                        .clickable { onDateSelected(dateMs) }
+                        .padding(vertical = 6.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            dayLabel,
+                            color = if (isSelected) TextWhite else TextMuted,
+                            fontSize = 10.sp,
+                            fontWeight = if (isToday) FontWeight.Bold else FontWeight.Normal
+                        )
+                        Text(
+                            dateLabel,
+                            color = if (isSelected) TextWhite.copy(alpha = 0.85f) else TextMuted.copy(alpha = 0.6f),
+                            fontSize = 10.sp,
+                            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
+                        )
+                    }
+                }
+            }
+
+            // Right arrow
+            IconButton(
+                onClick = {
+                    val c = Calendar.getInstance().apply { timeInMillis = selectedDateMs }
+                    c.add(Calendar.DAY_OF_YEAR, 1)
+                    onDateSelected(c.timeInMillis)
+                },
+                modifier = Modifier.size(28.dp)
+            ) {
+                Icon(Icons.Filled.ChevronRight, null, tint = TextMuted, modifier = Modifier.size(18.dp))
+            }
+
+            // Calendar picker icon
+            IconButton(
+                onClick = { showDatePicker = true },
+                modifier = Modifier.size(28.dp)
+            ) {
+                Icon(Icons.Filled.CalendarToday, null, tint = Cyan, modifier = Modifier.size(18.dp))
+            }
+        }
+    }
+
+    // DatePickerDialog
+    if (showDatePicker) {
+        val dpState = rememberDatePickerState(initialSelectedDateMillis = selectedDateMs)
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    dpState.selectedDateMillis?.let { onDateSelected(it) }
+                    showDatePicker = false
+                }) { Text("OK", color = Cyan) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePicker = false }) { Text("Cancel", color = TextMuted) }
+            },
+            colors = DatePickerDefaults.colors(containerColor = CardBg)
+        ) {
+            DatePicker(state = dpState)
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  TakeAttendanceScreen
 // ═══════════════════════════════════════════════════════════════
 @OptIn(ExperimentalMaterial3Api::class)
@@ -171,13 +319,16 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
     val absentMsgMap by viewModel.absentMessageMap.collectAsState()
     val sendingIds by viewModel.sendingMessageIds.collectAsState()
     val staffLabel by viewModel.staffName.collectAsState()
+    val selectedDateMs by viewModel.selectedDateMs.collectAsState()
     val context = LocalContext.current
 
-    val todayMs = remember { System.currentTimeMillis() }
-    val todayLabel = remember { SimpleDateFormat("MMM dd, yyyy", Locale.getDefault()).format(Date(todayMs)) }
-    val defaultDateMs = remember { startOfDay(todayMs) }
+    val dateLabel = remember(selectedDateMs) {
+        SimpleDateFormat("MMM dd, yyyy", Locale.getDefault()).format(Date(selectedDateMs))
+    }
 
-    LaunchedEffect(batchId) { viewModel.loadBatchStudentsAndAttendance(batchId, todayMs) }
+    LaunchedEffect(batchId, selectedDateMs) {
+        viewModel.loadBatchStudentsAndAttendance(batchId, selectedDateMs)
+    }
 
     // Dialog states
     var showChannelDialog by remember { mutableStateOf(false) }
@@ -205,12 +356,12 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
             Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp, vertical = 10.dp)
         ) {
-            // Date header
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Filled.CalendarToday, null, tint = Cyan, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("Date: $todayLabel", color = TextWhite, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-            }
+            // Date strip with navigation
+            DateStrip(
+                selectedDateMs = selectedDateMs,
+                onDateSelected = { viewModel.selectDate(it) },
+                isDateToday = { viewModel.isToday(it) }
+            )
             Spacer(Modifier.height(14.dp))
 
             // Summary bar
@@ -245,7 +396,7 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
 
             // Bulk action row
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                gradientButton("Mark All Present", { viewModel.markAll(batchId, defaultDateMs, "present") }, Modifier.weight(1f).height(42.dp))
+                gradientButton("Mark All Present", { viewModel.markAll(batchId, selectedDateMs, "present") }, Modifier.weight(1f).height(42.dp))
                 OutlinedButton(
                     onClick = { showAllChannelDialog = true },
                     modifier = Modifier.weight(1f).height(42.dp),
@@ -271,8 +422,8 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
                     status = status,
                     hasMessage = hasMessage,
                     isSending = isSending,
-                    onMark = { st -> viewModel.markAttendance(student.id, batchId, defaultDateMs, st) },
-                    onUndo = { viewModel.undoAttendance(student.id, defaultDateMs, batchId) },
+                    onMark = { st -> viewModel.markAttendance(student.id, batchId, selectedDateMs, st) },
+                    onUndo = { viewModel.undoAttendance(student.id, selectedDateMs, batchId) },
                     onSendMessage = {
                         dialogStudentId = student.id
                         showChannelDialog = true
@@ -294,17 +445,17 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
             title = { Text("Send Absent Message", color = TextWhite, fontSize = 16.sp) },
             text = {
                 Column {
-                    Text("${student?.fullName ?: "Student"} — absent $todayLabel", color = TextMuted, fontSize = 13.sp)
+                    Text("${student?.fullName ?: "Student"} — absent $dateLabel", color = TextMuted, fontSize = 13.sp)
                     Spacer(Modifier.height(12.dp))
                     channelCard("WhatsApp", Icons.Filled.Message, WAGreen, {
                         showChannelDialog = false
-                        viewModel.sendAbsentMessage(context, sid, batchId, defaultDateMs, "whatsapp",
+                        viewModel.sendAbsentMessage(context, sid, batchId, selectedDateMs, "whatsapp",
                             student?.fullName ?: "", bname, student?.phone, staffLabel, {}, {})
                     })
                     Spacer(Modifier.height(8.dp))
                     channelCard("SMS", Icons.Filled.Sms, ElectricBlue, {
                         showChannelDialog = false
-                        viewModel.sendAbsentMessage(context, sid, batchId, defaultDateMs, "sms",
+                        viewModel.sendAbsentMessage(context, sid, batchId, selectedDateMs, "sms",
                             student?.fullName ?: "", bname, student?.phone, staffLabel, {}, {})
                     })
                 }
@@ -327,12 +478,12 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
                     Spacer(Modifier.height(12.dp))
                     channelCard("WhatsApp (all)", Icons.Filled.Message, WAGreen, {
                         showAllChannelDialog = false
-                        viewModel.sendAllAbsentMessages(context, batchId, defaultDateMs, "whatsapp") {}
+                        viewModel.sendAllAbsentMessages(context, batchId, selectedDateMs, "whatsapp") {}
                     })
                     Spacer(Modifier.height(8.dp))
                     channelCard("SMS (all)", Icons.Filled.Sms, ElectricBlue, {
                         showAllChannelDialog = false
-                        viewModel.sendAllAbsentMessages(context, batchId, defaultDateMs, "sms") {}
+                        viewModel.sendAllAbsentMessages(context, batchId, selectedDateMs, "sms") {}
                     })
                 }
             },

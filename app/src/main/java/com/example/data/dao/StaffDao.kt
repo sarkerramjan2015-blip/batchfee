@@ -25,6 +25,9 @@ interface StaffDao {
     @Query("SELECT * FROM staff WHERE id = :staffId AND instituteId = :instituteId LIMIT 1")
     suspend fun getStaffByIdOnce(staffId: String, instituteId: String): StaffEntity?
 
+    @Query("SELECT * FROM staff WHERE staffCode = :staffCode AND archivedAtMs IS NULL LIMIT 1")
+    suspend fun getStaffByCodeOnce(staffCode: String): StaffEntity?
+
     @Query("""
         SELECT * FROM staff
         WHERE instituteId = :instituteId

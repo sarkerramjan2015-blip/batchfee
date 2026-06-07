@@ -31,6 +31,7 @@ import com.example.ui.superadmin.SuperAdminScreen
 import com.example.ui.subscription.SubscriptionExpiredScreen
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.update.ForceUpdateScreen
+import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -119,7 +120,9 @@ private fun MainAppContent(appDb: com.example.data.database.AppDatabase) {
                     .collection("institutes").document(uid)
                     .update("lastActiveAt", System.currentTimeMillis())
                     .await()
-            } catch (_: Exception) { }
+            } catch (e: Exception) {
+                FirebaseCrashlytics.getInstance().recordException(e)
+            }
         }
         while (true) {
             delay(5 * 60 * 1000L)
@@ -130,7 +133,9 @@ private fun MainAppContent(appDb: com.example.data.database.AppDatabase) {
                         .collection("institutes").document(uid)
                         .update("lastActiveAt", System.currentTimeMillis())
                         .await()
-                } catch (_: Exception) { }
+                } catch (e: Exception) {
+                    FirebaseCrashlytics.getInstance().recordException(e)
+                }
             }
         }
     }
@@ -575,6 +580,9 @@ private fun MainAppContent(appDb: com.example.data.database.AppDatabase) {
 
         composable<SubscriptionExpiredRoute> {
             SubscriptionExpiredScreen(
+                onRenew = {
+                    navController.navigate(PricingRoute)
+                },
                 onLogout = {
                     navController.navigate(AuthRoute) {
                         popUpTo(navController.graph.id) { inclusive = true }
@@ -590,9 +598,12 @@ private suspend fun checkSubscriptionExpired(instituteId: String): Boolean {
         val doc = FirebaseFirestore.getInstance()
             .collection("institutes").document(instituteId)
             .get().await()
+        val isActive = doc.getBoolean("isActive") ?: true
+        if (!isActive) return true
         val trialEnd = doc.getLong("trialEndDate") ?: return false
         System.currentTimeMillis() > trialEnd
-    } catch (_: Exception) {
+    } catch (e: Exception) {
+        FirebaseCrashlytics.getInstance().recordException(e)
         false
     }
 }

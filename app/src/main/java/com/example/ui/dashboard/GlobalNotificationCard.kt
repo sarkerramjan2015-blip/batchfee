@@ -15,10 +15,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.google.firebase.firestore.FirebaseFirestore
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.tasks.await
-import kotlinx.coroutines.withContext
+import com.google.firebase.firestore.ListenerRegistration
+import com.google.firebase.firestore.Query
 
 @Composable
 fun GlobalNotificationCard() {
@@ -27,21 +27,22 @@ fun GlobalNotificationCard() {
     var sentAt by remember { mutableStateOf<Long?>(null) }
     var dismissed by remember { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) {
-        try {
-            val snapshot = withContext(Dispatchers.IO) {
-                db.collection("Global_Notifications")
-                    .orderBy("sentAt", com.google.firebase.firestore.Query.Direction.DESCENDING)
-                    .limit(1)
-                    .get()
-                    .await()
+    DisposableEffect(Unit) {
+        val listener: ListenerRegistration = db.collection("Global_Notifications")
+            .orderBy("sentAt", Query.Direction.DESCENDING)
+            .limit(1)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    FirebaseCrashlytics.getInstance().recordException(error)
+                    return@addSnapshotListener
+                }
+                if (snapshot != null && !snapshot.isEmpty) {
+                    val doc = snapshot.documents[0]
+                    message = doc.getString("message")
+                    sentAt = doc.getLong("sentAt")
+                }
             }
-            if (!snapshot.isEmpty) {
-                val doc = snapshot.documents[0]
-                message = doc.getString("message")
-                sentAt = doc.getLong("sentAt")
-            }
-        } catch (_: Exception) { }
+        onDispose { listener.remove() }
     }
 
     if (dismissed || message.isNullOrBlank()) return

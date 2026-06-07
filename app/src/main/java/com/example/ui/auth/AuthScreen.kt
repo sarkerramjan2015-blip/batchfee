@@ -49,7 +49,10 @@ import com.example.domain.PasswordHasher
 import com.example.domain.SessionManager
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseAuthException
+import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.FirebaseFirestoreException
+import com.example.data.firestore.StaffSyncHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -117,7 +120,7 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
 
                 null
             } catch (e: Exception) {
-                e.printStackTrace()
+                FirebaseCrashlytics.getInstance().recordException(e)
                 null
             }
         }
@@ -157,6 +160,7 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                 val now = System.currentTimeMillis()
                 val fifteenDaysMs = 15L * 24 * 60 * 60 * 1000
 
+                // Write to Firestore FIRST — fail early if network/rules issue
                 withContext(Dispatchers.IO) {
                     val firestore = FirebaseFirestore.getInstance()
                     firestore.collection("institutes").document(uid).set(
@@ -168,9 +172,25 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                             "role" to "owner",
                             "createdAt" to now,
                             "isActive" to true,
-                            "trialEndDate" to (now + fifteenDaysMs)
+                            "trialEndDate" to (now + fifteenDaysMs),
+                            "studentCount" to 0,
+                            "staffCount" to 0,
+                            "batchCount" to 0
                         )
                     ).await()
+                }
+
+                // Verify Firestore write succeeded before proceeding
+                withContext(Dispatchers.IO) {
+                    val verify = FirebaseFirestore.getInstance()
+                        .collection("institutes").document(uid)
+                        .get().await()
+                    if (!verify.exists()) {
+                        throw FirebaseFirestoreException(
+                            "Cloud sync failed. Please check your connection and try again.",
+                            FirebaseFirestoreException.Code.ABORTED
+                        )
+                    }
                 }
 
                 val institute = InstituteEntity(
@@ -206,6 +226,7 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                 SessionManager.login(uid, uid, user.role)
                 onSuccess()
             } catch (e: FirebaseAuthException) {
+                FirebaseCrashlytics.getInstance().recordException(e)
                 val message = when (e.errorCode) {
                     "ERROR_EMAIL_ALREADY_IN_USE" -> "An account with this email already exists"
                     "ERROR_INVALID_EMAIL" -> "Please enter a valid email address"
@@ -213,115 +234,219 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                     else -> e.localizedMessage ?: "Authentication failed"
                 }
                 onError(message)
+            } catch (e: FirebaseFirestoreException) {
+                FirebaseCrashlytics.getInstance().recordException(e)
+                // Firestore write failed but Auth succeeded — cleanup auth user
+                try {
+                    FirebaseAuth.getInstance().currentUser?.delete()
+                } catch (_: Exception) { }
+                onError(e.localizedMessage ?: "Cloud sync failed. Check your connection and try again.")
             } catch (e: Exception) {
+                FirebaseCrashlytics.getInstance().recordException(e)
                 onError(e.localizedMessage ?: "Registration failed")
             }
         }
     }
 
     fun login(
-        email: String,
+        credential: String,
         passwordHash: String,
         onSuccess: (role: String) -> Unit,
         onError: (String) -> Unit
     ) {
-        if (email.isBlank() || passwordHash.isBlank()) {
-            onError("Login ID and password are required")
+        if (credential.isBlank() || passwordHash.isBlank()) {
+            onError("Email/Staff ID and password are required")
             return
         }
         
         viewModelScope.launch {
             try {
-                val loginId = email.trim()
-                var user = db.userDao().getUserByEmail(loginId)
+                val input = credential.trim()
+                val hasAt = input.contains("@")
 
-                if (user == null) {
-                    user = tryFirebaseLogin(loginId, passwordHash)
-                }
-
-                if (user == null && (loginId == "owner@batchfee.app" || loginId == "admin@batchfee.app" || loginId == "STF001")) {
-                    try {
-                        AppDatabase.ensureDemoDataSeeded(db)
-                    } catch (seedEx: Exception) {
-                        seedEx.printStackTrace()
-                    }
-                    user = db.userDao().getUserByEmail(loginId)
-                }
-
-                if (user == null) {
-                    onError("Invalid credentials")
-                    return@launch
-                }
-
-                // Check lockout before password verification
-                val nowMs = System.currentTimeMillis()
-                val lockedUntil = user.lockedUntilMs
-                if (lockedUntil != null && lockedUntil > nowMs) {
-                    val remainingMins = ((lockedUntil - nowMs) / 60_000).toInt() + 1
-                    onError("Account locked. Try again in $remainingMins min or use Forgot Password.")
-                    return@launch
-                }
-
-                // Password verification with backward compatibility
-                val storedHash = user.passwordHash
-                val passwordValid = if (PasswordHasher.isHashed(storedHash)) {
-                    PasswordHasher.verify(passwordHash, storedHash)
+                // ── SMART ROUTING: Email vs Staff ID ──
+                val firebaseEmail: String
+                if (hasAt) {
+                    // Direct email login
+                    firebaseEmail = input
                 } else {
-                    // Legacy plain-text password - auto-upgrade to hashed
-                    if (storedHash == passwordHash) {
-                        db.userDao().updateUser(user.copy(passwordHash = PasswordHasher.hash(passwordHash)))
-                        true
-                    } else {
-                        false
+                    // Staff ID — resolve to email via Room DB
+                    val staff = db.staffDao().getStaffByCodeOnce(input.uppercase())
+                    if (staff == null) {
+                        onError("Staff ID not found or not synced to this device.")
+                        return@launch
                     }
-                }
-
-                if (!passwordValid) {
-                    val newAttempts = user.failedAttempts + 1
-                    if (newAttempts >= 3) {
-                        val lockUntil = System.currentTimeMillis() + (15 * 60 * 1000L)
-                        db.userDao().updateFailedAttempts(loginId, newAttempts, lockUntil)
-                        onError("Account locked for 15 min after 3 failed attempts. Use Forgot Password to reset.")
-                    } else {
-                        db.userDao().updateFailedAttempts(loginId, newAttempts, null)
-                        val remaining = 3 - newAttempts
-                        onError("Wrong password. $remaining attempt" + (if (remaining > 1) "s" else "") + " remaining.")
+                    val staffEmail = staff.email
+                    if (staffEmail.isNullOrBlank()) {
+                        onError("No email linked to this Staff ID. Contact your admin.")
+                        return@launch
                     }
-                    return@launch
+                    firebaseEmail = staffEmail
                 }
 
-                // Success - reset failed attempts
-                if (user.failedAttempts > 0 || user.lockedUntilMs != null) {
-                    db.userDao().resetFailedAttempts(loginId)
+                // ── Firebase Auth ──
+                val authResult = withContext(Dispatchers.IO) {
+                    FirebaseAuth.getInstance()
+                        .signInWithEmailAndPassword(firebaseEmail, passwordHash)
+                        .await()
+                }
+                val uid = authResult.user?.uid
+                    ?: throw IllegalStateException("Firebase Auth returned null UID")
+
+                // ── Fetch or rebuild local user record ──
+                var localUser = db.userDao().getUserById(uid)
+                val firestoreUserDoc = withContext(Dispatchers.IO) {
+                    FirebaseFirestore.getInstance()
+                        .collection("institutes").document(uid)
+                        .get().await()
                 }
 
-                val instituteId = user.instituteId ?: ""
-                if (instituteId.isEmpty() && user.role != "SuperAdmin") {
-                    onError("Demo account not fully initialized. Please wait a moment and try again.")
-                    return@launch
-                }
+                val role: String
+                val instituteId: String?
+                var staffPermissions: String? = null
 
-                val staffPermissions = if (user.role == "Staff") {
-                    val staff = db.staffDao().getStaffByIdOnce(user.id, instituteId)
-                    when {
-                        staff == null -> {
-                            onError("Staff profile was not found. Contact your admin.")
-                            return@launch
-                        }
-                        staff.archivedAtMs != null || staff.status != "active" -> {
-                            onError("This staff account is inactive. Contact your admin.")
-                            return@launch
-                        }
-                        else -> staff.permissions
+                if (firestoreUserDoc.exists()) {
+                    val data = firestoreUserDoc.data ?: emptyMap()
+                    role = when (val r = data["role"] as? String) {
+                        "owner" -> "InstituteOwner"
+                        "superAdmin", "super_admin" -> "SuperAdmin"
+                        else -> r ?: "InstituteOwner"
+                    }
+                    instituteId = uid
+
+                    if (localUser == null) {
+                        val now = System.currentTimeMillis()
+                        localUser = UserEntity(
+                            id = uid,
+                            instituteId = uid,
+                            name = data["ownerName"] as? String ?: data["instituteName"] as? String ?: "",
+                            email = firebaseEmail,
+                            passwordHash = PasswordHasher.hash(passwordHash),
+                            role = role,
+                            createdAtMs = data["createdAt"] as? Long ?: now
+                        )
+                        db.userDao().insertUser(localUser)
+                        db.instituteDao().insertInstitute(
+                            InstituteEntity(
+                                id = uid,
+                                name = data["instituteName"] as? String ?: "Institute",
+                                currentPlanId = data["currentPlanId"] as? String ?: "plan_free_trial",
+                                subscriptionStatus = "trial",
+                                trialStartDateMs = data["createdAt"] as? Long ?: now,
+                                trialEndDateMs = data["trialEndDate"] as? Long ?: (now + 15L * 24 * 60 * 60 * 1000),
+                                currentPeriodEndMs = data["trialEndDate"] as? Long ?: (now + 15L * 24 * 60 * 60 * 1000),
+                                createdAtMs = data["createdAt"] as? Long ?: now,
+                                phone = data["phone"] as? String,
+                                whatsappNumber = data["whatsappNumber"] as? String,
+                                ownerName = data["ownerName"] as? String,
+                                email = data["email"] as? String,
+                                instituteCode = data["instituteCode"] as? String
+                            )
+                        )
                     }
                 } else {
-                    null
+                    // Not an institute — check if staff
+                    // Try all staff subcollections (worst case iterates, but staff count is small)
+                    var foundStaff: StaffSyncHelper.StaffFirestoreData? = null
+                    var foundInstId: String? = null
+                    // Query local staff list to find institute
+                    val localStaff = withContext(Dispatchers.IO) {
+                        db.staffDao().getStaffByCodeOnce(input.uppercase())
+                    }
+                    if (localStaff != null && localStaff.id == uid) {
+                        val fsData = StaffSyncHelper.fetchStaffFromFirestore(localStaff.instituteId, uid)
+                        if (fsData != null) {
+                            foundStaff = fsData
+                            foundInstId = localStaff.instituteId
+                        }
+                    }
+                    // Fallback: search by email in local users
+                    if (foundStaff == null) {
+                        val emailUser = db.userDao().getUserByEmail(firebaseEmail)
+                        if (emailUser != null && emailUser.role == "Staff") {
+                            val localSt = db.staffDao().getStaffByIdOnce(emailUser.id, emailUser.instituteId ?: "")
+                            if (localSt != null) {
+                                foundStaff = StaffSyncHelper.fetchStaffFromFirestore(
+                                    localSt.instituteId, emailUser.id
+                                )
+                                foundInstId = emailUser.instituteId
+                            }
+                        }
+                    }
+
+                    if (foundStaff == null || foundInstId == null) {
+                        onError("Staff account not found. Contact your admin.")
+                        return@launch
+                    }
+                    if (foundStaff.status != "active") {
+                        onError("This staff account is inactive. Contact your admin.")
+                        return@launch
+                    }
+                    role = "Staff"
+                    instituteId = foundInstId
+                    staffPermissions = foundStaff.permissions
+
+                    if (localUser == null) {
+                        localUser = UserEntity(
+                            id = uid,
+                            instituteId = foundInstId,
+                            name = foundStaff.fullName,
+                            email = firebaseEmail,
+                            passwordHash = PasswordHasher.hash(passwordHash),
+                            role = "Staff",
+                            createdAtMs = System.currentTimeMillis()
+                        )
+                        db.userDao().insertUser(localUser)
+                    }
+                    // Sync staff to local Room
+                    val staffEntity = com.example.data.models.StaffEntity(
+                        id = uid,
+                        instituteId = foundInstId,
+                        staffCode = foundStaff.staffCode,
+                        fullName = foundStaff.fullName,
+                        photoUri = null,
+                        roleTitle = foundStaff.roleTitle,
+                        phone = foundStaff.phone.takeIf { it.isNotBlank() },
+                        email = foundStaff.email.takeIf { it.isNotBlank() },
+                        address = null,
+                        joiningDateMs = null,
+                        monthlySalary = 0.0,
+                        assignedBatchIds = foundStaff.assignedBatchIds.takeIf { it.isNotBlank() },
+                        status = foundStaff.status,
+                        notes = null,
+                        permissions = foundStaff.permissions.takeIf { it.isNotBlank() },
+                        createdAtMs = System.currentTimeMillis(),
+                        updatedAtMs = System.currentTimeMillis(),
+                        archivedAtMs = null
+                    )
+                    db.staffDao().insertStaff(staffEntity)
                 }
 
-                SessionManager.login(user.id, instituteId, user.role, staffPermissions)
-                onSuccess(user.role)
+                // Ensure demo data seeded if needed
+                val existingPlans = db.subscriptionPlanDao().getAllPlans().first()
+                if (existingPlans.isEmpty()) {
+                    AppDatabase.ensureDemoDataSeeded(db)
+                }
+
+                // Reset failed attempts on successful login
+                if (localUser.failedAttempts > 0 || localUser.lockedUntilMs != null) {
+                    db.userDao().resetFailedAttempts(firebaseEmail)
+                }
+
+                SessionManager.login(uid, instituteId ?: "", role, staffPermissions)
+                onSuccess(role)
+
+            } catch (e: FirebaseAuthException) {
+                FirebaseCrashlytics.getInstance().recordException(e)
+                val message = when (e.errorCode) {
+                    "ERROR_INVALID_EMAIL" -> "Invalid email address."
+                    "ERROR_WRONG_PASSWORD" -> "Wrong password."
+                    "ERROR_USER_NOT_FOUND" -> "Account not found."
+                    else -> e.localizedMessage ?: "Login failed."
+                }
+                onError(message)
             } catch (e: Exception) {
-                e.printStackTrace()
+                FirebaseCrashlytics.getInstance().recordException(e)
                 onError("Login failed. Please try again.")
             }
         }
@@ -539,6 +664,7 @@ fun AuthScreen(
     var whatsappNumber by remember { mutableStateOf("") }
 
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var fieldError by remember { mutableStateOf<Map<String, Boolean>>(emptyMap()) }
     var isLoading by remember { mutableStateOf(false) }
     var loadingDemoAccount by remember { mutableStateOf<String?>(null) }
     var passwordVisible by remember { mutableStateOf(false) }
@@ -639,61 +765,70 @@ fun AuthScreen(
                 // Login / Register Form Card
                 GlassCard {
                     if (!isLoginMode) {
-                        DarkTextField(
-                            value = instituteName,
-                            onValueChange = { instituteName = it },
-                            label = "Institute Name",
-                            leadingIcon = { Icon(Icons.Filled.AccountBalance, null, tint = AuthMuted) }
-                        )
-                        Spacer(Modifier.height(12.dp))
-                        DarkTextField(
-                            value = ownerName,
-                            onValueChange = { ownerName = it },
-                            label = "Your Name",
-                            leadingIcon = { Icon(Icons.Filled.Person, null, tint = AuthMuted) }
-                        )
-                        Spacer(Modifier.height(12.dp))
-                        DarkTextField(
-                            value = whatsappNumber,
-                            onValueChange = { whatsappNumber = it },
-                            label = "WhatsApp Number",
-                            leadingIcon = {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text("+880 ", color = AuthMuted, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                                }
-                            },
-                            keyboardType = androidx.compose.ui.text.input.KeyboardType.Phone
-                        )
-                        Spacer(Modifier.height(12.dp))
+            val hasInstErr = fieldError.containsKey("instituteName")
+            val hasOwnerErr = fieldError.containsKey("ownerName")
+
+            DarkTextField(
+                value = instituteName,
+                onValueChange = { instituteName = it; if (hasInstErr) { fieldError = fieldError - "instituteName"; errorMessage = null } },
+                label = "Institute Name *",
+                leadingIcon = { Icon(Icons.Filled.AccountBalance, null, tint = AuthMuted) }
+            )
+            if (hasInstErr) Text("This field is required", color = Color(0xFFF87171), fontSize = 10.sp, modifier = Modifier.padding(start = 12.dp, top = 2.dp))
+            Spacer(Modifier.height(12.dp))
+            DarkTextField(
+                value = ownerName,
+                onValueChange = { ownerName = it; if (hasOwnerErr) { fieldError = fieldError - "ownerName"; errorMessage = null } },
+                label = "Your Name *",
+                leadingIcon = { Icon(Icons.Filled.Person, null, tint = AuthMuted) }
+            )
+            if (hasOwnerErr) Text("This field is required", color = Color(0xFFF87171), fontSize = 10.sp, modifier = Modifier.padding(start = 12.dp, top = 2.dp))
+            Spacer(Modifier.height(12.dp))
+            DarkTextField(
+                value = whatsappNumber,
+                onValueChange = { whatsappNumber = it },
+                label = "WhatsApp Number",
+                leadingIcon = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("+880 ", color = AuthMuted, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                     }
+                },
+                keyboardType = androidx.compose.ui.text.input.KeyboardType.Phone
+            )
+            Spacer(Modifier.height(12.dp))
+        }
 
-                    DarkTextField(
-                        value = email,
-                        onValueChange = { email = it },
-                        label = "Email / Staff ID",
-                        leadingIcon = { Icon(Icons.Filled.Email, null, tint = AuthMuted) },
-                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Email
-                    )
-                    Spacer(Modifier.height(12.dp))
+        val hasEmailErr = fieldError.containsKey("email")
+        DarkTextField(
+            value = email,
+            onValueChange = { email = it; if (hasEmailErr) { fieldError = fieldError - "email"; errorMessage = null } },
+            label = if (isLoginMode) "Email or Staff ID" else "Email *",
+            leadingIcon = { Icon(Icons.Filled.Email, null, tint = AuthMuted) },
+            keyboardType = androidx.compose.ui.text.input.KeyboardType.Email
+        )
+        if (hasEmailErr) Text("This field is required", color = Color(0xFFF87171), fontSize = 10.sp, modifier = Modifier.padding(start = 12.dp, top = 2.dp))
+        Spacer(Modifier.height(12.dp))
 
-                    DarkTextField(
-                        value = password,
-                        onValueChange = { password = it },
-                        label = "Password",
-                        leadingIcon = { Icon(Icons.Filled.Lock, null, tint = AuthMuted) },
-                        visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Password,
-                        imeAction = androidx.compose.ui.text.input.ImeAction.Done,
-                        trailingIcon = {
-                            IconButton(onClick = { passwordVisible = !passwordVisible }) {
-                                Icon(
-                                    if (passwordVisible) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
-                                    if (passwordVisible) "Hide" else "Show",
-                                    tint = AuthMuted
-                                )
-                            }
-                        }
+        val hasPwdErr = fieldError.containsKey("password")
+        DarkTextField(
+            value = password,
+            onValueChange = { password = it; if (hasPwdErr) { fieldError = fieldError - "password"; errorMessage = null } },
+            label = if (isLoginMode) "Password" else "Password *",
+            leadingIcon = { Icon(Icons.Filled.Lock, null, tint = AuthMuted) },
+            visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+            keyboardType = androidx.compose.ui.text.input.KeyboardType.Password,
+            imeAction = androidx.compose.ui.text.input.ImeAction.Done,
+            trailingIcon = {
+                IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                    Icon(
+                        if (passwordVisible) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
+                        if (passwordVisible) "Hide" else "Show",
+                        tint = AuthMuted
                     )
+                }
+            }
+        )
+        if (hasPwdErr) Text("This field is required", color = Color(0xFFF87171), fontSize = 10.sp, modifier = Modifier.padding(start = 12.dp, top = 2.dp))
 
                     // Forgot Password link (login mode only)
                     if (isLoginMode) {
@@ -765,6 +900,19 @@ fun AuthScreen(
                                     isLoading = false
                                 })
                             } else {
+                                // Per-field validation before calling ViewModel
+                                val errs = mutableMapOf<String, Boolean>()
+                                if (instituteName.isBlank()) errs["instituteName"] = true
+                                if (ownerName.isBlank()) errs["ownerName"] = true
+                                if (email.isBlank()) errs["email"] = true
+                                if (password.isBlank()) errs["password"] = true
+                                if (errs.isNotEmpty()) {
+                                    fieldError = errs
+                                    errorMessage = "Please fill all required fields."
+                                    isLoading = false
+                                    return@Button
+                                }
+                                fieldError = emptyMap()
                                 viewModel.registerInstitute(
                                     instituteName, ownerName, email, password, whatsappNumber,
                                     onSuccess = {
@@ -885,12 +1033,12 @@ fun AuthScreen(
                                     if (forgotEmail.isNotBlank()) {
                                         FirebaseAuth.getInstance().sendPasswordResetEmail(forgotEmail.trim())
                                             .addOnSuccessListener {
-                                                errorMessage = "Password reset link sent to " + forgotEmail
+                                                errorMessage = null
                                                 showForgotDialog = false
+                                                forgotEmail = ""
                                             }
                                             .addOnFailureListener { e ->
-                                                errorMessage = "Failed: " + (e.localizedMessage ?: "Unknown error")
-                                                showForgotDialog = false
+                                                errorMessage = "Email not registered or user not found. Only registered institutes can reset their password."
                                             }
                                     }
                                 }
@@ -924,12 +1072,29 @@ fun AuthScreen(
                     textAlign = TextAlign.Center
                 )
                 Spacer(Modifier.height(4.dp))
-                Text(
-                    text = "Queries? Contact developer",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = AuthMuted.copy(alpha = 0.4f),
-                    textAlign = TextAlign.Center
-                )
+
+                // WhatsApp contact button
+                val encodedMsg = java.net.URLEncoder
+                    .encode("Hello Developer, I am contacting you regarding some queries about the BatchFee app.", "UTF-8")
+                val waUri = "https://api.whatsapp.com/send?phone=+8801518657869&text=$encodedMsg"
+                OutlinedButton(
+                    onClick = {
+                        context.startActivity(
+                            android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(waUri))
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth(0.7f),
+                    shape = RoundedCornerShape(10.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, AuthCyan.copy(alpha = 0.25f)),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        containerColor = AuthCyan.copy(alpha = 0.06f),
+                        contentColor = AuthCyan.copy(alpha = 0.75f)
+                    )
+                ) {
+                    Text("💬", fontSize = 13.sp)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Chat on WhatsApp", fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                }
 
                 Spacer(Modifier.height(24.dp))
             }

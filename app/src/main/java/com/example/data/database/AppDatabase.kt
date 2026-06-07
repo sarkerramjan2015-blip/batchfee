@@ -13,6 +13,7 @@ import com.example.data.models.InstituteEntity
 import com.example.data.models.SubscriptionPlanEntity
 import com.example.data.models.UserEntity
 import com.example.domain.PasswordHasher
+import com.google.firebase.crashlytics.FirebaseCrashlytics
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -245,6 +246,36 @@ abstract class AppDatabase : RoomDatabase() {
                     createdAtMs = System.currentTimeMillis()
                 )
             )
+
+            // Create Firebase Auth account so isSuperAdmin() security rule works
+            // (isSuperAdmin checks request.auth.uid — must have an active Firebase Auth session)
+            try {
+                com.example.data.firebase.FirebaseAuthApi.createUser("admin@batchfee.app", "123456")
+            } catch (e: Exception) {
+                // EMAIL_EXISTS is expected on second run — user already created
+                if ((e.message ?: "").contains("EMAIL_EXISTS", ignoreCase = true).not()) {
+                    FirebaseCrashlytics.getInstance().recordException(e)
+                }
+            }
+
+            // Write SuperAdmin doc to Firestore so security rules isSuperAdmin() works
+            try {
+                com.google.firebase.firestore.FirebaseFirestore.getInstance()
+                    .collection("institutes")
+                    .document("sys_super_admin_1")
+                    .set(
+                        mapOf(
+                            "instituteName" to "BatchFee System",
+                            "role" to "SuperAdmin",
+                            "email" to "admin@batchfee.app",
+                            "createdAt" to System.currentTimeMillis(),
+                            "isActive" to true
+                        ),
+                        com.google.firebase.firestore.SetOptions.merge()
+                    ).await()
+            } catch (e: Exception) {
+                FirebaseCrashlytics.getInstance().recordException(e)
+            }
             
             val demoInstituteId = "demo_institute_1"
             val now = System.currentTimeMillis()
@@ -863,7 +894,9 @@ abstract class AppDatabase : RoomDatabase() {
                     ),
                     com.google.firebase.firestore.SetOptions.merge()
                 ).await()
-            } catch (_: Exception) { }
+            } catch (e: Exception) {
+                FirebaseCrashlytics.getInstance().recordException(e)
+            }
         }
     }
 }
