@@ -2,30 +2,54 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // Helper: Super Admin check
+    function isSuperAdmin() {
+      return request.auth != null
+        && get(/databases/$(database)/documents/institutes/$(request.auth.uid)).data.role == 'SuperAdmin';
+    }
+
     // Web form registrations — public create, authenticated read/manage
     match /registrations/{instituteId}/pending/{requestId} {
       allow read: if request.auth != null;
       allow create: if true;
-      allow delete: if request.auth != null;
+      allow delete: if request.auth != null && (request.auth.uid == instituteId || isSuperAdmin());
     }
     match /registrations/{instituteId} {
       allow read, write: if request.auth != null;
     }
 
-    // Institutes — public read (web form header), authenticated write
-    match /institutes/{document=**} {
-      allow read: if true;
-      allow write, update, delete: if request.auth != null;
+    // Institutes — authenticated read, owner or superadmin write
+    match /institutes/{instituteId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null;
+      allow update, delete: if request.auth != null && (request.auth.uid == instituteId || isSuperAdmin());
     }
 
-    // Global notifications — authenticated users can read/write
+    // Staff subcollection — secure per-institute access
+    match /institutes/{instituteId}/staffs/{staffId} {
+      // SuperAdmin and institute owner can read/write all staff records
+      allow read, write: if request.auth != null
+        && (request.auth.uid == instituteId || isSuperAdmin());
+
+      // Staff can read their own record only
+      allow read: if request.auth != null && request.auth.uid == staffId;
+    }
+
+    // Global notifications — any authenticated user can read, only SuperAdmin writes
     match /Global_Notifications/{document=**} {
-      allow read, write: if request.auth != null;
+      allow read: if request.auth != null;
+      allow write: if isSuperAdmin();
     }
 
-    // SuperAdmin stats — authenticated read/write
-    match /SuperAdmin/{document=**} {
-      allow read, write: if request.auth != null;
+    // Subscription payment requests — institutes submit, SuperAdmin manages
+    match /subscriptionRequests/{requestId} {
+      // Any authenticated institute owner can submit a request
+      allow create: if request.auth != null;
+      // SuperAdmin and the institute owner can read their own requests
+      allow read: if request.auth != null
+        && (request.auth.uid == resource.data.instituteId || isSuperAdmin());
+      // Only SuperAdmin can approve/reject
+      allow update, delete: if isSuperAdmin();
     }
 
     // Demo visitor tracking — open
@@ -35,7 +59,8 @@ service cloud.firestore {
 
     // Block everything else
     match /{document=**} {
-      allow read, write: if false;
+      allow read: if request.auth != null;
+      allow write: if false;
     }
   }
 }

@@ -32,10 +32,18 @@ import com.example.domain.SessionManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.firstOrNull
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.widget.Toast
 import androidx.compose.ui.platform.LocalContext
+import com.example.data.models.SubscriptionRequest
+import com.example.data.repository.SubscriptionRepository
+import kotlinx.coroutines.launch
 import java.net.URLEncoder
+import java.util.UUID
 
 // ── BatchFee Plan Data ──────────────────────────────────────────
 data class BatchFeePlan(
@@ -122,6 +130,8 @@ private val TextWhite     = Color(0xFFF8FAFC)
 private val TextMuted     = Color(0xFF94A3B8)
 private val WAGreen       = Color(0xFF25D366)
 private val Teal          = Color(0xFF14B8A6)
+private val AccentRed     = Color(0xFFF87171)
+private val Green         = Color(0xFF22C55E)
 
 // ── Feature list for all plans ──────────────────────────────────
 private val allPlanFeatures = listOf(
@@ -146,15 +156,32 @@ fun PricingScreen(
     val selectedDuration by viewModel.selectedDuration.collectAsState()
     val context = LocalContext.current
 
-    // Load institute name for WhatsApp message (read-only, no logic change)
+    // Load institute info for submission
     var instituteName by remember { mutableStateOf("BatchFee Institute") }
+    var instituteId by remember { mutableStateOf<String?>(null) }
+    var institutePhone by remember { mutableStateOf<String?>(null) }
+    var ownerName by remember { mutableStateOf("") }
     LaunchedEffect(Unit) {
         val instId = SessionManager.currentInstituteId.value
         if (instId != null) {
+            instituteId = instId
             val inst = db.instituteDao().getInstituteFlow(instId).firstOrNull()
-            inst?.let { instituteName = it.name }
+            inst?.let {
+                instituteName = it.name
+                institutePhone = it.phone ?: it.whatsappNumber
+                ownerName = it.ownerName ?: ""
+            }
         }
     }
+
+    // Payment submission state
+    var selectedPaymentMethod by remember { mutableStateOf("bkash") }
+    var lastTrxDigits by remember { mutableStateOf("") }
+    var isSubmitting by remember { mutableStateOf(false) }
+    var submitSuccess by remember { mutableStateOf(false) }
+    var submitError by remember { mutableStateOf<String?>(null) }
+    var selectedPlanId by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
 
     val durationOptions = listOf("1 Month", "6 Months", "1 Year")
     val saveLabels = listOf(null, "Save 10%", "Save 20%")
@@ -268,23 +295,21 @@ fun PricingScreen(
                     val price = remember(selectedDuration) { viewModel.priceFor(plan) }
                     val durationLabel = remember(selectedDuration) { viewModel.durationLabel() }
                     val billingLabel = remember(selectedDuration) { viewModel.billingLabel() }
-                    PlanCard(
-                        plan = plan,
-                        price = price,
-                        durationLabel = durationLabel,
-                        onChoose = {
-                            // Open WhatsApp with plan purchase inquiry
-                            // Format: multi-line message with plan name, student count, price, billing duration
-                            val message = "Hello Developer,\n" +
-                                    "I would like to purchase the ${plan.name} plan\n" +
-                                    "for ${plan.studentCount} students\n" +
-                                    "at BDT ${formatPrice(price)}\n" +
-                                    "for $billingLabel."
-                            val encoded = URLEncoder.encode(message, "UTF-8")
-                            val url = "https://wa.me/8801518657869?text=$encoded"
-                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-                        }
-                    )
+                    Box(modifier = Modifier
+                        .then(if (selectedPlanId == plan.id) Modifier.border(2.dp, Cyan, RoundedCornerShape(16.dp)) else Modifier)
+                    ) {
+                        PlanCard(
+                            plan = plan,
+                            price = price,
+                            durationLabel = durationLabel,
+                            isSelected = selectedPlanId == plan.id,
+                            onChoose = {
+                                selectedPlanId = plan.id
+                                submitSuccess = false
+                                submitError = null
+                            }
+                        )
+                    }
                 }
             }
 
@@ -369,6 +394,195 @@ fun PricingScreen(
                 Spacer(Modifier.height(24.dp))
             }
 
+            // ── Payment Submission Section ────────────────────
+            if (selectedPlanId != null) {
+                val selPlan = plans.find { it.id == selectedPlanId } ?: return@Scaffold
+                val selPrice = remember(selectedDuration) { viewModel.priceFor(selPlan) }
+                val selBilling = remember(selectedDuration) { viewModel.billingLabel() }
+                val durationMonths = when (selectedDuration) { 0 -> 1; 1 -> 6; 2 -> 12; else -> 1 }
+
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(containerColor = CardBg),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, BorderSub)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text("Submit Payment Request", color = TextWhite, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(4.dp))
+                        Text("${selPlan.name} · ${selBilling} · BDT ${"%.0f".format(selPrice)}", color = Cyan, fontSize = 13.sp)
+                        Spacer(Modifier.height(12.dp))
+                        HorizontalDivider(color = BorderSub)
+                        Spacer(Modifier.height(12.dp))
+
+                        // Payment method chips
+                        Text("Payment Method", color = TextMuted, fontSize = 12.sp)
+                        Spacer(Modifier.height(6.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            listOf("bkash" to "bKash", "nagad" to "Nagad").forEach { (id, label) ->
+                                val isSel = selectedPaymentMethod == id
+                                val number = if (id == "bkash") "01777408383" else "01518657869"
+                                FilterChip(
+                                    selected = isSel,
+                                    onClick = { selectedPaymentMethod = id },
+                                    label = { Text(label, fontSize = 12.sp) },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = Cyan.copy(alpha = 0.2f),
+                                        selectedLabelColor = Cyan
+                                    ),
+                                    border = FilterChipDefaults.filterChipBorder(
+                                        borderColor = if (isSel) Cyan else BorderSub,
+                                        selectedBorderColor = Cyan,
+                                        enabled = true,
+                                        selected = isSel
+                                    )
+                                )
+                            }
+                        }
+
+                        Spacer(Modifier.height(8.dp))
+
+                        // Payment number with copy
+                        val payNumber = if (selectedPaymentMethod == "bkash") "01777408383" else "01518657869"
+                        val payLabel = if (selectedPaymentMethod == "bkash") "bKash (Send Money)" else "Nagad"
+                        Row(
+                            modifier = Modifier.fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(CardBgAlt)
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(payLabel, color = TextMuted, fontSize = 11.sp)
+                                Text(payNumber, color = TextWhite, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                            }
+                            IconButton(
+                                onClick = {
+                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    clipboard.setPrimaryClip(ClipData.newPlainText("number", payNumber))
+                                    Toast.makeText(context, "Number copied!", Toast.LENGTH_SHORT).show()
+                                }
+                            ) {
+                                Icon(Icons.Filled.ContentCopy, contentDescription = "Copy", tint = Cyan, modifier = Modifier.size(20.dp))
+                            }
+                        }
+
+                        Spacer(Modifier.height(12.dp))
+
+                        // Last 4 digits input
+                        OutlinedTextField(
+                            value = lastTrxDigits,
+                            onValueChange = { if (it.length <= 4 && it.all { c -> c.isDigit() }) lastTrxDigits = it },
+                            label = { Text("Last 4 digits of TrxID", color = TextMuted) },
+                            placeholder = { Text("e.g. 8X7K", color = TextMuted.copy(alpha = 0.5f)) },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = TextWhite,
+                                unfocusedTextColor = TextWhite,
+                                focusedBorderColor = Cyan,
+                                unfocusedBorderColor = BorderSub
+                            )
+                        )
+
+                        Spacer(Modifier.height(14.dp))
+
+                        // Error / Success
+                        if (submitError != null) {
+                            Text(submitError!!, color = AccentRed, fontSize = 12.sp)
+                            Spacer(Modifier.height(6.dp))
+                        }
+                        if (submitSuccess) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = Green, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Request submitted! Check Billing for status.", color = Green, fontSize = 12.sp)
+                            }
+                            Spacer(Modifier.height(6.dp))
+                        }
+
+                        // Submit button
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(
+                                    if (isSubmitting) Brush.horizontalGradient(listOf(TextMuted, BorderSub))
+                                    else Brush.horizontalGradient(listOf(Cyan, ElectricBlue))
+                                )
+                                .clickable(enabled = !isSubmitting && lastTrxDigits.length == 4) {
+                                    scope.launch {
+                                        if (instituteId == null) {
+                                            submitError = "Institute not found. Try restarting the app."
+                                            return@launch
+                                        }
+                                        isSubmitting = true
+                                        submitError = null
+                                        try {
+                                            val request = SubscriptionRequest(
+                                                requestId = "SR-${System.currentTimeMillis()}",
+                                                instituteId = instituteId!!,
+                                                instituteName = instituteName,
+                                                ownerName = ownerName,
+                                                institutePhone = institutePhone,
+                                                requestedPlanId = selPlan.id,
+                                                durationMonths = durationMonths,
+                                                amountPaid = selPrice,
+                                                transactionLast4 = lastTrxDigits,
+                                                paymentMethod = selectedPaymentMethod,
+                                                requestSentAt = System.currentTimeMillis()
+                                            )
+                                            SubscriptionRepository().submitRequest(request)
+                                            submitSuccess = true
+                                            lastTrxDigits = ""
+                                        } catch (e: Exception) {
+                                            submitError = e.message ?: "Submission failed. Try again."
+                                        } finally {
+                                            isSubmitting = false
+                                        }
+                                    }
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (isSubmitting) {
+                                CircularProgressIndicator(color = Cyan, modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
+                            } else {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Filled.Send, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(8.dp))
+                                    Text("Submit Request", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(16.dp))
+            }
+
+            // ── WhatsApp Fallback ─────────────────────────────
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 18.dp)
+                    .height(44.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Brush.horizontalGradient(listOf(WAGreen, Teal)))
+                    .clickable {
+                        val message = "Hello Developer, I need help with subscription plans."
+                        val encoded = URLEncoder.encode(message, "UTF-8")
+                        val url = "https://wa.me/8801518657869?text=$encoded"
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.Phone, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Contact Developer on WhatsApp", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                }
+            }
+
             Spacer(Modifier.height(12.dp))
         }
     }
@@ -380,6 +594,7 @@ private fun PlanCard(
     plan: BatchFeePlan,
     price: Double,
     durationLabel: String,
+    isSelected: Boolean = false,
     onChoose: () -> Unit
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "planGlow")

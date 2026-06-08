@@ -1,5 +1,12 @@
 package com.example.ui.superadmin
 
+import android.content.Context
+import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Typeface
+import android.net.Uri
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -19,19 +26,23 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.FileProvider
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.database.AppDatabase
 import com.example.data.models.InstituteEntity
+import com.example.data.models.SubscriptionRequest
 import com.example.domain.SessionManager
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -39,6 +50,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.FileOutputStream
 import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.util.*
@@ -68,8 +81,25 @@ data class SuperAdminStats(
     val totalStaff: Int = 0
 )
 
+data class InstituteCardData(
+    val entity: InstituteEntity,
+    val studentCount: Int = 0,
+    val staffCount: Int = 0,
+    val batchCount: Int = 0
+)
+
+data class InstituteStaffSummary(
+    val id: String,
+    val fullName: String,
+    val staffCode: String,
+    val roleTitle: String,
+    val status: String,
+    val phone: String,
+    val email: String
+)
+
 class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
-    private val _institutes = MutableStateFlow<List<InstituteEntity>>(emptyList())
+    private val _institutes = MutableStateFlow<List<InstituteCardData>>(emptyList())
     val institutes = _institutes.asStateFlow()
 
     private val _stats = MutableStateFlow(SuperAdminStats())
@@ -81,19 +111,102 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
     private val _operationMsg = MutableStateFlow<String?>(null)
     val operationMsg = _operationMsg.asStateFlow()
 
+    private val _shareReceiptEvent = MutableStateFlow<Pair<Bitmap, String>?>(null)
+    val shareReceiptEvent = _shareReceiptEvent.asStateFlow()
+
     private val _lastActiveMap = MutableStateFlow<Map<String, Long>>(emptyMap())
     val lastActiveMap = _lastActiveMap.asStateFlow()
+
+    private val _pendingRequests = MutableStateFlow<List<SubscriptionRequest>>(emptyList())
+    val pendingRequests = _pendingRequests.asStateFlow()
 
     private val firestore = FirebaseFirestore.getInstance()
 
     val projectedRevenue: Double
-        get() = _stats.value.activeSubscriptions * STANDARD_MONTHLY_FEE
+        get() = _stats.value.totalRevenue
 
     init {
         loadInstitutesRealtime()
+        loadPendingRequestsRealtime()
     }
 
     fun clearOperationMsg() { _operationMsg.value = null }
+
+    private fun loadPendingRequestsRealtime() {
+        firestore.collection("subscriptionRequests")
+            .whereEqualTo("status", "pending")
+            .orderBy("requestSentAt")
+            .addSnapshotListener { snapshot, error ->
+                if (error != null || snapshot == null) return@addSnapshotListener
+                _pendingRequests.value = snapshot.documents.mapNotNull { doc ->
+                    val data = doc.data ?: return@mapNotNull null
+                    SubscriptionRequest.fromFirestore(doc.id, data)
+                }
+            }
+    }
+
+    fun approveRequest(request: SubscriptionRequest) {
+        viewModelScope.launch {
+            try {
+                android.util.Log.d("SUPERADMIN", "approveRequest: instituteId=${request.instituteId}, requestId=${request.requestId}, planId=${request.requestedPlanId}, durationMonths=${request.durationMonths}")
+                val newEnd = withContext(Dispatchers.IO) {
+                    val repo = com.example.data.repository.SubscriptionRepository(firestore)
+                    android.util.Log.d("SUPERADMIN", "approveRequest DBG: approving subscriptionRequests/${request.requestId}")
+                    repo.approveRequest(request.requestId, "sys_super_admin_1")
+                    val end = System.currentTimeMillis() + (request.durationMonths * 30L * 24 * 60 * 60 * 1000)
+                    android.util.Log.d("SUPERADMIN", "approveRequest DBG: updating institutes/${request.instituteId} → plan=${request.requestedPlanId}, end=$end")
+                    firestore.collection("institutes").document(request.instituteId)
+                        .update("currentPlanId", request.requestedPlanId, "trialEndDate", end, "isActive", true)
+                        .await()
+                    end
+                }
+                _operationMsg.value = "Approved ${request.instituteName} — ${request.requestedPlanId}"
+                // Generate receipt and trigger share
+                val receiptNumber = "SUB-${System.currentTimeMillis()}"
+                val planNames = mapOf(
+                    "plan_free_trial" to "Free Trial", "plan_starter" to "Starter",
+                    "plan_growth" to "Growth", "plan_pro" to "Pro", "plan_institute" to "Institute"
+                )
+                val planName = planNames[request.requestedPlanId] ?: request.requestedPlanId
+                val bitmap = withContext(Dispatchers.IO) {
+                    createSubscriptionReceiptBitmap(
+                        receiptNumber = receiptNumber,
+                        instituteName = request.instituteName,
+                        planName = planName,
+                        durationMonths = request.durationMonths,
+                        amountPaid = request.amountPaid,
+                        paymentMethod = request.paymentMethod,
+                        transactionLast4 = request.transactionLast4,
+                        startDateMs = System.currentTimeMillis(),
+                        endDateMs = newEnd
+                    )
+                }
+                val phone = _institutes.value.find { it.entity.id == request.instituteId }?.entity?.whatsappNumber
+                    ?: request.institutePhone
+                _shareReceiptEvent.value = Pair(bitmap, phone ?: "")
+            } catch (e: Exception) {
+                _operationMsg.value = "Approve failed: ${e.message}"
+                FirebaseCrashlytics.getInstance().recordException(e)
+            }
+        }
+    }
+
+    fun consumeShareEvent() { _shareReceiptEvent.value = null }
+
+    fun rejectRequest(request: SubscriptionRequest, note: String? = null) {
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    val repo = com.example.data.repository.SubscriptionRepository(firestore)
+                    repo.rejectRequest(request.requestId, "sys_super_admin_1", note)
+                }
+                _operationMsg.value = "Rejected ${request.instituteName}"
+            } catch (e: Exception) {
+                _operationMsg.value = "Reject failed: ${e.message}"
+                FirebaseCrashlytics.getInstance().recordException(e)
+            }
+        }
+    }
 
     private fun loadInstitutesRealtime() {
         firestore.collection("institutes")
@@ -103,7 +216,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                     return@addSnapshotListener
                 }
 
-                val list = mutableListOf<InstituteEntity>()
+                val list = mutableListOf<InstituteCardData>()
                 val activeMap = mutableMapOf<String, Long>()
                 var activeCount = 0
                 val now = System.currentTimeMillis()
@@ -119,6 +232,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                     val lastActive = data["lastActiveAt"] as? Long
                     val studentCount = (data["studentCount"] as? Long)?.toInt() ?: 0
                     val staffCount = (data["staffCount"] as? Long)?.toInt() ?: 0
+                    val batchCount = (data["batchCount"] as? Long)?.toInt() ?: 0
 
                     if (lastActive != null) activeMap[uid] = lastActive
 
@@ -132,21 +246,27 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                     if (isActive && trialEnd > now) activeCount++
 
                     list.add(
-                        InstituteEntity(
-                            id = uid,
-                            name = data["instituteName"] as? String ?: "Institute",
-                            currentPlanId = "plan_free_trial",
-                            subscriptionStatus = status,
-                            trialStartDateMs = createdAt,
-                            trialEndDateMs = trialEnd,
-                            currentPeriodEndMs = trialEnd,
-                            createdAtMs = createdAt,
-                            phone = data["phone"] as? String,
-                            whatsappNumber = data["whatsappNumber"] as? String,
-                            ownerName = data["ownerName"] as? String,
-                            email = data["email"] as? String,
-                            instituteCode = data["instituteCode"] as? String,
-                            securityPin = data["securityPin"] as? String
+                        InstituteCardData(
+                            entity = InstituteEntity(
+                                id = uid,
+                                name = data["instituteName"] as? String ?: "Institute",
+                                currentPlanId = data["currentPlanId"] as? String ?: "plan_free_trial",
+                                subscriptionStatus = status,
+                                trialStartDateMs = createdAt,
+                                trialEndDateMs = trialEnd,
+                                currentPeriodEndMs = trialEnd,
+                                createdAtMs = createdAt,
+                                phone = data["phone"] as? String,
+                                whatsappNumber = data["whatsappNumber"] as? String,
+                                profilePhotoUri = data["profilePhotoUri"] as? String,
+                                ownerName = data["ownerName"] as? String,
+                                email = data["email"] as? String,
+                                instituteCode = data["instituteCode"] as? String,
+                                securityPin = data["securityPin"] as? String
+                            ),
+                            studentCount = studentCount,
+                            staffCount = staffCount,
+                            batchCount = batchCount
                         )
                     )
                 }
@@ -158,12 +278,27 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                     ((it.data?.get("staffCount") as? Long) ?: 0L).toInt()
                 }
 
+                val actualRevenue = snapshot.documents.sumOf { doc ->
+                    val planId = doc.data?.get("currentPlanId") as? String ?: "plan_free_trial"
+                    val isAct = (doc.data?.get("isActive") as? Boolean ?: true)
+                    val end = (doc.data?.get("trialEndDate") as? Long ?: now)
+                    if (isAct && end > now) {
+                        when (planId) {
+                            "plan_starter" -> 499.0
+                            "plan_growth" -> 999.0
+                            "plan_pro" -> 1999.0
+                            "plan_institute" -> 4999.0
+                            else -> 0.0
+                        }
+                    } else 0.0
+                }
+
                 _institutes.value = list
                 _lastActiveMap.value = activeMap
                 _stats.value = SuperAdminStats(
                     totalInstitutes = list.size,
                     activeSubscriptions = activeCount,
-                    totalRevenue = activeCount * STANDARD_MONTHLY_FEE,
+                    totalRevenue = actualRevenue,
                     totalStudents = totalStudents,
                     totalStaff = totalStaff
                 )
@@ -258,6 +393,35 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
         }
     }
 
+    fun loadInstituteStaff(instituteId: String, onResult: (List<InstituteStaffSummary>) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val data = withContext(Dispatchers.IO) {
+                    firestore.collection("institutes").document(instituteId)
+                        .collection("staffs")
+                        .get().await()
+                }
+                val staffList = data.documents.mapNotNull { doc ->
+                    val d = doc.data ?: return@mapNotNull null
+                    if (d["status"] == "archived") return@mapNotNull null
+                    InstituteStaffSummary(
+                        id = doc.id,
+                        fullName = d["fullName"] as? String ?: "N/A",
+                        staffCode = d["staffCode"] as? String ?: "",
+                        roleTitle = d["roleTitle"] as? String ?: "N/A",
+                        status = d["status"] as? String ?: "active",
+                        phone = d["phone"] as? String ?: "",
+                        email = d["email"] as? String ?: ""
+                    )
+                }.sortedBy { it.fullName }
+                onResult(staffList)
+            } catch (e: Exception) {
+                FirebaseCrashlytics.getInstance().recordException(e)
+                onResult(emptyList())
+            }
+        }
+    }
+
     fun lastActiveLabel(instituteId: String): String {
         val ts = _lastActiveMap.value[instituteId] ?: return "Never"
         val diff = System.currentTimeMillis() - ts
@@ -295,7 +459,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                     firestore.collection("institutes").document(instituteId)
                         .update("securityPin", pin).await()
                 }
-                _operationMsg.value = "Security PIN updated to $pin"
+                _operationMsg.value = "Security PIN updated"
             } catch (e: Exception) {
                 _operationMsg.value = "Failed: ${e.message}"
             }
@@ -317,6 +481,7 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
     val viewModel: SuperAdminViewModel = viewModel(factory = SuperAdminViewModelFactory(db))
     val institutes by viewModel.institutes.collectAsState()
     val stats by viewModel.stats.collectAsState()
+    val pendingRequests by viewModel.pendingRequests.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val operationMsg by viewModel.operationMsg.collectAsState()
     val projected = viewModel.projectedRevenue
@@ -327,6 +492,22 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
     }
 
     var announceText by remember { mutableStateOf("") }
+    var searchQuery by remember { mutableStateOf("") }
+    var statusFilter by remember { mutableStateOf("all") }
+
+    val filteredInstitutes = remember(institutes, searchQuery, statusFilter) {
+        institutes.filter { card ->
+            val inst = card.entity
+            val matchesSearch = searchQuery.isBlank() ||
+                inst.name.contains(searchQuery, ignoreCase = true) ||
+                (inst.instituteCode?.contains(searchQuery, ignoreCase = true) ?: false) ||
+                (inst.ownerName?.contains(searchQuery, ignoreCase = true) ?: false) ||
+                (inst.phone?.contains(searchQuery) ?: false) ||
+                (inst.email?.contains(searchQuery, ignoreCase = true) ?: false)
+            val matchesFilter = statusFilter == "all" || inst.subscriptionStatus == statusFilter
+            matchesSearch && matchesFilter
+        }
+    }
 
     Scaffold(
         containerColor = BgColor,
@@ -451,21 +632,158 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
                 }
             }
 
+            // ── Pending Requests ──
+            if (pendingRequests.isNotEmpty()) {
+                item {
+                    Spacer(Modifier.height(4.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Text("Pending Requests · ${pendingRequests.size}", color = AccentAmber, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                    Spacer(Modifier.height(6.dp))
+                }
+                items(pendingRequests) { req ->
+                    Card(
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = CardBg),
+                        border = BorderStroke(1.dp, AccentAmber.copy(alpha = 0.3f))
+                    ) {
+                        Column(Modifier.padding(14.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(req.instituteName, color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                                Box(Modifier.clip(RoundedCornerShape(6.dp)).background(AccentAmber.copy(alpha = 0.15f)).padding(horizontal = 8.dp, vertical = 2.dp)) {
+                                    Text(req.status.uppercase(), color = AccentAmber, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                            Spacer(Modifier.height(4.dp))
+                            Text("${req.requestedPlanId} · ${req.durationMonths} Month(s) · BDT ${"%.0f".format(req.amountPaid)}", color = TextMuted, fontSize = 12.sp)
+                            Text("${req.paymentMethod} · TrxID: ***${req.transactionLast4} · ${req.ownerName}", color = TextMuted, fontSize = 11.sp)
+                            Spacer(Modifier.height(10.dp))
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+                                var rejectNote by remember { mutableStateOf("") }
+                                var showRejectDialog by remember { mutableStateOf(false) }
+                                OutlinedButton(
+                                    onClick = { showRejectDialog = true },
+                                    shape = RoundedCornerShape(8.dp),
+                                    border = ButtonDefaults.outlinedButtonBorder,
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentRed)
+                                ) { Text("Reject", fontSize = 12.sp) }
+                                Spacer(Modifier.width(8.dp))
+                                Button(
+                                    onClick = { viewModel.approveRequest(req) },
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = AccentGreen)
+                                ) { Text("Approve", fontSize = 12.sp, color = Color.Black) }
+                                if (showRejectDialog) {
+                                    AlertDialog(
+                                        onDismissRequest = { showRejectDialog = false },
+                                        title = { Text("Reject ${req.instituteName}?", color = TextWhite) },
+                                        text = {
+                                            OutlinedTextField(
+                                                value = rejectNote, onValueChange = { rejectNote = it },
+                                                placeholder = { Text("Reason (optional)", color = TextMuted) },
+                                                modifier = Modifier.fillMaxWidth(),
+                                                colors = OutlinedTextFieldDefaults.colors(focusedTextColor = TextWhite, unfocusedTextColor = TextWhite)
+                                            )
+                                        },
+                                        confirmButton = {
+                                            Button(onClick = { viewModel.rejectRequest(req, rejectNote.ifBlank { null }); showRejectDialog = false }) {
+                                                Text("Reject")
+                                            }
+                                        },
+                                        dismissButton = {
+                                            TextButton(onClick = { showRejectDialog = false }) { Text("Cancel") }
+                                        },
+                                        containerColor = CardBg
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             // ── Institute list ──
             item {
                 Spacer(Modifier.height(4.dp))
-                Text("All Institutes · ${institutes.size}", color = TextMuted, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text("All Institutes · ${filteredInstitutes.size}", color = TextMuted, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    if (searchQuery.isNotBlank() || statusFilter != "all") {
+                        TextButton(onClick = { searchQuery = ""; statusFilter = "all" }) {
+                            Text("Clear", color = AccentCyan, fontSize = 12.sp)
+                        }
+                    }
+                }
             }
 
-            if (institutes.isEmpty()) {
+            // ── Search bar ──
+            item {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = { Text("Search by name, code, owner, phone, email...", color = TextMuted.copy(alpha = 0.5f), fontSize = 13.sp) },
+                    leadingIcon = { Icon(Icons.Filled.Search, null, tint = TextMuted, modifier = Modifier.size(20.dp)) },
+                    trailingIcon = if (searchQuery.isNotBlank()) {
+                        { IconButton(onClick = { searchQuery = "" }) { Icon(Icons.Filled.Close, null, tint = TextMuted, modifier = Modifier.size(18.dp)) } }
+                    } else null,
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = CardBg, unfocusedContainerColor = CardBg,
+                        focusedBorderColor = AccentCyan, unfocusedBorderColor = BorderSub,
+                        focusedTextColor = TextWhite, unfocusedTextColor = TextWhite,
+                        cursorColor = AccentCyan
+                    )
+                )
+            }
+
+            // ── Filter chips ──
+            item {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val filters = listOf(
+                        "all" to "All",
+                        "trial" to "Trial",
+                        "active" to "Active",
+                        "expired" to "Expired",
+                        "blocked" to "Blocked"
+                    )
+                    filters.forEach { (key, label) ->
+                        val selected = statusFilter == key
+                        val chipColor = when (key) {
+                            "trial" -> AccentCyan; "active" -> AccentGreen; "expired" -> AccentRed; "blocked" -> AccentAmber; else -> TextMuted
+                        }
+                        FilterChip(
+                            selected = selected,
+                            onClick = { statusFilter = if (selected) "all" else key },
+                            label = {
+                                Text(label, fontSize = 11.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (selected) chipColor else TextMuted)
+                            },
+                            colors = FilterChipDefaults.filterChipColors(
+                                containerColor = CardBg,
+                                selectedContainerColor = chipColor.copy(alpha = 0.15f)
+                            ),
+                            border = FilterChipDefaults.filterChipBorder(
+                                borderColor = if (selected) chipColor.copy(alpha = 0.5f) else BorderSub,
+                                selectedBorderColor = chipColor.copy(alpha = 0.5f),
+                                enabled = true, selected = selected
+                            ),
+                            shape = RoundedCornerShape(8.dp)
+                        )
+                    }
+                }
+            }
+
+            if (filteredInstitutes.isEmpty()) {
                 item {
                     Box(Modifier.fillMaxWidth().padding(vertical = 24.dp), contentAlignment = Alignment.Center) {
-                        Text("No institutes registered yet.", color = TextMuted, fontSize = 14.sp)
+                        Text(if (searchQuery.isNotBlank() || statusFilter != "all") "No institutes match your filters." else "No institutes registered yet.",
+                            color = TextMuted, fontSize = 14.sp)
                     }
                 }
             } else {
-                items(institutes, key = { it.id }) { inst ->
-                    InstituteCard(inst, viewModel)
+                items(filteredInstitutes, key = { it.entity.id }) { card ->
+                    InstituteCard(card, viewModel)
                 }
             }
 
@@ -511,6 +829,7 @@ private fun ProjectedRevenueCard(amount: Double, activeCount: Int) {
     val pulseAnim = rememberInfiniteTransition()
     val glowAlpha by pulseAnim.animateFloat(0.4f, 0.7f, infiniteRepeatable(tween(1500), RepeatMode.Reverse))
     val trendLine by pulseAnim.animateFloat(0.55f, 1f, infiniteRepeatable(tween(1800), RepeatMode.Reverse))
+    val avgFee = if (activeCount > 0) amount / activeCount else 499.0
 
     Card(
         shape = RoundedCornerShape(14.dp),
@@ -530,7 +849,7 @@ private fun ProjectedRevenueCard(amount: Double, activeCount: Int) {
                         color = TextWhite, fontSize = 28.sp, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(4.dp))
                     Text("Expected Next Month Revenue", color = TextMuted, fontSize = 13.sp)
-                    Text("Based on $activeCount active subscriptions × BDT ${NumberFormat.getNumberInstance(Locale.getDefault()).format(STANDARD_MONTHLY_FEE.toInt())}",
+                    Text("Based on $activeCount active subscriptions × avg BDT ${NumberFormat.getNumberInstance(Locale.getDefault()).format(avgFee.toInt())}",
                         color = TextMuted.copy(alpha = 0.6f), fontSize = 11.sp)
                 }
                 Box(Modifier.size(48.dp).clip(RoundedCornerShape(14.dp)).background(AccentViolet.copy(alpha = 0.12f)), contentAlignment = Alignment.Center) {
@@ -553,7 +872,16 @@ private fun ProjectedRevenueCard(amount: Double, activeCount: Int) {
 
 // ── Institute Card ────────────────────────────────────────────
 @Composable
-private fun InstituteCard(inst: InstituteEntity, viewModel: SuperAdminViewModel) {
+private fun DetailRow(label: String, value: String, color: Color = TextMuted) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 2.dp)) {
+        Text("$label:", color = TextMuted.copy(alpha = 0.6f), fontSize = 12.sp, modifier = Modifier.width(80.dp))
+        Text(value, color = color, fontSize = 12.sp)
+    }
+}
+
+@Composable
+private fun InstituteCard(card: InstituteCardData, viewModel: SuperAdminViewModel) {
+    val inst = card.entity
     val dateFormat = remember { SimpleDateFormat("dd MMM yyyy", Locale.getDefault()) }
     val statusColor = when (inst.subscriptionStatus) {
         "active" -> AccentGreen; "trial" -> AccentCyan; "expired" -> AccentRed; "blocked" -> AccentAmber; else -> TextMuted
@@ -563,8 +891,13 @@ private fun InstituteCard(inst: InstituteEntity, viewModel: SuperAdminViewModel)
     var showExtendDialog by remember { mutableStateOf(false) }
     var extendDays by remember { mutableStateOf("30") }
     var showManageDialog by remember { mutableStateOf(false) }
+    var showDetailSheet by remember { mutableStateOf(false) }
 
-    Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = CardBg)) {
+    Card(
+        Modifier.fillMaxWidth().clickable { showDetailSheet = true },
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = CardBg)
+    ) {
         Column(Modifier.padding(16.dp)) {
             // Header row
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -591,7 +924,7 @@ private fun InstituteCard(inst: InstituteEntity, viewModel: SuperAdminViewModel)
                 }
             }
 
-            // Contact Info + Subscription
+            // Contact Info + Counts
             Spacer(Modifier.height(10.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -643,18 +976,24 @@ private fun InstituteCard(inst: InstituteEntity, viewModel: SuperAdminViewModel)
                             Text("Inactive", color = AccentRed.copy(alpha = 0.7f), fontSize = 10.sp)
                         }
                     }
+                }
+            }
+
+            // ── Per-institute counts ──
+            Spacer(Modifier.height(8.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Box(Modifier.clip(RoundedCornerShape(6.dp)).background(AccentCyan.copy(alpha = 0.12f)).padding(horizontal = 10.dp, vertical = 4.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Filled.Visibility, null, tint = TextMuted.copy(alpha = 0.5f), modifier = Modifier.size(13.dp))
+                        Icon(Icons.Filled.People, null, tint = AccentCyan, modifier = Modifier.size(13.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text("ID: ${inst.id.take(8)}...", color = TextMuted.copy(alpha = 0.5f), fontSize = 10.sp)
+                        Text("${card.studentCount} students", color = AccentCyan, fontSize = 11.sp, fontWeight = FontWeight.Medium)
                     }
-                    if (!inst.securityPin.isNullOrBlank()) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Filled.Key, null, tint = AccentAmber.copy(alpha = 0.7f), modifier = Modifier.size(13.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("PIN: ${inst.securityPin}", color = AccentAmber.copy(alpha = 0.7f), fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                        }
-                    }
+                }
+                Box(Modifier.clip(RoundedCornerShape(6.dp)).background(AccentPink.copy(alpha = 0.12f)).padding(horizontal = 10.dp, vertical = 4.dp)) {
+                    Text("${card.staffCount} staff", color = AccentPink, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                }
+                Box(Modifier.clip(RoundedCornerShape(6.dp)).background(AccentViolet.copy(alpha = 0.12f)).padding(horizontal = 10.dp, vertical = 4.dp)) {
+                    Text("${card.batchCount} batches", color = AccentViolet, fontSize = 11.sp, fontWeight = FontWeight.Medium)
                 }
             }
 
@@ -762,6 +1101,164 @@ private fun InstituteCard(inst: InstituteEntity, viewModel: SuperAdminViewModel)
                 }
             }
         }
+    }
+
+    // ── Detail Sheet ──
+    if (showDetailSheet) {
+        val planPrices = remember { mapOf(
+            "plan_free_trial" to 0.0, "plan_starter" to 499.0, "plan_growth" to 999.0,
+            "plan_pro" to 1999.0, "plan_institute" to 4999.0
+        )}
+        val planPrice = planPrices[inst.currentPlanId] ?: 500.0
+
+        AlertDialog(
+            onDismissRequest = { showDetailSheet = false },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(40.dp).clip(RoundedCornerShape(10.dp)).background(
+                        Brush.linearGradient(listOf(AccentViolet.copy(alpha = 0.3f), ElectricBlue.copy(alpha = 0.15f)))),
+                        contentAlignment = Alignment.Center
+                    ) { Text(inst.name.take(2).uppercase(), color = AccentViolet, fontSize = 16.sp, fontWeight = FontWeight.Bold) }
+                    Spacer(Modifier.width(10.dp))
+                    Column {
+                        Text(inst.name, color = TextWhite, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        if (!inst.instituteCode.isNullOrBlank()) Text(inst.instituteCode, color = AccentViolet, fontSize = 12.sp)
+                    }
+                }
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    // Stats row
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Box(Modifier.weight(1f).clip(RoundedCornerShape(10.dp)).background(AccentCyan.copy(alpha = 0.1f)).padding(12.dp), contentAlignment = Alignment.Center) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("${card.studentCount}", color = AccentCyan, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                                Text("Students", color = AccentCyan.copy(alpha = 0.7f), fontSize = 10.sp)
+                            }
+                        }
+                        Box(Modifier.weight(1f).clip(RoundedCornerShape(10.dp)).background(AccentPink.copy(alpha = 0.1f)).padding(12.dp), contentAlignment = Alignment.Center) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("${card.staffCount}", color = AccentPink, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                                Text("Staff", color = AccentPink.copy(alpha = 0.7f), fontSize = 10.sp)
+                            }
+                        }
+                        Box(Modifier.weight(1f).clip(RoundedCornerShape(10.dp)).background(AccentViolet.copy(alpha = 0.1f)).padding(12.dp), contentAlignment = Alignment.Center) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("${card.batchCount}", color = AccentViolet, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                                Text("Batches", color = AccentViolet.copy(alpha = 0.7f), fontSize = 10.sp)
+                            }
+                        }
+                    }
+
+                    HorizontalDivider(color = BorderSub)
+
+                    // Details
+                    DetailRow("Owner", inst.ownerName ?: "N/A")
+                    DetailRow("Phone", inst.phone ?: "N/A")
+                    DetailRow("WhatsApp", inst.whatsappNumber ?: "N/A")
+                    DetailRow("Email", inst.email ?: "N/A")
+                    DetailRow("Plan", "${inst.currentPlanId} (BDT ${NumberFormat.getNumberInstance(Locale.getDefault()).format(planPrice.toInt())})")
+                    DetailRow("Status", inst.subscriptionStatus.replaceFirstChar { it.uppercase() }, when (inst.subscriptionStatus) {
+                        "active" -> AccentGreen; "trial" -> AccentCyan; "expired" -> AccentRed; "blocked" -> AccentAmber; else -> TextMuted
+                    })
+                    DetailRow("Expiry", dateFormat.format(Date(inst.trialEndDateMs)))
+                    DetailRow("Joined", dateFormat.format(Date(inst.createdAtMs)))
+                    DetailRow("Last Active", lastActive)
+                    DetailRow("Institute ID", inst.id.take(12))
+                    if (!inst.securityPin.isNullOrBlank()) {
+                        var revealPin by remember { mutableStateOf(false) }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Filled.Key, null, tint = AccentAmber.copy(alpha = 0.7f), modifier = Modifier.size(14.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("PIN:", color = TextMuted, fontSize = 12.sp, modifier = Modifier.width(48.dp))
+                            if (revealPin) {
+                                Text(inst.securityPin, color = AccentAmber, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                IconButton(onClick = { revealPin = false }, modifier = Modifier.size(20.dp)) {
+                                    Icon(Icons.Filled.VisibilityOff, null, tint = TextMuted, modifier = Modifier.size(14.dp))
+                                }
+                            } else {
+                                Text("••••••", color = TextMuted, fontSize = 12.sp)
+                                IconButton(onClick = { revealPin = true }, modifier = Modifier.size(20.dp)) {
+                                    Icon(Icons.Filled.Visibility, null, tint = AccentAmber, modifier = Modifier.size(14.dp))
+                                }
+                            }
+                        }
+                    }
+
+                    // ── Staff list (fetched from Firestore) ──
+                    var staffList by remember { mutableStateOf<List<InstituteStaffSummary>?>(null) }
+                    LaunchedEffect(inst.id) { viewModel.loadInstituteStaff(inst.id) { staffList = it } }
+
+                    HorizontalDivider(color = BorderSub)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.People, null, tint = AccentPink.copy(alpha = 0.7f), modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Staff (${staffList?.size ?: 0})", color = AccentPink, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    }
+                    when {
+                        staffList == null -> {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp).align(Alignment.CenterHorizontally),
+                                strokeWidth = 2.dp, color = AccentPink
+                            )
+                        }
+                        staffList!!.isEmpty() -> Text("No staff found", color = TextMuted, fontSize = 12.sp)
+                        else -> {
+                            staffList!!.take(10).forEach { s ->
+                                Row(
+                                    Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Box(
+                                        Modifier.size(28.dp).clip(RoundedCornerShape(8.dp))
+                                            .background(AccentPink.copy(alpha = 0.15f)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(s.fullName.take(1).uppercase(), color = AccentPink, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                    Spacer(Modifier.width(8.dp))
+                                    Column(Modifier.weight(1f)) {
+                                        Text(s.fullName, color = TextWhite, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                                        Text("${s.roleTitle} · ${s.staffCode}", color = TextMuted, fontSize = 10.sp)
+                                    }
+                                    Box(
+                                        Modifier.clip(RoundedCornerShape(4.dp)).background(
+                                            when (s.status) {
+                                                "active" -> AccentGreen; "suspended" -> AccentAmber; else -> AccentRed
+                                            }.copy(alpha = 0.15f)
+                                        ).padding(horizontal = 6.dp, vertical = 2.dp)
+                                    ) {
+                                        Text(
+                                            s.status.replaceFirstChar { it.uppercase() }, fontSize = 9.sp,
+                                            color = when (s.status) { "active" -> AccentGreen; "suspended" -> AccentAmber; else -> AccentRed }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    OutlinedButton(onClick = {
+                        showDetailSheet = false
+                        showExtendDialog = true
+                    }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(8.dp)) {
+                        Text("Extend", fontSize = 12.sp, color = AccentCyan)
+                    }
+                    OutlinedButton(onClick = {
+                        showDetailSheet = false
+                        showManageDialog = true
+                    }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(8.dp)) {
+                        Text("Manage", fontSize = 12.sp, color = AccentViolet)
+                    }
+                }
+            },
+            dismissButton = { TextButton(onClick = { showDetailSheet = false }) { Text("Close", color = TextMuted) } },
+            containerColor = CardBg,
+            shape = RoundedCornerShape(16.dp)
+        )
     }
 
     // Extend Dialog
@@ -938,5 +1435,133 @@ private fun InstituteCard(inst: InstituteEntity, viewModel: SuperAdminViewModel)
             },
             dismissButton = { TextButton(onClick = { showManageDialog = false }) { Text("Cancel", color = TextMuted) } }
         )
+    }
+
+    // ── Share receipt event ──────────────────────────────
+    val context = LocalContext.current
+    val shareEvent by viewModel.shareReceiptEvent.collectAsState()
+    LaunchedEffect(shareEvent) {
+        shareEvent?.let { (bitmap, phone) ->
+            shareSubscriptionReceipt(context, bitmap, phone)
+            viewModel.consumeShareEvent()
+        }
+    }
+}
+
+// ── Subscription Receipt Bitmap (Canvas) ──────────────────
+private fun createSubscriptionReceiptBitmap(
+    receiptNumber: String,
+    instituteName: String,
+    planName: String,
+    durationMonths: Int,
+    amountPaid: Double,
+    paymentMethod: String,
+    transactionLast4: String,
+    startDateMs: Long,
+    endDateMs: Long
+): Bitmap {
+    val w = 600; val h = 800
+    val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+    val c = Canvas(bmp)
+    val dateFmt = SimpleDateFormat("dd MMM yyyy", Locale.getDefault())
+    val darkBg = android.graphics.Color.parseColor("#0F172A")
+    val white = android.graphics.Color.WHITE
+    val muted = android.graphics.Color.parseColor("#94A3B8")
+    val cyan = android.graphics.Color.parseColor("#22D3EE")
+    val dark = android.graphics.Color.parseColor("#1E293B")
+    val textDark = android.graphics.Color.parseColor("#0F172A")
+
+    // White background
+    c.drawColor(white)
+
+    // ── Header bar ──
+    val headerBg = Paint().apply { color = darkBg }
+    c.drawRect(0f, 0f, w.toFloat(), 120f, headerBg)
+
+    // BF logo circle
+    val logoBg = Paint().apply { color = cyan; isAntiAlias = true }
+    c.drawCircle(50f, 60f, 28f, logoBg)
+    val logoTxt = Paint().apply { color = darkBg; textSize = 28f; typeface = Typeface.DEFAULT_BOLD; isAntiAlias = true; textAlign = Paint.Align.CENTER }
+    c.drawText("BF", 50f, 72f, logoTxt)
+
+    // Institute name
+    val headerName = Paint().apply { color = white; textSize = 22f; typeface = Typeface.DEFAULT_BOLD; isAntiAlias = true }
+    c.drawText(instituteName, 95f, 50f, headerName)
+    // Subtitle
+    val headerSub = Paint().apply { color = muted; textSize = 13f; isAntiAlias = true }
+    c.drawText("BatchFee Subscription", 95f, 70f, headerSub)
+    c.drawText("Management Platform", 95f, 88f, headerSub)
+
+    // ── Title ──
+    val titlePaint = Paint().apply { color = darkBg; textSize = 26f; typeface = Typeface.DEFAULT_BOLD; isAntiAlias = true; textAlign = Paint.Align.CENTER }
+    c.drawText("SUBSCRIPTION RECEIPT", w / 2f, 160f, titlePaint)
+
+    val lbl = Paint().apply { color = muted; textSize = 18f; isAntiAlias = true }
+    val vlu = Paint().apply { color = darkBg; textSize = 20f; typeface = Typeface.DEFAULT_BOLD; isAntiAlias = true }
+    val div = Paint().apply { color = android.graphics.Color.parseColor("#E2E8F0"); strokeWidth = 1.5f }
+
+    var y = 210f; val lh = 44f; val c1 = 40f; val c2 = 220f
+
+    // Receipt number + date
+    c.drawText("Receipt #", c1, y, lbl)
+    c.drawText(receiptNumber, c2, y, vlu); y += lh
+    c.drawText("Date", c1, y, lbl)
+    c.drawText(dateFmt.format(Date(startDateMs)), c2, y, vlu); y += lh + 10f
+    c.drawLine(c1, y, w - 40f, y, div); y += 24f
+
+    // ── Plan details ──
+    c.drawText("Plan", c1, y, lbl)
+    c.drawText(planName, c2, y, vlu); y += lh
+    c.drawText("Duration", c1, y, lbl)
+    c.drawText("${durationMonths} Month(s)", c2, y, vlu); y += lh
+    c.drawText("Period", c1, y, lbl)
+    c.drawText("${dateFmt.format(Date(startDateMs))} - ${dateFmt.format(Date(endDateMs))}", c2, y, Paint().apply { color = darkBg; textSize = 17f; isAntiAlias = true }); y += lh + 10f
+    c.drawLine(c1, y, w - 40f, y, div); y += 24f
+
+    // ── Payment ──
+    c.drawText("Amount Paid", c1, y, lbl)
+    c.drawText("BDT ${"%,.0f".format(amountPaid)}", c2, y, Paint().apply { color = cyan; textSize = 26f; typeface = Typeface.DEFAULT_BOLD; isAntiAlias = true }); y += lh + 8f
+    c.drawText("Method", c1, y, lbl)
+    c.drawText(paymentMethod.uppercase(), c2, y, vlu); y += lh
+    c.drawText("Transaction", c1, y, lbl)
+    c.drawText("***$transactionLast4", c2, y, vlu); y += lh + 10f
+    c.drawLine(c1, y, w - 40f, y, div); y += 24f
+
+    // ── Expiry ──
+    c.drawText("Expiry Date", c1, y, lbl)
+    c.drawText(dateFmt.format(Date(endDateMs)), c2, y, Paint().apply { color = android.graphics.Color.parseColor("#F87171"); textSize = 20f; typeface = Typeface.DEFAULT_BOLD; isAntiAlias = true }); y += lh + 10f
+
+    // ── Footer ──
+    c.drawLine(c1, y, w - 40f, y, div); y += 30f
+    val foot = Paint().apply { color = muted; textSize = 14f; isAntiAlias = true; textAlign = Paint.Align.CENTER }
+    c.drawText("Generated by BatchFee Super Admin", w / 2f, y, foot); y += 22f
+    c.drawText("This is a computer-generated receipt.", w / 2f, y, foot)
+
+    return bmp
+}
+
+private fun shareSubscriptionReceipt(context: Context, bitmap: Bitmap, phone: String?) {
+    val cleanPhone = phone?.replace("+", "")?.replace(" ", "")?.replace("-", "")?.takeIf { it.isNotBlank() }
+    val file = File(context.cacheDir, "sub_receipt_${System.currentTimeMillis()}.png")
+    FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+    val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+    val intent = Intent(Intent.ACTION_SEND).apply {
+        type = "image/png"
+        putExtra(Intent.EXTRA_STREAM, uri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        `package` = "com.whatsapp"
+        if (cleanPhone != null) {
+            putExtra("jid", "${cleanPhone}@s.whatsapp.net")
+        }
+    }
+    try {
+        context.startActivity(Intent.createChooser(intent, "Share Subscription Receipt"))
+    } catch (_: Exception) {
+        // Fallback: generic share
+        context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+            type = "image/png"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }, "Share Receipt"))
     }
 }

@@ -99,7 +99,16 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
     private val _staffName = MutableStateFlow("")
     val staffName = _staffName.asStateFlow()
 
+    private val _selectedDateMs = MutableStateFlow(startOfDay(System.currentTimeMillis()))
+    val selectedDateMs = _selectedDateMs.asStateFlow()
+
     init { loadBatches() }
+
+    fun selectDate(dateMs: Long) {
+        _selectedDateMs.value = startOfDay(dateMs)
+    }
+
+    fun isToday(dateMs: Long): Boolean = startOfDay(dateMs) == startOfDay(System.currentTimeMillis())
 
     private fun isAdmin() = SessionManager.isAdmin()
     private fun isStaff() = SessionManager.isStaff()
