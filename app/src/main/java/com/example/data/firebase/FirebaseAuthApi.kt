@@ -14,6 +14,7 @@ import java.util.concurrent.TimeUnit
 object FirebaseAuthApi {
     private const val API_KEY = "AIzaSyD5Ksi9vr0jJjD5cKZ4okpEKmBgK2OVzTI"
     private const val SIGN_UP_URL = "https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=$API_KEY"
+    private const val SIGN_IN_URL = "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=$API_KEY"
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -68,6 +69,40 @@ object FirebaseAuthApi {
                     ?.replaceFirstChar { it.uppercase() }
                     ?: "Unknown error (${response.code})"
                 FirebaseCrashlytics.getInstance().log("Firebase signUp failed: $message")
+                throw SignUpException(message)
+            }
+        }
+    }
+
+    /**
+     * Signs in via REST API to fetch the real Firebase Auth UID without
+     * affecting the SDK auth session. Returns the UID (localId).
+     * Throws [SignUpException] on failure.
+     */
+    suspend fun signInWithPassword(email: String, password: String): String {
+        return withContext(Dispatchers.IO) {
+            val requestBody = moshi.adapter(SignUpRequest::class.java)
+                .toJson(SignUpRequest(email = email, password = password, returnSecureToken = false))
+            val request = Request.Builder()
+                .url(SIGN_IN_URL)
+                .post(requestBody.toRequestBody("application/json".toMediaType()))
+                .build()
+            val response = client.newCall(request).execute()
+
+            if (response.isSuccessful) {
+                val body = response.body?.string() ?: throw SignUpException("Empty response from Firebase")
+                val parsed = moshi.adapter(SignUpResponse::class.java).fromJson(body)
+                parsed?.localId ?: throw SignUpException("No localId in Firebase response")
+            } else {
+                val errorBody = response.body?.string() ?: ""
+                val error = try {
+                    moshi.adapter(FirebaseError::class.java).fromJson(errorBody)
+                } catch (_: Exception) { null }
+                val message = error?.error?.message
+                    ?.replace("_", " ")
+                    ?.replaceFirstChar { it.uppercase() }
+                    ?: "Unknown error (${response.code})"
+                FirebaseCrashlytics.getInstance().log("Firebase signIn failed: $message")
                 throw SignUpException(message)
             }
         }

@@ -13,6 +13,7 @@ import com.example.data.models.InstituteEntity
 import com.example.data.models.SubscriptionPlanEntity
 import com.example.data.models.UserEntity
 import com.example.domain.PasswordHasher
+import com.example.data.firebase.FirebaseAuthApi
 import com.google.firebase.crashlytics.FirebaseCrashlytics
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -173,9 +174,18 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        // Cached real Firebase Auth UIDs — resolved once per process lifetime
+        @Volatile
+        var realAdminUid: String? = null
+        @Volatile
+        var realOwnerUid: String? = null
+
         suspend fun ensureDemoDataSeeded(db: AppDatabase) {
             withContext(Dispatchers.IO) {
                 try {
+                    // Always ensure Firebase Auth accounts exist and capture real UIDs
+                    ensureFirebaseAuthAccounts()
+
                     val user = db.userDao().getUserByEmail("admin@batchfee.app")
                     if (user == null) {
                         populateInitialPlans(db.subscriptionPlanDao())
@@ -183,7 +193,107 @@ abstract class AppDatabase : RoomDatabase() {
                         populateDemoData(db)
                     }
                 } catch (e: Exception) {
-                    e.printStackTrace()
+                    FirebaseCrashlytics.getInstance().recordException(e)
+                }
+            }
+        }
+
+        private suspend fun ensureFirebaseAuthAccounts() {
+            // ── SuperAdmin ──
+            try {
+                realAdminUid = FirebaseAuthApi.createUser("admin@batchfee.app", "123456")
+                // Always write/update Firestore doc at the real UID so isSuperAdmin() works
+                try {
+                    com.google.firebase.firestore.FirebaseFirestore.getInstance()
+                        .collection("institutes")
+                        .document(realAdminUid!!)
+                        .set(
+                            mapOf(
+                                "instituteName" to "BatchFee System",
+                                "role" to "SuperAdmin",
+                                "email" to "admin@batchfee.app",
+                                "createdAt" to System.currentTimeMillis(),
+                                "isActive" to true
+                            ),
+                            com.google.firebase.firestore.SetOptions.merge()
+                        ).await()
+                } catch (e: Exception) {
+                    FirebaseCrashlytics.getInstance().recordException(e)
+                }
+            } catch (e: Exception) {
+                if ((e.message ?: "").contains("EMAIL_EXISTS", ignoreCase = true)) {
+                    // Account already exists — resolve its real UID via sign-in
+                    try {
+                        realAdminUid = FirebaseAuthApi.signInWithPassword("admin@batchfee.app", "123456")
+                        // Ensure Firestore doc exists at the real UID
+                        try {
+                            com.google.firebase.firestore.FirebaseFirestore.getInstance()
+                                .collection("institutes")
+                                .document(realAdminUid!!)
+                                .set(
+                                    mapOf(
+                                        "instituteName" to "BatchFee System",
+                                        "role" to "SuperAdmin",
+                                        "email" to "admin@batchfee.app",
+                                        "isActive" to true
+                                    ),
+                                    com.google.firebase.firestore.SetOptions.merge()
+                                ).await()
+                        } catch (_: Exception) { }
+                    } catch (_: Exception) { }
+                } else {
+                    FirebaseCrashlytics.getInstance().recordException(e)
+                }
+            }
+
+            // ── Demo Owner ──
+            try {
+                realOwnerUid = FirebaseAuthApi.createUser("owner@batchfee.app", "123456")
+                try {
+                    com.google.firebase.firestore.FirebaseFirestore.getInstance()
+                        .collection("institutes")
+                        .document(realOwnerUid!!)
+                        .set(
+                            mapOf(
+                                "instituteName" to "BatchFee Demo Institute",
+                                "instituteCode" to "BGS-100",
+                                "ownerName" to "Demo Owner",
+                                "email" to "owner@batchfee.app",
+                                "role" to "owner",
+                                "createdAt" to System.currentTimeMillis(),
+                                "isActive" to true,
+                                "trialEndDate" to (System.currentTimeMillis() + 30L * 24 * 60 * 60 * 1000),
+                                "studentCount" to 0,
+                                "staffCount" to 0
+                            ),
+                            com.google.firebase.firestore.SetOptions.merge()
+                        ).await()
+                } catch (e: Exception) {
+                    FirebaseCrashlytics.getInstance().recordException(e)
+                }
+            } catch (e: Exception) {
+                if ((e.message ?: "").contains("EMAIL_EXISTS", ignoreCase = true)) {
+                    try {
+                        realOwnerUid = FirebaseAuthApi.signInWithPassword("owner@batchfee.app", "123456")
+                        try {
+                            com.google.firebase.firestore.FirebaseFirestore.getInstance()
+                                .collection("institutes")
+                                .document(realOwnerUid!!)
+                                .set(
+                                    mapOf(
+                                        "instituteName" to "BatchFee Demo Institute",
+                                        "instituteCode" to "BGS-100",
+                                        "ownerName" to "Demo Owner",
+                                        "email" to "owner@batchfee.app",
+                                        "role" to "owner",
+                                        "isActive" to true
+                                    ),
+                                    com.google.firebase.firestore.SetOptions.merge()
+                                ).await()
+                        } catch (_: Exception) { }
+                    } catch (_: Exception) { }
+                } else {
+                    FirebaseCrashlytics.getInstance().recordException(e)
                 }
             }
         }
@@ -235,9 +345,13 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         suspend fun populateSuperAdmin(userDao: UserDao, instituteDao: InstituteDao) {
+            // Use real Firebase Auth UIDs instead of hardcoded fake IDs
+            val adminUid = realAdminUid ?: "sys_super_admin_1"
+            val ownerUid = realOwnerUid ?: "demo_institute_1"
+
             userDao.insertUser(
                 UserEntity(
-                    id = "sys_super_admin_1",
+                    id = adminUid,
                     instituteId = null,
                     name = "System Admin",
                     email = "admin@batchfee.app",
@@ -247,22 +361,11 @@ abstract class AppDatabase : RoomDatabase() {
                 )
             )
 
-            // Create Firebase Auth account so isSuperAdmin() security rule works
-            // (isSuperAdmin checks request.auth.uid — must have an active Firebase Auth session)
-            try {
-                com.example.data.firebase.FirebaseAuthApi.createUser("admin@batchfee.app", "123456")
-            } catch (e: Exception) {
-                // EMAIL_EXISTS is expected on second run — user already created
-                if ((e.message ?: "").contains("EMAIL_EXISTS", ignoreCase = true).not()) {
-                    FirebaseCrashlytics.getInstance().recordException(e)
-                }
-            }
-
-            // Write SuperAdmin doc to Firestore so security rules isSuperAdmin() works
+            // Write SuperAdmin doc to Firestore at the REAL UID so isSuperAdmin() works
             try {
                 com.google.firebase.firestore.FirebaseFirestore.getInstance()
                     .collection("institutes")
-                    .document("sys_super_admin_1")
+                    .document(adminUid)
                     .set(
                         mapOf(
                             "instituteName" to "BatchFee System",
@@ -277,7 +380,7 @@ abstract class AppDatabase : RoomDatabase() {
                 FirebaseCrashlytics.getInstance().recordException(e)
             }
             
-            val demoInstituteId = "demo_institute_1"
+            val demoInstituteId = ownerUid
             val now = System.currentTimeMillis()
             val thirtyDaysMs = 30L * 24 * 60 * 60 * 1000
             
@@ -304,7 +407,7 @@ abstract class AppDatabase : RoomDatabase() {
             
             userDao.insertUser(
                 UserEntity(
-                    id = "demo_owner_1",
+                    id = ownerUid,
                     instituteId = demoInstituteId,
                     name = "Mohammad Ramjan Sarker",
                     email = "owner@batchfee.app",
@@ -315,8 +418,8 @@ abstract class AppDatabase : RoomDatabase() {
             )
         }
         suspend fun populateDemoData(db: AppDatabase) {
-            val demoInstituteId = "demo_institute_1"
-            val ownerId = "demo_owner_1"
+            val demoInstituteId = realOwnerUid ?: "demo_institute_1"
+            val ownerId = realOwnerUid ?: "demo_owner_1"
             val now = System.currentTimeMillis()
             val dayMs = 24L * 60 * 60 * 1000
             val rng = java.util.Random(42)

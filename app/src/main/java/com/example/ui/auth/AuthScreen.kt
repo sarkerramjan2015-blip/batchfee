@@ -68,64 +68,6 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
         }
     }
 
-    private suspend fun tryFirebaseLogin(email: String, password: String): UserEntity? {
-        return withContext(Dispatchers.IO) {
-            try {
-                val authResult = FirebaseAuth.getInstance()
-                    .signInWithEmailAndPassword(email, password)
-                    .await()
-                val uid = authResult.user?.uid ?: return@withContext null
-
-                val firestoreUser = FirebaseFirestore.getInstance()
-                    .collection("institutes").document(uid).get().await()
-
-                val existingPlans = db.subscriptionPlanDao().getAllPlans().first()
-                if (existingPlans.isEmpty()) {
-                    AppDatabase.ensureDemoDataSeeded(db)
-                }
-
-                if (firestoreUser.exists()) {
-                    val data = firestoreUser.data ?: return@withContext null
-                    val instituteName = data["instituteName"] as? String ?: "Institute"
-                    val ownerName = data["ownerName"] as? String ?: instituteName
-                    val role = data["role"] as? String ?: "InstituteOwner"
-                    val createdAt = data["createdAt"] as? Long ?: System.currentTimeMillis()
-
-                    val institute = InstituteEntity(
-                        id = uid, name = instituteName,
-                        currentPlanId = "plan_free_trial",
-                        subscriptionStatus = "trial",
-                        trialStartDateMs = createdAt,
-                        trialEndDateMs = createdAt + (15L * 24 * 60 * 60 * 1000),
-                        currentPeriodEndMs = createdAt + (15L * 24 * 60 * 60 * 1000),
-                        createdAtMs = createdAt
-                    )
-
-                    val mappedRole = when (role) {
-                        "owner" -> "InstituteOwner"
-                        "superAdmin", "super_admin" -> "SuperAdmin"
-                        else -> role
-                    }
-
-                    val user = UserEntity(
-                        id = uid, instituteId = uid, name = ownerName,
-                        email = email, passwordHash = PasswordHasher.hash(password),
-                        role = mappedRole, createdAtMs = createdAt
-                    )
-
-                    db.instituteDao().insertInstitute(institute)
-                    db.userDao().insertUser(user)
-                    return@withContext user
-                }
-
-                null
-            } catch (e: Exception) {
-                FirebaseCrashlytics.getInstance().recordException(e)
-                null
-            }
-        }
-    }
-
     fun registerInstitute(
         instituteName: String,
         ownerName: String,
@@ -262,7 +204,9 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
         viewModelScope.launch {
             try {
                 val input = credential.trim()
+                val cleanPassword = passwordHash.trim()
                 val hasAt = input.contains("@")
+                android.util.Log.d("AUTH_LOGIN", "LOGIN: credential=$input, hasAt=$hasAt, cleanPassword length=${cleanPassword.length}, cleanPassword='$cleanPassword'")
 
                 // ── SMART ROUTING: Email vs Staff ID ──
                 val firebaseEmail: String
@@ -273,11 +217,13 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                     // Staff ID — resolve to email via Room DB
                     val staff = db.staffDao().getStaffByCodeOnce(input.uppercase())
                     if (staff == null) {
+                        android.util.Log.w("AUTH_LOGIN", "Staff ID not found: $input")
                         onError("Staff ID not found or not synced to this device.")
                         return@launch
                     }
                     val staffEmail = staff.email
                     if (staffEmail.isNullOrBlank()) {
+                        android.util.Log.w("AUTH_LOGIN", "Staff has no email: ${staff.id}")
                         onError("No email linked to this Staff ID. Contact your admin.")
                         return@launch
                     }
@@ -285,13 +231,17 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                 }
 
                 // ── Firebase Auth ──
+                android.util.Log.d("AUTH_LOGIN", "Calling signInWithEmailAndPassword: email=$firebaseEmail, password length=${cleanPassword.length}")
                 val authResult = withContext(Dispatchers.IO) {
+                    // Sign out any stale session first to avoid credential expiry errors
+                    try { FirebaseAuth.getInstance().signOut() } catch (_: Exception) { }
                     FirebaseAuth.getInstance()
-                        .signInWithEmailAndPassword(firebaseEmail, passwordHash)
+                        .signInWithEmailAndPassword(firebaseEmail, cleanPassword)
                         .await()
                 }
                 val uid = authResult.user?.uid
                     ?: throw IllegalStateException("Firebase Auth returned null UID")
+                android.util.Log.d("AUTH_LOGIN", "AUTH OK: uid=$uid")
 
                 // ── Fetch or rebuild local user record ──
                 var localUser = db.userDao().getUserById(uid)
@@ -344,6 +294,12 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                             )
                         )
                     }
+                } else if (localUser != null && localUser.role != "Staff") {
+                    // Firestore doc missing but user exists in local Room — offline/legacy fallback
+                    android.util.Log.w("AUTH_LOGIN", "Firestore doc not found but local user exists: uid=$uid, role=${localUser.role}")
+                    role = localUser.role
+                    instituteId = localUser.instituteId
+                    staffPermissions = null
                 } else {
                     // Not an institute — check if staff
                     // Try all staff subcollections (worst case iterates, but staff count is small)
@@ -375,7 +331,7 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                     }
 
                     if (foundStaff == null || foundInstId == null) {
-                        onError("Staff account not found. Contact your admin.")
+                        onError("Account not found. If you registered before, your data may need to be re-synced. Contact support.")
                         return@launch
                     }
                     if (foundStaff.status != "active") {
@@ -437,15 +393,18 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                 onSuccess(role)
 
             } catch (e: FirebaseAuthException) {
+                android.util.Log.e("AUTH_LOGIN", "FirebaseAuthException: code=${e.errorCode}, msg=${e.message}")
                 FirebaseCrashlytics.getInstance().recordException(e)
                 val message = when (e.errorCode) {
                     "ERROR_INVALID_EMAIL" -> "Invalid email address."
                     "ERROR_WRONG_PASSWORD" -> "Wrong password."
-                    "ERROR_USER_NOT_FOUND" -> "Account not found."
-                    else -> e.localizedMessage ?: "Login failed."
+                    "ERROR_USER_NOT_FOUND" -> "Account not found. Check your email or contact support."
+                    "ERROR_INVALID_CREDENTIAL" -> "Invalid credentials. Try again or reset your password."
+                    else -> e.localizedMessage ?: "Login failed. Please try again."
                 }
                 onError(message)
             } catch (e: Exception) {
+                android.util.Log.e("AUTH_LOGIN", "Unexpected error: ${e.message}", e)
                 FirebaseCrashlytics.getInstance().recordException(e)
                 onError("Login failed. Please try again.")
             }
