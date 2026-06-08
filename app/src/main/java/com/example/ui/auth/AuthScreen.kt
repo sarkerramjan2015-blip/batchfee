@@ -259,13 +259,18 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                     val data = firestoreUserDoc.data ?: emptyMap()
                     role = when (val r = data["role"] as? String) {
                         "owner" -> "InstituteOwner"
+                        "admin" -> "InstituteAdmin"
+                        "instituteAdmin", "institute_admin" -> "InstituteAdmin"
                         "superAdmin", "super_admin" -> "SuperAdmin"
                         else -> r ?: "InstituteOwner"
                     }
-                    instituteId = uid
+                    instituteId = data["instituteId"] as? String ?: uid
 
                     if (localUser == null) {
                         val now = System.currentTimeMillis()
+                        val currentPlanId = data["currentPlanId"] as? String ?: "plan_free_trial"
+                        val subscriptionStatus = data["subscriptionStatus"] as? String
+                            ?: if (currentPlanId == "plan_free_trial") "trial" else "active"
                         localUser = UserEntity(
                             id = uid,
                             instituteId = uid,
@@ -280,11 +285,12 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                             InstituteEntity(
                                 id = uid,
                                 name = data["instituteName"] as? String ?: "Institute",
-                                currentPlanId = data["currentPlanId"] as? String ?: "plan_free_trial",
-                                subscriptionStatus = "trial",
+                                currentPlanId = currentPlanId,
+                                subscriptionStatus = subscriptionStatus,
                                 trialStartDateMs = data["createdAt"] as? Long ?: now,
                                 trialEndDateMs = data["trialEndDate"] as? Long ?: (now + 15L * 24 * 60 * 60 * 1000),
-                                currentPeriodEndMs = data["trialEndDate"] as? Long ?: (now + 15L * 24 * 60 * 60 * 1000),
+                                currentPeriodEndMs = (data["currentPeriodEndMs"] as? Long)
+                                    ?: (data["trialEndDate"] as? Long ?: (now + 15L * 24 * 60 * 60 * 1000)),
                                 createdAtMs = data["createdAt"] as? Long ?: now,
                                 phone = data["phone"] as? String,
                                 whatsappNumber = data["whatsappNumber"] as? String,
@@ -473,6 +479,40 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
             }
         }
     }
+
+    fun sendPasswordResetEmail(
+        email: String,
+        onSuccess: (String) -> Unit,
+        onError: (String) -> Unit
+    ) {
+        val normalizedEmail = email.trim()
+        if (normalizedEmail.isBlank()) {
+            onError("Email address is required.")
+            return
+        }
+        if (!normalizedEmail.contains("@")) {
+            onError("Enter your registered email address.")
+            return
+        }
+
+        viewModelScope.launch {
+            try {
+                FirebaseAuth.getInstance().sendPasswordResetEmail(normalizedEmail).await()
+                onSuccess("Password reset email sent to $normalizedEmail")
+            } catch (e: FirebaseAuthException) {
+                FirebaseCrashlytics.getInstance().recordException(e)
+                val message = when (e.errorCode) {
+                    "ERROR_INVALID_EMAIL" -> "Enter a valid email address."
+                    "ERROR_USER_NOT_FOUND" -> "No Firebase account was found for this email."
+                    else -> e.localizedMessage ?: "Could not send reset email."
+                }
+                onError(message)
+            } catch (e: Exception) {
+                FirebaseCrashlytics.getInstance().recordException(e)
+                onError(e.localizedMessage ?: "Could not send reset email.")
+            }
+        }
+    }
 }
 
 class AuthViewModelFactory(private val db: AppDatabase) : ViewModelProvider.Factory {
@@ -623,6 +663,7 @@ fun AuthScreen(
     var whatsappNumber by remember { mutableStateOf("") }
 
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var infoMessage by remember { mutableStateOf<String?>(null) }
     var fieldError by remember { mutableStateOf<Map<String, Boolean>>(emptyMap()) }
     var isLoading by remember { mutableStateOf(false) }
     var loadingDemoAccount by remember { mutableStateOf<String?>(null) }
@@ -793,7 +834,11 @@ fun AuthScreen(
                     if (isLoginMode) {
                         Spacer(Modifier.height(4.dp))
                         TextButton(
-                            onClick = { forgotEmail = email; showForgotDialog = true },
+                            onClick = {
+                                forgotEmail = email.takeIf { it.contains("@") } ?: ""
+                                infoMessage = null
+                                showForgotDialog = true
+                            },
                             modifier = Modifier.align(Alignment.End)
                         ) {
                             Text("Forgot Password?", color = AuthMuted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
@@ -813,6 +858,25 @@ fun AuthScreen(
                             Text(
                                 errorMessage!!,
                                 color = Color(0xFFFCA5A5),
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    } else if (infoMessage != null) {
+                        Spacer(Modifier.height(12.dp))
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(AuthBlue.copy(alpha = 0.14f))
+                                .border(1.dp, AuthCyan.copy(alpha = 0.35f), RoundedCornerShape(10.dp))
+                                .padding(10.dp)
+                        ) {
+                            Text(
+                                infoMessage!!,
+                                color = AuthCyan,
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.Medium,
                                 textAlign = TextAlign.Center,
@@ -989,17 +1053,17 @@ fun AuthScreen(
                         confirmButton = {
                             TextButton(
                                 onClick = {
-                                    if (forgotEmail.isNotBlank()) {
-                                        FirebaseAuth.getInstance().sendPasswordResetEmail(forgotEmail.trim())
-                                            .addOnSuccessListener {
-                                                errorMessage = null
-                                                showForgotDialog = false
-                                                forgotEmail = ""
-                                            }
-                                            .addOnFailureListener { e ->
-                                                errorMessage = "Email not registered or user not found. Only registered institutes can reset their password."
-                                            }
-                                    }
+                                    infoMessage = null
+                                    errorMessage = null
+                                    viewModel.sendPasswordResetEmail(
+                                        email = forgotEmail,
+                                        onSuccess = {
+                                            infoMessage = it
+                                            showForgotDialog = false
+                                            forgotEmail = ""
+                                        },
+                                        onError = { errorMessage = it }
+                                    )
                                 }
                             ) { Text("Send Reset Link", color = AuthCyan, fontWeight = FontWeight.Bold) }
                         },

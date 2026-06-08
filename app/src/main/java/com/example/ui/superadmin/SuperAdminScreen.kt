@@ -149,16 +149,48 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
         viewModelScope.launch {
             try {
                 android.util.Log.d("SUPERADMIN", "approveRequest: instituteId=${request.instituteId}, requestId=${request.requestId}, planId=${request.requestedPlanId}, durationMonths=${request.durationMonths}")
+                val approvedAt = System.currentTimeMillis()
                 val newEnd = withContext(Dispatchers.IO) {
                     val repo = com.example.data.repository.SubscriptionRepository(firestore)
+                    val reviewerUserId = SessionManager.currentUserId.value ?: "sys_super_admin_1"
                     android.util.Log.d("SUPERADMIN", "approveRequest DBG: approving subscriptionRequests/${request.requestId}")
-                    repo.approveRequest(request.requestId, "sys_super_admin_1")
-                    val end = System.currentTimeMillis() + (request.durationMonths * 30L * 24 * 60 * 60 * 1000)
+                    repo.approveRequest(request.requestId, reviewerUserId)
+                    val end = approvedAt + (request.durationMonths * 30L * 24 * 60 * 60 * 1000)
                     android.util.Log.d("SUPERADMIN", "approveRequest DBG: updating institutes/${request.instituteId} → plan=${request.requestedPlanId}, end=$end")
                     firestore.collection("institutes").document(request.instituteId)
-                        .update("currentPlanId", request.requestedPlanId, "trialEndDate", end, "isActive", true)
+                        .update(
+                            mapOf(
+                                "currentPlanId" to request.requestedPlanId,
+                                "trialEndDate" to end,
+                                "currentPeriodEndMs" to end,
+                                "subscriptionStatus" to "active",
+                                "isActive" to true
+                            )
+                        )
                         .await()
+                    db.instituteDao().getInstitute(request.instituteId)?.let { current ->
+                        db.instituteDao().insertInstitute(
+                            current.copy(
+                                currentPlanId = request.requestedPlanId,
+                                subscriptionStatus = "active",
+                                trialEndDateMs = end,
+                                currentPeriodEndMs = end
+                            )
+                        )
+                    }
                     end
+                }
+                _pendingRequests.value = _pendingRequests.value.filterNot { it.requestId == request.requestId }
+                _institutes.value = _institutes.value.map { card ->
+                    if (card.entity.id != request.instituteId) return@map card
+                    card.copy(
+                        entity = card.entity.copy(
+                            currentPlanId = request.requestedPlanId,
+                            subscriptionStatus = "active",
+                            trialEndDateMs = newEnd,
+                            currentPeriodEndMs = newEnd
+                        )
+                    )
                 }
                 _operationMsg.value = "Approved ${request.instituteName} — ${request.requestedPlanId}"
                 // Generate receipt and trigger share
@@ -198,8 +230,10 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
             try {
                 withContext(Dispatchers.IO) {
                     val repo = com.example.data.repository.SubscriptionRepository(firestore)
-                    repo.rejectRequest(request.requestId, "sys_super_admin_1", note)
+                    val reviewerUserId = SessionManager.currentUserId.value ?: "sys_super_admin_1"
+                    repo.rejectRequest(request.requestId, reviewerUserId, note)
                 }
+                _pendingRequests.value = _pendingRequests.value.filterNot { it.requestId == request.requestId }
                 _operationMsg.value = "Rejected ${request.instituteName}"
             } catch (e: Exception) {
                 _operationMsg.value = "Reject failed: ${e.message}"
@@ -236,10 +270,14 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
 
                     if (lastActive != null) activeMap[uid] = lastActive
 
+                    val currentPlanId = data["currentPlanId"] as? String ?: "plan_free_trial"
+                    val storedStatus = data["subscriptionStatus"] as? String
                     val status = when {
                         !isActive -> "blocked"
                         trialEnd < now -> "expired"
-                        (now - createdAt) < trialWindow -> "trial"
+                        storedStatus == "active" -> "active"
+                        storedStatus == "trial" -> "trial"
+                        currentPlanId == "plan_free_trial" && (now - createdAt) < trialWindow -> "trial"
                         else -> "active"
                     }
 
@@ -250,7 +288,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                             entity = InstituteEntity(
                                 id = uid,
                                 name = data["instituteName"] as? String ?: "Institute",
-                                currentPlanId = data["currentPlanId"] as? String ?: "plan_free_trial",
+                                currentPlanId = currentPlanId,
                                 subscriptionStatus = status,
                                 trialStartDateMs = createdAt,
                                 trialEndDateMs = trialEnd,

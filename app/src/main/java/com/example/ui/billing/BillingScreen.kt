@@ -74,6 +74,40 @@ class BillingViewModel(private val db: AppDatabase) : ViewModel() {
         }
         viewModelScope.launch {
             val instId = SessionManager.currentInstituteId.value ?: return@launch
+            firestore.collection("institutes").document(instId)
+                .addSnapshotListener { snapshot, error ->
+                    if (error != null || snapshot == null || !snapshot.exists()) return@addSnapshotListener
+                    val data = snapshot.data ?: return@addSnapshotListener
+                    val now = System.currentTimeMillis()
+                    val currentPlanId = data["currentPlanId"] as? String ?: "plan_free_trial"
+                    val subscriptionStatus = data["subscriptionStatus"] as? String
+                        ?: if (currentPlanId == "plan_free_trial") "trial" else "active"
+                    val institute = InstituteEntity(
+                        id = snapshot.id,
+                        name = data["instituteName"] as? String ?: "Institute",
+                        currentPlanId = currentPlanId,
+                        subscriptionStatus = subscriptionStatus,
+                        trialStartDateMs = data["createdAt"] as? Long ?: now,
+                        trialEndDateMs = data["trialEndDate"] as? Long ?: now,
+                        currentPeriodEndMs = (data["currentPeriodEndMs"] as? Long)
+                            ?: (data["trialEndDate"] as? Long ?: now),
+                        createdAtMs = data["createdAt"] as? Long ?: now,
+                        phone = data["phone"] as? String,
+                        whatsappNumber = data["whatsappNumber"] as? String,
+                        ownerName = data["ownerName"] as? String,
+                        email = data["email"] as? String,
+                        instituteCode = data["instituteCode"] as? String,
+                        securityPin = data["securityPin"] as? String
+                    )
+                    viewModelScope.launch {
+                        db.instituteDao().insertInstitute(institute)
+                        _institute.value = institute
+                        _currentPlan.value = db.subscriptionPlanDao().getPlanById(institute.currentPlanId)
+                    }
+                }
+        }
+        viewModelScope.launch {
+            val instId = SessionManager.currentInstituteId.value ?: return@launch
             firestore.collection("subscriptionRequests")
                 .whereEqualTo("instituteId", instId)
                 .orderBy("requestSentAt", Query.Direction.DESCENDING)
@@ -111,6 +145,20 @@ fun BillingScreen(
     val plan by viewModel.currentPlan.collectAsState()
     val latestRequest by viewModel.latestRequest.collectAsState()
     val dateFormat = SimpleDateFormat("MMM dd, yyyy", Locale.getDefault())
+    val fallbackPlanName = remember(institute?.currentPlanId) {
+        when (institute?.currentPlanId) {
+            "plan_free_trial" -> "Free Trial"
+            "plan_starter" -> "Starter"
+            "plan_growth" -> "Growth"
+            "plan_pro" -> "Pro"
+            "plan_institute" -> "Institute"
+            null -> "Loading..."
+            else -> institute?.currentPlanId?.replace('_', ' ')
+                ?.split(' ')
+                ?.joinToString(" ") { token -> token.replaceFirstChar { c -> c.uppercase() } }
+                ?: "Loading..."
+        }
+    }
 
     Scaffold(
         containerColor = BgDark,
@@ -140,7 +188,7 @@ fun BillingScreen(
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text("Current Plan", color = TextMuted, fontSize = 12.sp)
                     Spacer(Modifier.height(4.dp))
-                    Text(plan?.name ?: "Loading...", color = TextWhite, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                    Text(plan?.name ?: fallbackPlanName, color = TextWhite, fontSize = 20.sp, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(8.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         val status = institute?.subscriptionStatus ?: ""

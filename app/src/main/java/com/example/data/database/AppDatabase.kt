@@ -178,6 +178,8 @@ abstract class AppDatabase : RoomDatabase() {
         @Volatile
         var realAdminUid: String? = null
         @Volatile
+        var realInstituteAdminUid: String? = null
+        @Volatile
         var realOwnerUid: String? = null
 
         suspend fun ensureDemoDataSeeded(db: AppDatabase) {
@@ -186,7 +188,7 @@ abstract class AppDatabase : RoomDatabase() {
                     // Always ensure Firebase Auth accounts exist and capture real UIDs
                     ensureFirebaseAuthAccounts()
 
-                    val user = db.userDao().getUserByEmail("admin@batchfee.app")
+                    val user = db.userDao().getUserByEmail("superadmin@batchfee.app")
                     if (user == null) {
                         populateInitialPlans(db.subscriptionPlanDao())
                         populateSuperAdmin(db.userDao(), db.instituteDao())
@@ -201,7 +203,7 @@ abstract class AppDatabase : RoomDatabase() {
         private suspend fun ensureFirebaseAuthAccounts() {
             // ── SuperAdmin ──
             try {
-                realAdminUid = FirebaseAuthApi.createUser("admin@batchfee.app", "123456")
+                realAdminUid = FirebaseAuthApi.createUser("superadmin@batchfee.app", "11223344")
                 // Always write/update Firestore doc at the real UID so isSuperAdmin() works
                 try {
                     com.google.firebase.firestore.FirebaseFirestore.getInstance()
@@ -211,7 +213,7 @@ abstract class AppDatabase : RoomDatabase() {
                             mapOf(
                                 "instituteName" to "BatchFee System",
                                 "role" to "SuperAdmin",
-                                "email" to "admin@batchfee.app",
+                                "email" to "superadmin@batchfee.app",
                                 "createdAt" to System.currentTimeMillis(),
                                 "isActive" to true
                             ),
@@ -224,7 +226,7 @@ abstract class AppDatabase : RoomDatabase() {
                 if ((e.message ?: "").contains("EMAIL_EXISTS", ignoreCase = true)) {
                     // Account already exists — resolve its real UID via sign-in
                     try {
-                        realAdminUid = FirebaseAuthApi.signInWithPassword("admin@batchfee.app", "123456")
+                        realAdminUid = FirebaseAuthApi.signInWithPassword("superadmin@batchfee.app", "11223344")
                         // Ensure Firestore doc exists at the real UID
                         try {
                             com.google.firebase.firestore.FirebaseFirestore.getInstance()
@@ -234,7 +236,63 @@ abstract class AppDatabase : RoomDatabase() {
                                     mapOf(
                                         "instituteName" to "BatchFee System",
                                         "role" to "SuperAdmin",
-                                        "email" to "admin@batchfee.app",
+                                        "email" to "superadmin@batchfee.app",
+                                        "isActive" to true
+                                    ),
+                                    com.google.firebase.firestore.SetOptions.merge()
+                                ).await()
+                        } catch (_: Exception) { }
+                    } catch (_: Exception) { }
+                } else {
+                    FirebaseCrashlytics.getInstance().recordException(e)
+                }
+            }
+
+            // ── Institute Admin ──
+            try {
+                realInstituteAdminUid = FirebaseAuthApi.createUser("instituteadmin@batchfee.app", "123456")
+                try {
+                    com.google.firebase.firestore.FirebaseFirestore.getInstance()
+                        .collection("institutes")
+                        .document(realInstituteAdminUid!!)
+                        .set(
+                            mapOf(
+                                "instituteName" to "BatchFee Admin Office",
+                                "instituteId" to realInstituteAdminUid!!,
+                                "role" to "InstituteAdmin",
+                                "email" to "instituteadmin@batchfee.app",
+                                "currentPlanId" to "plan_free_trial",
+                                "subscriptionStatus" to "trial",
+                                "createdAt" to System.currentTimeMillis(),
+                                "trialEndDate" to (System.currentTimeMillis() + 15L * 24 * 60 * 60 * 1000),
+                                "studentCount" to 0,
+                                "staffCount" to 0,
+                                "isActive" to true
+                            ),
+                            com.google.firebase.firestore.SetOptions.merge()
+                        ).await()
+                } catch (e: Exception) {
+                    FirebaseCrashlytics.getInstance().recordException(e)
+                }
+            } catch (e: Exception) {
+                if ((e.message ?: "").contains("EMAIL_EXISTS", ignoreCase = true)) {
+                    try {
+                        realInstituteAdminUid = FirebaseAuthApi.signInWithPassword("instituteadmin@batchfee.app", "123456")
+                        try {
+                            com.google.firebase.firestore.FirebaseFirestore.getInstance()
+                                .collection("institutes")
+                                .document(realInstituteAdminUid!!)
+                                .set(
+                                    mapOf(
+                                        "instituteName" to "BatchFee Admin Office",
+                                        "instituteId" to realInstituteAdminUid!!,
+                                        "role" to "InstituteAdmin",
+                                        "email" to "instituteadmin@batchfee.app",
+                                        "currentPlanId" to "plan_free_trial",
+                                        "subscriptionStatus" to "trial",
+                                        "trialEndDate" to (System.currentTimeMillis() + 15L * 24 * 60 * 60 * 1000),
+                                        "studentCount" to 0,
+                                        "staffCount" to 0,
                                         "isActive" to true
                                     ),
                                     com.google.firebase.firestore.SetOptions.merge()
@@ -258,6 +316,7 @@ abstract class AppDatabase : RoomDatabase() {
                                 "instituteName" to "BatchFee Demo Institute",
                                 "instituteCode" to "BGS-100",
                                 "ownerName" to "Demo Owner",
+                                "instituteId" to realOwnerUid!!,
                                 "email" to "owner@batchfee.app",
                                 "role" to "owner",
                                 "createdAt" to System.currentTimeMillis(),
@@ -284,6 +343,7 @@ abstract class AppDatabase : RoomDatabase() {
                                         "instituteName" to "BatchFee Demo Institute",
                                         "instituteCode" to "BGS-100",
                                         "ownerName" to "Demo Owner",
+                                        "instituteId" to realOwnerUid!!,
                                         "email" to "owner@batchfee.app",
                                         "role" to "owner",
                                         "isActive" to true
@@ -347,17 +407,31 @@ abstract class AppDatabase : RoomDatabase() {
         suspend fun populateSuperAdmin(userDao: UserDao, instituteDao: InstituteDao) {
             // Use real Firebase Auth UIDs instead of hardcoded fake IDs
             val adminUid = realAdminUid ?: "sys_super_admin_1"
+            val instituteAdminUid = realInstituteAdminUid ?: "sys_institute_admin_1"
             val ownerUid = realOwnerUid ?: "demo_institute_1"
+            val now = System.currentTimeMillis()
 
             userDao.insertUser(
                 UserEntity(
                     id = adminUid,
                     instituteId = null,
                     name = "System Admin",
-                    email = "admin@batchfee.app",
-                    passwordHash = PasswordHasher.hash("123456"),
+                    email = "superadmin@batchfee.app",
+                    passwordHash = PasswordHasher.hash("11223344"),
                     role = "SuperAdmin",
-                    createdAtMs = System.currentTimeMillis()
+                    createdAtMs = now
+                )
+            )
+
+            userDao.insertUser(
+                UserEntity(
+                    id = instituteAdminUid,
+                    instituteId = instituteAdminUid,
+                    name = "Institute Admin",
+                    email = "instituteadmin@batchfee.app",
+                    passwordHash = PasswordHasher.hash("123456"),
+                    role = "InstituteAdmin",
+                    createdAtMs = now
                 )
             )
 
@@ -369,9 +443,10 @@ abstract class AppDatabase : RoomDatabase() {
                     .set(
                         mapOf(
                             "instituteName" to "BatchFee System",
+                            "instituteId" to adminUid,
                             "role" to "SuperAdmin",
-                            "email" to "admin@batchfee.app",
-                            "createdAt" to System.currentTimeMillis(),
+                            "email" to "superadmin@batchfee.app",
+                            "createdAt" to now,
                             "isActive" to true
                         ),
                         com.google.firebase.firestore.SetOptions.merge()
@@ -379,9 +454,23 @@ abstract class AppDatabase : RoomDatabase() {
             } catch (e: Exception) {
                 FirebaseCrashlytics.getInstance().recordException(e)
             }
+
+            instituteDao.insertInstitute(
+                InstituteEntity(
+                    id = instituteAdminUid,
+                    name = "BatchFee Admin Office",
+                    currentPlanId = "plan_free_trial",
+                    subscriptionStatus = "trial",
+                    trialStartDateMs = now,
+                    trialEndDateMs = now + 15L * 24 * 60 * 60 * 1000,
+                    currentPeriodEndMs = now + 15L * 24 * 60 * 60 * 1000,
+                    createdAtMs = now,
+                    ownerName = "Institute Admin",
+                    email = "instituteadmin@batchfee.app"
+                )
+            )
             
             val demoInstituteId = ownerUid
-            val now = System.currentTimeMillis()
             val thirtyDaysMs = 30L * 24 * 60 * 60 * 1000
             
             instituteDao.insertInstitute(
