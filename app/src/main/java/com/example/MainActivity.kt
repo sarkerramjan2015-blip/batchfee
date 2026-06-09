@@ -25,6 +25,8 @@ import com.example.domain.ThemePreferences
 import com.example.ui.auth.AuthScreen
 import com.example.ui.billing.BillingScreen
 import com.example.ui.dashboard.DashboardScreen
+import com.example.ui.legal.PrivacyPolicyScreen
+import com.example.ui.legal.TermsConditionsScreen
 import com.example.ui.navigation.*
 import com.example.ui.pricing.PricingScreen
 import com.example.ui.superadmin.SuperAdminScreen
@@ -178,8 +180,22 @@ private fun MainAppContent(appDb: com.example.data.database.AppDatabase) {
                     navController.navigate(SuperAdminRoute) {
                         popUpTo(navController.graph.id) { inclusive = true }
                     }
+                },
+                onNavigatePrivacyPolicy = {
+                    navController.navigate(PrivacyPolicyRoute)
+                },
+                onNavigateTermsConditions = {
+                    navController.navigate(TermsConditionsRoute)
                 }
             )
+        }
+
+        composable<PrivacyPolicyRoute> {
+            PrivacyPolicyScreen(onBack = { navController.popBackStack() })
+        }
+
+        composable<TermsConditionsRoute> {
+            TermsConditionsScreen(onBack = { navController.popBackStack() })
         }
         
         composable<DashboardRoute> {

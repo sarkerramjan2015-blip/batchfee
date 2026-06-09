@@ -650,7 +650,9 @@ fun AuthScreen(
     db: AppDatabase,
     sessionNotice: String? = null,
     onNavigateDashboard: () -> Unit,
-    onNavigateSuperAdmin: () -> Unit
+    onNavigateSuperAdmin: () -> Unit,
+    onNavigatePrivacyPolicy: () -> Unit,
+    onNavigateTermsConditions: () -> Unit
 ) {
     val viewModel: AuthViewModel = viewModel(factory = AuthViewModelFactory(db))
     val context = LocalContext.current
@@ -1087,6 +1089,26 @@ fun AuthScreen(
                 }
 
                 Spacer(Modifier.height(16.dp))
+
+                Row(
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    TextButton(onClick = onNavigatePrivacyPolicy) {
+                        Text("Privacy Policy", color = AuthCyan, fontSize = 12.sp)
+                    }
+                    Text(
+                        text = "and",
+                        color = AuthMuted.copy(alpha = 0.75f),
+                        fontSize = 12.sp
+                    )
+                    TextButton(onClick = onNavigateTermsConditions) {
+                        Text("Terms & Conditions", color = AuthCyan, fontSize = 12.sp)
+                    }
+                }
+
+                Spacer(Modifier.height(8.dp))
 
                 Text(
                     text = "v" + BuildConfig.VERSION_NAME + " . BatchFee",

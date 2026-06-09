@@ -6,6 +6,12 @@ import kotlinx.serialization.Serializable
 object AuthRoute
 
 @Serializable
+object PrivacyPolicyRoute
+
+@Serializable
+object TermsConditionsRoute
+
+@Serializable
 object DashboardRoute
 
 @Serializable
