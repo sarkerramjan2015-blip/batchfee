@@ -9,6 +9,8 @@ import androidx.lifecycle.viewModelScope
 import com.example.data.database.AppDatabase
 import com.example.data.models.FeeEntity
 import com.example.data.repository.FeeCollectionRepository
+import com.example.domain.appendInstituteSignature
+import com.example.domain.loadInstituteSignature
 import com.example.domain.SessionManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -141,9 +143,15 @@ class FeeViewModel(private val db: AppDatabase) : ViewModel() {
         feePeriod: String,
         channel: String
     ) {
+        val instId = SessionManager.currentInstituteId.value ?: return
         val dateLabel = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date())
-        val msg = "Dear Parent, $studentName has a pending fee of BDT ${"%.0f".format(dueAmount)} for $feePeriod as of $dateLabel. Please pay at your earliest convenience. - BatchFee"
-        try {
+        viewModelScope.launch {
+            val instituteSignature = loadInstituteSignature(db, instId)
+            val msg = appendInstituteSignature(
+                "Dear Parent, $studentName has a pending fee of BDT ${"%.0f".format(dueAmount)} for $feePeriod as of $dateLabel. Please pay at your earliest convenience.",
+                instituteSignature
+            )
+            try {
             when (channel) {
                 "whatsapp" -> {
                     val number = phone?.replace("+", "")?.replace(" ", "")?.replace("-", "")
@@ -162,7 +170,8 @@ class FeeViewModel(private val db: AppDatabase) : ViewModel() {
                     )
                 }
             }
-        } catch (_: Exception) {
+            } catch (_: Exception) {
+            }
         }
     }
 

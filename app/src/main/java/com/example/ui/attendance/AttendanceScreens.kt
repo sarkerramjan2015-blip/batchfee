@@ -77,9 +77,8 @@ private fun gradientButton(text: String, onClick: () -> Unit, modifier: Modifier
 fun AttendanceBatchSelectScreen(db: AppDatabase, onBack: () -> Unit, onSelectBatch: (String) -> Unit) {
     val viewModel: AttendanceViewModel = viewModel(factory = AttendanceViewModelFactory(db))
     val batches by viewModel.batches.collectAsState()
-    val summaries by viewModel.batchSummaries.collectAsState()
-    // Load summaries for dashboard-style cards
-    LaunchedEffect(Unit) { viewModel.loadDashboardSummaries() }
+    val summaries by viewModel.dailyBatchSummaries.collectAsState()
+    LaunchedEffect(Unit) { viewModel.loadDailySummaries() }
 
     Scaffold(
         containerColor = BgColor,
@@ -124,7 +123,7 @@ fun AttendanceBatchSelectScreen(db: AppDatabase, onBack: () -> Unit, onSelectBat
                                     Text(batch.name, color = TextWhite, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     val total = summary?.totalStudents ?: 0
                                     val marked = summary?.markedCount ?: 0
-                                    Text("$marked/$total marked", color = TextMuted, fontSize = 12.sp)
+                                    Text("$marked/$total marked today", color = TextMuted, fontSize = 12.sp)
                                 }
                                 Icon(Icons.Filled.ChevronRight, null, tint = TextMuted, modifier = Modifier.size(20.dp))
                             }
@@ -602,7 +601,7 @@ fun AttendanceReportScreen(db: AppDatabase, onBack: () -> Unit) {
     val batches by viewModel.batches.collectAsState()
     val summaries by viewModel.batchSummaries.collectAsState()
 
-    LaunchedEffect(Unit) { viewModel.loadDashboardSummaries() }
+    LaunchedEffect(Unit) { viewModel.loadMonthlySummaries() }
 
     var selectedBatchId by remember { mutableStateOf<String?>(null) }
     // Compute overall from all batch summaries
@@ -614,7 +613,9 @@ fun AttendanceReportScreen(db: AppDatabase, onBack: () -> Unit) {
             presentCount = summaries.sumOf { it.presentCount },
             absentCount = summaries.sumOf { it.absentCount },
             leaveCount = summaries.sumOf { it.leaveCount },
-            holidayCount = summaries.sumOf { it.holidayCount }
+            holidayCount = summaries.sumOf { it.holidayCount },
+            expectedStudentDays = summaries.sumOf { it.expectedStudentDays },
+            attendanceDays = summaries.maxOfOrNull { it.attendanceDays } ?: 0
         )
     }
 
@@ -679,24 +680,25 @@ private fun summaryCard(sum: BatchAttendanceSummary, modifier: Modifier = Modifi
     ) {
         Column(Modifier.padding(14.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("${sum.markedCount}/${sum.totalStudents} marked", color = TextMuted, fontSize = 12.sp)
+                Text("${sum.markedCount}/${sum.expectedStudentDays} student-days covered", color = TextMuted, fontSize = 12.sp)
+                Text("${sum.attendanceDays} active days", color = TextMuted, fontSize = 12.sp)
             }
             Spacer(Modifier.height(6.dp))
             if (includeProgress) {
-                val total = sum.totalStudents.toFloat().coerceAtLeast(1f)
-                Row(Modifier.fillMaxWidth().height(10.dp)) {
-                    Box(Modifier.weight((sum.presentCount / total).coerceAtLeast(0.001f)).fillMaxHeight().clip(RoundedCornerShape(topStart = 5.dp, bottomStart = 5.dp)).background(AccentGreen))
-                    Box(Modifier.weight((sum.absentCount / total).coerceAtLeast(0.001f)).fillMaxHeight().background(AccentRed))
-                    Box(Modifier.weight((sum.leaveCount / total).coerceAtLeast(0.001f)).fillMaxHeight().background(AccentSky))
-                    Box(Modifier.weight((sum.holidayCount / total).coerceAtLeast(0.001f)).fillMaxHeight().clip(RoundedCornerShape(topEnd = 5.dp, bottomEnd = 5.dp)).background(AccentGray))
-                }
+                LinearProgressIndicator(
+                    progress = { (sum.coveragePct / 100f).coerceIn(0f, 1f) },
+                    modifier = Modifier.fillMaxWidth().height(10.dp).clip(RoundedCornerShape(5.dp)),
+                    color = AccentGreen,
+                    trackColor = CardBgAlt
+                )
                 Spacer(Modifier.height(8.dp))
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                statChip("Present", "${"%.0f".format(sum.presentPct)}%", sum.presentCount, AccentGreen)
-                statChip("Absent", "${"%.0f".format(sum.absentPct)}%", sum.absentCount, AccentRed)
-                statChip("Leave", "${"%.0f".format(sum.leavePct)}%", sum.leaveCount, AccentSky)
-                statChip("Holiday", "${"%.0f".format(sum.holidayPct)}%", sum.holidayCount, AccentGray)
+                statChip("Coverage", "${"%.0f".format(sum.coveragePct)}%", sum.markedCount, AccentViolet)
+                statChip("Present", "${"%.0f".format(sum.presentPerformancePct)}%", sum.presentCount, AccentGreen)
+                statChip("Absent", "${"%.0f".format(sum.absentPerformancePct)}%", sum.absentCount, AccentRed)
+                statChip("Leave", sum.leaveCount.toString(), sum.leaveCount, AccentSky)
+                statChip("Holiday", sum.holidayCount.toString(), sum.holidayCount, AccentGray)
             }
         }
     }
@@ -706,6 +708,7 @@ private fun summaryCard(sum: BatchAttendanceSummary, modifier: Modifier = Modifi
 private fun statChip(label: String, pct: String, count: Int, color: Color) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Text(pct, color = color, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-        Text("$count $label", color = TextMuted, fontSize = 10.sp)
+        val caption = if (label == "Coverage") "$count marked" else "$count $label"
+        Text(caption, color = TextMuted, fontSize = 10.sp)
     }
 }

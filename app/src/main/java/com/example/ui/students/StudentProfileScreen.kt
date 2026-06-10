@@ -29,6 +29,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
@@ -41,6 +42,8 @@ import com.example.data.models.FeeEntity
 import com.example.data.models.PaymentEntity
 import com.example.data.models.StudentEntity
 import com.example.data.repository.FeeCollectionRepository
+import com.example.domain.appendInstituteSignature
+import com.example.domain.loadInstituteSignature
 import com.example.domain.SessionManager
 import com.example.data.firestore.InstituteSyncHelper
 import com.example.ui.components.buildWhatsAppUrl
@@ -85,6 +88,7 @@ fun StudentProfileScreen(
     val instId = SessionManager.currentInstituteId.collectAsState().value
 
     var student by remember { mutableStateOf<StudentEntity?>(null) }
+    var instituteSignature by remember { mutableStateOf("") }
     var showStudentMenu by remember { mutableStateOf(false) }
     var showMessageDialog by remember { mutableStateOf(false) }
     var directMessage by remember { mutableStateOf("") }
@@ -97,6 +101,10 @@ fun StudentProfileScreen(
     var feeHistory by remember { mutableStateOf<List<FeeEntity>>(emptyList()) }
     var paymentHistory by remember { mutableStateOf<List<PaymentEntity>>(emptyList()) }
     var monthAttendance by remember { mutableStateOf<List<com.example.data.models.AttendanceEntity>>(emptyList()) }
+
+    LaunchedEffect(instId) {
+        instituteSignature = loadInstituteSignature(db, instId)
+    }
 
     // ── Batch dialog state ──────────────────────────────────
     var showBatchDialog by remember { mutableStateOf(false) }
@@ -215,6 +223,7 @@ fun StudentProfileScreen(
                     paymentHistory = paymentHistory,
                     monthAttendance = monthAttendance,
                     context = context,
+                    instituteSignature = instituteSignature,
                     insightsVisible = showStudentInsights,
                     onToggleInsights = { showStudentInsights = !showStudentInsights },
                     onAssignBatch = { showBatchDialog = true }
@@ -870,15 +879,17 @@ fun StudentProfileScreen(
 
                 SectionHeader("Contact Info")
                 InfoCard {
-                    InfoRow("Phone", s.phone ?: "N/A")
                     val whatsappFromNotes = s.notes?.let { n ->
                         if (n.startsWith("WhatsApp: ")) {
                             n.split("\n", limit = 2)[0].removePrefix("WhatsApp: ")
                         } else null
                     }
-                    if (!whatsappFromNotes.isNullOrBlank()) {
-                        InfoRow("WhatsApp", whatsappFromNotes)
-                    }
+                    CompactContactInfoRow(
+                        "Phone",
+                        s.phone ?: "N/A",
+                        "WhatsApp",
+                        whatsappFromNotes?.takeIf { it.isNotBlank() } ?: "N/A"
+                    )
                     InfoRow("Email", s.email ?: "N/A")
                     InfoRow("Address", s.address ?: "N/A")
                 }
@@ -1007,7 +1018,10 @@ fun StudentProfileScreen(
                         shareStudentText(
                             context,
                             "Student Login",
-                            "Student: ${s.fullName}\nLogin ID: ${s.studentCode}\nPassword: Not set yet"
+                            appendInstituteSignature(
+                                "Student: ${s.fullName}\nLogin ID: ${s.studentCode}\nPassword: Not set yet",
+                                instituteSignature
+                            )
                         )
                     },
                     onMessage = {
@@ -1020,15 +1034,15 @@ fun StudentProfileScreen(
                     },
                     onGenerateReport = {
                         showStudentMenu = false
-                        shareStudentText(context, "Student Report", buildStudentReportText(s, batches, totalPaid, totalDue))
+                        shareStudentText(context, "Student Report", buildStudentReportText(s, batches, totalPaid, totalDue, instituteSignature))
                     },
                     onRegistrationForm = {
                         showStudentMenu = false
-                        shareStudentText(context, "Student Registration Form", buildStudentRegistrationText(s))
+                        shareStudentText(context, "Student Registration Form", buildStudentRegistrationText(s, instituteSignature))
                     },
                     onFeeSummary = {
                         showStudentMenu = false
-                        shareStudentText(context, "Student Fee Summary", buildStudentFeeSummaryText(s, totalPaid, totalDue))
+                        shareStudentText(context, "Student Fee Summary", buildStudentFeeSummaryText(s, totalPaid, totalDue, instituteSignature))
                     },
                     onGenerateIdCard = {
                         showStudentMenu = false
@@ -1043,11 +1057,11 @@ fun StudentProfileScreen(
                     onMessageChange = { directMessage = it },
                     onDismiss = { showMessageDialog = false },
                     onSendSms = {
-                        sendStudentMessage(context, s.phone, directMessage, useWhatsApp = false)
+                        sendStudentMessage(context, s.phone, directMessage, instituteSignature, useWhatsApp = false)
                         showMessageDialog = false
                     },
                     onSendWhatsApp = {
-                        sendStudentMessage(context, s.phone, directMessage, useWhatsApp = true)
+                        sendStudentMessage(context, s.phone, directMessage, instituteSignature, useWhatsApp = true)
                         showMessageDialog = false
                     }
                 )
@@ -1295,8 +1309,14 @@ private fun printStudentText(context: android.content.Context, title: String, te
     webView.loadDataWithBaseURL(null, html, "text/html", "UTF-8", null)
 }
 
-private fun sendStudentMessage(context: android.content.Context, phone: String?, message: String, useWhatsApp: Boolean) {
-    val body = message.trim()
+private fun sendStudentMessage(
+    context: android.content.Context,
+    phone: String?,
+    message: String,
+    instituteSignature: String,
+    useWhatsApp: Boolean
+) {
+    val body = appendInstituteSignature(message.trim(), instituteSignature)
     if (useWhatsApp) {
         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(buildWhatsAppUrl(phone, body))))
     } else {
@@ -1308,7 +1328,13 @@ private fun sendStudentMessage(context: android.content.Context, phone: String?,
     }
 }
 
-private fun buildStudentReportText(student: StudentEntity, batches: List<BatchEntity>, totalPaid: Double, totalDue: Double): String =
+private fun buildStudentReportText(
+    student: StudentEntity,
+    batches: List<BatchEntity>,
+    totalPaid: Double,
+    totalDue: Double,
+    instituteSignature: String
+): String =
     buildString {
         appendLine("Student Report")
         appendLine("Name: ${student.fullName}")
@@ -1319,9 +1345,10 @@ private fun buildStudentReportText(student: StudentEntity, batches: List<BatchEn
         appendLine("Batches: ${batches.joinToString { it.name }.ifBlank { "N/A" }}")
         appendLine("Collected Fees: ${totalPaid.toLong()}")
         appendLine("Due Fees: ${totalDue.toLong()}")
+        if (instituteSignature.isNotBlank()) appendLine(instituteSignature)
     }
 
-private fun buildStudentRegistrationText(student: StudentEntity): String =
+private fun buildStudentRegistrationText(student: StudentEntity, instituteSignature: String): String =
     buildString {
         appendLine("Student Registration Form")
         appendLine("Name: ${student.fullName}")
@@ -1332,15 +1359,17 @@ private fun buildStudentRegistrationText(student: StudentEntity): String =
         appendLine("Address: ${student.address ?: "N/A"}")
         appendLine("School: ${student.schoolName ?: "N/A"}")
         appendLine("Class: ${student.className ?: "N/A"}")
+        if (instituteSignature.isNotBlank()) appendLine(instituteSignature)
     }
 
-private fun buildStudentFeeSummaryText(student: StudentEntity, totalPaid: Double, totalDue: Double): String =
+private fun buildStudentFeeSummaryText(student: StudentEntity, totalPaid: Double, totalDue: Double, instituteSignature: String): String =
     buildString {
         appendLine("Student Fee Summary")
         appendLine("Name: ${student.fullName}")
         appendLine("ID: ${student.studentCode}")
         appendLine("Collected Fees: ${totalPaid.toLong()}")
         appendLine("Pending Dues: ${totalDue.toLong()}")
+        if (instituteSignature.isNotBlank()) appendLine(instituteSignature)
     }
 
 @Composable
@@ -1352,6 +1381,7 @@ private fun StudentDashboardContent(
     paymentHistory: List<PaymentEntity>,
     monthAttendance: List<com.example.data.models.AttendanceEntity>,
     context: android.content.Context,
+    instituteSignature: String,
     insightsVisible: Boolean,
     onToggleInsights: () -> Unit,
     onAssignBatch: () -> Unit
@@ -1525,7 +1555,8 @@ private fun StudentDashboardContent(
             paymentHistory = paymentHistory,
             totalPaid = totalPaid,
             totalDue = totalDue,
-            context = context
+            context = context,
+            instituteSignature = instituteSignature
         )
     }
 
@@ -1571,7 +1602,7 @@ private fun StudentDashboardContent(
                 }) { Icon(Icons.Filled.Whatsapp, contentDescription = null, tint = WAGreen) }
             }
             Spacer(Modifier.height(14.dp))
-            TwoColumnInfo("Phone number", student.phone ?: "N/A", "WhatsApp", whatsappNumber.ifBlank { "N/A" })
+            CompactContactInfoRow("Phone number", student.phone ?: "N/A", "WhatsApp", whatsappNumber.ifBlank { "N/A" })
             Spacer(Modifier.height(14.dp))
             ProfileInfoBlock("Address", student.address ?: "N/A")
 
@@ -1594,7 +1625,8 @@ private fun StudentInsightsPanel(
     paymentHistory: List<PaymentEntity>,
     totalPaid: Double,
     totalDue: Double,
-    context: android.content.Context
+    context: android.content.Context,
+    instituteSignature: String
 ) {
     val monthLabel = remember { SimpleDateFormat("MMMM yyyy", Locale.getDefault()).format(Date()) }
     val present = monthAttendance.count { it.status.equals("present", ignoreCase = true) }
@@ -1602,8 +1634,8 @@ private fun StudentInsightsPanel(
     val leave = monthAttendance.count { it.status.equals("leave", ignoreCase = true) }
     val holiday = monthAttendance.count { it.status.equals("holiday", ignoreCase = true) }
     val marked = monthAttendance.size.coerceAtLeast(1)
-    val attendanceText = buildMonthlyAttendanceReportText(student, monthLabel, present, absent, leave, holiday, monthAttendance.size)
-    val feeText = buildDetailedFeeReportText(student, paymentHistory, totalPaid, totalDue)
+    val attendanceText = buildMonthlyAttendanceReportText(student, monthLabel, present, absent, leave, holiday, monthAttendance.size, instituteSignature)
+    val feeText = buildDetailedFeeReportText(student, paymentHistory, totalPaid, totalDue, instituteSignature)
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -1633,7 +1665,8 @@ private fun StudentInsightsPanel(
                 context = context,
                 phone = student.phone,
                 title = "Monthly Attendance Report",
-                body = attendanceText
+                body = attendanceText,
+                instituteSignature = instituteSignature
             )
 
             Spacer(Modifier.height(22.dp))
@@ -1663,7 +1696,8 @@ private fun StudentInsightsPanel(
                 context = context,
                 phone = student.phone,
                 title = "Student Fee Details",
-                body = feeText
+                body = feeText,
+                instituteSignature = instituteSignature
             )
         }
     }
@@ -1719,16 +1753,22 @@ private fun FeePaymentRow(payment: PaymentEntity) {
 }
 
 @Composable
-private fun ReportActionRow(context: android.content.Context, phone: String?, title: String, body: String) {
+private fun ReportActionRow(
+    context: android.content.Context,
+    phone: String?,
+    title: String,
+    body: String,
+    instituteSignature: String
+) {
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
         ReportActionButton(Icons.Filled.Share, "Share", Modifier.weight(1f)) {
             shareStudentText(context, title, body)
         }
         ReportActionButton(Icons.Filled.Whatsapp, "WhatsApp", Modifier.weight(1f)) {
-            sendStudentMessage(context, phone, body, useWhatsApp = true)
+            sendStudentMessage(context, phone, body, instituteSignature, useWhatsApp = true)
         }
         ReportActionButton(Icons.Filled.Sms, "SMS", Modifier.weight(1f)) {
-            sendStudentMessage(context, phone, body, useWhatsApp = false)
+            sendStudentMessage(context, phone, body, instituteSignature, useWhatsApp = false)
         }
         ReportActionButton(Icons.Filled.Print, "Print", Modifier.weight(1f)) {
             printStudentText(context, title, body)
@@ -1779,7 +1819,8 @@ private fun buildMonthlyAttendanceReportText(
     absent: Int,
     leave: Int,
     holiday: Int,
-    totalMarked: Int
+    totalMarked: Int,
+    instituteSignature: String
 ): String =
     buildString {
         appendLine("Monthly Attendance Report")
@@ -1791,13 +1832,15 @@ private fun buildMonthlyAttendanceReportText(
         appendLine("Leave: $leave")
         appendLine("Holiday: $holiday")
         appendLine("Total marked days: $totalMarked")
+        if (instituteSignature.isNotBlank()) appendLine(instituteSignature)
     }
 
 private fun buildDetailedFeeReportText(
     student: StudentEntity,
     payments: List<PaymentEntity>,
     totalPaid: Double,
-    totalDue: Double
+    totalDue: Double,
+    instituteSignature: String
 ): String =
     buildString {
         appendLine("Student Fee Details")
@@ -1814,6 +1857,7 @@ private fun buildDetailedFeeReportText(
                 appendLine("- ${SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(payment.paymentDateMs))}: ${payment.amount.toLong()} (${payment.paymentMethod}, ${payment.receiptNumber})")
             }
         }
+        if (instituteSignature.isNotBlank()) appendLine(instituteSignature)
     }
 
 @Composable
@@ -1869,25 +1913,83 @@ private fun SmallDashboardTile(title: String, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun TwoColumnInfo(leftLabel: String, leftValue: String, rightLabel: String, rightValue: String) {
+private fun TwoColumnInfo(
+    leftLabel: String,
+    leftValue: String,
+    rightLabel: String,
+    rightValue: String,
+    singleLineValues: Boolean = false
+) {
     Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-        ProfileInfoBlock(leftLabel, leftValue, Modifier.weight(1f))
-        ProfileInfoBlock(rightLabel, rightValue, Modifier.weight(1f))
+        ProfileInfoBlock(leftLabel, leftValue, Modifier.weight(1f), singleLineValue = singleLineValues)
+        ProfileInfoBlock(rightLabel, rightValue, Modifier.weight(1f), singleLineValue = singleLineValues)
     }
 }
 
 @Composable
-private fun ProfileInfoBlock(label: String, value: String, modifier: Modifier = Modifier) {
+private fun CompactContactInfoRow(
+    leftLabel: String,
+    leftValue: String,
+    rightLabel: String,
+    rightValue: String
+) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+        CompactContactBlock(leftLabel, leftValue, Modifier.weight(1f))
+        CompactContactBlock(rightLabel, rightValue, Modifier.weight(1f))
+    }
+}
+
+@Composable
+private fun CompactContactBlock(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(CardBgAlt.copy(alpha = 0.72f))
+            .border(1.dp, BorderSub, RoundedCornerShape(10.dp))
+            .padding(horizontal = 6.dp, vertical = 10.dp)
+    ) {
+        Text(label, color = TextMuted, fontSize = 10.sp, maxLines = 1)
+        Spacer(Modifier.height(4.dp))
+        Text(
+            value,
+            color = TextWhite,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Clip
+        )
+    }
+}
+
+@Composable
+private fun ProfileInfoBlock(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier,
+    singleLineValue: Boolean = false
+) {
     Column(
         modifier = modifier
             .clip(RoundedCornerShape(12.dp))
             .background(CardBgAlt.copy(alpha = 0.72f))
             .border(1.dp, BorderSub, RoundedCornerShape(12.dp))
-            .padding(12.dp)
+            .padding(
+                horizontal = if (singleLineValue) 10.dp else 12.dp,
+                vertical = 12.dp
+            )
     ) {
         Text(label, color = TextMuted, fontSize = 12.sp, maxLines = 1)
         Spacer(Modifier.height(5.dp))
-        Text(value, color = TextWhite, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+        Text(
+            value,
+            color = TextWhite,
+            fontSize = if (singleLineValue) 9.sp else 15.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = if (singleLineValue) 1 else Int.MAX_VALUE,
+            softWrap = !singleLineValue,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }
 

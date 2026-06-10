@@ -479,13 +479,10 @@ fun DashboardScreen(
 
     // ── Attendance state (shared with dialog) ──────────────
     val attVM: AttendanceViewModel = viewModel(factory = AttendanceViewModelFactory(db))
-    val attSummaries by attVM.batchSummaries.collectAsState()
-    val staffSum by attVM.staffAttendanceSummary.collectAsState()
+    val attSummaries by attVM.dailyBatchSummaries.collectAsState()
+    val staffSum by attVM.dailyStaffAttendanceSummary.collectAsState()
     var attLoading by remember { mutableStateOf(true) }
-    LaunchedEffect(Unit) { attVM.loadDashboardSummaries(); attLoading = false }
-    val currentMonthLabel = remember {
-        SimpleDateFormat("MMM yyyy", Locale.getDefault()).format(java.util.Calendar.getInstance().time)
-    }
+    LaunchedEffect(Unit) { attVM.loadDailySummaries(); attLoading = false }
     val todayLabel = remember {
         SimpleDateFormat("EEE, dd MMM", Locale.getDefault()).format(java.util.Calendar.getInstance().time)
     }
@@ -496,7 +493,9 @@ fun DashboardScreen(
             presentCount = attSummaries.sumOf { it.presentCount },
             absentCount = attSummaries.sumOf { it.absentCount },
             leaveCount = attSummaries.sumOf { it.leaveCount },
-            holidayCount = attSummaries.sumOf { it.holidayCount }
+            holidayCount = attSummaries.sumOf { it.holidayCount },
+            expectedStudentDays = attSummaries.sumOf { it.expectedStudentDays },
+            attendanceDays = 1
         )
     }
     var selectedBatchId by remember { mutableStateOf<String?>(null) }
@@ -644,7 +643,7 @@ fun DashboardScreen(
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically) {
                             Text("Attendance", color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                            Text(currentMonthLabel, color = AccentCyan, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            Text("Today", color = AccentCyan, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                         }
                         Spacer(Modifier.height(12.dp))
 
@@ -678,10 +677,10 @@ fun DashboardScreen(
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     val sMarked = studentOverall?.markedCount ?: 0
                     val sTotal = studentOverall?.totalStudents ?: 0
-                    AttendanceMiniCard("Student", Icons.Filled.School, sMarked, sTotal, AccentGreen, { safeNavigate("AttendanceRoute") }, Modifier.weight(1f))
+                    AttendanceMiniCard("Student", Icons.Filled.School, sMarked, sTotal, "marked today", AccentGreen, { safeNavigate("AttendanceRoute") }, Modifier.weight(1f))
                     val stMarked = staffSum.markedCount
                     val stTotal = staffSum.totalStaff
-                    AttendanceMiniCard("Staff", Icons.Filled.Group, stMarked, stTotal, AccentSky, { safeNavigate("StaffAttendanceRoute") }, Modifier.weight(1f))
+                    AttendanceMiniCard("Staff", Icons.Filled.Group, stMarked, stTotal, "marked today", AccentSky, { safeNavigate("StaffAttendanceRoute") }, Modifier.weight(1f))
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -851,7 +850,7 @@ fun DashboardScreen(
                 text = {
                     batchSum?.let { sum ->
                         Column {
-                            AttendanceSegmentedBar(sum, "Students: ${sum.markedCount}/${sum.totalStudents}")
+                            AttendanceSegmentedBar(sum, "Students")
                             Spacer(Modifier.height(12.dp))
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                                 dialogStat("Present", "${"%.0f".format(sum.presentPct)}%", AccentGreen, sum.presentCount)
@@ -2671,10 +2670,10 @@ private fun AttendanceSegmentedBar(sum: BatchAttendanceSummary, label: String) {
     Column {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text(label, color = TextSecondary, fontSize = 12.sp)
-            Text("${sum.markedCount}/${sum.totalStudents}", color = TextSecondary, fontSize = 11.sp)
+            Text("${sum.markedCount}/${sum.totalStudents} marked today", color = TextSecondary, fontSize = 11.sp)
         }
         Spacer(Modifier.height(6.dp))
-        val total = sum.totalStudents.toFloat().coerceAtLeast(1f)
+        val total = sum.chartTotal.toFloat().coerceAtLeast(1f)
         val pW = sum.presentCount / total; val aW = sum.absentCount / total
         val lW = sum.leaveCount / total; val hW = sum.holidayCount / total
         Canvas(modifier = Modifier.fillMaxWidth().height(10.dp)) {
@@ -2703,10 +2702,10 @@ private fun StaffSegmentedBar(sum: StaffAttendanceSummary) {
     Column {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text("Staff", color = TextSecondary, fontSize = 12.sp)
-            Text("${sum.markedCount}/${sum.totalStaff}", color = TextSecondary, fontSize = 11.sp)
+            Text("${sum.markedCount}/${sum.totalStaff} marked today", color = TextSecondary, fontSize = 11.sp)
         }
         Spacer(Modifier.height(6.dp))
-        val total = sum.totalStaff.toFloat().coerceAtLeast(1f)
+        val total = sum.chartTotal.toFloat().coerceAtLeast(1f)
         val pW = sum.presentCount / total; val aW = sum.absentCount / total
         val lW = sum.leaveCount / total; val hW = sum.holidayCount / total
         Canvas(modifier = Modifier.fillMaxWidth().height(10.dp)) {
@@ -2752,7 +2751,7 @@ private fun BatchMiniCard(name: String, total: Int, marked: Int, presentPct: Flo
 }
 
 @Composable
-private fun AttendanceMiniCard(label: String, icon: ImageVector, marked: Int, total: Int, accent: Color, onClick: () -> Unit, modifier: Modifier = Modifier) {
+private fun AttendanceMiniCard(label: String, icon: ImageVector, marked: Int, total: Int, detail: String, accent: Color, onClick: () -> Unit, modifier: Modifier = Modifier) {
     Card(
         modifier = modifier.clickable(onClick = onClick),
         shape = RoundedCornerShape(14.dp),
@@ -2766,7 +2765,7 @@ private fun AttendanceMiniCard(label: String, icon: ImageVector, marked: Int, to
                 Text(label, color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
             }
             Spacer(Modifier.height(8.dp))
-            Text("$marked / $total marked", color = TextSecondary, fontSize = 12.sp)
+            Text("$marked / $total $detail", color = TextSecondary, fontSize = 12.sp)
             Spacer(Modifier.height(4.dp))
             val prog = if (total > 0) marked.toFloat() / total else 0f
             LinearProgressIndicator(

@@ -56,6 +56,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -78,6 +79,9 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.database.AppDatabase
+import com.example.domain.SessionManager
+import com.example.domain.appendInstituteSignature
+import com.example.domain.loadInstituteSignature
 import kotlinx.coroutines.launch
 import java.net.URLEncoder
 import java.text.NumberFormat
@@ -119,8 +123,14 @@ fun DueFeeListScreen(db: AppDatabase, onBack: () -> Unit) {
     val viewModel: FeeViewModel = viewModel(factory = FeeViewModelFactory(db))
     val dueDetails by viewModel.dueFeesWithDetails.collectAsState()
     val context = LocalContext.current
+    val instId = SessionManager.currentInstituteId.value
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
+    var instituteSignature by remember { mutableStateOf("") }
+
+    LaunchedEffect(instId) {
+        instituteSignature = loadInstituteSignature(db, instId)
+    }
 
     var searchVisible by remember { mutableStateOf(true) }
     var query by remember { mutableStateOf("") }
@@ -184,7 +194,7 @@ fun DueFeeListScreen(db: AppDatabase, onBack: () -> Unit) {
                 Intent(Intent.ACTION_SEND).apply {
                     type = "text/plain"
                     putExtra(Intent.EXTRA_SUBJECT, title)
-                    putExtra(Intent.EXTRA_TEXT, body)
+                    putExtra(Intent.EXTRA_TEXT, appendInstituteSignature(body, instituteSignature))
                 },
                 title
             )
@@ -192,12 +202,14 @@ fun DueFeeListScreen(db: AppDatabase, onBack: () -> Unit) {
     }
 
     fun openWhatsApp(body: String) {
-        val encoded = URLEncoder.encode(body, "UTF-8")
+        val encoded = URLEncoder.encode(appendInstituteSignature(body, instituteSignature), "UTF-8")
         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/?text=$encoded")))
     }
 
     fun openSms(body: String) {
-        context.startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:")).apply { putExtra("sms_body", body) })
+        context.startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:")).apply {
+            putExtra("sms_body", appendInstituteSignature(body, instituteSignature))
+        })
     }
 
     fun sendReminder(group: DueStudentGroup, channel: String) {

@@ -34,6 +34,8 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.database.AppDatabase
 import com.example.data.models.StudentEntity
+import com.example.domain.appendInstituteSignature
+import com.example.domain.loadInstituteSignature
 import com.example.domain.SessionManager
 import kotlinx.coroutines.launch
 
@@ -66,6 +68,12 @@ fun StudentListScreen(
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+    val instId = SessionManager.currentInstituteId.value
+    var instituteSignature by remember { mutableStateOf("") }
+
+    LaunchedEffect(instId) {
+        instituteSignature = loadInstituteSignature(db, instId)
+    }
 
     var searchQuery by remember { mutableStateOf("") }
     var showSearch by remember { mutableStateOf(true) }
@@ -111,7 +119,7 @@ fun StudentListScreen(
     }
 
     fun sendMessage(useWhatsApp: Boolean) {
-        val message = messageText.trim()
+        val message = appendInstituteSignature(messageText.trim(), instituteSignature)
         if (message.isBlank()) {
             scope.launch { snackbarHostState.showSnackbar("Write a message first.") }
             return

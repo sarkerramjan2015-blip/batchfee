@@ -12,6 +12,9 @@ interface AttendanceDao {
     @Query("SELECT * FROM attendance WHERE instituteId = :instituteId AND batchId = :batchId AND attendanceDateMs BETWEEN :startMs AND :endMs ORDER BY attendanceDateMs ASC")
     fun getAttendanceForBatchByDateRange(instituteId: String, batchId: String, startMs: Long, endMs: Long): Flow<List<AttendanceEntity>>
 
+    @Query("SELECT * FROM attendance WHERE instituteId = :instituteId AND attendanceDateMs BETWEEN :startMs AND :endMs ORDER BY attendanceDateMs ASC")
+    fun getAttendanceByInstituteDateRange(instituteId: String, startMs: Long, endMs: Long): Flow<List<AttendanceEntity>>
+
     @Query("SELECT * FROM attendance WHERE instituteId = :instituteId AND studentId = :studentId AND batchId = :batchId ORDER BY attendanceDateMs DESC")
     fun getAttendanceForStudent(instituteId: String, studentId: String, batchId: String): Flow<List<AttendanceEntity>>
 

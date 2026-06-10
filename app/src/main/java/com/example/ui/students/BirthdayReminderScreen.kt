@@ -38,6 +38,9 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.example.data.database.AppDatabase
 import com.example.data.models.StudentEntity
+import com.example.domain.SessionManager
+import com.example.domain.appendInstituteSignature
+import com.example.domain.loadInstituteSignature
 import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
@@ -208,8 +211,14 @@ fun BirthdayReminderScreen(db: AppDatabase, onBack: () -> Unit, onNavigateToPric
     val todayBirthdays by viewModel.todayBirthdays.collectAsState()
     val upcomingBirthdays by viewModel.upcomingBirthdays.collectAsState()
     val context = LocalContext.current
+    val instId = SessionManager.currentInstituteId.value
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
+    var instituteSignature by remember { mutableStateOf("") }
+
+    LaunchedEffect(instId) {
+        instituteSignature = loadInstituteSignature(db, instId)
+    }
 
     var wishDialogTarget by remember { mutableStateOf<StudentEntity?>(null) }
 
@@ -344,6 +353,13 @@ fun BirthdayReminderScreen(db: AppDatabase, onBack: () -> Unit, onNavigateToPric
                                 val intent = Intent(Intent.ACTION_SEND).apply {
                                     type = "image/png"
                                     putExtra(Intent.EXTRA_STREAM, cardUri)
+                                    putExtra(
+                                        Intent.EXTRA_TEXT,
+                                        appendInstituteSignature(
+                                            "Happy Birthday ${student.fullName}! Turning $age today.",
+                                            instituteSignature
+                                        )
+                                    )
                                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                                     `package` = "com.whatsapp"
                                 }
@@ -355,6 +371,13 @@ fun BirthdayReminderScreen(db: AppDatabase, onBack: () -> Unit, onNavigateToPric
                                     Intent(Intent.ACTION_SEND).apply {
                                         type = "image/png"
                                         putExtra(Intent.EXTRA_STREAM, cardUri)
+                                        putExtra(
+                                            Intent.EXTRA_TEXT,
+                                            appendInstituteSignature(
+                                                "Happy Birthday ${student.fullName}! Turning $age today.",
+                                                instituteSignature
+                                            )
+                                        )
                                         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                                     },
                                     "Share Birthday Card"
@@ -372,8 +395,11 @@ fun BirthdayReminderScreen(db: AppDatabase, onBack: () -> Unit, onNavigateToPric
                         color = ElectricBlue,
                         onClick = {
                             wishDialogTarget = null
-                            val msg = "Happy Birthday ${student.fullName}! \uD83C\uDF82 Turning $age today. " +
-                                    "Wishing you a year filled with success and happiness. \uD83C\uDF89\uD83C\uDF81"
+                            val msg = appendInstituteSignature(
+                                "Happy Birthday ${student.fullName}! \uD83C\uDF82 Turning $age today. " +
+                                    "Wishing you a year filled with success and happiness. \uD83C\uDF89\uD83C\uDF81",
+                                instituteSignature
+                            )
                             val phone = student.phone?.takeIf { it.isNotBlank() }
                             try {
                                 val intent = Intent(Intent.ACTION_SENDTO).apply {

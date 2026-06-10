@@ -35,6 +35,8 @@ import com.example.data.database.AppDatabase
 import com.example.data.models.AttendanceEntity
 import com.example.data.models.PaymentEntity
 import com.example.data.models.StaffEntity
+import com.example.domain.appendInstituteSignature
+import com.example.domain.loadInstituteSignature
 import com.example.domain.SessionManager
 import com.example.ui.components.buildWhatsAppUrl
 import kotlinx.coroutines.launch
@@ -77,6 +79,11 @@ fun BatchDetailScreen(
     val totalExpected by paymentVM.totalExpected.collectAsState()
     val totalCollected by paymentVM.totalCollected.collectAsState()
     val isLoading by paymentVM.isLoading.collectAsState()
+    var instituteSignature by remember { mutableStateOf("") }
+
+    LaunchedEffect(instId) {
+        instituteSignature = loadInstituteSignature(db, instId)
+    }
 
     // This-month stats
     val paidThisMonth by paymentVM.paidThisMonthCount.collectAsState()
@@ -155,7 +162,7 @@ fun BatchDetailScreen(
     }
 
     fun openWhatsApp(target: BatchStudentWithFee) {
-        val msg = buildDueMessage(target)
+        val msg = appendInstituteSignature(buildDueMessage(target), instituteSignature)
         val url = buildWhatsAppUrl(target.student.phone, msg)
         try { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
         catch (_: Exception) { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/?text=${
@@ -163,7 +170,7 @@ fun BatchDetailScreen(
     }
 
     fun openSMS(target: BatchStudentWithFee) {
-        val msg = buildDueMessage(target)
+        val msg = appendInstituteSignature(buildDueMessage(target), instituteSignature)
         val phone = target.student.phone?.takeIf { it.isNotBlank() }
         val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${phone ?: ""}"))
         intent.putExtra("sms_body", msg)
@@ -197,7 +204,7 @@ fun BatchDetailScreen(
                         s.student.fullName
                     } — Due BDT ${s.dueAmount.toLong()} (${s.fee?.feePeriod ?: "N/A"})"
                 }
-                val msg = "BatchFee — $batchName\nDue Fees:\n$lines"
+                val msg = appendInstituteSignature("$batchName\nDue Fees:\n$lines", instituteSignature)
                 when (channel) {
                     "whatsapp" -> {
                         val encoded = URLEncoder.encode(msg, "UTF-8")
@@ -220,7 +227,7 @@ fun BatchDetailScreen(
                 Intent(Intent.ACTION_SEND).apply {
                     type = "text/plain"
                     putExtra(Intent.EXTRA_SUBJECT, title)
-                    putExtra(Intent.EXTRA_TEXT, text)
+                    putExtra(Intent.EXTRA_TEXT, appendInstituteSignature(text, instituteSignature))
                 },
                 title
             )
