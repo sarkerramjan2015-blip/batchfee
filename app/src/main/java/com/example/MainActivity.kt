@@ -500,7 +500,16 @@ private fun MainAppContent(appDb: com.example.data.database.AppDatabase) {
         }
         
         composable<CreateExamRoute> {
-            com.example.ui.exams.CreateExamScreen(db = appDb, onBack = { navController.popBackStack() })
+            com.example.ui.exams.AddEditExamScreen(db = appDb, onBack = { navController.popBackStack() })
+        }
+
+        composable<EditExamRoute> { backStackEntry ->
+            val route = backStackEntry.toRoute<EditExamRoute>()
+            com.example.ui.exams.AddEditExamScreen(
+                db = appDb,
+                examId = route.examId,
+                onBack = { navController.popBackStack() }
+            )
         }
 
         composable<ExamDetailRoute> { backStackEntry ->
@@ -508,7 +517,8 @@ private fun MainAppContent(appDb: com.example.data.database.AppDatabase) {
             com.example.ui.exams.ExamDetailScreen(
                 db = appDb,
                 examId = route.examId,
-                onBack = { navController.popBackStack() }
+                onBack = { navController.popBackStack() },
+                onEdit = { navController.navigate(EditExamRoute(route.examId)) }
             )
         }
         

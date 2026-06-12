@@ -183,9 +183,14 @@ class FeeViewModel(private val db: AppDatabase) : ViewModel() {
         dueDateMs: Long,
         baseAmount: Double,
         discount: Double,
-        lateFee: Double
+        lateFee: Double,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit
     ) {
-        val instId = SessionManager.currentInstituteId.value ?: return
+        val instId = SessionManager.currentInstituteId.value ?: run {
+            onError("No active institute session.")
+            return
+        }
         viewModelScope.launch {
             try {
                 feeRepository.createFee(
@@ -199,7 +204,11 @@ class FeeViewModel(private val db: AppDatabase) : ViewModel() {
                     discountAmount = discount,
                     lateFeeAmount = lateFee
                 )
+                onSuccess()
             } catch (_: IllegalArgumentException) {
+                onError("Unable to create fee. Please check the values and try again.")
+            } catch (e: Exception) {
+                onError(e.message ?: "Unable to create fee.")
             }
         }
     }

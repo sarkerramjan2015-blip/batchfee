@@ -726,7 +726,7 @@ fun UnifiedCollectScreen(
                             db.receiptDao().insertReceipt(
                                 receipt.copy(
                                     totalAmount = updatedFee.totalAmount,
-                                    paidAmount = editRequest.amount,
+                                    paidAmount = updatedPaid,
                                     dueAmount = updatedDue,
                                     receiptDateMs = editRequest.paymentDateMs,
                                     paymentMethod = editRequest.method,

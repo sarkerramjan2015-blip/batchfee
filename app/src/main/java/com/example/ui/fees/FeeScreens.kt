@@ -50,6 +50,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.database.AppDatabase
 import com.example.data.models.BatchEntity
 import com.example.data.models.FeeEntity
+import com.example.data.models.InstituteEntity
 import com.example.data.models.ReceiptEntity
 import com.example.data.models.StudentEntity
 import com.example.domain.SessionManager
@@ -102,9 +103,12 @@ private data class MonthYear(val month: Int, val year: Int, val label: String)
 
 private fun generateMonthOptions(): List<MonthYear> {
     val names = listOf("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
-    val currentYear = Calendar.getInstance().get(Calendar.YEAR)
-    return (currentYear - 1..currentYear + 2).flatMap { year ->
-        (1..12).map { month -> MonthYear(month, year, "${names[month - 1]} $year") }
+    val calendar = Calendar.getInstance()
+    return (-12..1).map { offset ->
+        val c = (calendar.clone() as Calendar).apply { add(Calendar.MONTH, offset) }
+        val month = c.get(Calendar.MONTH) + 1
+        val year = c.get(Calendar.YEAR)
+        MonthYear(month, year, "${names[month - 1]} $year")
     }
 }
 
@@ -206,16 +210,34 @@ private fun generatePdfReceipt(
 
 // ── Helper: Receipt bitmap for sharing ───────────────────────────
 private fun createReceiptBitmap(
+    context: Context,
     receiptNumber: String, studentName: String, batchName: String, feePeriod: String,
-    payableAmount: Double, collectedAmount: Double, dueAmount: Double, paymentMethod: String
+    payableAmount: Double, collectedAmount: Double, dueAmount: Double, paymentMethod: String,
+    instituteName: String,
+    instituteLogoUri: String?
 ): Bitmap {
     val w = 800; val h = 900
     val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
     val c = Canvas(bmp)
     c.drawColor(android.graphics.Color.WHITE)
 
-    c.drawRect(0f, 0f, w.toFloat(), 100f, Paint().apply { color = android.graphics.Color.parseColor("#0F172A") })
-    c.drawText("PAYMENT RECEIPT", 30f, 65f, Paint().apply {
+    val logo = loadBitmapFromUri(context, instituteLogoUri)
+    c.drawRect(0f, 0f, w.toFloat(), 120f, Paint().apply { color = android.graphics.Color.parseColor("#0F172A") })
+    if (logo != null) {
+        val scaled = Bitmap.createScaledBitmap(logo, 72, 72, true)
+        c.drawBitmap(scaled, 30f, 24f, Paint(Paint.ANTI_ALIAS_FLAG))
+    } else {
+        c.drawCircle(66f, 60f, 36f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.parseColor("#22D3EE") })
+        c.drawText(instituteName.take(1).uppercase(), 50f, 76f, Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.parseColor("#0F172A")
+            textSize = 34f
+            typeface = Typeface.DEFAULT_BOLD
+        })
+    }
+    c.drawText(instituteName, 120f, 56f, Paint().apply {
+        color = android.graphics.Color.WHITE; textSize = 30f; typeface = Typeface.DEFAULT_BOLD; isAntiAlias = true
+    })
+    c.drawText("PAYMENT RECEIPT", 120f, 90f, Paint().apply {
         color = android.graphics.Color.WHITE; textSize = 36f; typeface = Typeface.DEFAULT_BOLD; isAntiAlias = true
     })
 
@@ -247,12 +269,12 @@ private fun createReceiptBitmap(
 
 // ── Helper: WhatsApp / share ─────────────────────────────────────
 private fun shareReceiptImage(context: Context, bitmap: Bitmap, phone: String?) {
-    val file = File(context.cacheDir, "receipt_share_${System.currentTimeMillis()}.png")
-    FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+    val file = File(context.cacheDir, "receipt_share_${System.currentTimeMillis()}.jpg")
+    FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.JPEG, 95, it) }
     val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
     val send = { pkg: String? ->
         Intent(Intent.ACTION_SEND).apply {
-            type = "image/png"; putExtra(Intent.EXTRA_STREAM, uri)
+            type = "image/jpeg"; putExtra(Intent.EXTRA_STREAM, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             if (pkg != null) `package` = pkg
             if (!phone.isNullOrBlank() && pkg == "com.whatsapp") {
@@ -265,14 +287,23 @@ private fun shareReceiptImage(context: Context, bitmap: Bitmap, phone: String?) 
 }
 
 private fun shareReceiptImageAny(context: Context, bitmap: Bitmap) {
-    val file = File(context.cacheDir, "receipt_share_${System.currentTimeMillis()}.png")
-    FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+    val file = File(context.cacheDir, "receipt_share_${System.currentTimeMillis()}.jpg")
+    FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.JPEG, 95, it) }
     val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
     context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
-        type = "image/png"
+        type = "image/jpeg"
         putExtra(Intent.EXTRA_STREAM, uri)
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }, "Share Receipt"))
+}
+
+private fun loadBitmapFromUri(context: Context, uriString: String?): Bitmap? {
+    val uri = uriString?.takeIf { it.isNotBlank() }?.let(Uri::parse) ?: return null
+    return try {
+        context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) }
+    } catch (_: Exception) {
+        null
+    }
 }
 
 private fun sendReceiptMessage(context: Context, phone: String?, body: String) {
@@ -368,6 +399,8 @@ private fun <T> PremiumDropdown(
 fun CreateFeeScreen(db: AppDatabase, onBack: () -> Unit) {
     val viewModel: FeeViewModel = viewModel(factory = FeeViewModelFactory(db))
     val instId = SessionManager.currentInstituteId.collectAsState().value
+    val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
     var students by remember { mutableStateOf<List<com.example.data.models.StudentEntity>>(emptyList()) }
     var selectedStudentId by remember { mutableStateOf<String?>(null) }
     var baseAmount by remember { mutableStateOf("") }
@@ -381,6 +414,7 @@ fun CreateFeeScreen(db: AppDatabase, onBack: () -> Unit) {
 
     Scaffold(
         containerColor = BgColor,
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text("Create Fee", color = TextWhite, fontWeight = FontWeight.Bold, fontSize = 20.sp) },
@@ -492,9 +526,10 @@ fun CreateFeeScreen(db: AppDatabase, onBack: () -> Unit) {
                                 dueDateMs = System.currentTimeMillis() + 7L*24*60*60*1000,
                                 baseAmount = amount,
                                 discount = 0.0,
-                                lateFee = 0.0
+                                lateFee = 0.0,
+                                onSuccess = onBack,
+                                onError = { scope.launch { snackbarHostState.showSnackbar(it) } }
                             )
-                            onBack()
                         }
                     },
                     modifier = Modifier.fillMaxSize(),
@@ -525,14 +560,15 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
     // ── Data ──
     var fee by remember { mutableStateOf<FeeEntity?>(null) }
     var student by remember { mutableStateOf<StudentEntity?>(null) }
+    var institute by remember { mutableStateOf<InstituteEntity?>(null) }
     var batches by remember { mutableStateOf<List<BatchEntity>>(emptyList()) }
     var selectedBatchId by remember { mutableStateOf<String?>(null) }
     var isLoading by remember { mutableStateOf(true) }
 
     // ── Calculations ──
     val monthOptions = remember { generateMonthOptions() }
-    var startMonthIdx by remember { mutableIntStateOf(0) }
-    var endMonthIdx by remember { mutableIntStateOf(0) }
+    var startMonthIdx by remember { mutableIntStateOf(monthOptions.lastIndex - 1) }
+    var endMonthIdx by remember { mutableIntStateOf(monthOptions.lastIndex - 1) }
     var discountPercent by remember { mutableDoubleStateOf(0.0) }
     var collectedAmount by remember { mutableStateOf("") }
     var manualAmountEdit by remember { mutableStateOf(false) }
@@ -561,6 +597,11 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
     LaunchedEffect(instId, feeId) {
         if (instId != null) { fee = db.feeDao().getFeeById(feeId, instId); isLoading = false }
     }
+    LaunchedEffect(instId) {
+        if (instId != null) {
+            db.instituteDao().getInstituteFlow(instId).collect { institute = it }
+        }
+    }
     // ── Load student ──
     LaunchedEffect(instId, fee?.studentId) {
         val sid = fee?.studentId ?: return@LaunchedEffect
@@ -581,7 +622,7 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
     }
     // ── Parse fee period → default month indices ──
     LaunchedEffect(fee, monthOptions.size) {
-        if (fee != null && startMonthIdx == 0 && endMonthIdx == 0) {
+        if (fee != null && startMonthIdx == monthOptions.lastIndex - 1 && endMonthIdx == monthOptions.lastIndex - 1) {
             parseFeePeriod(fee!!.feePeriod)?.let { (m, y) ->
                 val idx = monthOptions.indexOfFirst { it.month == m + 1 && it.year == y }
                 if (idx >= 0) { startMonthIdx = idx; endMonthIdx = idx }
@@ -706,10 +747,13 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
                         OutlinedButton(
                             onClick = {
                                 val bmp = createReceiptBitmap(
+                                    context,
                                     receiptNumber, student?.fullName ?: "",
                                     selectedBatch?.name ?: "", receiptPeriod,
                                     payableAmount, collectedNow,
-                                    remainingDue, paymentMethod
+                                    remainingDue, paymentMethod,
+                                    institute?.name ?: "BatchFee",
+                                    institute?.profilePhotoUri
                                 )
                                 shareReceiptImage(context, bmp, student?.phone)
                             },
@@ -739,10 +783,13 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
                         Button(
                             onClick = {
                                 val bmp = createReceiptBitmap(
+                                    context,
                                     receiptNumber, student?.fullName ?: "",
                                     selectedBatch?.name ?: "", receiptPeriod,
                                     payableAmount, collectedNow,
-                                    remainingDue, paymentMethod
+                                    remainingDue, paymentMethod,
+                                    institute?.name ?: "BatchFee",
+                                    institute?.profilePhotoUri
                                 )
                                 shareReceiptImageAny(context, bmp)
                             },
@@ -1131,6 +1178,7 @@ fun ReceiptDetailScreen(db: AppDatabase, paymentId: String, onBack: () -> Unit) 
     val instId = SessionManager.currentInstituteId.collectAsState().value
     val context = LocalContext.current
     var receipt by remember { mutableStateOf<ReceiptEntity?>(null) }
+    var institute by remember { mutableStateOf<InstituteEntity?>(null) }
     var studentName by remember { mutableStateOf("") }
     var studentPhone by remember { mutableStateOf<String?>(null) }
     var batchName by remember { mutableStateOf("") }
@@ -1139,6 +1187,11 @@ fun ReceiptDetailScreen(db: AppDatabase, paymentId: String, onBack: () -> Unit) 
 
     LaunchedEffect(instId, paymentId) {
         if (instId != null) db.receiptDao().getReceiptByPaymentId(instId, paymentId).collect { receipt = it }
+    }
+    LaunchedEffect(instId) {
+        if (instId != null) {
+            db.instituteDao().getInstituteFlow(instId).collect { institute = it }
+        }
     }
     LaunchedEffect(instId, receipt?.studentId) {
         val sid = receipt?.studentId ?: return@LaunchedEffect
@@ -1227,8 +1280,11 @@ fun ReceiptDetailScreen(db: AppDatabase, paymentId: String, onBack: () -> Unit) 
                     Button(
                         onClick = {
                             val bmp = createReceiptBitmap(
+                                context,
                                 r.receiptNumber, studentName, batchName, feePeriod,
-                                r.totalAmount, r.paidAmount, r.dueAmount, r.paymentMethod
+                                r.totalAmount, r.paidAmount, r.dueAmount, r.paymentMethod,
+                                institute?.name ?: "BatchFee",
+                                institute?.profilePhotoUri
                             )
                             shareReceiptImage(context, bmp, studentPhone)
                         },

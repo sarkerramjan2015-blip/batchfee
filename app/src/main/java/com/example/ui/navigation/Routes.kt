@@ -68,6 +68,7 @@ object BillingRoute
 @Serializable object ProfitLossRoute
 @Serializable object ExamsRoute
 @Serializable object CreateExamRoute
+@Serializable data class EditExamRoute(val examId: String)
 @Serializable data class ExamDetailRoute(val examId: String)
 @Serializable data class AddResultRoute(val examId: String)
 @Serializable object ResultReportRoute

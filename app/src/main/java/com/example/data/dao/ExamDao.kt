@@ -21,4 +21,7 @@ interface ExamDao {
 
     @Update
     suspend fun updateExam(exam: ExamEntity)
+
+    @Query("UPDATE exams SET archivedAtMs = :archivedAtMs, updatedAtMs = :archivedAtMs WHERE id = :examId AND instituteId = :instituteId")
+    suspend fun archiveExam(instituteId: String, examId: String, archivedAtMs: Long)
 }

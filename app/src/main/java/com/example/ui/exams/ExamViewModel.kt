@@ -31,6 +31,8 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
     private val _batches = MutableStateFlow<List<BatchEntity>>(emptyList())
     val batches = _batches.asStateFlow()
 
+    private val _instituteName = MutableStateFlow("")
+
     private val _selectedExam = MutableStateFlow<ExamEntity?>(null)
     val selectedExam = _selectedExam.asStateFlow()
 
@@ -52,6 +54,11 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
         }
         viewModelScope.launch {
             db.batchDao().getBatchesByInstitute(instId).collect { _batches.value = it }
+        }
+        viewModelScope.launch {
+            db.instituteDao().getInstituteFlow(instId).collect { institute ->
+                _instituteName.value = institute?.name?.trim().orEmpty()
+            }
         }
     }
 
@@ -131,6 +138,60 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
         }
     }
 
+    fun updateExam(
+        examId: String,
+        batchId: String,
+        examName: String,
+        subject: String?,
+        totalMarks: Double,
+        passingMarks: Double,
+        examDateMs: Long,
+        teacherName: String?,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit = {}
+    ) {
+        val instId = SessionManager.currentInstituteId.value ?: return
+        val currentExam = _selectedExam.value
+        if (currentExam == null || currentExam.id != examId) {
+            onError("Exam details not loaded yet.")
+            return
+        }
+        if (batchId.isBlank()) { onError("Batch is required."); return }
+        if (examName.isBlank()) { onError("Exam name is required."); return }
+        if (totalMarks <= 0) { onError("Total marks must be greater than 0."); return }
+        if (passingMarks > totalMarks) { onError("Passing marks cannot exceed total marks."); return }
+
+        viewModelScope.launch {
+            db.examDao().updateExam(
+                currentExam.copy(
+                    instituteId = instId,
+                    batchId = batchId,
+                    examName = examName.trim(),
+                    subject = subject?.trim()?.takeIf { it.isNotEmpty() },
+                    examDateMs = examDateMs,
+                    totalMarks = totalMarks,
+                    passingMarks = passingMarks,
+                    teacherName = teacherName?.trim()?.takeIf { it.isNotEmpty() },
+                    updatedAtMs = System.currentTimeMillis()
+                )
+            )
+            onSuccess()
+        }
+    }
+
+    fun archiveExam(examId: String, onSuccess: () -> Unit, onError: (String) -> Unit = {}) {
+        val instId = SessionManager.currentInstituteId.value ?: return
+        viewModelScope.launch {
+            try {
+                val now = System.currentTimeMillis()
+                db.examDao().archiveExam(instId, examId, now)
+                onSuccess()
+            } catch (e: Exception) {
+                onError(e.message ?: "Failed to delete exam")
+            }
+        }
+    }
+
     fun saveResults(
         examId: String,
         batchId: String,
@@ -193,9 +254,10 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
     fun buildMeritMessage(exam: ExamEntity, includeAll: Boolean = true): String {
         val results = _studentResults.value.filter { it.result != null }
         val batchName = _batches.value.find { it.id == exam.batchId }?.name ?: "Batch"
+        val instituteName = currentInstituteName()
         val sb = StringBuilder()
-        sb.appendLine("📊 Exam Merit List")
-        sb.appendLine("${exam.examName} — $batchName")
+        sb.appendLine("Exam Merit List")
+        sb.appendLine("${exam.examName} - $batchName")
         if (exam.subject != null) sb.appendLine("Subject: ${exam.subject}")
         sb.appendLine("Total Marks: ${formatMarks(exam.totalMarks)} | Pass: ${formatMarks(exam.passingMarks)}")
         sb.appendLine()
@@ -203,10 +265,10 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
         list.forEach { item ->
             val grade = item.result?.grade ?: "-"
             val marks = item.result?.marksObtained?.let { formatMarks(it) } ?: "-"
-            sb.appendLine("${item.position}. ${item.student.fullName} — $marks ($grade)")
+            sb.appendLine("${item.position}. ${item.student.fullName} - $marks ($grade)")
         }
         sb.appendLine()
-        sb.appendLine("— Sent via BatchFee")
+        sb.appendLine("Sent via $instituteName")
         return sb.toString()
     }
 
@@ -214,17 +276,22 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
         val grade = item.result?.grade ?: "-"
         val marks = item.result?.marksObtained?.let { formatMarks(it) } ?: "-"
         val batchName = _batches.value.find { it.id == exam.batchId }?.name ?: "Batch"
-        val passFail = if ((item.result?.marksObtained ?: 0.0) >= exam.passingMarks) "Passed ✅" else "Needs Improvement"
+        val instituteName = currentInstituteName()
+        val passFail = if ((item.result?.marksObtained ?: 0.0) >= exam.passingMarks) "Passed" else "Needs Improvement"
         return buildString {
-            appendLine("📚 Exam Result")
-            appendLine("${exam.examName} — $batchName")
+            appendLine("Exam Result")
+            appendLine("${exam.examName} - $batchName")
             if (exam.subject != null) appendLine("Subject: ${exam.subject}")
             appendLine("Marks: $marks / ${formatMarks(exam.totalMarks)}")
             appendLine("Grade: $grade | Position: ${item.position}")
             appendLine("Result: $passFail")
             appendLine()
-            appendLine("— BatchFee")
+            appendLine("-$instituteName")
         }
+    }
+
+    private fun currentInstituteName(): String {
+        return _instituteName.value.takeIf { it.isNotBlank() } ?: "BatchFee"
     }
 
     private fun calculateGrade(marks: Double, total: Double, pass: Double): String {

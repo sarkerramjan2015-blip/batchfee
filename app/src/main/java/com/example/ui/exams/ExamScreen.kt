@@ -158,11 +158,13 @@ fun ExamListScreen(db: AppDatabase, onBack: () -> Unit, onAddExam: () -> Unit, o
 // ═══════════════════════════════════════════════════════════
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun CreateExamScreen(db: AppDatabase, onBack: () -> Unit) {
+fun AddEditExamScreen(db: AppDatabase, examId: String? = null, onBack: () -> Unit) {
     val viewModel: ExamViewModel = viewModel(factory = ExamViewModelFactory(db))
     val batches by viewModel.batches.collectAsState()
+    val selectedExam by viewModel.selectedExam.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+    val isEditMode = examId != null
 
     var selectedBatchId by remember { mutableStateOf<String?>(null) }
     var examName by remember { mutableStateOf("") }
@@ -172,13 +174,33 @@ fun CreateExamScreen(db: AppDatabase, onBack: () -> Unit) {
     var selectedDateMs by remember { mutableStateOf(System.currentTimeMillis()) }
     var showDatePicker by remember { mutableStateOf(false) }
     val dateFormat = remember { SimpleDateFormat("dd MMM yyyy", Locale.getDefault()) }
+    var formInitialized by remember(examId) { mutableStateOf(false) }
+
+    LaunchedEffect(examId) {
+        if (examId != null) {
+            viewModel.loadExamDetails(examId)
+        }
+    }
+
+    LaunchedEffect(selectedExam?.id, examId) {
+        val exam = selectedExam
+        if (isEditMode && exam != null && exam.id == examId && !formInitialized) {
+            selectedBatchId = exam.batchId
+            examName = exam.examName
+            subject = exam.subject.orEmpty()
+            totalMarks = formatNum(exam.totalMarks)
+            passingMarks = formatNum(exam.passingMarks)
+            selectedDateMs = exam.examDateMs
+            formInitialized = true
+        }
+    }
 
     Scaffold(
         containerColor = BgColor,
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
-                title = { Text("Create Exam", color = TextWhite, fontWeight = FontWeight.Bold, fontSize = 20.sp) },
+                title = { Text(if (isEditMode) "Edit Exam" else "Create Exam", color = TextWhite, fontWeight = FontWeight.Bold, fontSize = 20.sp) },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = TextWhite) } },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = BgColor)
             )
@@ -266,29 +288,47 @@ fun CreateExamScreen(db: AppDatabase, onBack: () -> Unit) {
             }
 
             Spacer(Modifier.height(20.dp))
-            val canCreate = selectedBatchId != null && examName.isNotBlank() &&
+            val canSaveExam = selectedBatchId != null && examName.isNotBlank() &&
                     (totalMarks.toDoubleOrNull() ?: 0.0) > 0 &&
                     (passingMarks.toDoubleOrNull() ?: 0.0) <= (totalMarks.toDoubleOrNull() ?: 100.0)
             Box(
                 modifier = Modifier.fillMaxWidth().height(50.dp).clip(RoundedCornerShape(14.dp))
                     .shadow(4.dp, RoundedCornerShape(14.dp), spotColor = Cyan.copy(alpha = 0.3f))
-                    .let { m -> if (canCreate) m.background(brush = Brush.horizontalGradient(listOf(ElectricBlue, Cyan))) else m.background(CardBgAlt).border(1.dp, BorderSub, RoundedCornerShape(14.dp)) },
+                    .let { m -> if (canSaveExam) m.background(brush = Brush.horizontalGradient(listOf(ElectricBlue, Cyan))) else m.background(CardBgAlt).border(1.dp, BorderSub, RoundedCornerShape(14.dp)) },
                 contentAlignment = Alignment.Center
             ) {
                 TextButton(
                     onClick = {
-                        viewModel.createExam(
-                            batchId = selectedBatchId!!, examName = examName, subject = subject,
-                            totalMarks = totalMarks.toDoubleOrNull() ?: 100.0,
-                            passingMarks = passingMarks.toDoubleOrNull() ?: 40.0,
-                            examDateMs = selectedDateMs, teacherName = null,
-                            onSuccess = onBack,
-                            onError = { scope.launch { snackbarHostState.showSnackbar(it) } }
-                        )
+                        val onError: (String) -> Unit = { message ->
+                            scope.launch { snackbarHostState.showSnackbar(message) }
+                        }
+                        if (isEditMode) {
+                            viewModel.updateExam(
+                                examId = examId!!,
+                                batchId = selectedBatchId!!,
+                                examName = examName,
+                                subject = subject,
+                                totalMarks = totalMarks.toDoubleOrNull() ?: 100.0,
+                                passingMarks = passingMarks.toDoubleOrNull() ?: 40.0,
+                                examDateMs = selectedDateMs,
+                                teacherName = null,
+                                onSuccess = onBack,
+                                onError = onError
+                            )
+                        } else {
+                            viewModel.createExam(
+                                batchId = selectedBatchId!!, examName = examName, subject = subject,
+                                totalMarks = totalMarks.toDoubleOrNull() ?: 100.0,
+                                passingMarks = passingMarks.toDoubleOrNull() ?: 40.0,
+                                examDateMs = selectedDateMs, teacherName = null,
+                                onSuccess = onBack,
+                                onError = onError
+                            )
+                        }
                     },
-                    modifier = Modifier.fillMaxSize(), enabled = canCreate,
-                    colors = ButtonDefaults.textButtonColors(contentColor = if (canCreate) Color.White else TextMuted)
-                ) { Text("Create Exam", fontWeight = FontWeight.Bold, fontSize = 16.sp) }
+                    modifier = Modifier.fillMaxSize(), enabled = canSaveExam,
+                    colors = ButtonDefaults.textButtonColors(contentColor = if (canSaveExam) Color.White else TextMuted)
+                ) { Text(if (isEditMode) "Update Exam" else "Create Exam", fontWeight = FontWeight.Bold, fontSize = 16.sp) }
             }
         }
     }
@@ -313,7 +353,7 @@ fun CreateExamScreen(db: AppDatabase, onBack: () -> Unit) {
 // ═══════════════════════════════════════════════════════════
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ExamDetailScreen(db: AppDatabase, examId: String, onBack: () -> Unit) {
+fun ExamDetailScreen(db: AppDatabase, examId: String, onBack: () -> Unit, onEdit: () -> Unit) {
     val viewModel: ExamViewModel = viewModel(factory = ExamViewModelFactory(db))
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -329,6 +369,8 @@ fun ExamDetailScreen(db: AppDatabase, examId: String, onBack: () -> Unit) {
     var showMeritDialog by remember { mutableStateOf(false) }
     var showShareSheet by remember { mutableStateOf(false) }
     var showStudentMessageDialog by remember { mutableStateOf<StudentResultItem?>(null) }
+    var showExamMenu by remember { mutableStateOf(false) }
+    var showDeleteConfirm by remember { mutableStateOf(false) }
 
     LaunchedEffect(examId) { viewModel.loadExamDetails(examId) }
 
@@ -352,6 +394,32 @@ fun ExamDetailScreen(db: AppDatabase, examId: String, onBack: () -> Unit) {
                 actions = {
                     if (hasResults) {
                         IconButton(onClick = { showShareSheet = true }) { Icon(Icons.Filled.Share, null, tint = Cyan) }
+                    }
+                    Box {
+                        IconButton(onClick = { showExamMenu = true }) {
+                            Icon(Icons.Filled.MoreVert, null, tint = TextWhite)
+                        }
+                        DropdownMenu(
+                            expanded = showExamMenu,
+                            onDismissRequest = { showExamMenu = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Edit Exam") },
+                                leadingIcon = { Icon(Icons.Filled.Edit, contentDescription = null) },
+                                onClick = {
+                                    showExamMenu = false
+                                    onEdit()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Delete Exam", color = AccentRed) },
+                                leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null, tint = AccentRed) },
+                                onClick = {
+                                    showExamMenu = false
+                                    showDeleteConfirm = true
+                                }
+                            )
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = BgColor)
@@ -558,6 +626,37 @@ fun ExamDetailScreen(db: AppDatabase, examId: String, onBack: () -> Unit) {
                 }
             }
         }
+    }
+
+    if (showDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            containerColor = CardBg,
+            title = { Text("Delete exam?", color = TextWhite) },
+            text = { Text("This will remove the exam from the Exams & Results list.", color = TextMuted) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.archiveExam(
+                            examId = examId,
+                            onSuccess = {
+                                showDeleteConfirm = false
+                                onBack()
+                            },
+                            onError = { message ->
+                                showDeleteConfirm = false
+                                scope.launch { snackbarHostState.showSnackbar(message) }
+                            }
+                        )
+                    }
+                ) { Text("Delete", color = AccentRed) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = false }) {
+                    Text("Cancel", color = TextMuted)
+                }
+            }
+        )
     }
 }
 
