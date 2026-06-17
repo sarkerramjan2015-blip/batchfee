@@ -26,7 +26,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -166,6 +165,21 @@ fun UnifiedCollectScreen(
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
     val feeRepository = remember { FeeCollectionRepository(db) }
+
+    var instituteInfo by remember { mutableStateOf(InstituteInfo("BatchFee", "N/A", "BF")) }
+    LaunchedEffect(Unit) {
+        val instId = SessionManager.currentInstituteId.value
+        if (instId != null) {
+            val entity = withContext(Dispatchers.IO) { db.instituteDao().getInstitute(instId) }
+            if (entity != null) {
+                instituteInfo = InstituteInfo(
+                    name = entity.name.ifBlank { "BatchFee Institute" },
+                    phone = entity.phone ?: "N/A",
+                    logoText = entity.name.take(2).uppercase()
+                )
+            }
+        }
+    }
 
     var searchQuery by remember { mutableStateOf("") }
     var allStudents by remember { mutableStateOf<List<StudentEntity>>(emptyList()) }
@@ -442,10 +456,10 @@ fun UnifiedCollectScreen(
                         item {
                             PaymentHistoryCard(
                                 history = paymentHistory,
-                                onPrint = { item -> printHistoryReceipt(context, student, item) },
-                                onWhatsApp = { item -> sendHistoryReceiptWhatsApp(context, student.phone, buildHistoryReceiptText(student, item)) },
-                                onMessage = { item -> sendHistoryReceiptMessage(context, student.phone, buildHistoryReceiptText(student, item)) },
-                                onShare = { item -> shareHistoryReceipt(context, buildHistoryReceiptText(student, item)) },
+                                onPrint = { item -> printHistoryReceipt(context, instituteInfo, student, item) },
+                                onWhatsApp = { item -> sendHistoryReceiptWhatsApp(context, instituteInfo, student, student.phone, item) },
+                                onMessage = { item -> sendHistoryReceiptMessage(context, student.phone, buildHistoryReceiptText(instituteInfo, student, item)) },
+                                onShare = { item -> shareHistoryReceipt(context, buildHistoryReceiptText(instituteInfo, student, item)) },
                                 onEdit = { item -> editingHistoryItem = item }
                             )
                         }
@@ -491,7 +505,6 @@ fun UnifiedCollectScreen(
                                 NewFeeForm(
                                     batches = studentBatches,
                                     selectedBatchId = selectedBatchId,
-                                    showPeriodPicker = showPeriodPicker,
                                     startMonthIdx = startMonthIdx,
                                     endMonthIdx = endMonthIdx,
                                     monthOptions = monthOptions,
@@ -505,7 +518,26 @@ fun UnifiedCollectScreen(
                                         baseAmount = amountText(nextBase)
                                         collectAmount = amountText(nextBase)
                                     },
-                                    onOpenPeriodPicker = { showPeriodPicker = true },
+                                    onStartMonthChanged = { idx ->
+                                        val old = minOf(startMonthIdx, endMonthIdx)
+                                        val newEnd = maxOf(idx, endMonthIdx)
+                                        startMonthIdx = minOf(idx, endMonthIdx)
+                                        if (idx > endMonthIdx) endMonthIdx = idx
+                                        val months = (kotlin.math.max(startMonthIdx, endMonthIdx) - kotlin.math.min(startMonthIdx, endMonthIdx) + 1).coerceAtLeast(1)
+                                        feePeriod = buildFeePeriodLabel(startMonthIdx, endMonthIdx, monthOptions)
+                                        val nextBase = calcNewFeeBase(selectedBatch, months)
+                                        baseAmount = amountText(nextBase)
+                                        collectAmount = amountText(nextBase)
+                                    },
+                                    onEndMonthChanged = { idx ->
+                                        if (idx < startMonthIdx) startMonthIdx = idx
+                                        endMonthIdx = kotlin.math.max(startMonthIdx, idx)
+                                        val months = (endMonthIdx - startMonthIdx + 1).coerceAtLeast(1)
+                                        feePeriod = buildFeePeriodLabel(startMonthIdx, endMonthIdx, monthOptions)
+                                        val nextBase = calcNewFeeBase(selectedBatch, months)
+                                        baseAmount = amountText(nextBase)
+                                        collectAmount = amountText(nextBase)
+                                    },
                                     onBaseAmountChange = {
                                         baseAmount = moneyInput(it)
                                         collectAmount = moneyInput(it)
@@ -591,6 +623,8 @@ fun UnifiedCollectScreen(
                                         try {
                                             val now = System.currentTimeMillis()
                                             val receiptText = buildCollectionReceiptText(
+                                                instituteName = instituteInfo.name,
+                                                institutePhone = instituteInfo.phone,
                                                 student = student,
                                                 batchName = selectedBatch?.name,
                                                 period = if (showDueSelector) selectedDue?.fee?.feePeriod ?: feePeriod else feePeriod.trim(),
@@ -736,6 +770,7 @@ fun UnifiedCollectScreen(
                                 receiptDateMs = editRequest.paymentDateMs,
                                 paymentMethod = editRequest.method,
                                 receiptText = buildHistoryReceiptText(
+                                    institute = instituteInfo,
                                     student = student,
                                     item = item.copy(
                                         payment = updatedPayment,
@@ -1117,7 +1152,6 @@ private fun ExistingDueSelector(
 private fun NewFeeForm(
     batches: List<BatchEntity>,
     selectedBatchId: String?,
-    showPeriodPicker: Boolean,
     startMonthIdx: Int = 0,
     endMonthIdx: Int = 0,
     monthOptions: List<UcMonthYear> = emptyList(),
@@ -1125,7 +1159,8 @@ private fun NewFeeForm(
     baseAmount: String,
     discountPercent: Double,
     onBatchSelected: (BatchEntity?) -> Unit,
-    onOpenPeriodPicker: () -> Unit,
+    onStartMonthChanged: (Int) -> Unit,
+    onEndMonthChanged: (Int) -> Unit,
     onBaseAmountChange: (String) -> Unit,
     onDiscountChange: (Double) -> Unit
 ) {
@@ -1155,12 +1190,28 @@ private fun NewFeeForm(
             }
 
             Text("Fee Period", color = TextMuted, fontSize = 12.sp)
-            FeePeriodField(
-                startMonthIdx = startMonthIdx,
-                endMonthIdx = endMonthIdx,
-                monthOptions = monthOptions,
-                feeType = feeType,
-                onClick = onOpenPeriodPicker
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                MonthDropdown(
+                    label = "Start Month",
+                    selectedIdx = startMonthIdx,
+                    monthOptions = monthOptions,
+                    onSelected = onStartMonthChanged,
+                    modifier = Modifier.weight(1f)
+                )
+                MonthDropdown(
+                    label = "End Month",
+                    selectedIdx = endMonthIdx,
+                    monthOptions = monthOptions,
+                    onSelected = onEndMonthChanged,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            val monthCount = (endMonthIdx - startMonthIdx + 1).coerceAtLeast(1)
+            Text(
+                "$monthCount Month${if (monthCount > 1) "s" else ""} · $feeType",
+                color = Cyan.copy(alpha = 0.8f),
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium
             )
 
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
@@ -1527,41 +1578,61 @@ private fun MonthYearRangePicker(
 }
 
 @Composable
-private fun FeePeriodField(
-    startMonthIdx: Int,
-    endMonthIdx: Int,
+private fun MonthDropdown(
+    label: String,
+    selectedIdx: Int,
     monthOptions: List<UcMonthYear>,
-    feeType: String,
-    onClick: () -> Unit
+    onSelected: (Int) -> Unit,
+    modifier: Modifier = Modifier
 ) {
-    val label = buildFeePeriodLabel(startMonthIdx, endMonthIdx, monthOptions)
-    val monthCount = (endMonthIdx - startMonthIdx + 1).coerceAtLeast(1)
+    var expanded by remember { mutableStateOf(false) }
+    val selectedLabel = monthOptions.getOrNull(selectedIdx)?.label ?: "Select"
 
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .clickable { onClick() },
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = CardBgAlt),
-        border = BorderStroke(1.dp, Cyan.copy(alpha = 0.3f))
-    ) {
-        Row(
-            Modifier.padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically
+    Box(modifier = modifier) {
+        OutlinedTextField(
+            value = selectedLabel,
+            onValueChange = {},
+            readOnly = true,
+            label = { Text(label, color = TextMuted, fontSize = 11.sp) },
+            trailingIcon = {
+                IconButton(onClick = { expanded = true }) {
+                    Icon(Icons.Filled.ArrowDropDown, null, tint = TextMuted)
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            shape = RoundedCornerShape(10.dp),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedTextColor = TextWhite,
+                unfocusedTextColor = TextWhite,
+                focusedContainerColor = CardBgAlt,
+                unfocusedContainerColor = CardBgAlt,
+                focusedBorderColor = Cyan.copy(alpha = 0.5f),
+                unfocusedBorderColor = BorderSub,
+                cursorColor = Cyan
+            )
+        )
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            modifier = Modifier.background(CardBg)
         ) {
-            Icon(Icons.Filled.CalendarMonth, null, tint = Cyan, modifier = Modifier.size(20.dp))
-            Spacer(Modifier.width(10.dp))
-            Column(Modifier.weight(1f)) {
-                Text(label.ifBlank { "Select period" }, color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                Text(
-                    "$monthCount Month${if (monthCount > 1) "s" else ""} · $feeType",
-                    color = Cyan.copy(alpha = 0.8f),
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Medium
+            monthOptions.forEachIndexed { idx, item ->
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            item.label,
+                            color = if (idx == selectedIdx) Cyan else TextWhite,
+                            fontSize = 13.sp,
+                            fontWeight = if (idx == selectedIdx) FontWeight.Bold else FontWeight.Normal
+                        )
+                    },
+                    onClick = {
+                        onSelected(idx)
+                        expanded = false
+                    }
                 )
             }
-            Icon(Icons.Filled.ArrowDropDown, null, tint = TextMuted, modifier = Modifier.size(20.dp))
         }
     }
 }
@@ -1646,6 +1717,8 @@ private fun drawReceiptLine(
 }
 
 private fun buildCollectionReceiptText(
+    instituteName: String,
+    institutePhone: String,
     student: StudentEntity,
     batchName: String?,
     period: String,
@@ -1656,7 +1729,11 @@ private fun buildCollectionReceiptText(
     remainingDue: Double,
     paymentMethod: String
 ): String = buildString {
-    appendLine("BatchFee - Payment Receipt")
+    appendLine("══════════════════════════════")
+    appendLine("  $instituteName")
+    appendLine("══════════════════════════════")
+    appendLine("PAYMENT RECEIPT")
+    appendLine("")
     appendLine("Student: ${student.fullName}")
     appendLine("ID: ${student.studentCode}")
     appendLine("Batch: ${batchName ?: "Direct"}")
@@ -1668,18 +1745,25 @@ private fun buildCollectionReceiptText(
     appendLine("Remaining Due: BDT ${formatSmartAmount(remainingDue)}")
     appendLine("Method: ${paymentMethod.uppercase()}")
     appendLine("Date: ${formatDate(System.currentTimeMillis())}")
+    appendLine("")
+    appendLine("──────────────────────────────")
+    appendLine("Contact: $institutePhone")
+    appendLine("Thank you — $instituteName")
 }
 
-private fun buildHistoryReceiptText(student: StudentEntity, item: StudentPaymentHistory): String =
+private fun buildHistoryReceiptText(institute: InstituteInfo, student: StudentEntity, item: StudentPaymentHistory): String =
     buildString {
-        appendLine("BatchFee - Payment Receipt")
+        appendLine("══════════════════════════════")
+        appendLine("  ${institute.name}")
+        appendLine("══════════════════════════════")
+        appendLine("PAYMENT RECEIPT")
         appendLine("Receipt: ${item.payment.receiptNumber}")
+        appendLine("")
         appendLine("Student: ${student.fullName}")
         appendLine("ID: ${student.studentCode}")
         appendLine("Batch: ${item.batchName ?: "Direct"}")
         appendLine("Period: ${item.feePeriod}")
         appendLine("Date: ${formatDate(item.payment.paymentDateMs)}")
-        appendLine("Student ID: ${student.studentCode}")
         appendLine("Fee Amount: BDT ${formatSmartAmount(item.baseAmount)}")
         if (item.discountAmount > 0.0) {
             appendLine("Discount: ${formatDiscountPercent(item)}% - BDT ${formatSmartAmount(item.discountAmount)}")
@@ -1689,7 +1773,13 @@ private fun buildHistoryReceiptText(student: StudentEntity, item: StudentPayment
         appendLine("Remaining Due: BDT ${formatSmartAmount(item.remainingDue)}")
         appendLine("Method: ${item.payment.paymentMethod.uppercase()}")
         item.payment.note?.takeIf { it.isNotBlank() }?.let { appendLine("Note: $it") }
+        appendLine("")
+        appendLine("──────────────────────────────")
+        appendLine("Contact: ${institute.phone}")
+        appendLine("Thank you — ${institute.name}")
     }
+
+private data class InstituteInfo(val name: String, val phone: String, val logoText: String)
 
 private fun shareHistoryReceipt(context: Context, receiptText: String) {
     context.startActivity(
@@ -1712,19 +1802,56 @@ private fun sendHistoryReceiptMessage(context: Context, phone: String?, receiptT
     )
 }
 
-private fun sendHistoryReceiptWhatsApp(context: Context, phone: String?, receiptText: String) {
-    val cleanPhone = phone.orEmpty().replace("+", "").replace(" ", "").replace("-", "")
-    val encoded = URLEncoder.encode(receiptText, "UTF-8")
-    val url = if (cleanPhone.isBlank()) "https://wa.me/?text=$encoded" else "https://wa.me/$cleanPhone?text=$encoded"
-    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+private fun sendHistoryReceiptWhatsApp(context: Context, institute: InstituteInfo, student: StudentEntity, phone: String?, item: StudentPaymentHistory) {
+    try {
+        val file = generateReceiptPdf(context, institute, student, item)
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        val cleanPhone = phone.orEmpty().replace("+", "").replace(" ", "").replace("-", "")
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "application/pdf"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            putExtra(Intent.EXTRA_TEXT, "Payment Receipt - ${student.fullName}")
+        }
+        try {
+            intent.`package` = "com.whatsapp"
+            context.startActivity(intent)
+        } catch (_: Exception) {
+            val waIntent = Intent(Intent.ACTION_VIEW).apply {
+                data = Uri.parse(if (cleanPhone.isBlank()) "https://wa.me/" else "https://wa.me/$cleanPhone")
+            }
+            context.startActivity(waIntent)
+            Toast.makeText(context, "Please attach the PDF manually from your files.", Toast.LENGTH_LONG).show()
+        }
+    } catch (_: Exception) {
+        val receiptText = buildHistoryReceiptText(institute, student, item)
+        val cleanPhone = phone.orEmpty().replace("+", "").replace(" ", "").replace("-", "")
+        val encoded = URLEncoder.encode(receiptText, "UTF-8")
+        val url = if (cleanPhone.isBlank()) "https://wa.me/?text=$encoded" else "https://wa.me/$cleanPhone?text=$encoded"
+        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+    }
 }
 
-private fun printHistoryReceipt(context: Context, student: StudentEntity, item: StudentPaymentHistory) {
-    val receiptText = buildHistoryReceiptText(student, item)
+private fun printHistoryReceipt(context: Context, institute: InstituteInfo, student: StudentEntity, item: StudentPaymentHistory) {
     try {
-        val document = PdfDocument()
-        val showDiscount = item.discountAmount > 0.0
-        val pageHeight = if (showDiscount) 575 else 535
+        val file = generateReceiptPdf(context, institute, student, item)
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        context.startActivity(
+            Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/pdf")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+        )
+    } catch (e: Exception) {
+        val receiptText = buildHistoryReceiptText(institute, student, item)
+        Toast.makeText(context, "Could not open receipt PDF. Sharing text instead.", Toast.LENGTH_SHORT).show()
+        shareHistoryReceipt(context, receiptText)
+    }
+}
+
+private fun generateReceiptPdf(context: Context, institute: InstituteInfo, student: StudentEntity, item: StudentPaymentHistory): File {
+    val document = PdfDocument()
+    val showDiscount = item.discountAmount > 0.0
+    val pageHeight = if (showDiscount) 575 else 535
         val page = document.startPage(PdfDocument.PageInfo.Builder(420, pageHeight, 1).create())
         val canvas = page.canvas
         val ink = AndroidColor.rgb(20, 27, 38)
@@ -1762,7 +1889,7 @@ private fun printHistoryReceipt(context: Context, student: StudentEntity, item: 
         canvas.drawRoundRect(RectF(18f, 18f, 402f, pageHeight - 18f), 22f, 22f, stroke)
 
         fill.color = blue
-        canvas.drawRoundRect(RectF(18f, 18f, 402f, 94f), 22f, 22f, fill)
+        canvas.drawRoundRect(RectF(18f, 18f, 402f, 120f), 22f, 22f, fill)
         fill.color = cyan
         canvas.drawCircle(363f, 48f, 42f, fill)
         fill.color = AndroidColor.argb(80, 255, 255, 255)
@@ -1772,15 +1899,17 @@ private fun printHistoryReceipt(context: Context, student: StudentEntity, item: 
         canvas.drawRoundRect(RectF(34f, 34f, 72f, 72f), 10f, 10f, fill)
         bold.color = blue
         bold.textSize = 14f
-        canvas.drawText("BF", 44f, 58f, bold)
-        whiteBold.textSize = 18f
-        canvas.drawText("Fee Receipt", 88f, 50f, whiteBold)
+        canvas.drawText(institute.logoText.take(2).uppercase(), 44f, 58f, bold)
+        whiteBold.textSize = 16f
+        val safeName = pdfSafe(institute.name, 24)
+        canvas.drawText(safeName, 88f, 46f, whiteBold)
         text.color = AndroidColor.argb(210, 255, 255, 255)
-        text.textSize = 10.5f
-        canvas.drawText("Receipt ${item.payment.receiptNumber}", 88f, 68f, text)
-        canvas.drawText(formatEditDate(item.payment.paymentDateMs), 292f, 68f, text)
+        text.textSize = 10f
+        canvas.drawText("Receipt ${item.payment.receiptNumber}", 88f, 64f, text)
+        canvas.drawText(formatEditDate(item.payment.paymentDateMs), 292f, 64f, text)
+        canvas.drawText("Contact: ${institute.phone}", 88f, 80f, text)
 
-        var y = 124f
+        var y = 148f
         bold.color = ink
         bold.textSize = 17f
         canvas.drawText(pdfSafe(student.fullName, 27), 34f, y, bold)
@@ -1855,7 +1984,7 @@ private fun printHistoryReceipt(context: Context, student: StudentEntity, item: 
         text.color = AndroidColor.WHITE
         text.textSize = 9.5f
         text.textAlign = Paint.Align.CENTER
-        canvas.drawText("Thank you. This receipt was generated by BatchFee.", 210f, pageHeight - 34f, text)
+        canvas.drawText("Thank you  ·  ${institute.name}", 210f, pageHeight - 34f, text)
         text.textAlign = Paint.Align.LEFT
 
         document.finishPage(page)
@@ -1863,16 +1992,5 @@ private fun printHistoryReceipt(context: Context, student: StudentEntity, item: 
         val file = File(context.cacheDir, "history_receipt_${item.payment.receiptNumber.replace("/", "_")}.pdf")
         file.outputStream().use { document.writeTo(it) }
         document.close()
-
-        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-        context.startActivity(
-            Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(uri, "application/pdf")
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            }
-        )
-    } catch (e: Exception) {
-        Toast.makeText(context, "Could not open receipt PDF. Sharing text instead.", Toast.LENGTH_SHORT).show()
-        shareHistoryReceipt(context, receiptText)
-    }
+        return file
 }

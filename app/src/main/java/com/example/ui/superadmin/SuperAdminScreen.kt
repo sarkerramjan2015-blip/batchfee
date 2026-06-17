@@ -6,7 +6,9 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Typeface
+import android.graphics.pdf.PdfDocument
 import android.net.Uri
+import android.widget.Toast
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -146,6 +148,23 @@ data class ManagedUserSummary(
     val status: String = "active"
 )
 
+data class SubscriptionReceiptData(
+    val receiptNumber: String,
+    val instituteName: String,
+    val ownerName: String,
+    val ownerPhone: String,
+    val ownerEmail: String,
+    val instituteCode: String,
+    val instituteAddress: String,
+    val planName: String,
+    val durationMonths: Int,
+    val amountPaid: Double,
+    val paymentMethod: String,
+    val transactionLast4: String,
+    val startDateMs: Long,
+    val endDateMs: Long
+)
+
 class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
     private val _institutes = MutableStateFlow<List<InstituteCardData>>(emptyList())
     val institutes = _institutes.asStateFlow()
@@ -164,6 +183,9 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
 
     private val _shareReceiptEvent = MutableStateFlow<Pair<Bitmap, String>?>(null)
     val shareReceiptEvent = _shareReceiptEvent.asStateFlow()
+
+    private val _receiptData = MutableStateFlow<SubscriptionReceiptData?>(null)
+    val receiptData = _receiptData.asStateFlow()
 
     private val _lastActiveMap = MutableStateFlow<Map<String, Long>>(emptyMap())
     val lastActiveMap = _lastActiveMap.asStateFlow()
@@ -285,31 +307,36 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                     )
                 }
                 _operationMsg.value = "Approved ${request.instituteName} — ${request.requestedPlanId}"
-                // Generate receipt and trigger share
-                val receiptNumber = "SUB-${System.currentTimeMillis()}"
+                // Store receipt data for manual share
                 val planName = planDisplayName(request.requestedPlanId, _subscriptionPlans.value)
-                val bitmap = withContext(Dispatchers.IO) {
-                    createSubscriptionReceiptBitmap(
-                        receiptNumber = receiptNumber,
-                        instituteName = request.instituteName,
-                        planName = planName,
-                        durationMonths = request.durationMonths,
-                        amountPaid = request.amountPaid,
-                        paymentMethod = request.paymentMethod,
-                        transactionLast4 = request.transactionLast4,
-                        startDateMs = System.currentTimeMillis(),
-                        endDateMs = newEnd
-                    )
+                val instDoc = withContext(Dispatchers.IO) {
+                    firestore.collection("institutes").document(request.instituteId).get().await()
                 }
-                val phone = _institutes.value.find { it.entity.id == request.instituteId }?.entity?.whatsappNumber
-                    ?: request.institutePhone
-                _shareReceiptEvent.value = Pair(bitmap, phone ?: "")
+                val instData = instDoc.data ?: emptyMap()
+                _receiptData.value = SubscriptionReceiptData(
+                    receiptNumber = "SUB-${System.currentTimeMillis()}",
+                    instituteName = request.instituteName,
+                    ownerName = request.ownerName,
+                    ownerPhone = request.institutePhone ?: "",
+                    ownerEmail = instData["email"] as? String ?: "",
+                    instituteCode = instData["instituteCode"] as? String ?: "",
+                    instituteAddress = instData["address"] as? String ?: "",
+                    planName = planName,
+                    durationMonths = request.durationMonths,
+                    amountPaid = request.amountPaid,
+                    paymentMethod = request.paymentMethod,
+                    transactionLast4 = request.transactionLast4,
+                    startDateMs = System.currentTimeMillis(),
+                    endDateMs = newEnd
+                )
             } catch (e: Exception) {
                 _operationMsg.value = "Approve failed: ${e.message}"
                 FirebaseCrashlytics.getInstance().recordException(e)
             }
         }
     }
+
+    fun clearReceipt() { _receiptData.value = null }
 
     fun consumeShareEvent() { _shareReceiptEvent.value = null }
 
@@ -624,6 +651,127 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
         }
     }
 
+    // ── Trash / Remove Institute ─────────────────────────────
+    private val _trashedInstitutes = MutableStateFlow<List<InstituteCardData>>(emptyList())
+    val trashedInstitutes = _trashedInstitutes.asStateFlow()
+
+    fun removeInstitute(instituteId: String, superAdminPassword: String) {
+        viewModelScope.launch {
+            try {
+                val uid = SessionManager.currentUserId.value ?: return@launch
+                val user = withContext(Dispatchers.IO) { db.userDao().getUserById(uid) }
+                if (user == null || !PasswordHasher.verify(superAdminPassword, user.passwordHash)) {
+                    _operationMsg.value = "Wrong super admin password."
+                    return@launch
+                }
+                val card = _institutes.value.find { it.entity.id == instituteId } ?: return@launch
+                val trashedAt = System.currentTimeMillis()
+                val expiresAt = trashedAt + 10L * 24 * 60 * 60 * 1000 // 10 days
+                withContext(Dispatchers.IO) {
+                    // Mark institute as deleted in Firestore (move to trash subcollection)
+                    val instDoc = firestore.collection("institutes").document(instituteId).get().await()
+                    val instData = (instDoc.data ?: emptyMap()).toMutableMap()
+                    instData["_trashedAt"] = trashedAt
+                    instData["_trashExpiresAt"] = expiresAt
+                    instData["_trashedBy"] = uid
+                    instData["isActive"] = false
+                    instData["subscriptionStatus"] = "trashed"
+                    firestore.collection("institutes_trash").document(instituteId).set(instData).await()
+                    firestore.collection("institutes").document(instituteId).delete().await()
+                    // Move app_user to trash
+                    try {
+                        val appUserDoc = firestore.collection("app_users").document(instituteId).get().await()
+                        if (appUserDoc.exists()) {
+                            val userData = appUserDoc.data?.toMutableMap() ?: mutableMapOf()
+                            userData["_trashedAt"] = trashedAt
+                            firestore.collection("app_users_trash").document(instituteId).set(userData).await()
+                            firestore.collection("app_users").document(instituteId).delete().await()
+                        }
+                    } catch (_: Exception) { }
+                }
+                _trashedInstitutes.value = _trashedInstitutes.value + listOf(card.copy(
+                    entity = card.entity.copy(
+                        subscriptionStatus = "trashed",
+                        trialEndDateMs = trashedAt,
+                        currentPeriodEndMs = expiresAt
+                    )
+                ))
+                _institutes.value = _institutes.value.filter { it.entity.id != instituteId }
+                _operationMsg.value = "${card.entity.name} moved to trash. Auto-delete in 10 days."
+            } catch (e: Exception) {
+                _operationMsg.value = "Failed: ${e.message}"
+                FirebaseCrashlytics.getInstance().recordException(e)
+            }
+        }
+    }
+
+    fun restoreInstitute(instituteId: String) {
+        viewModelScope.launch {
+            try {
+                val card = _trashedInstitutes.value.find { it.entity.id == instituteId } ?: return@launch
+                withContext(Dispatchers.IO) {
+                    val trashDoc = firestore.collection("institutes_trash").document(instituteId).get().await()
+                    val data = (trashDoc.data ?: emptyMap()).toMutableMap()
+                    data.remove("_trashedAt")
+                    data.remove("_trashExpiresAt")
+                    data.remove("_trashedBy")
+                    data["isActive"] = true
+                    data["subscriptionStatus"] = "active"
+                    firestore.collection("institutes").document(instituteId).set(data).await()
+                    firestore.collection("institutes_trash").document(instituteId).delete().await()
+                    // Restore app_user
+                    try {
+                        val trashUserDoc = firestore.collection("app_users_trash").document(instituteId).get().await()
+                        if (trashUserDoc.exists()) {
+                            val userData = trashUserDoc.data?.toMutableMap() ?: mutableMapOf()
+                            userData.remove("_trashedAt")
+                            firestore.collection("app_users").document(instituteId).set(userData).await()
+                            firestore.collection("app_users_trash").document(instituteId).delete().await()
+                        }
+                    } catch (_: Exception) { }
+                }
+                _trashedInstitutes.value = _trashedInstitutes.value.filter { it.entity.id != instituteId }
+                _institutes.value = _institutes.value + listOf(card.copy(
+                    entity = card.entity.copy(
+                        subscriptionStatus = "active",
+                        trialEndDateMs = card.entity.currentPeriodEndMs
+                    )
+                ))
+                _operationMsg.value = "${card.entity.name} restored."
+            } catch (e: Exception) {
+                _operationMsg.value = "Failed: ${e.message}"
+                FirebaseCrashlytics.getInstance().recordException(e)
+            }
+        }
+    }
+
+    fun permanentlyDelete(instituteId: String) {
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    firestore.collection("institutes_trash").document(instituteId).delete().await()
+                    try { firestore.collection("app_users_trash").document(instituteId).delete().await() } catch (_: Exception) { }
+                    // Clean subcollections
+                    try {
+                        firestore.collection("institutes").document(instituteId).collection("staffs").get().await()
+                            .documents.forEach { it.reference.delete().await() }
+                    } catch (_: Exception) { }
+                }
+                _trashedInstitutes.value = _trashedInstitutes.value.filter { it.entity.id != instituteId }
+                _operationMsg.value = "Institute permanently deleted."
+            } catch (e: Exception) {
+                _operationMsg.value = "Failed: ${e.message}"
+                FirebaseCrashlytics.getInstance().recordException(e)
+            }
+        }
+    }
+
+    fun clearExpiredTrash() {
+        val now = System.currentTimeMillis()
+        val expired = _trashedInstitutes.value.filter { it.entity.currentPeriodEndMs < now }
+        expired.forEach { permanentlyDelete(it.entity.id) }
+    }
+
     fun manageInstitute(
         instituteId: String,
         newExpiryMs: Long,
@@ -832,12 +980,14 @@ class SuperAdminViewModelFactory(private val db: AppDatabase) : ViewModelProvide
 fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
     val viewModel: SuperAdminViewModel = viewModel(factory = SuperAdminViewModelFactory(db))
     val institutes by viewModel.institutes.collectAsState()
+    val trashedInstitutes by viewModel.trashedInstitutes.collectAsState()
     val subscriptionPlans by viewModel.subscriptionPlans.collectAsState()
     val stats by viewModel.stats.collectAsState()
     val pendingRequests by viewModel.pendingRequests.collectAsState()
     val managedUsers by viewModel.managedUsers.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val operationMsg by viewModel.operationMsg.collectAsState()
+    val receiptData by viewModel.receiptData.collectAsState()
     val projected = viewModel.projectedRevenue
 
     val snackbarHostState = remember { SnackbarHostState() }
@@ -854,6 +1004,7 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
     var editingUser by remember { mutableStateOf<ManagedUserSummary?>(null) }
     var editingPlan by remember { mutableStateOf<SubscriptionPlanEntity?>(null) }
     var showPlanDialog by remember { mutableStateOf(false) }
+    var showReceiptDialog by remember { mutableStateOf(false) }
 
     val planNameById = remember(subscriptionPlans) { subscriptionPlans.associate { it.id to it.name } }
 
@@ -1040,9 +1191,11 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
                                     border = ButtonDefaults.outlinedButtonBorder,
                                     colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentRed)
                                 ) { Text("Reject", fontSize = 12.sp) }
-                                Spacer(Modifier.width(8.dp))
-                                Button(
-                                    onClick = { viewModel.approveRequest(req) },
+                Spacer(Modifier.width(8.dp))
+                                Button(onClick = {
+                                    viewModel.approveRequest(req)
+                                    showReceiptDialog = true
+                                },
                                     shape = RoundedCornerShape(8.dp),
                                     colors = ButtonDefaults.buttonColors(containerColor = AccentGreen)
                                 ) { Text("Approve", fontSize = 12.sp, color = Color.Black) }
@@ -1160,6 +1313,66 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
                 }
             }
 
+            // ── Trash Section ──
+            if (trashedInstitutes.isNotEmpty()) {
+                item {
+                    Spacer(Modifier.height(8.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Text("Trash · ${trashedInstitutes.size}", color = AccentRed, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        LaunchedEffect(Unit) { viewModel.clearExpiredTrash() }
+                    }
+                    Spacer(Modifier.height(6.dp))
+                }
+                items(trashedInstitutes, key = { it.entity.id }) { card ->
+                    val inst = card.entity
+                    val dateFormat = remember { SimpleDateFormat("dd MMM yyyy", Locale.getDefault()) }
+                    Card(
+                        Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(14.dp),
+                        colors = CardDefaults.cardColors(containerColor = CardBg),
+                        border = BorderStroke(1.dp, AccentRed.copy(alpha = 0.3f))
+                    ) {
+                        Column(Modifier.padding(14.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(AccentRed.copy(alpha = 0.15f)), contentAlignment = Alignment.Center) {
+                                    Icon(Icons.Filled.Delete, null, tint = AccentRed, modifier = Modifier.size(18.dp))
+                                }
+                                Spacer(Modifier.width(10.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(inst.name, color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                                    Text("Auto-delete: ${dateFormat.format(Date(inst.currentPeriodEndMs))}", color = AccentRed.copy(alpha = 0.7f), fontSize = 11.sp)
+                                }
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(
+                                    onClick = { viewModel.restoreInstitute(inst.id) },
+                                    modifier = Modifier.weight(1f).height(36.dp),
+                                    shape = RoundedCornerShape(8.dp),
+                                    border = ButtonDefaults.outlinedButtonBorder,
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentGreen)
+                                ) {
+                                    Icon(Icons.Filled.Restore, null, modifier = Modifier.size(14.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Restore", fontSize = 12.sp)
+                                }
+                                OutlinedButton(
+                                    onClick = { viewModel.permanentlyDelete(inst.id) },
+                                    modifier = Modifier.weight(1f).height(36.dp),
+                                    shape = RoundedCornerShape(8.dp),
+                                    border = ButtonDefaults.outlinedButtonBorder,
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentRed)
+                                ) {
+                                    Icon(Icons.Filled.DeleteForever, null, modifier = Modifier.size(14.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Delete Forever", fontSize = 12.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             item {
                 SubscriptionPlanSection(
                     plans = subscriptionPlans,
@@ -1188,6 +1401,107 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
                 viewModel.saveSubscriptionPlan(existingId, plan)
                 showPlanDialog = false
             }
+        )
+    }
+
+    // ── Receipt Dialog ──
+    if (showReceiptDialog) {
+        val context = LocalContext.current
+        val data = receiptData
+        AlertDialog(
+            onDismissRequest = { showReceiptDialog = false; viewModel.clearReceipt() },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.ReceiptLong, null, tint = AccentGreen, modifier = Modifier.size(24.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Money Receipt Ready", color = TextWhite, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                }
+            },
+            text = {
+                Column(modifier = Modifier.padding(4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    data?.let { r ->
+                        Card(
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = CardBg),
+                            border = BorderStroke(1.dp, AccentGreen.copy(alpha = 0.3f))
+                        ) {
+                            Column(Modifier.padding(12.dp)) {
+                                Text(r.instituteName, color = TextWhite, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                                Text("${r.planName} · ${r.durationMonths} Month(s)", color = AccentCyan, fontSize = 12.sp)
+                                Spacer(Modifier.height(4.dp))
+                                Text("BDT ${"%,.0f".format(r.amountPaid)}", color = AccentGreen, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                                Spacer(Modifier.height(2.dp))
+                                Text("${r.paymentMethod.uppercase()} · Trx: ***${r.transactionLast4}", color = TextMuted, fontSize = 11.sp)
+                                Text("${SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(r.startDateMs))} — ${SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(r.endDateMs))}", color = TextMuted, fontSize = 11.sp)
+                            }
+                        }
+                    }
+                    Text("Send this receipt to the institute owner via WhatsApp or print it.", color = TextMuted, fontSize = 12.sp)
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        data?.let { r ->
+                            try {
+                                val file = generateSubscriptionReceiptPdf(context, r)
+                                val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+                                val phone = r.ownerPhone.replace("+", "").replace(" ", "").replace("-", "")
+                                var handled = false
+                                val waIntent = Intent(Intent.ACTION_SEND)
+                                waIntent.type = "application/pdf"
+                                waIntent.putExtra(Intent.EXTRA_STREAM, uri)
+                                waIntent.putExtra(Intent.EXTRA_TEXT, "Subscription Receipt - ${r.instituteName}")
+                                waIntent.setPackage("com.whatsapp")
+                                if (waIntent.resolveActivity(context.packageManager) != null) {
+                                    context.startActivity(waIntent)
+                                    handled = true
+                                }
+                                if (!handled) {
+                                    Toast.makeText(context, "WhatsApp not installed. Use Print.", Toast.LENGTH_SHORT).show()
+                                }
+                            } catch (_: Exception) { }
+                        }
+                        showReceiptDialog = false
+                        viewModel.clearReceipt()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF25D366))
+                ) {
+                    Icon(Icons.Filled.Chat, null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Send to WhatsApp", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = {
+                        data?.let { r ->
+                            try {
+                                val file = generateSubscriptionReceiptPdf(context, r)
+                                val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+                                context.startActivity(Intent(Intent.ACTION_VIEW).apply {
+                                    setDataAndType(uri, "application/pdf")
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                })
+                            } catch (_: Exception) { }
+                        }
+                        showReceiptDialog = false
+                        viewModel.clearReceipt()
+                    }) {
+                        Icon(Icons.Filled.Print, null, tint = ElectricBlue, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Print", color = ElectricBlue, fontSize = 13.sp)
+                    }
+                    TextButton(onClick = {
+                        showReceiptDialog = false
+                        viewModel.clearReceipt()
+                    }) {
+                        Text("Close", color = TextMuted, fontSize = 13.sp)
+                    }
+                }
+            },
+            containerColor = CardBg,
+            shape = RoundedCornerShape(16.dp)
         )
     }
 }
@@ -1554,6 +1868,7 @@ private fun InstituteCard(
     subscriptionPlans: List<SubscriptionPlanEntity>
 ) {
     val inst = card.entity
+    val ctx = LocalContext.current
     val dateFormat = remember { SimpleDateFormat("dd MMM yyyy", Locale.getDefault()) }
     val statusColor = when (inst.subscriptionStatus) {
         "active" -> AccentGreen; "trial" -> AccentCyan; "expired" -> AccentRed; "blocked" -> AccentAmber; else -> TextMuted
@@ -1629,6 +1944,20 @@ private fun InstituteCard(
                             Icon(Icons.Filled.Chat, null, tint = AccentGreen.copy(alpha = 0.7f), modifier = Modifier.size(14.dp))
                             Spacer(Modifier.width(4.dp))
                             Text(inst.whatsappNumber, color = AccentGreen.copy(alpha = 0.8f), fontSize = 12.sp)
+                            Spacer(Modifier.width(6.dp))
+                            IconButton(
+                                onClick = {
+                                    val phone = inst.whatsappNumber.replace("+", "").replace(" ", "").replace("-", "")
+                                    val msg = "Hi, this is BatchFee developer. I'm reaching out regarding your institute \"${inst.name}\"."
+                                    val intent = Intent(Intent.ACTION_VIEW).apply {
+                                        data = Uri.parse("https://wa.me/$phone?text=${Uri.encode(msg)}")
+                                    }
+                                    ctx.startActivity(intent)
+                                },
+                                modifier = Modifier.size(22.dp)
+                            ) {
+                                Icon(Icons.Filled.Chat, null, tint = Color(0xFF25D366), modifier = Modifier.size(18.dp))
+                            }
                         }
                     }
                 }
@@ -1718,6 +2047,88 @@ private fun InstituteCard(
 
             Spacer(Modifier.height(6.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                // Remove button
+                var showRemoveConfirm by remember { mutableStateOf(false) }
+                OutlinedButton(
+                    onClick = { showRemoveConfirm = true },
+                    modifier = Modifier.weight(1f).height(38.dp),
+                    shape = RoundedCornerShape(10.dp),
+                    border = ButtonDefaults.outlinedButtonBorder,
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentRed)
+                ) {
+                    Icon(Icons.Filled.Delete, null, modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Remove", fontSize = 12.sp)
+                }
+
+                // Remove confirmation dialog
+                if (showRemoveConfirm) {
+                    var removePassword by remember { mutableStateOf("") }
+                    var showRemovePassword by remember { mutableStateOf(false) }
+                    if (showRemovePassword) {
+                        AlertDialog(
+                            onDismissRequest = { showRemovePassword = false; showRemoveConfirm = false },
+                            title = { Text("Enter Super Admin Password", color = TextWhite, fontWeight = FontWeight.Bold) },
+                            text = {
+                                Column {
+                                    Text("\"${inst.name}\" will be moved to trash. This action can be reversed within 10 days.", color = TextMuted, fontSize = 13.sp)
+                                    Spacer(Modifier.height(12.dp))
+                                    Text("Enter your password to continue:", color = TextMuted, fontSize = 12.sp)
+                                    Spacer(Modifier.height(8.dp))
+                                    OutlinedTextField(
+                                        value = removePassword,
+                                        onValueChange = { removePassword = it },
+                                        placeholder = { Text("Super admin password", color = TextMuted.copy(alpha = 0.5f)) },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        singleLine = true,
+                                        colors = OutlinedTextFieldDefaults.colors(
+                                            focusedTextColor = TextWhite, unfocusedTextColor = TextWhite,
+                                            focusedBorderColor = AccentRed, unfocusedBorderColor = BorderSub,
+                                            cursorColor = AccentRed
+                                        )
+                                    )
+                                }
+                            },
+                            confirmButton = {
+                                Button(
+                                    onClick = {
+                                        viewModel.removeInstitute(inst.id, removePassword)
+                                        showRemovePassword = false
+                                        showRemoveConfirm = false
+                                    },
+                                    enabled = removePassword.isNotBlank(),
+                                    colors = ButtonDefaults.buttonColors(containerColor = AccentRed)
+                                ) { Text("Move to Trash", color = Color.White, fontWeight = FontWeight.Bold) }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { showRemovePassword = false; showRemoveConfirm = false }) {
+                                    Text("Cancel", color = TextMuted)
+                                }
+                            },
+                            containerColor = CardBg,
+                            shape = RoundedCornerShape(16.dp)
+                        )
+                    } else {
+                        AlertDialog(
+                            onDismissRequest = { showRemoveConfirm = false },
+                            title = { Text("Remove ${inst.name}?", color = TextWhite, fontWeight = FontWeight.Bold) },
+                            text = {
+                                Text("Are you sure you want to remove this institute?\n\nAll data will be moved to trash and become inaccessible. You can restore it within 10 days before permanent deletion.", color = TextMuted, fontSize = 13.sp)
+                            },
+                            confirmButton = {
+                                Button(onClick = { showRemovePassword = true }, colors = ButtonDefaults.buttonColors(containerColor = AccentRed)) {
+                                    Text("Yes, Remove", color = Color.White)
+                                }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { showRemoveConfirm = false }) { Text("Cancel", color = TextMuted) }
+                            },
+                            containerColor = CardBg,
+                            shape = RoundedCornerShape(16.dp)
+                        )
+                    }
+                }
+
                 OutlinedButton(
                     onClick = { viewModel.sendPasswordReset(inst.email) },
                     modifier = Modifier.weight(1f).height(38.dp),
@@ -2118,6 +2529,105 @@ private fun InstituteCard(
             viewModel.consumeShareEvent()
         }
     }
+}
+
+// ── Subscription Receipt PDF ─────────────────────────────
+private fun generateSubscriptionReceiptPdf(context: Context, r: SubscriptionReceiptData): File {
+    val document = PdfDocument()
+    val page = document.startPage(PdfDocument.PageInfo.Builder(595, 842, 1).create()) // A4
+    val canvas = page.canvas
+    val dateFmt = SimpleDateFormat("dd MMM yyyy", Locale.getDefault())
+    val w = 595f; val h = 842f
+
+    val white = android.graphics.Color.WHITE
+    val darkBg = android.graphics.Color.parseColor("#0F172A")
+    val cyan = android.graphics.Color.parseColor("#22D3EE")
+    val muted = android.graphics.Color.parseColor("#64748B")
+    val textDark = android.graphics.Color.parseColor("#1E293B")
+    val lightBg = android.graphics.Color.parseColor("#F1F5F9")
+    val green = android.graphics.Color.parseColor("#16A34A")
+    val red = android.graphics.Color.parseColor("#EF4444")
+    val gray200 = android.graphics.Color.parseColor("#E2E8F0")
+
+    val fill = Paint().apply { style = Paint.Style.FILL }
+    val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 11f; color = textDark }
+    val bold = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 13f; color = textDark; isFakeBoldText = true }
+    val whiteText = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 14f; color = white; isFakeBoldText = true }
+
+    // ── Header ──
+    fill.color = darkBg
+    canvas.drawRect(0f, 0f, w, 140f, fill)
+    whiteText.textSize = 22f
+    canvas.drawText("SUBSCRIPTION RECEIPT", 40f, 55f, whiteText)
+    whiteText.textSize = 13f
+    canvas.drawText(r.instituteName, 40f, 80f, whiteText)
+    whiteText.textSize = 10f
+    canvas.drawText("Receipt #: ${r.receiptNumber}  •  ${dateFmt.format(Date(r.startDateMs))}", 40f, 100f, whiteText)
+
+    // ── Institute Owner Info ──
+    var y = 170f
+    fill.color = lightBg
+    canvas.drawRect(30f, y - 5, w - 30f, y + 65f, fill)
+    bold.textSize = 14f; bold.color = textDark
+    canvas.drawText("Institute Details", 40f, y + 15f, bold)
+    text.textSize = 10f; text.color = muted
+    canvas.drawText("Owner: ${r.ownerName}", 40f, y + 30f, text)
+    canvas.drawText("Phone: ${r.ownerPhone}", 40f, y + 42f, text)
+    if (r.ownerEmail.isNotBlank()) canvas.drawText("Email: ${r.ownerEmail}", 40f, y + 54f, text)
+    if (r.instituteCode.isNotBlank()) canvas.drawText("Institute Code: ${r.instituteCode}", 240f, y + 30f, text)
+    if (r.instituteAddress.isNotBlank()) canvas.drawText("Address: ${r.instituteAddress}", 240f, y + 42f, text)
+
+    // ── Plan Details ──
+    y += 85f
+    bold.textSize = 14f
+    canvas.drawText("Subscription Details", 40f, y, bold)
+    y += 20f
+    fill.color = gray200; canvas.drawRect(40f, y, w - 40f, y + 1f, fill); y += 15f
+
+    val rows = listOf(
+        "Plan" to r.planName,
+        "Duration" to "${r.durationMonths} Month(s)",
+        "Period" to "${dateFmt.format(Date(r.startDateMs))} — ${dateFmt.format(Date(r.endDateMs))}",
+        "Amount Paid" to "BDT ${"%,.0f".format(r.amountPaid)}",
+        "Payment Method" to r.paymentMethod.uppercase(),
+        "Transaction Ref" to "***${r.transactionLast4}"
+    )
+    rows.forEach { (label, value) ->
+        text.textSize = 10f; text.color = muted
+        canvas.drawText(label, 40f, y + 8f, text)
+        text.textSize = 11f; text.color = if (label == "Amount Paid") green else textDark
+        text.isFakeBoldText = label == "Amount Paid"
+        canvas.drawText(value, 280f, y + 8f, text)
+        text.isFakeBoldText = false
+        y += if (label == "Amount Paid") 24f else 18f
+    }
+
+    // ── Status ──
+    y += 15f
+    fill.color = lightBg
+    canvas.drawRect(40f, y, w - 40f, y + 30f, fill)
+    bold.textSize = 12f; bold.color = green
+    canvas.drawText("STATUS: APPROVED & ACTIVE", 50f, y + 19f, bold)
+
+    // ── Expiry Warning ──
+    y += 50f
+    bold.textSize = 11f; bold.color = red
+    canvas.drawText("Subscription Expires:", 40f, y, bold)
+    bold.textSize = 13f
+    canvas.drawText(dateFmt.format(Date(r.endDateMs)), 200f, y, bold)
+
+    // ── Footer ──
+    y = h - 50f
+    fill.color = gray200; canvas.drawRect(40f, y, w - 40f, y + 1f, fill)
+    y += 15f
+    text.textSize = 9f; text.color = muted
+    canvas.drawText("Generated by BatchFee Super Admin  •  This is a computer-generated receipt.", 40f, y + 5f, text)
+
+    document.finishPage(page)
+    val file = File(context.cacheDir, "sub_receipt_${r.receiptNumber}.pdf")
+    file.outputStream().use { document.writeTo(it) }
+    document.close()
+    return file
 }
 
 // ── Subscription Receipt Bitmap (Canvas) ──────────────────

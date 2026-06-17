@@ -9,6 +9,8 @@ import com.example.BuildConfig
 import com.example.data.dao.InstituteDao
 import com.example.data.dao.SubscriptionPlanDao
 import com.example.data.dao.UserDao
+import com.example.data.firestore.AppUserSyncHelper
+import com.example.data.firestore.ManagedUserRecord
 import com.example.data.firestore.ReminderTemplateSyncHelper
 import com.example.data.firestore.SubscriptionPlanSyncHelper
 import com.example.data.models.InstituteEntity
@@ -180,8 +182,6 @@ abstract class AppDatabase : RoomDatabase() {
         @Volatile
         var realAdminUid: String? = null
         @Volatile
-        var realInstituteAdminUid: String? = null
-        @Volatile
         var realOwnerUid: String? = null
 
         suspend fun ensureDemoDataSeeded(db: AppDatabase) {
@@ -202,161 +202,126 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        suspend fun seedDemoForRealUid(db: AppDatabase, ownerUid: String, instituteId: String) {
+            withContext(Dispatchers.IO) {
+                try {
+                    realOwnerUid = ownerUid
+                    val existingPlan = db.subscriptionPlanDao().getPlanById("plan_free_trial")
+                    if (existingPlan == null) {
+                        populateInitialPlans(db.subscriptionPlanDao())
+                    }
+                    populateSuperAdmin(db.userDao(), db.instituteDao())
+                    populateDemoData(db)
+                } catch (e: Exception) {
+                    FirebaseCrashlytics.getInstance().recordException(e)
+                }
+            }
+        }
+
         private suspend fun ensureFirebaseAuthAccounts() {
             // ── SuperAdmin ──
             try {
                 realAdminUid = FirebaseAuthApi.createUser("superadmin@batchfee.app", "11223344")
-                // Always write/update Firestore doc at the real UID so isSuperAdmin() works
-                try {
-                    com.google.firebase.firestore.FirebaseFirestore.getInstance()
-                        .collection("institutes")
-                        .document(realAdminUid!!)
-                        .set(
-                            mapOf(
-                                "instituteName" to "BatchFee System",
-                                "role" to "SuperAdmin",
-                                "email" to "superadmin@batchfee.app",
-                                "createdAt" to System.currentTimeMillis(),
-                                "isActive" to true
-                            ),
-                            com.google.firebase.firestore.SetOptions.merge()
-                        ).await()
-                } catch (e: Exception) {
-                    FirebaseCrashlytics.getInstance().recordException(e)
-                }
+                seedFirestoreAndAppUser(realAdminUid!!, "superadmin@batchfee.app", "SuperAdmin", "BatchFee System")
             } catch (e: Exception) {
                 if ((e.message ?: "").contains("EMAIL_EXISTS", ignoreCase = true)) {
-                    // Account already exists — resolve its real UID via sign-in
                     try {
                         realAdminUid = FirebaseAuthApi.signInWithPassword("superadmin@batchfee.app", "11223344")
-                        // Ensure Firestore doc exists at the real UID
-                        try {
-                            com.google.firebase.firestore.FirebaseFirestore.getInstance()
-                                .collection("institutes")
-                                .document(realAdminUid!!)
-                                .set(
-                                    mapOf(
-                                        "instituteName" to "BatchFee System",
-                                        "role" to "SuperAdmin",
-                                        "email" to "superadmin@batchfee.app",
-                                        "isActive" to true
-                                    ),
-                                    com.google.firebase.firestore.SetOptions.merge()
-                                ).await()
-                        } catch (_: Exception) { }
-                    } catch (_: Exception) { }
+                        seedFirestoreAndAppUser(realAdminUid!!, "superadmin@batchfee.app", "SuperAdmin", "BatchFee System")
+                    } catch (e2: Exception) {
+                        FirebaseCrashlytics.getInstance().recordException(e2)
+                    }
                 } else {
                     FirebaseCrashlytics.getInstance().recordException(e)
                 }
             }
 
-            // ── Institute Admin ──
+            // ── Demo Owner (fresh account: demo@batchfee.app) ──
             try {
-                realInstituteAdminUid = FirebaseAuthApi.createUser("instituteadmin@batchfee.app", "123456")
-                try {
-                    com.google.firebase.firestore.FirebaseFirestore.getInstance()
-                        .collection("institutes")
-                        .document(realInstituteAdminUid!!)
-                        .set(
-                            mapOf(
-                                "instituteName" to "BatchFee Admin Office",
-                                "instituteId" to realInstituteAdminUid!!,
-                                "role" to "InstituteAdmin",
-                                "email" to "instituteadmin@batchfee.app",
-                                "currentPlanId" to "plan_free_trial",
-                                "subscriptionStatus" to "trial",
-                                "createdAt" to System.currentTimeMillis(),
-                                "trialEndDate" to (System.currentTimeMillis() + 15L * 24 * 60 * 60 * 1000),
-                                "studentCount" to 0,
-                                "staffCount" to 0,
-                                "isActive" to true
-                            ),
-                            com.google.firebase.firestore.SetOptions.merge()
-                        ).await()
-                } catch (e: Exception) {
-                    FirebaseCrashlytics.getInstance().recordException(e)
-                }
+                realOwnerUid = FirebaseAuthApi.createUser("demo@batchfee.app", "123456")
+                seedFirestoreAndAppUser(
+                    realOwnerUid!!, "demo@batchfee.app", "InstituteOwner", "BatchFee Demo Institute",
+                    extraFields = mapOf(
+                        "instituteCode" to "BGS-100",
+                        "ownerName" to "Demo Owner",
+                        "phone" to "+8801712345678",
+                        "whatsappNumber" to "+8801712345678",
+                        "trialEndDate" to (System.currentTimeMillis() + 30L * 24 * 60 * 60 * 1000),
+                        "studentCount" to 0,
+                        "staffCount" to 0,
+                        "currentPlanId" to "plan_pro",
+                        "subscriptionStatus" to "trial"
+                    )
+                )
             } catch (e: Exception) {
                 if ((e.message ?: "").contains("EMAIL_EXISTS", ignoreCase = true)) {
                     try {
-                        realInstituteAdminUid = FirebaseAuthApi.signInWithPassword("instituteadmin@batchfee.app", "123456")
-                        try {
-                            com.google.firebase.firestore.FirebaseFirestore.getInstance()
-                                .collection("institutes")
-                                .document(realInstituteAdminUid!!)
-                                .set(
-                                    mapOf(
-                                        "instituteName" to "BatchFee Admin Office",
-                                        "instituteId" to realInstituteAdminUid!!,
-                                        "role" to "InstituteAdmin",
-                                        "email" to "instituteadmin@batchfee.app",
-                                        "currentPlanId" to "plan_free_trial",
-                                        "subscriptionStatus" to "trial",
-                                        "trialEndDate" to (System.currentTimeMillis() + 15L * 24 * 60 * 60 * 1000),
-                                        "studentCount" to 0,
-                                        "staffCount" to 0,
-                                        "isActive" to true
-                                    ),
-                                    com.google.firebase.firestore.SetOptions.merge()
-                                ).await()
-                        } catch (_: Exception) { }
-                    } catch (_: Exception) { }
-                } else {
-                    FirebaseCrashlytics.getInstance().recordException(e)
-                }
-            }
-
-            // ── Demo Owner ──
-            try {
-                realOwnerUid = FirebaseAuthApi.createUser("owner@batchfee.app", "123456")
-                try {
-                    com.google.firebase.firestore.FirebaseFirestore.getInstance()
-                        .collection("institutes")
-                        .document(realOwnerUid!!)
-                        .set(
-                            mapOf(
+                        realOwnerUid = FirebaseAuthApi.signInWithPassword("demo@batchfee.app", "123456")
+                        seedFirestoreAndAppUser(
+                            realOwnerUid!!, "demo@batchfee.app", "InstituteOwner", "BatchFee Demo Institute",
+                            extraFields = mapOf(
                                 "instituteName" to "BatchFee Demo Institute",
                                 "instituteCode" to "BGS-100",
                                 "ownerName" to "Demo Owner",
-                                "instituteId" to realOwnerUid!!,
-                                "email" to "owner@batchfee.app",
+                                "email" to "demo@batchfee.app",
+                                "phone" to "+8801712345678",
+                                "whatsappNumber" to "+8801712345678",
                                 "role" to "owner",
-                                "createdAt" to System.currentTimeMillis(),
-                                "isActive" to true,
-                                "trialEndDate" to (System.currentTimeMillis() + 30L * 24 * 60 * 60 * 1000),
-                                "studentCount" to 0,
-                                "staffCount" to 0
-                            ),
-                            com.google.firebase.firestore.SetOptions.merge()
-                        ).await()
-                } catch (e: Exception) {
-                    FirebaseCrashlytics.getInstance().recordException(e)
-                }
-            } catch (e: Exception) {
-                if ((e.message ?: "").contains("EMAIL_EXISTS", ignoreCase = true)) {
-                    try {
-                        realOwnerUid = FirebaseAuthApi.signInWithPassword("owner@batchfee.app", "123456")
-                        try {
-                            com.google.firebase.firestore.FirebaseFirestore.getInstance()
-                                .collection("institutes")
-                                .document(realOwnerUid!!)
-                                .set(
-                                    mapOf(
-                                        "instituteName" to "BatchFee Demo Institute",
-                                        "instituteCode" to "BGS-100",
-                                        "ownerName" to "Demo Owner",
-                                        "instituteId" to realOwnerUid!!,
-                                        "email" to "owner@batchfee.app",
-                                        "role" to "owner",
-                                        "isActive" to true
-                                    ),
-                                    com.google.firebase.firestore.SetOptions.merge()
-                                ).await()
-                        } catch (_: Exception) { }
-                    } catch (_: Exception) { }
+                                "isActive" to true
+                            )
+                        )
+                    } catch (e2: Exception) {
+                        FirebaseCrashlytics.getInstance().recordException(e2)
+                    }
                 } else {
                     FirebaseCrashlytics.getInstance().recordException(e)
                 }
+            }
+        }
+
+        private suspend fun seedFirestoreAndAppUser(
+            uid: String,
+            email: String,
+            role: String,
+            instituteName: String,
+            extraFields: Map<String, Any> = emptyMap()
+        ) {
+            val now = System.currentTimeMillis()
+            val fifteenDaysMs = 15L * 24 * 60 * 60 * 1000
+            val baseFields = mutableMapOf<String, Any>(
+                "instituteName" to instituteName,
+                "role" to role,
+                "email" to email,
+                "createdAt" to now,
+                "isActive" to true,
+                "trialEndDate" to (now + fifteenDaysMs),
+                "studentCount" to 0,
+                "staffCount" to 0
+            )
+            baseFields.putAll(extraFields)
+
+            try {
+                com.google.firebase.firestore.FirebaseFirestore.getInstance()
+                    .collection("institutes").document(uid)
+                    .set(baseFields, com.google.firebase.firestore.SetOptions.merge())
+                    .await()
+            } catch (e: Exception) {
+                FirebaseCrashlytics.getInstance().recordException(e)
+            }
+
+            try {
+                AppUserSyncHelper.upsertManagedUser(
+                    ManagedUserRecord(
+                        id = uid,
+                        name = instituteName,
+                        email = email,
+                        role = role,
+                        instituteId = uid,
+                        createdAtMs = now
+                    )
+                )
+            } catch (e: Exception) {
+                FirebaseCrashlytics.getInstance().recordException(e)
             }
         }
 
@@ -412,7 +377,6 @@ abstract class AppDatabase : RoomDatabase() {
         suspend fun populateSuperAdmin(userDao: UserDao, instituteDao: InstituteDao) {
             // Use real Firebase Auth UIDs instead of hardcoded fake IDs
             val adminUid = realAdminUid ?: "sys_super_admin_1"
-            val instituteAdminUid = realInstituteAdminUid ?: "sys_institute_admin_1"
             val ownerUid = realOwnerUid ?: "demo_institute_1"
             val now = System.currentTimeMillis()
 
@@ -424,18 +388,6 @@ abstract class AppDatabase : RoomDatabase() {
                     email = "superadmin@batchfee.app",
                     passwordHash = PasswordHasher.hash("11223344"),
                     role = "SuperAdmin",
-                    createdAtMs = now
-                )
-            )
-
-            userDao.insertUser(
-                UserEntity(
-                    id = instituteAdminUid,
-                    instituteId = instituteAdminUid,
-                    name = "Institute Admin",
-                    email = "instituteadmin@batchfee.app",
-                    passwordHash = PasswordHasher.hash("123456"),
-                    role = "InstituteAdmin",
                     createdAtMs = now
                 )
             )
@@ -459,21 +411,6 @@ abstract class AppDatabase : RoomDatabase() {
             } catch (e: Exception) {
                 FirebaseCrashlytics.getInstance().recordException(e)
             }
-
-            instituteDao.insertInstitute(
-                InstituteEntity(
-                    id = instituteAdminUid,
-                    name = "BatchFee Admin Office",
-                    currentPlanId = "plan_free_trial",
-                    subscriptionStatus = "trial",
-                    trialStartDateMs = now,
-                    trialEndDateMs = now + 15L * 24 * 60 * 60 * 1000,
-                    currentPeriodEndMs = now + 15L * 24 * 60 * 60 * 1000,
-                    createdAtMs = now,
-                    ownerName = "Institute Admin",
-                    email = "instituteadmin@batchfee.app"
-                )
-            )
             
             val demoInstituteId = ownerUid
             val thirtyDaysMs = 30L * 24 * 60 * 60 * 1000
@@ -493,7 +430,7 @@ abstract class AppDatabase : RoomDatabase() {
                     whatsappNumber = "+8801712345678",
                     profilePhotoUri = null,
                     ownerName = "Demo Owner",
-                    email = "owner@batchfee.app",
+                    email = "demo@batchfee.app",
                     instituteCode = "BGS-100",
                     securityPin = null
                 )
@@ -504,7 +441,7 @@ abstract class AppDatabase : RoomDatabase() {
                     id = ownerUid,
                     instituteId = demoInstituteId,
                     name = "Mohammad Ramjan Sarker",
-                    email = "owner@batchfee.app",
+                    email = "demo@batchfee.app",
                     passwordHash = PasswordHasher.hash("123456"),
                     role = "InstituteOwner",
                     createdAtMs = now
@@ -1079,7 +1016,7 @@ abstract class AppDatabase : RoomDatabase() {
                         "instituteName" to "BatchFee Demo Institute",
                         "instituteCode" to "BGS-100",
                         "ownerName" to "Demo Owner",
-                        "email" to "owner@batchfee.app",
+                        "email" to "demo@batchfee.app",
                         "phone" to "+8801712345678",
                         "whatsappNumber" to "+8801712345678",
                         "role" to "owner",

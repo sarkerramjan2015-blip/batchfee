@@ -28,6 +28,18 @@
             text-align: center;
             margin-bottom: 20px;
         }
+        .header-card .institute-badge {
+            display: inline-block;
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+            color: #22D3EE;
+            background: rgba(34, 211, 238, 0.1);
+            padding: 4px 12px;
+            border-radius: 20px;
+            margin-bottom: 10px;
+        }
         .header-card h2 {
             font-size: 20px;
             font-weight: 700;
@@ -37,6 +49,19 @@
             font-size: 13px;
             color: #22D3EE;
             margin-top: 6px;
+        }
+        .lang-notice {
+            background: rgba(34, 211, 238, 0.08);
+            border: 1px solid rgba(34, 211, 238, 0.2);
+            border-radius: 10px;
+            padding: 10px 16px;
+            text-align: center;
+            font-size: 12px;
+            font-weight: 600;
+            color: #22D3EE;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 16px;
         }
         .instruction {
             font-size: 13px;
@@ -235,15 +260,21 @@
 </head>
 <body>
     <div class="container">
+        <!-- Language Notice -->
+        <div class="lang-notice">
+            All information must be provided in English
+        </div>
+
         <!-- Header -->
         <div class="header-card">
+            <div class="institute-badge">STUDENT REGISTRATION</div>
             <h2 id="instituteName">Loading...</h2>
             <div class="phone" id="institutePhone"></div>
         </div>
 
         <!-- Instruction -->
         <div class="instruction">
-            ⚠️ Please fill out the form carefully in English. All fields marked with * are required.
+            Fields marked with * are required. Fill out carefully before submitting.
         </div>
 
         <!-- Form -->

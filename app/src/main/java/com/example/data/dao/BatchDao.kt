@@ -23,4 +23,7 @@ interface BatchDao {
 
     @Update
     suspend fun updateBatch(batch: BatchEntity)
+
+    @Query("UPDATE batches SET archivedAtMs = :archivedAtMs, updatedAtMs = :updatedAtMs WHERE id = :batchId AND instituteId = :instituteId")
+    suspend fun archiveBatch(batchId: String, instituteId: String, archivedAtMs: Long, updatedAtMs: Long)
 }

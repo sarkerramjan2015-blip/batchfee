@@ -452,10 +452,21 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                     db.staffDao().insertStaff(staffEntity)
                 }
 
-                // Ensure demo data seeded if needed
-                val existingPlans = db.subscriptionPlanDao().getAllPlans().first()
-                if (existingPlans.isEmpty()) {
-                    AppDatabase.ensureDemoDataSeeded(db)
+                // Seed demo data at the REAL Firebase UID for demo accounts
+                val isDemoOwner = firebaseEmail == "demo@batchfee.app" || firebaseEmail == "owner@batchfee.app"
+                if (isDemoOwner && role == "InstituteOwner" && instituteId != null) {
+                    withContext(Dispatchers.IO) {
+                        val studentCount = db.studentDao().getStudentsByInstituteOnce(instituteId).size
+                        if (studentCount == 0) {
+                            AppDatabase.realOwnerUid = uid
+                            AppDatabase.seedDemoForRealUid(db, uid, instituteId)
+                        }
+                    }
+                } else {
+                    val existingPlans = db.subscriptionPlanDao().getAllPlans().first()
+                    if (existingPlans.isEmpty()) {
+                        AppDatabase.ensureDemoDataSeeded(db)
+                    }
                 }
 
                 // Reset failed attempts on successful login
@@ -1168,7 +1179,7 @@ fun AuthScreen(
                     )
                 }
 
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(8.dp))
 
                 // Toggle login/register
                 TextButton(onClick = { isLoginMode = !isLoginMode; errorMessage = null }) {
@@ -1179,7 +1190,7 @@ fun AuthScreen(
                     )
                 }
 
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(4.dp))
 
                 Row(
                     horizontalArrangement = Arrangement.Center,
@@ -1190,7 +1201,7 @@ fun AuthScreen(
                         Text("Privacy Policy", color = AuthCyan, fontSize = 12.sp)
                     }
                     Text(
-                        text = "and",
+                        text = "·",
                         color = AuthMuted.copy(alpha = 0.75f),
                         fontSize = 12.sp
                     )
@@ -1199,14 +1210,6 @@ fun AuthScreen(
                     }
                 }
 
-                Spacer(Modifier.height(8.dp))
-
-                Text(
-                    text = "v" + BuildConfig.VERSION_NAME + " . BatchFee",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = AuthMuted.copy(alpha = 0.5f),
-                    textAlign = TextAlign.Center
-                )
                 Spacer(Modifier.height(4.dp))
 
                 // WhatsApp contact button
@@ -1240,7 +1243,16 @@ fun AuthScreen(
                     )
                 }
 
-                Spacer(Modifier.height(24.dp))
+                Spacer(Modifier.height(12.dp))
+
+                Text(
+                    text = "v" + BuildConfig.VERSION_NAME + " · BatchFee",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = AuthMuted.copy(alpha = 0.5f),
+                    textAlign = TextAlign.Center
+                )
+
+                Spacer(Modifier.height(16.dp))
             }
         }
     }

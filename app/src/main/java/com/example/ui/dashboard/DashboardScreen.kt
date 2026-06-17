@@ -170,6 +170,9 @@ class DashboardViewModel(private val db: AppDatabase) : ViewModel() {
     private val _trialDaysLeft = MutableStateFlow(0)
     val trialDaysLeft = _trialDaysLeft.asStateFlow()
 
+    private val _subscriptionRemainingDays = MutableStateFlow(0)
+    val subscriptionRemainingDays = _subscriptionRemainingDays.asStateFlow()
+
     private val _studentCount = MutableStateFlow(0)
     val studentCount = _studentCount.asStateFlow()
 
@@ -220,6 +223,11 @@ class DashboardViewModel(private val db: AppDatabase) : ViewModel() {
                         val remainingMs = inst.trialEndDateMs - System.currentTimeMillis()
                         val days = (remainingMs / (1000 * 60 * 60 * 24)).coerceAtLeast(0).toInt()
                         _trialDaysLeft.value = days
+                    }
+                    if (inst != null) {
+                        val remainingMs = inst.currentPeriodEndMs - System.currentTimeMillis()
+                        val remainingDays = (remainingMs / (1000 * 60 * 60 * 24)).coerceAtLeast(0).toInt()
+                        _subscriptionRemainingDays.value = remainingDays
                     }
                     if (inst != null) {
                         _currentPlan.value = db.subscriptionPlanDao().getPlanById(inst.currentPlanId)
@@ -426,6 +434,7 @@ fun DashboardScreen(
     val staffCount by viewModel.staffCount.collectAsState()
     val currentUser by viewModel.currentUser.collectAsState()
     val currentPlan by viewModel.currentPlan.collectAsState()
+    val subscriptionRemainingDays by viewModel.subscriptionRemainingDays.collectAsState()
 
     var showFabMenu by remember { mutableStateOf(false) }
     var showProfilePopup by remember { mutableStateOf(false) }
@@ -581,7 +590,7 @@ fun DashboardScreen(
                                 Text("Tap to manage", color = TextSecondary, style = MaterialTheme.typography.labelSmall)
                             }
                         }
-                        Spacer(Modifier.height(16.dp))
+                        Spacer(Modifier.height(12.dp))
                         // Students row — navigates to Students list
                         OverviewRow(
                             icon = Icons.Filled.School,
@@ -1014,7 +1023,7 @@ fun DashboardScreen(
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(120.dp)
+                            .height(96.dp)
                             .background(
                                 androidx.compose.ui.graphics.Brush.verticalGradient(
                                     colors = listOf(Color(0xFF1A265E), Color(0xFF0F1629))
@@ -1092,116 +1101,129 @@ fun DashboardScreen(
                         }
                     }
                     
-                    Spacer(Modifier.height(48.dp))
+                    Spacer(Modifier.height(40.dp))
                     
-                    // Profile Info
+                    // Profile Info (compact)
                     Column(modifier = Modifier.padding(horizontal = 20.dp)) {
                         Text(
                             institute?.name ?: "BatchFee Demo Institute",
                             color = Color.White,
-                            fontSize = 20.sp,
+                            fontSize = 18.sp,
                             fontWeight = FontWeight.Bold
                         )
-                        Spacer(Modifier.height(4.dp))
+                        Spacer(Modifier.height(2.dp))
                         Text(
                             currentUser?.name ?: "Institute Owner",
                             color = AccentCyan,
-                            fontSize = 13.sp,
+                            fontSize = 12.sp,
                             fontWeight = FontWeight.Medium
                         )
                         Spacer(Modifier.height(2.dp))
                         Text(
                             currentUser?.email ?: "owner@batchfee.app",
                             color = TextSecondary,
-                            fontSize = 13.sp
+                            fontSize = 12.sp
                         )
                         
-                        Spacer(Modifier.height(12.dp))
+                        Spacer(Modifier.height(8.dp))
                         
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("Code", color = TextSecondary, fontSize = 13.sp)
-                            Spacer(Modifier.width(8.dp))
+                            Text("Code", color = TextSecondary, fontSize = 12.sp)
+                            Spacer(Modifier.width(6.dp))
                             Box(
                                 modifier = Modifier
-                                    .background(Color(0xFF1A265E), RoundedCornerShape(6.dp))
-                                    .padding(horizontal = 8.dp, vertical = 3.dp)
+                                    .background(Color(0xFF1A265E), RoundedCornerShape(5.dp))
+                                    .padding(horizontal = 6.dp, vertical = 2.dp)
                             ) {
-                                Text(institute?.id ?: "DEMO", color = AccentBlue, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                Text(institute?.id ?: "DEMO", color = AccentBlue, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                             }
                         }
                         
-                        Spacer(Modifier.height(12.dp))
+                        Spacer(Modifier.height(6.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Filled.Phone, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(15.dp))
-                            Spacer(Modifier.width(8.dp))
+                            Icon(Icons.Filled.Phone, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(14.dp))
+                            Spacer(Modifier.width(6.dp))
                             Text(
                                 institute?.phone?.takeIf { it.isNotBlank() } ?: "Not added",
                                 color = if (institute?.phone.isNullOrBlank()) TextSecondary else Color.White,
-                                fontSize = 13.sp
+                                fontSize = 12.sp
                             )
                         }
-                        Spacer(Modifier.height(6.dp))
+                        Spacer(Modifier.height(4.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Filled.LocationOn, contentDescription = null, tint = AccentBlue, modifier = Modifier.size(15.dp))
-                            Spacer(Modifier.width(8.dp))
+                            Icon(Icons.Filled.LocationOn, contentDescription = null, tint = AccentBlue, modifier = Modifier.size(14.dp))
+                            Spacer(Modifier.width(6.dp))
                             Text(
                                 institute?.address?.takeIf { it.isNotBlank() } ?: "Not added",
                                 color = if (institute?.address.isNullOrBlank()) TextSecondary else Color.White,
-                                fontSize = 13.sp
+                                fontSize = 12.sp
                             )
                         }
                         
-                        Spacer(Modifier.height(20.dp))
-                        Text("Current Subscription", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-                        Spacer(Modifier.height(10.dp))
+                        Spacer(Modifier.height(14.dp))
+                        Text("Current Subscription", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.height(8.dp))
                         
-                        // Subscription Card
+                        // Subscription Card (compact)
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(RoundedCornerShape(14.dp))
+                                .clip(RoundedCornerShape(12.dp))
                                 .background(
                                     androidx.compose.ui.graphics.Brush.linearGradient(
                                         colors = listOf(Color(0xFF161D35), Color(0xFF0D1322))
                                     )
                                 )
-                                .border(1.dp, Color(0xFF1E2A45), RoundedCornerShape(14.dp))
-                                .padding(14.dp)
+                                .border(1.dp, Color(0xFF1E2A45), RoundedCornerShape(12.dp))
+                                .padding(12.dp)
                         ) {
                             Column {
                                 val isTrial = institute?.subscriptionStatus == "trial"
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Box(modifier = Modifier.size(30.dp).background(Color(0xFF4C5DDB), RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) {
-                                        Icon(Icons.Filled.WorkspacePremium, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
-                                    }
-                                    Spacer(Modifier.width(10.dp))
-                                    Column {
-                                        Text("Current Plan", color = TextSecondary, fontSize = 11.sp)
-                                        Text(currentPlan?.name ?: if (isTrial) "Free Trial" else "Active Plan", color = AccentBlue, fontSize = 17.sp, fontWeight = FontWeight.Bold)
-                                    }
+                                val isActive = institute?.subscriptionStatus == "active"
+                                val statusLabel = when {
+                                    isTrial -> "Trial"
+                                    isActive -> "Active"
+                                    else -> institute?.subscriptionStatus ?: "Unknown"
                                 }
-                                Spacer(Modifier.height(12.dp))
+                                val remainingDays = if (isTrial) trialDays else subscriptionRemainingDays
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Filled.Group, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(15.dp))
+                                    Box(modifier = Modifier.size(26.dp).background(Color(0xFF4C5DDB), RoundedCornerShape(7.dp)), contentAlignment = Alignment.Center) {
+                                        Icon(Icons.Filled.WorkspacePremium, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                                    }
                                     Spacer(Modifier.width(8.dp))
-                                    Text("${currentPlan?.maxStudents ?: 100} Students", color = TextSecondary, fontSize = 13.sp)
+                                    Column {
+                                        Text(currentPlan?.name ?: if (isTrial) "Free Trial" else "Active Plan", color = AccentBlue, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                                        Text("$statusLabel · $remainingDays days remaining", color = TextSecondary, fontSize = 10.sp)
+                                    }
                                 }
-                                Spacer(Modifier.height(10.dp))
+                                Spacer(Modifier.height(8.dp))
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Filled.Group, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(14.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("$studentCount of ${currentPlan?.maxStudents ?: 100} Students", color = TextSecondary, fontSize = 12.sp)
+                                }
+                                Spacer(Modifier.height(6.dp))
                                 HorizontalDivider(color = Color(0xFF1E2A45))
-                                Spacer(Modifier.height(10.dp))
+                                Spacer(Modifier.height(6.dp))
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Filled.CalendarToday, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(15.dp))
-                                    Spacer(Modifier.width(8.dp))
+                                    Icon(Icons.Filled.CalendarToday, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(14.dp))
+                                    Spacer(Modifier.width(6.dp))
                                     Column {
-                                        Text(if (isTrial) "Trial active" else "Next Renewal", color = TextSecondary, fontSize = 11.sp)
-                                        val remainingText = if (isTrial) "$trialDays days left" else "Active"
-                                        Text(remainingText, color = AccentCyan, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                        Text(if (isTrial) "Trial started" else "Next Renewal", color = TextSecondary, fontSize = 10.sp)
+                                        val dateLabel = if (isTrial) {
+                                            val endDate = java.util.Date(institute?.trialEndDateMs ?: 0L)
+                                            SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(endDate)
+                                        } else {
+                                            val endDate = java.util.Date(institute?.currentPeriodEndMs ?: 0L)
+                                            SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(endDate)
+                                        }
+                                        Text(dateLabel, color = AccentCyan, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                                     }
                                 }
                             }
                         }
                         
-                        Spacer(Modifier.height(24.dp))
+                        Spacer(Modifier.height(6.dp))
                         
                         // View Subscription Plan - Primary Premium Button with Animated Glow
                         val infiniteTransition = rememberInfiniteTransition(label = "glow")
@@ -1227,7 +1249,7 @@ fun DashboardScreen(
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(54.dp)
+                                .height(46.dp)
                                 .clip(RoundedCornerShape(14.dp))
                                 .background(Color(0xFF1A265E))
                                 .border(

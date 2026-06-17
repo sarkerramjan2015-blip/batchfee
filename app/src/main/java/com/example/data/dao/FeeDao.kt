@@ -45,4 +45,10 @@ interface FeeDao {
     
     @Query("SELECT SUM(paidAmount) FROM fees WHERE instituteId = :instituteId AND cancelledAtMs IS NULL")
     fun getTotalCollected(instituteId: String): Flow<Double?>
+
+    @Query("UPDATE fees SET batchId = :newBatchId, updatedAtMs = :now WHERE studentId = :studentId AND batchId = :oldBatchId AND instituteId = :instituteId AND cancelledAtMs IS NULL")
+    suspend fun updateFeeBatchIdForStudent(studentId: String, oldBatchId: String, newBatchId: String, instituteId: String, now: Long)
+
+    @Query("SELECT * FROM fees WHERE instituteId = :instituteId AND studentId = :studentId AND batchId = :batchId AND cancelledAtMs IS NULL")
+    suspend fun getFeesByStudentOnce(instituteId: String, studentId: String, batchId: String): List<FeeEntity>
 }

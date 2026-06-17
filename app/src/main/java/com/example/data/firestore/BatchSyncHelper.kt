@@ -29,6 +29,19 @@ object BatchSyncHelper {
         }
     }
 
+    suspend fun archiveBatch(batch: BatchEntity) {
+        withContext(Dispatchers.IO) {
+            try {
+                batchesCollection(batch.instituteId)
+                    .document(batch.id)
+                    .set(batch.copy(archivedAtMs = System.currentTimeMillis()).toFirestore())
+                    .await()
+            } catch (e: Exception) {
+                FirebaseCrashlytics.getInstance().recordException(e)
+            }
+        }
+    }
+
     suspend fun syncAllFromFirestore(db: AppDatabase, instituteId: String) {
         withContext(Dispatchers.IO) {
             try {

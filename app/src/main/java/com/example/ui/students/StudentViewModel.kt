@@ -11,6 +11,9 @@ import com.example.data.models.BatchEntity
 import com.example.data.models.StudentEntity
 import com.example.domain.SessionManager
 import com.example.data.firestore.InstituteSyncHelper
+import com.example.data.firestore.BatchStudentSyncHelper
+import com.example.data.firestore.FinanceSyncHelper
+import com.example.data.models.BatchStudentEntity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -35,7 +38,7 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
     private fun loadStudents() {
         viewModelScope.launch {
             val instId = SessionManager.currentInstituteId.value ?: return@launch
-            CoreDataSyncCoordinator.refreshInstituteCache(db, instId)
+            InstituteCacheRefreshManager.refreshIfStale(db, instId)
             db.studentDao().getStudentsByInstitute(instId).collect {
                 _studentList.value = it
             }
@@ -109,15 +112,18 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
             archivedAtMs = null
         )
         viewModelScope.launch {
-            StudentSyncHelper.upsertStudent(student)
             db.studentDao().insertStudent(student)
-            try {
-                val count = withContext(Dispatchers.IO) {
-                    db.studentDao().getStudentsByInstituteOnce(instId).size
-                }
-                InstituteSyncHelper.updateStudentCount(instId, count)
-            } catch (_: Exception) { }
             onSuccess()
+            // Firestore sync in background after immediate local save
+            launch { StudentSyncHelper.upsertStudent(student) }
+            launch {
+                try {
+                    val count = withContext(Dispatchers.IO) {
+                        db.studentDao().getStudentsByInstituteOnce(instId).size
+                    }
+                    InstituteSyncHelper.updateStudentCount(instId, count)
+                } catch (_: Exception) { }
+            }
         }
     }
 
@@ -171,6 +177,71 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
             StudentSyncHelper.upsertStudent(updated)
             db.studentDao().updateStudent(updated)
             onSuccess()
+        }
+    }
+
+    fun shiftStudentBatch(
+        studentId: String,
+        oldBatchId: String,
+        newBatchId: String,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit = {}
+    ) {
+        val instId = SessionManager.currentInstituteId.value
+        if (instId == null) {
+            onError("No active institute session.")
+            return
+        }
+        if (oldBatchId == newBatchId) {
+            onError("Source and target batch must be different.")
+            return
+        }
+        viewModelScope.launch {
+            try {
+                val now = System.currentTimeMillis()
+
+                // Step 1: Remove from old batch (local)
+                withContext(Dispatchers.IO) {
+                    db.batchStudentDao().removeStudentFromBatch(oldBatchId, studentId, instId, now)
+                }
+
+                // Step 2: Enroll in new batch (local)
+                val enrollment = BatchStudentEntity(
+                    id = UUID.randomUUID().toString(),
+                    instituteId = instId,
+                    batchId = newBatchId,
+                    studentId = studentId,
+                    joinedAtMs = now,
+                    status = "active",
+                    leftAtMs = null
+                )
+                withContext(Dispatchers.IO) {
+                    db.batchStudentDao().enrollStudent(enrollment)
+                }
+
+                // Step 3: Update fee batchIds (local)
+                withContext(Dispatchers.IO) {
+                    db.feeDao().updateFeeBatchIdForStudent(studentId, oldBatchId, newBatchId, instId, now)
+                }
+
+                onSuccess()
+
+                // Step 4: Firestore sync (background, non-blocking)
+                launch {
+                    try {
+                        BatchStudentSyncHelper.markRemoved(instId, oldBatchId, studentId, now)
+                        BatchStudentSyncHelper.upsertEnrollment(enrollment)
+                        val fees = withContext(Dispatchers.IO) {
+                            db.feeDao().getFeesByStudentOnce(instId, studentId, newBatchId)
+                        }
+                        fees.forEach { fee ->
+                            try { FinanceSyncHelper.upsertFee(fee) } catch (_: Exception) { }
+                        }
+                    } catch (_: Exception) { }
+                }
+            } catch (e: Exception) {
+                onError(e.message ?: "Failed to shift student batch.")
+            }
         }
     }
 }

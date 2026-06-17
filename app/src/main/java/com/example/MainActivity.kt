@@ -533,7 +533,7 @@ private fun MainAppContent(appDb: com.example.data.database.AppDatabase) {
         
         composable<IdCardPreviewRoute> { backStackEntry ->
             val route = backStackEntry.toRoute<IdCardPreviewRoute>()
-            com.example.ui.students.IdCardPreviewScreen(db = appDb, type = route.type, id = route.id, onBack = { navController.popBackStack() })
+            com.example.ui.students.IdCardPreviewScreen(db = appDb, type = route.type, studentId = route.id, onBack = { navController.popBackStack() })
         }
         
         composable<BirthdayReminderRoute> {
@@ -606,6 +606,7 @@ private fun MainAppContent(appDb: com.example.data.database.AppDatabase) {
 
         composable<SubscriptionExpiredRoute> {
             SubscriptionExpiredScreen(
+                db = appDb,
                 onRenew = {
                     navController.navigate(PricingRoute)
                 },

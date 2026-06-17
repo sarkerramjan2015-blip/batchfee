@@ -5,7 +5,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 object SessionManager {
-    const val SESSION_TIMEOUT_MS = 60_000L
+    const val SESSION_TIMEOUT_MS = 300_000L
     const val SESSION_EXPIRED_MESSAGE = "Session expired. Log in again."
 
     private val _currentUserId = MutableStateFlow<String?>(null)

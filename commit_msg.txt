@@ -1,0 +1,19 @@
+feat: SuperAdmin institute trash system + subscription receipt overhaul + UI polish
+
+- Added 3-step Remove Institute flow (confirm → password → move to trash)
+- Trash section with 10-day auto-delete, restore, and permanent delete
+- New firestore collections: institutes_trash, app_users_trash
+- Professional A4 PDF subscription receipt with full institute owner details
+- WhatsApp contact icon per institute on SuperAdmin card
+- Registration form header polish (institute name + phone, English notice)
+- Fixed auto-logout timeout from 1 min to 5 min
+- Condensed login page (no scroll needed)
+- Receipts now branded with institute name, logo, and contact number
+- Salary month dropdown (running month default, ±6 months range)
+- Salary receipt PDF with print/WhatsApp on mark-paid
+- Student single-student batch shift with full data transfer
+- Batch delete with strong warning confirmation dialog
+- ID Card system: real PDF with student photo + data + print/WhatsApp
+- Collection fee: dual month dropdown replacing grid picker
+
+Co-authored-by: CommandCodeBot <noreply@commandcode.ai>

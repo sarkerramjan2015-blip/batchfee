@@ -185,6 +185,7 @@ fun PricingScreen(
     var submitSuccess by remember { mutableStateOf(false) }
     var submitError by remember { mutableStateOf<String?>(null) }
     var selectedPlanId by remember { mutableStateOf<String?>(null) }
+    var showPaymentDialog by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     val durationOptions = listOf("1 Month", "6 Months", "1 Year")
@@ -311,6 +312,7 @@ fun PricingScreen(
                                 selectedPlanId = plan.id
                                 submitSuccess = false
                                 submitError = null
+                                showPaymentDialog = true
                             }
                         )
                     }
@@ -398,193 +400,153 @@ fun PricingScreen(
                 Spacer(Modifier.height(24.dp))
             }
 
-            // ── Payment Submission Section ────────────────────
-            if (selectedPlanId != null) {
+            // ── Payment Request Dialog ──────────────────────────
+            if (showPaymentDialog && selectedPlanId != null) {
                 val selPlan = plans.find { it.id == selectedPlanId } ?: return@Scaffold
                 val selPrice = remember(selectedDuration) { viewModel.priceFor(selPlan) }
                 val selBilling = remember(selectedDuration) { viewModel.billingLabel() }
                 val durationMonths = when (selectedDuration) { 0 -> 1; 1 -> 6; 2 -> 12; else -> 1 }
 
-                Card(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp),
-                    shape = RoundedCornerShape(14.dp),
-                    colors = CardDefaults.cardColors(containerColor = CardBg),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, BorderSub)
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text("Submit Payment Request", color = TextWhite, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                        Spacer(Modifier.height(4.dp))
-                        Text("${selPlan.name} · ${selBilling} · BDT ${"%.0f".format(selPrice)}", color = Cyan, fontSize = 13.sp)
-                        Spacer(Modifier.height(12.dp))
-                        HorizontalDivider(color = BorderSub)
-                        Spacer(Modifier.height(12.dp))
+                AlertDialog(
+                    onDismissRequest = { if (!isSubmitting) showPaymentDialog = false },
+                    containerColor = CardBg,
+                    shape = RoundedCornerShape(16.dp),
+                    title = {
+                        Text("Submit Payment Request", color = TextWhite, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                    },
+                    text = {
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Text("${selPlan.name} · ${selBilling} · BDT ${"%.0f".format(selPrice)}", color = Cyan, fontSize = 13.sp)
+                            HorizontalDivider(color = BorderSub)
 
-                        // Payment method chips
-                        Text("Payment Method", color = TextMuted, fontSize = 12.sp)
-                        Spacer(Modifier.height(6.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            listOf("bkash" to "bKash", "nagad" to "Nagad").forEach { (id, label) ->
-                                val isSel = selectedPaymentMethod == id
-                                val number = if (id == "bkash") "01777408383" else "01518657869"
-                                FilterChip(
-                                    selected = isSel,
-                                    onClick = { selectedPaymentMethod = id },
-                                    label = { Text(label, fontSize = 12.sp) },
-                                    colors = FilterChipDefaults.filterChipColors(
-                                        selectedContainerColor = Cyan.copy(alpha = 0.2f),
-                                        selectedLabelColor = Cyan
-                                    ),
-                                    border = FilterChipDefaults.filterChipBorder(
-                                        borderColor = if (isSel) Cyan else BorderSub,
-                                        selectedBorderColor = Cyan,
-                                        enabled = true,
-                                        selected = isSel
+                            // Payment method chips
+                            Text("Payment Method", color = TextMuted, fontSize = 12.sp)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                listOf("bkash" to "bKash", "nagad" to "Nagad").forEach { (id, label) ->
+                                    val isSel = selectedPaymentMethod == id
+                                    FilterChip(
+                                        selected = isSel,
+                                        onClick = { selectedPaymentMethod = id },
+                                        label = { Text(label, fontSize = 12.sp) },
+                                        colors = FilterChipDefaults.filterChipColors(
+                                            selectedContainerColor = Cyan.copy(alpha = 0.2f),
+                                            selectedLabelColor = Cyan
+                                        ),
+                                        border = FilterChipDefaults.filterChipBorder(
+                                            borderColor = if (isSel) Cyan else BorderSub,
+                                            selectedBorderColor = Cyan,
+                                            enabled = true,
+                                            selected = isSel
+                                        )
                                     )
-                                )
-                            }
-                        }
-
-                        Spacer(Modifier.height(8.dp))
-
-                        // Payment number with copy
-                        val payNumber = if (selectedPaymentMethod == "bkash") "01777408383" else "01518657869"
-                        val payLabel = if (selectedPaymentMethod == "bkash") "bKash (Send Money)" else "Nagad"
-                        Row(
-                            modifier = Modifier.fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(CardBgAlt)
-                                .padding(horizontal = 12.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(payLabel, color = TextMuted, fontSize = 11.sp)
-                                Text(payNumber, color = TextWhite, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                            }
-                            IconButton(
-                                onClick = {
-                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                    clipboard.setPrimaryClip(ClipData.newPlainText("number", payNumber))
-                                    Toast.makeText(context, "Number copied!", Toast.LENGTH_SHORT).show()
                                 }
+                            }
+
+                            // Payment number with copy
+                            val payNumber = if (selectedPaymentMethod == "bkash") "01777408383" else "01518657869"
+                            val payLabel = if (selectedPaymentMethod == "bkash") "bKash (Send Money)" else "Nagad"
+                            Row(
+                                modifier = Modifier.fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(CardBgAlt)
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(Icons.Filled.ContentCopy, contentDescription = "Copy", tint = Cyan, modifier = Modifier.size(20.dp))
-                            }
-                        }
-
-                        Spacer(Modifier.height(12.dp))
-
-                        // Last 4 digits input
-                        OutlinedTextField(
-                            value = lastTrxDigits,
-                            onValueChange = { if (it.length <= 4 && it.all { c -> c.isDigit() }) lastTrxDigits = it },
-                            label = { Text("Last 4 digits of TrxID", color = TextMuted) },
-                            placeholder = { Text("e.g. 8X7K", color = TextMuted.copy(alpha = 0.5f)) },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true,
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedTextColor = TextWhite,
-                                unfocusedTextColor = TextWhite,
-                                focusedBorderColor = Cyan,
-                                unfocusedBorderColor = BorderSub
-                            )
-                        )
-
-                        Spacer(Modifier.height(14.dp))
-
-                        // Error / Success
-                        if (submitError != null) {
-                            Text(submitError!!, color = AccentRed, fontSize = 12.sp)
-                            Spacer(Modifier.height(6.dp))
-                        }
-                        if (submitSuccess) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = Green, modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.width(6.dp))
-                                Text("Request submitted! Check Billing for status.", color = Green, fontSize = 12.sp)
-                            }
-                            Spacer(Modifier.height(6.dp))
-                        }
-
-                        // Submit button
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(48.dp)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(
-                                    if (isSubmitting) Brush.horizontalGradient(listOf(TextMuted, BorderSub))
-                                    else Brush.horizontalGradient(listOf(Cyan, ElectricBlue))
-                                )
-                                .clickable(enabled = !isSubmitting && lastTrxDigits.length == 4) {
-                                    scope.launch {
-                                        if (instituteId == null) {
-                                            submitError = "Institute not found. Try restarting the app."
-                                            return@launch
-                                        }
-                                        isSubmitting = true
-                                        submitError = null
-                                        try {
-                                            val request = SubscriptionRequest(
-                                                requestId = "SR-${System.currentTimeMillis()}",
-                                                instituteId = instituteId!!,
-                                                instituteName = instituteName,
-                                                ownerName = ownerName,
-                                                institutePhone = institutePhone,
-                                                requestedPlanId = selPlan.id,
-                                                durationMonths = durationMonths,
-                                                amountPaid = selPrice,
-                                                transactionLast4 = lastTrxDigits,
-                                                paymentMethod = selectedPaymentMethod,
-                                                requestSentAt = System.currentTimeMillis()
-                                            )
-                                            SubscriptionRepository().submitRequest(request)
-                                            submitSuccess = true
-                                            lastTrxDigits = ""
-                                        } catch (e: Exception) {
-                                            submitError = e.message ?: "Submission failed. Try again."
-                                        } finally {
-                                            isSubmitting = false
-                                        }
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(payLabel, color = TextMuted, fontSize = 11.sp)
+                                    Text(payNumber, color = TextWhite, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                }
+                                IconButton(
+                                    onClick = {
+                                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                        clipboard.setPrimaryClip(ClipData.newPlainText("number", payNumber))
+                                        Toast.makeText(context, "Number copied!", Toast.LENGTH_SHORT).show()
                                     }
-                                },
-                            contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(Icons.Filled.ContentCopy, contentDescription = "Copy", tint = Cyan, modifier = Modifier.size(20.dp))
+                                }
+                            }
+
+                            // Last 4 digits input
+                            OutlinedTextField(
+                                value = lastTrxDigits,
+                                onValueChange = { if (it.length <= 4 && it.all { c -> c.isDigit() }) lastTrxDigits = it },
+                                label = { Text("Last 4 digits of TrxID", color = TextMuted) },
+                                placeholder = { Text("e.g. 8X7K", color = TextMuted.copy(alpha = 0.5f)) },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true,
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedTextColor = TextWhite,
+                                    unfocusedTextColor = TextWhite,
+                                    focusedBorderColor = Cyan,
+                                    unfocusedBorderColor = BorderSub
+                                )
+                            )
+
+                            // Error / Success
+                            if (submitError != null) {
+                                Text(submitError!!, color = AccentRed, fontSize = 12.sp)
+                            }
+                            if (submitSuccess) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = Green, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Payment submitted. Admin will review and approve your request.", color = Green, fontSize = 12.sp)
+                                }
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        Button(
+                            onClick = {
+                                scope.launch {
+                                    if (instituteId == null) {
+                                        submitError = "Institute not found. Try restarting the app."
+                                        return@launch
+                                    }
+                                    isSubmitting = true
+                                    submitError = null
+                                    try {
+                                        val request = SubscriptionRequest(
+                                            requestId = "SR-${System.currentTimeMillis()}",
+                                            instituteId = instituteId!!,
+                                            instituteName = instituteName,
+                                            ownerName = ownerName,
+                                            institutePhone = institutePhone,
+                                            requestedPlanId = selPlan.id,
+                                            durationMonths = durationMonths,
+                                            amountPaid = selPrice,
+                                            transactionLast4 = lastTrxDigits,
+                                            paymentMethod = selectedPaymentMethod,
+                                            requestSentAt = System.currentTimeMillis()
+                                        )
+                                        SubscriptionRepository().submitRequest(request)
+                                        submitSuccess = true
+                                        lastTrxDigits = ""
+                                    } catch (e: Exception) {
+                                        submitError = e.message ?: "Submission failed. Try again."
+                                    } finally {
+                                        isSubmitting = false
+                                    }
+                                }
+                            },
+                            enabled = !isSubmitting && lastTrxDigits.length == 4 && !submitSuccess,
+                            colors = ButtonDefaults.buttonColors(containerColor = Cyan),
+                            shape = RoundedCornerShape(10.dp)
                         ) {
                             if (isSubmitting) {
-                                CircularProgressIndicator(color = Cyan, modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
+                                CircularProgressIndicator(color = Color.White, modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                             } else {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Filled.Send, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
-                                    Spacer(Modifier.width(8.dp))
-                                    Text("Submit Request", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                                }
+                                Text("Submit Request", color = Color.White, fontWeight = FontWeight.Bold)
                             }
                         }
-                    }
-                }
-                Spacer(Modifier.height(16.dp))
-            }
-
-            // ── WhatsApp Fallback ─────────────────────────────
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 18.dp)
-                    .height(44.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(Brush.horizontalGradient(listOf(WAGreen, Teal)))
-                    .clickable {
-                        val message = "Hello Developer, I need help with subscription plans."
-                        val encoded = URLEncoder.encode(message, "UTF-8")
-                        val url = "https://wa.me/8801518657869?text=$encoded"
-                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
                     },
-                contentAlignment = Alignment.Center
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Filled.Phone, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Contact Developer on WhatsApp", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                }
+                    dismissButton = {
+                        TextButton(onClick = { showPaymentDialog = false }, enabled = !isSubmitting) {
+                            Text("Close", color = TextMuted)
+                        }
+                    }
+                )
             }
 
             Spacer(Modifier.height(12.dp))

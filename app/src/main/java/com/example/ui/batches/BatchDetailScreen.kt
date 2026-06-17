@@ -111,6 +111,7 @@ fun BatchDetailScreen(
     // Dialogs
     var sendMessageTarget by remember { mutableStateOf<BatchStudentWithFee?>(null) }
     var sendAllDueChoice by remember { mutableStateOf(false) }
+    var showDeleteDialog by remember { mutableStateOf(false) }
 
     // Load data on first composition
     LaunchedEffect(batchId) { paymentVM.loadBatchDetail(batchId) }
@@ -446,7 +447,7 @@ fun BatchDetailScreen(
             },
             onShift = {
                 showBatchMenu = false
-                scope.launch { snackbarHostState.showSnackbar("Shift batch will be added next.") }
+                scope.launch { snackbarHostState.showSnackbar("Shift single students from the Student Profile screen.") }
             },
             onDelete = {
                 showBatchMenu = false
@@ -488,6 +489,72 @@ fun BatchDetailScreen(
                 }
             },
             confirmButton = { TextButton(onClick = { showPaymentHistoryFor = null }) { Text("Close", color = Cyan) } }
+        )
+    }
+
+    if (showDeleteDialog && batch != null) {
+        var isDeleting by remember { mutableStateOf(false) }
+        val batchEntity = batch!!
+        AlertDialog(
+            onDismissRequest = { if (!isDeleting) showDeleteDialog = false },
+            containerColor = CardBg,
+            icon = { Icon(Icons.Filled.Warning, null, tint = AccentRed, modifier = Modifier.size(40.dp)) },
+            title = { Text("Delete Batch Permanently", color = AccentRed, fontSize = 17.sp, fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "Are you sure you want to delete this batch?",
+                        color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        "\"${batchEntity.name.take(30)}\"",
+                        color = Cyan, fontSize = 14.sp, fontWeight = FontWeight.Bold
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "All batch information will be permanently removed. No student records, fee records, or attendance data related to this batch will remain accessible.",
+                        color = TextMuted, fontSize = 12.sp
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.Delete, null, tint = AccentRed.copy(alpha = 0.8f), modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("This action cannot be undone.", color = AccentRed.copy(alpha = 0.8f), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        isDeleting = true
+                        (paymentVM as BatchViewModel).deleteBatch(
+                            batch = batchEntity,
+                            onError = { msg ->
+                                isDeleting = false
+                                showDeleteDialog = false
+                                scope.launch { snackbarHostState.showSnackbar(msg) }
+                            },
+                            onSuccess = {
+                                isDeleting = false
+                                showDeleteDialog = false
+                                scope.launch { snackbarHostState.showSnackbar("Batch deleted successfully.") }
+                                onBack()
+                            }
+                        )
+                    },
+                    enabled = !isDeleting,
+                    colors = ButtonDefaults.buttonColors(containerColor = AccentRed),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    if (isDeleting) CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
+                    else Text("Yes, Delete Permanently", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteDialog = false }, enabled = !isDeleting) {
+                    Text("Cancel", color = TextMuted)
+                }
+            }
         )
     }
 

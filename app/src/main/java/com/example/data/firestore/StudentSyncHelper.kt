@@ -24,7 +24,7 @@ object StudentSyncHelper {
                     .await()
             } catch (e: Exception) {
                 FirebaseCrashlytics.getInstance().recordException(e)
-                throw e
+                // Best-effort sync — don't crash local operations
             }
         }
     }

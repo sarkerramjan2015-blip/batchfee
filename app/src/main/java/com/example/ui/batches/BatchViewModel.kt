@@ -6,11 +6,13 @@ import androidx.lifecycle.viewModelScope
 import com.example.data.database.AppDatabase
 import com.example.data.firestore.BatchSyncHelper
 import com.example.data.firestore.CoreDataSyncCoordinator
+import com.example.data.firestore.InstituteCacheRefreshManager
 import com.example.data.firestore.InstituteSyncHelper
 import com.example.data.models.BatchEntity
 import com.example.domain.SessionManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -27,7 +29,7 @@ class BatchViewModel(private val db: AppDatabase) : ViewModel() {
     private fun loadBatches() {
         viewModelScope.launch {
             val instId = SessionManager.currentInstituteId.value ?: return@launch
-            CoreDataSyncCoordinator.refreshInstituteCache(db, instId)
+            InstituteCacheRefreshManager.refreshIfStale(db, instId)
             db.batchDao().getBatchesByInstitute(instId).collect {
                 _batchList.value = it
             }
@@ -93,6 +95,72 @@ class BatchViewModel(private val db: AppDatabase) : ViewModel() {
             BatchSyncHelper.upsertBatch(updated)
             db.batchDao().updateBatch(updated)
             onSuccess()
+        }
+    }
+
+    fun deleteBatch(batch: BatchEntity, onError: (String) -> Unit = {}, onSuccess: () -> Unit) {
+        val instId = SessionManager.currentInstituteId.value
+        if (instId == null) {
+            onError("No active institute session.")
+            return
+        }
+        viewModelScope.launch {
+            try {
+                val now = System.currentTimeMillis()
+                db.batchDao().archiveBatch(batch.id, instId, now, now)
+                BatchSyncHelper.archiveBatch(batch)
+                onSuccess()
+            } catch (e: Exception) {
+                onError(e.message ?: "Failed to delete batch.")
+            }
+        }
+    }
+
+    fun shiftAllStudents(
+        fromBatch: BatchEntity,
+        toBatch: BatchEntity,
+        onError: (String) -> Unit = {},
+        onSuccess: () -> Unit
+    ) {
+        val instId = SessionManager.currentInstituteId.value
+        if (instId == null) {
+            onError("No active institute session.")
+            return
+        }
+        if (fromBatch.id == toBatch.id) {
+            onError("Source and target batch must be different.")
+            return
+        }
+        viewModelScope.launch {
+            try {
+                val now = System.currentTimeMillis()
+                val students = withContext(Dispatchers.IO) {
+                    db.batchStudentDao().getStudentsForBatch(fromBatch.id, instId).firstOrNull() ?: emptyList()
+                }
+                if (students.isEmpty()) {
+                    onError("No active students found in this batch.")
+                    return@launch
+                }
+                withContext(Dispatchers.IO) {
+                    students.forEach { student ->
+                        db.batchStudentDao().removeStudentFromBatch(fromBatch.id, student.id, instId, now)
+                        val enrollment = com.example.data.models.BatchStudentEntity(
+                            id = UUID.randomUUID().toString(),
+                            instituteId = instId,
+                            batchId = toBatch.id,
+                            studentId = student.id,
+                            joinedAtMs = now,
+                            status = "active",
+                            leftAtMs = null
+                        )
+                        db.batchStudentDao().enrollStudent(enrollment)
+                        db.feeDao().updateFeeBatchIdForStudent(student.id, fromBatch.id, toBatch.id, instId, now)
+                    }
+                }
+                onSuccess()
+            } catch (e: Exception) {
+                onError(e.message ?: "Failed to shift students.")
+            }
         }
     }
 }

@@ -112,6 +112,9 @@ fun StudentProfileScreen(
     // ── Batch dialog state ──────────────────────────────────
     var showBatchDialog by remember { mutableStateOf(false) }
 
+    // ── Shift dialog state ───────────────────────────────────
+    var showShiftDialog by remember { mutableStateOf(false) }
+
     // ── Fee collection state ─────────────────────────────────
     var showFeeForm by remember { mutableStateOf(false) }
     val feeRepository = remember { FeeCollectionRepository(db) }
@@ -1004,6 +1007,106 @@ fun StudentProfileScreen(
                 )
             }
 
+            // ── Shift Batch Dialog ────────────────────────────
+            if (showShiftDialog) {
+                var allBatches by remember { mutableStateOf<List<BatchEntity>>(emptyList()) }
+                var selectedNewBatchId by remember { mutableStateOf<String?>(null) }
+                var isShifting by remember { mutableStateOf(false) }
+                LaunchedEffect(instId) {
+                    if (instId != null) {
+                        InstituteCacheRefreshManager.refreshIfStale(db, instId)
+                        db.batchDao().getBatchesByInstitute(instId).collect { allBatches = it }
+                    }
+                }
+                val availableBatches = allBatches.filter { !enrolledBatchIds.contains(it.id) }
+
+                AlertDialog(
+                    onDismissRequest = { if (!isShifting) showShiftDialog = false },
+                    containerColor = CardBg,
+                    icon = { Icon(Icons.Filled.SwapHoriz, null, tint = AccentAmber, modifier = Modifier.size(40.dp)) },
+                    title = { Text("Shift Student to Another Batch", color = TextWhite, fontSize = 17.sp, fontWeight = FontWeight.Bold) },
+                    text = {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(
+                                "Select a target batch below. The student will be removed from all currently enrolled batches and moved to the new batch. All existing fee records will follow the student.",
+                                color = TextMuted, fontSize = 12.sp
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            if (availableBatches.isEmpty()) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Filled.Info, null, tint = TextMuted, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("No other batches available.", color = TextMuted, fontSize = 13.sp)
+                                }
+                            } else {
+                                availableBatches.forEach { batch ->
+                                    val isSelected = selectedNewBatchId == batch.id
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(if (isSelected) AccentAmber.copy(alpha = 0.1f) else CardBgAlt)
+                                            .border(1.dp, if (isSelected) AccentAmber.copy(alpha = 0.5f) else BorderSub, RoundedCornerShape(10.dp))
+                                            .clickable { if (!isShifting) selectedNewBatchId = batch.id }
+                                            .padding(12.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(batch.name, color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                                            Text(
+                                                "Monthly: BDT ${"%.0f".format(batch.monthlyFeeAmount)} · Status: ${batch.status}",
+                                                color = TextMuted, fontSize = 11.sp
+                                            )
+                                        }
+                                        if (isSelected) {
+                                            Icon(Icons.Filled.CheckCircle, null, tint = AccentAmber, modifier = Modifier.size(20.dp))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        Button(
+                            onClick = {
+                                isShifting = true
+                                val targetId = selectedNewBatchId ?: return@Button
+                                val parentVM = StudentViewModel(db)
+                                val oldBatchId = batches.firstOrNull()?.id
+                                if (oldBatchId != null) {
+                                    parentVM.shiftStudentBatch(
+                                        studentId = studentId,
+                                        oldBatchId = oldBatchId,
+                                        newBatchId = targetId,
+                                        onSuccess = {
+                                            isShifting = false
+                                            showShiftDialog = false
+                                        },
+                                        onError = { msg ->
+                                            isShifting = false
+                                            showShiftDialog = false
+                                        }
+                                    )
+                                } else {
+                                    isShifting = false
+                                }
+                            },
+                            enabled = !isShifting && selectedNewBatchId != null && availableBatches.isNotEmpty(),
+                            colors = ButtonDefaults.buttonColors(containerColor = AccentAmber),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            if (isShifting) CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
+                            else Text("Shift Batch", color = Color.Black, fontWeight = FontWeight.Bold)
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showShiftDialog = false }, enabled = !isShifting) {
+                            Text("Cancel", color = TextMuted)
+                        }
+                    }
+                )
+            }
+
             if (showStudentMenu) {
                 StudentBatchMenuDialog(
                     onDismiss = { showStudentMenu = false },
@@ -1014,6 +1117,10 @@ fun StudentProfileScreen(
                     onAssignBatch = {
                         showStudentMenu = false
                         showBatchDialog = true
+                    },
+                    onShiftBatch = {
+                        showStudentMenu = false
+                        showShiftDialog = true
                     },
                     onCloseStudent = {
                         showStudentMenu = false
@@ -1148,6 +1255,7 @@ private fun StudentBatchMenuDialog(
     onDismiss: () -> Unit,
     onEdit: () -> Unit,
     onAssignBatch: () -> Unit,
+    onShiftBatch: () -> Unit,
     onCloseStudent: () -> Unit,
     onShareLogin: () -> Unit,
     onMessage: () -> Unit,
@@ -1160,6 +1268,7 @@ private fun StudentBatchMenuDialog(
     val items = listOf(
         StudentBatchMenuItem("Edit Student", "You can edit student details here", Icons.Filled.Edit, onEdit),
         StudentBatchMenuItem("Assign Batch", "You can assign new batch here", Icons.Filled.Groups, onAssignBatch),
+        StudentBatchMenuItem("Shift Batch", "You can shift this student to another batch", Icons.Filled.SwapHoriz, onShiftBatch),
         StudentBatchMenuItem("Close", "You can mark student status as inactive.", Icons.Filled.Close, onCloseStudent),
         StudentBatchMenuItem("Share Login Id And Password", "Share login Id And Password", Icons.Filled.Share, onShareLogin),
         StudentBatchMenuItem("Message", "Send a direct message", Icons.Filled.Email, onMessage),
