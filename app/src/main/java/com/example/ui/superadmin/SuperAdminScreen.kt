@@ -1440,14 +1440,14 @@ private fun SubscriptionPlanEditorDialog(
                             id = normalizedId,
                             name = name.trim(),
                             description = description.trim(),
-                            priceBdt = parsedPriceBdt,
+                            priceBdt = parsedPriceBdt!!,
                             priceInr = parsedPriceInr,
-                            maxStudents = parsedMaxStudents,
-                            maxBatches = parsedMaxBatches,
-                            maxUsers = parsedMaxUsers,
-                            maxBranches = parsedMaxBranches,
+                            maxStudents = parsedMaxStudents!!,
+                            maxBatches = parsedMaxBatches!!,
+                            maxUsers = parsedMaxUsers!!,
+                            maxBranches = parsedMaxBranches!!,
                             tag = tag.trim(),
-                            tierLevel = parsedTierLevel
+                            tierLevel = parsedTierLevel!!
                         )
                     )
                 }

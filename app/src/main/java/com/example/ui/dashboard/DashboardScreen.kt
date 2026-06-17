@@ -519,7 +519,15 @@ fun DashboardScreen(
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val compactLayout = maxWidth < 380.dp
+        val tabletLayout = maxWidth >= 840.dp
+        val contentModifier = if (tabletLayout) {
+            Modifier.fillMaxWidth().widthIn(max = 760.dp)
+        } else {
+            Modifier.fillMaxWidth()
+        }
+        val shortcutColumns = if (tabletLayout) 3 else 2
         Scaffold(
             containerColor = DashboardBg,
             snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -533,27 +541,31 @@ fun DashboardScreen(
             }
         }
     ) { innerPadding ->
-        Column(
+        Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(innerPadding)
-                .verticalScroll(rememberScrollState())
+                .fillMaxSize()
+                .padding(innerPadding),
+            contentAlignment = Alignment.TopCenter
         ) {
-            DashboardHeader(
-                institute = institute,
-                ownerName = currentUser?.name,
-                savedProfilePhotoUri = savedProfilePhotoUri,
-                todayLabel = todayLabel,
-                planLabel = if (institute?.subscriptionStatus == "trial") {
-                    "Trial: $trialDays days"
-                } else {
-                    currentPlan?.name ?: "Active plan"
-                },
-                onProfileClick = { showProfilePopup = true },
-                onSettingsClick = { safeNavigate("SettingsRoute") }
-            )
+            Column(
+                modifier = contentModifier.verticalScroll(rememberScrollState())
+            ) {
+                DashboardHeader(
+                    institute = institute,
+                    ownerName = currentUser?.name,
+                    savedProfilePhotoUri = savedProfilePhotoUri,
+                    todayLabel = todayLabel,
+                    planLabel = if (institute?.subscriptionStatus == "trial") {
+                        "Trial: $trialDays days"
+                    } else {
+                        currentPlan?.name ?: "Active plan"
+                    },
+                    compactLayout = compactLayout,
+                    onProfileClick = { showProfilePopup = true },
+                    onSettingsClick = { safeNavigate("SettingsRoute") }
+                )
 
-            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+                Column(modifier = Modifier.padding(horizontal = if (compactLayout) 12.dp else 16.dp, vertical = 14.dp)) {
                 GlobalNotificationCard()
                 // Overview Card
                 Card(
@@ -763,19 +775,39 @@ fun DashboardScreen(
                             Text("View", color = AccentCyan, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                         }
                         Spacer(Modifier.height(14.dp))
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            DueSummaryBlock(
-                                count = dueFeeSummary.activeCount,
-                                amount = dueFeeSummary.activeAmount,
-                                label = "Active",
-                                modifier = Modifier.weight(1f)
-                            )
-                            DueSummaryBlock(
-                                count = dueFeeSummary.closeCount,
-                                amount = dueFeeSummary.closeAmount,
-                                label = "Close",
-                                modifier = Modifier.weight(1f)
-                            )
+                        if (compactLayout) {
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                DueSummaryBlock(
+                                    count = dueFeeSummary.activeCount,
+                                    amount = dueFeeSummary.activeAmount,
+                                    label = "Active",
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                DueSummaryBlock(
+                                    count = dueFeeSummary.closeCount,
+                                    amount = dueFeeSummary.closeAmount,
+                                    label = "Close",
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+                        } else {
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                DueSummaryBlock(
+                                    count = dueFeeSummary.activeCount,
+                                    amount = dueFeeSummary.activeAmount,
+                                    label = "Active",
+                                    modifier = Modifier.weight(1f)
+                                )
+                                DueSummaryBlock(
+                                    count = dueFeeSummary.closeCount,
+                                    amount = dueFeeSummary.closeAmount,
+                                    label = "Close",
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
                         }
 
                     }
@@ -787,6 +819,7 @@ fun DashboardScreen(
                     examCount = examCount,
                     birthdayCount = birthdayCount,
                     enquirySummary = enquirySummary,
+                    compactLayout = compactLayout,
                     onOpenExams = { safeNavigate("ExamsRoute") },
                     onOpenBirthdays = { safeNavigate("BirthdayReminderRoute") },
                     onOpenEnquiry = { safeNavigate("EnquiryListRoute") },
@@ -816,16 +849,26 @@ fun DashboardScreen(
                         modifier = Modifier.fillMaxWidth(),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        shortcuts.chunked(3).forEach { rowItems ->
+                        shortcuts.chunked(shortcutColumns).forEach { rowItems ->
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
-                                rowItems.forEach { (label, icon, route) ->
-                                    ShortcutItem(label, icon, Modifier.weight(1f), { safeNavigate(route) })
+                                rowItems.forEachIndexed { index, (label, icon, route) ->
+                                    ShortcutItem(
+                                        label = label,
+                                        icon = icon,
+                                        modifier = if (rowItems.size == 1) Modifier.fillMaxWidth() else Modifier.weight(1f),
+                                        onClick = { safeNavigate(route) }
+                                    )
+                                    if (index != rowItems.lastIndex && rowItems.size > 1) {
+                                        Spacer(Modifier.width(10.dp))
+                                    }
                                 }
-                                repeat(3 - rowItems.size) {
-                                    Spacer(Modifier.weight(1f))
+                                if (rowItems.size > 1 && rowItems.size < shortcutColumns) {
+                                    repeat(shortcutColumns - rowItems.size) {
+                                        Spacer(Modifier.weight(1f))
+                                    }
                                 }
                             }
                         }
@@ -1529,6 +1572,8 @@ fun DashboardScreen(
 }
 }
 
+}
+
 private suspend fun persistInstituteProfilePhoto(context: android.content.Context, sourceUri: Uri): String =
     withContext(Dispatchers.IO) {
         val directory = File(context.filesDir, "institute_profile").apply { mkdirs() }
@@ -1805,6 +1850,7 @@ private fun DashboardHeader(
     savedProfilePhotoUri: Uri?,
     todayLabel: String,
     planLabel: String,
+    compactLayout: Boolean,
     onProfileClick: () -> Unit,
     onSettingsClick: () -> Unit
 ) {
@@ -1812,7 +1858,10 @@ private fun DashboardHeader(
         modifier = Modifier
             .fillMaxWidth()
             .background(DashboardCard)
-            .padding(horizontal = 16.dp, vertical = 14.dp)
+            .padding(
+                horizontal = if (compactLayout) 12.dp else 16.dp,
+                vertical = if (compactLayout) 12.dp else 14.dp
+            )
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -1820,7 +1869,7 @@ private fun DashboardHeader(
         ) {
             Box(
                 modifier = Modifier
-                    .size(54.dp)
+                    .size(if (compactLayout) 50.dp else 54.dp)
                     .clip(CircleShape)
                     .background(if (savedProfilePhotoUri == null) AccentCyan else DashboardCardAlt)
                     .border(1.dp, AccentCyan.copy(alpha = 0.70f), CircleShape)
@@ -1842,7 +1891,7 @@ private fun DashboardHeader(
                     )
                 }
             }
-            Spacer(modifier = Modifier.width(14.dp))
+            Spacer(modifier = Modifier.width(if (compactLayout) 12.dp else 14.dp))
             Column(
                 modifier = Modifier
                     .weight(1f)
@@ -1871,12 +1920,12 @@ private fun DashboardHeader(
             IconButton(
                 onClick = onSettingsClick,
                 modifier = Modifier
-                    .size(44.dp)
-                    .clip(RoundedCornerShape(14.dp))
+                    .size(if (compactLayout) 42.dp else 44.dp)
+                    .clip(RoundedCornerShape(if (compactLayout) 12.dp else 14.dp))
                     .background(DashboardCardAlt)
-                    .border(1.dp, DashboardStroke, RoundedCornerShape(14.dp))
+                    .border(1.dp, DashboardStroke, RoundedCornerShape(if (compactLayout) 12.dp else 14.dp))
             ) {
-                Icon(Icons.Filled.Settings, contentDescription = "Settings", tint = TextPrimary, modifier = Modifier.size(22.dp))
+                Icon(Icons.Filled.Settings, contentDescription = "Settings", tint = TextPrimary, modifier = Modifier.size(if (compactLayout) 20.dp else 22.dp))
             }
         }
         Spacer(Modifier.height(12.dp))
@@ -1888,12 +1937,14 @@ private fun DashboardHeader(
                 icon = Icons.Filled.CalendarToday,
                 text = todayLabel,
                 accent = AccentSky,
+                compactLayout = compactLayout,
                 modifier = Modifier.weight(1f)
             )
             DashboardHeaderPill(
                 icon = Icons.Filled.WorkspacePremium,
                 text = planLabel,
                 accent = AccentGreen,
+                compactLayout = compactLayout,
                 modifier = Modifier.weight(1f)
             )
         }
@@ -1916,23 +1967,24 @@ private fun DashboardHeaderPill(
     icon: ImageVector,
     text: String,
     accent: Color,
+    compactLayout: Boolean,
     modifier: Modifier = Modifier
 ) {
     Row(
         modifier = modifier
-            .height(34.dp)
-            .clip(RoundedCornerShape(12.dp))
+            .height(if (compactLayout) 32.dp else 34.dp)
+            .clip(RoundedCornerShape(if (compactLayout) 11.dp else 12.dp))
             .background(accent.copy(alpha = 0.10f))
-            .border(1.dp, accent.copy(alpha = 0.22f), RoundedCornerShape(12.dp))
-            .padding(horizontal = 10.dp),
+            .border(1.dp, accent.copy(alpha = 0.22f), RoundedCornerShape(if (compactLayout) 11.dp else 12.dp))
+            .padding(horizontal = if (compactLayout) 9.dp else 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(icon, contentDescription = null, tint = accent, modifier = Modifier.size(16.dp))
-        Spacer(Modifier.width(7.dp))
+        Icon(icon, contentDescription = null, tint = accent, modifier = Modifier.size(if (compactLayout) 15.dp else 16.dp))
+        Spacer(Modifier.width(if (compactLayout) 6.dp else 7.dp))
         Text(
             text,
             color = TextPrimary,
-            fontSize = 11.sp,
+            fontSize = if (compactLayout) 10.sp else 11.sp,
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
@@ -1991,59 +2043,100 @@ private fun HomeEngagementSection(
     examCount: Int,
     birthdayCount: Int,
     enquirySummary: EnquirySummary,
+    compactLayout: Boolean,
     onOpenExams: () -> Unit,
     onOpenBirthdays: () -> Unit,
     onOpenEnquiry: () -> Unit,
     onComingSoon: (String) -> Unit
 ) {
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Row(
+    if (compactLayout) {
+        Column(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             HomeFeatureTile(
                 title = "Exams",
                 count = examCount,
                 icon = Icons.Filled.Assignment,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.fillMaxWidth(),
                 onClick = onOpenExams
             )
             HomeFeatureTile(
                 title = "Birthdays",
                 count = birthdayCount,
                 icon = Icons.Filled.Cake,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.fillMaxWidth(),
                 onClick = onOpenBirthdays
             )
-        }
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
             HomeFeatureTile(
                 title = "Home works",
                 count = 0,
                 icon = Icons.Filled.ListAlt,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.fillMaxWidth(),
                 onClick = { onComingSoon("Home works") }
             )
             HomeFeatureTile(
                 title = "Class works",
                 count = 0,
                 icon = Icons.Filled.ListAlt,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.fillMaxWidth(),
                 onClick = { onComingSoon("Class works") }
             )
+            EnquirySummaryCard(
+                summary = enquirySummary,
+                onClick = onOpenEnquiry
+            )
         }
+    } else {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                HomeFeatureTile(
+                    title = "Exams",
+                    count = examCount,
+                    icon = Icons.Filled.Assignment,
+                    modifier = Modifier.weight(1f),
+                    onClick = onOpenExams
+                )
+                HomeFeatureTile(
+                    title = "Birthdays",
+                    count = birthdayCount,
+                    icon = Icons.Filled.Cake,
+                    modifier = Modifier.weight(1f),
+                    onClick = onOpenBirthdays
+                )
+            }
 
-        EnquirySummaryCard(
-            summary = enquirySummary,
-            onClick = onOpenEnquiry
-        )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                HomeFeatureTile(
+                    title = "Home works",
+                    count = 0,
+                    icon = Icons.Filled.ListAlt,
+                    modifier = Modifier.weight(1f),
+                    onClick = { onComingSoon("Home works") }
+                )
+                HomeFeatureTile(
+                    title = "Class works",
+                    count = 0,
+                    icon = Icons.Filled.ListAlt,
+                    modifier = Modifier.weight(1f),
+                    onClick = { onComingSoon("Class works") }
+                )
+            }
+
+            EnquirySummaryCard(
+                summary = enquirySummary,
+                onClick = onOpenEnquiry
+            )
+        }
     }
 }
 

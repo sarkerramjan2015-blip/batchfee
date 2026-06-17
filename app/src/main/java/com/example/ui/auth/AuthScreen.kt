@@ -657,10 +657,12 @@ private fun AnimatedLogo(modifier: Modifier = Modifier) {
 
 // Glass card for input fields
 @Composable
-private fun GlassCard(content: @Composable ColumnScope.() -> Unit) {
+private fun GlassCard(
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit
+) {
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
+        modifier = modifier
             .shadow(12.dp, RoundedCornerShape(20.dp), spotColor = AuthCyan.copy(alpha = 0.10f)),
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = AuthCardBg.copy(alpha = 0.85f)),
@@ -757,17 +759,27 @@ fun AuthScreen(
         colors = listOf(AuthBg, AuthBgMid, AuthBgEnd)
     )
 
-    Box(
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .background(bgGradient)
     ) {
+        val compactWidth = maxWidth < 360.dp
+        val compactHeight = maxHeight < 700.dp
+        val contentHorizontalPadding = if (compactWidth) 16.dp else 24.dp
+        val contentVerticalPadding = if (compactHeight) 24.dp else 48.dp
+        val logoSize = if (compactWidth) 88.dp else 100.dp
+        val orbOneSize = if (compactWidth || compactHeight) 220.dp else 280.dp
+        val orbTwoSize = if (compactWidth || compactHeight) 260.dp else 320.dp
+        val orbThreeSize = if (compactWidth || compactHeight) 160.dp else 200.dp
+        val formMaxWidth = if (maxWidth >= 600.dp) 480.dp else 0.dp
+        val actionsMaxWidth = if (compactWidth) 320.dp else 360.dp
         // Decorative orbs
         Box(
             modifier = Modifier
                 .align(Alignment.TopStart)
-                .offset(x = (-100).dp, y = (-60).dp)
-                .size(280.dp)
+                .offset(x = (-80).dp, y = (-48).dp)
+                .size(orbOneSize)
                 .background(
                     Brush.radialGradient(
                         colors = listOf(Color(0xFF6D28D9).copy(alpha = 0.35f), Color.Transparent)
@@ -777,8 +789,8 @@ fun AuthScreen(
         Box(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
-                .offset(x = 80.dp, y = 120.dp)
-                .size(320.dp)
+                .offset(x = 72.dp, y = 96.dp)
+                .size(orbTwoSize)
                 .background(
                     Brush.radialGradient(
                         colors = listOf(AuthCyan.copy(alpha = 0.25f), Color.Transparent)
@@ -788,8 +800,8 @@ fun AuthScreen(
         Box(
             modifier = Modifier
                 .align(Alignment.Center)
-                .offset(y = (-80).dp)
-                .size(200.dp)
+                .offset(y = (-64).dp)
+                .size(orbThreeSize)
                 .background(
                     Brush.radialGradient(
                         colors = listOf(AuthViolet.copy(alpha = 0.08f), Color.Transparent)
@@ -807,15 +819,15 @@ fun AuthScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 24.dp, vertical = 48.dp),
+                    .padding(horizontal = contentHorizontalPadding, vertical = contentVerticalPadding),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Spacer(Modifier.height(16.dp))
 
                 // Animated Logo
-                AnimatedLogo()
+                AnimatedLogo(modifier = Modifier.size(logoSize))
 
-                Spacer(Modifier.height(24.dp))
+                Spacer(Modifier.height(if (compactHeight) 18.dp else 24.dp))
 
                 // App Name + Tagline
                 Text(
@@ -833,10 +845,18 @@ fun AuthScreen(
                     color = AuthCyan,
                     textAlign = TextAlign.Center
                 )
-                Spacer(Modifier.height(32.dp))
+                Spacer(Modifier.height(if (compactHeight) 20.dp else 32.dp))
 
                 // Login / Register Form Card
-                GlassCard {
+                GlassCard(
+                    modifier = if (formMaxWidth > 0.dp) {
+                        Modifier
+                            .fillMaxWidth()
+                            .widthIn(max = formMaxWidth)
+                    } else {
+                        Modifier.fillMaxWidth()
+                    }
+                ) {
                     if (!isLoginMode) {
             val hasInstErr = fieldError.containsKey("instituteName")
             val hasOwnerErr = fieldError.containsKey("ownerName")
@@ -1199,7 +1219,9 @@ fun AuthScreen(
                             android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(waUri))
                         )
                     },
-                    modifier = Modifier.fillMaxWidth(0.7f),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .widthIn(max = actionsMaxWidth),
                     shape = RoundedCornerShape(10.dp),
                     border = androidx.compose.foundation.BorderStroke(1.dp, AuthCyan.copy(alpha = 0.25f)),
                     colors = ButtonDefaults.outlinedButtonColors(
@@ -1209,7 +1231,13 @@ fun AuthScreen(
                 ) {
                     Text("💬", fontSize = 13.sp)
                     Spacer(Modifier.width(8.dp))
-                    Text("Chat on WhatsApp", fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                    Text(
+                        "Chat on WhatsApp: +880 1518657869",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                    )
                 }
 
                 Spacer(Modifier.height(24.dp))

@@ -21,7 +21,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.sp
 import com.example.domain.AccessControl
 import com.example.domain.SessionManager
@@ -53,69 +55,82 @@ fun BatchFeeBottomNav(
     currentRoute: String,
     onNavigate: (String) -> Unit
 ) {
-    val currentRole by SessionManager.currentUserRole.collectAsState()
-    val currentStaffPermissions by SessionManager.currentStaffPermissions.collectAsState()
-    val visibleNavItems = remember(currentRole, currentStaffPermissions) {
-        navItems.filter { AccessControl.canAccessRoute(it.route) }
-    }
-
-    Column(
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
             .background(NavBg)
             .navigationBarsPadding()
     ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(1.dp)
-                .background(
-                    Brush.horizontalGradient(
-                        listOf(Color.Transparent, Cyan.copy(alpha = 0.34f), Color.Transparent)
+        val compactLayout = maxWidth < 360.dp
+        val navHeight = if (compactLayout) 64.dp else 72.dp
+        val itemHorizontalPadding = if (compactLayout) 6.dp else 8.dp
+        val itemVerticalPadding = if (compactLayout) 4.dp else 5.dp
+        val iconBoxSize = if (compactLayout) 28.dp else 30.dp
+        val iconSize = if (compactLayout) 17.dp else 18.dp
+        val labelSize = if (compactLayout) 9.5.sp else 10.5.sp
+
+        val currentRole by SessionManager.currentUserRole.collectAsState()
+        val currentStaffPermissions by SessionManager.currentStaffPermissions.collectAsState()
+        val visibleNavItems = remember(currentRole, currentStaffPermissions) {
+            navItems.filter { AccessControl.canAccessRoute(it.route) }
+        }
+
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(
+                        Brush.horizontalGradient(
+                            listOf(Color.Transparent, Cyan.copy(alpha = 0.34f), Color.Transparent)
+                        )
                     )
-                )
-        )
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(72.dp)
-                .background(NavBg)
-                .padding(horizontal = 8.dp, vertical = 5.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            visibleNavItems.forEach { item ->
-                val isFee = item.isFeeAction
-                val isSelected = currentRoute == item.route
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(navHeight)
+                    .background(NavBg)
+                    .padding(horizontal = itemHorizontalPadding, vertical = itemVerticalPadding),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                visibleNavItems.forEach { item ->
+                    val isFee = item.isFeeAction
+                    val isSelected = currentRoute == item.route
 
-                val textColor by animateColorAsState(
-                    targetValue = when {
-                        isFee -> Cyan
-                        isSelected -> Cyan
-                        else -> TextMuted.copy(alpha = 0.68f)
-                    },
-                    animationSpec = tween(220),
-                    label = "textColor"
-                )
-                val iconTint by animateColorAsState(
-                    targetValue = when {
-                        isFee -> TextWhite
-                        isSelected -> Cyan.copy(alpha = 0.85f)
-                        else -> TextMuted.copy(alpha = 0.68f)
-                    },
-                    animationSpec = tween(220),
-                    label = "iconTint"
-                )
+                    val textColor by animateColorAsState(
+                        targetValue = when {
+                            isFee -> Cyan
+                            isSelected -> Cyan
+                            else -> TextMuted.copy(alpha = 0.68f)
+                        },
+                        animationSpec = tween(220),
+                        label = "textColor"
+                    )
+                    val iconTint by animateColorAsState(
+                        targetValue = when {
+                            isFee -> TextWhite
+                            isSelected -> Cyan.copy(alpha = 0.85f)
+                            else -> TextMuted.copy(alpha = 0.68f)
+                        },
+                        animationSpec = tween(220),
+                        label = "iconTint"
+                    )
 
-                BottomNavItem(
-                    item = item,
-                    isSelected = isSelected,
-                    isFeeAction = isFee,
-                    textColor = textColor,
-                    iconTint = iconTint,
-                    modifier = Modifier.weight(1f),
-                    onClick = { onNavigate(item.route) }
-                )
+                    BottomNavItem(
+                        item = item,
+                        isSelected = isSelected,
+                        isFeeAction = isFee,
+                        textColor = textColor,
+                        iconTint = iconTint,
+                        iconBoxSize = iconBoxSize,
+                        iconSize = iconSize,
+                        labelSize = labelSize,
+                        modifier = Modifier.weight(1f),
+                        onClick = { onNavigate(item.route) }
+                    )
+                }
             }
         }
     }
@@ -128,6 +143,9 @@ private fun BottomNavItem(
     isFeeAction: Boolean,
     textColor: Color,
     iconTint: Color,
+    iconBoxSize: Dp,
+    iconSize: Dp,
+    labelSize: TextUnit,
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
@@ -191,7 +209,7 @@ private fun BottomNavItem(
     ) {
         Box(
             modifier = Modifier
-                .size(30.dp)
+                .size(iconBoxSize)
                 .clip(RoundedCornerShape(12.dp))
                 .background(
                     if (isFeeAction) {
@@ -208,13 +226,13 @@ private fun BottomNavItem(
                 item.icon,
                 contentDescription = item.label,
                 tint = iconTint,
-                modifier = Modifier.size(18.dp)
+                modifier = Modifier.size(iconSize)
             )
         }
         Spacer(Modifier.height(4.dp))
         Text(
             item.label,
-            fontSize = 10.5.sp,
+            fontSize = labelSize,
             lineHeight = 12.sp,
             fontWeight = if (isSelected || isFeeAction) FontWeight.SemiBold else FontWeight.Medium,
             color = textColor,
