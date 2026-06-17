@@ -25,6 +25,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.database.AppDatabase
+import com.example.BuildConfig
 import com.example.domain.BiometricAuthManager
 import com.example.domain.DataExporter
 import com.example.domain.ThemePreferences
@@ -230,7 +231,7 @@ fun SettingsScreen(
 
             // polish: centered version text
             Text(
-                "BatchFee v1.0 (Android)",
+                "BatchFee v${BuildConfig.VERSION_NAME} (Android)",
                 color = TextMuted,
                 fontSize = 12.sp,
                 textAlign = TextAlign.Center,

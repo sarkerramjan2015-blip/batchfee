@@ -208,7 +208,7 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                 val input = credential.trim()
                 val cleanPassword = passwordHash.trim()
                 val hasAt = input.contains("@")
-                android.util.Log.d("AUTH_LOGIN", "LOGIN: credential=$input, hasAt=$hasAt, cleanPassword length=${cleanPassword.length}, cleanPassword='$cleanPassword'")
+                android.util.Log.d("AUTH_LOGIN", "LOGIN: credential=$input, hasAt=$hasAt, password length=${cleanPassword.length}")
 
                 // ── SMART ROUTING: Email vs Staff ID ──
                 val firebaseEmail: String
@@ -233,7 +233,7 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                 }
 
                 // ── Firebase Auth ──
-                android.util.Log.d("AUTH_LOGIN", "Calling signInWithEmailAndPassword: email=$firebaseEmail, password length=${cleanPassword.length}")
+                android.util.Log.d("AUTH_LOGIN", "Calling signInWithEmailAndPassword: email=$firebaseEmail")
                 val authResult = withContext(Dispatchers.IO) {
                     // Sign out any stale session first to avoid credential expiry errors
                     try { FirebaseAuth.getInstance().signOut() } catch (_: Exception) { }
@@ -758,6 +758,7 @@ fun AuthScreen(
     var biometricLoginAvailable by remember { mutableStateOf(false) }
     var showForgotDialog by remember { mutableStateOf(false) }
     var forgotEmail by remember { mutableStateOf("") }
+    var consentChecked by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { contentVisible = true }
     LaunchedEffect(sessionNotice, isLoginMode) {
@@ -934,6 +935,52 @@ fun AuthScreen(
         )
         if (hasPwdErr) Text("This field is required", color = Color(0xFFF87171), fontSize = 10.sp, modifier = Modifier.padding(start = 12.dp, top = 2.dp))
 
+                    if (!isLoginMode) {
+                        Spacer(Modifier.height(8.dp))
+                        val hasConsentErr = fieldError.containsKey("consent")
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Checkbox(
+                                checked = consentChecked,
+                                onCheckedChange = {
+                                    consentChecked = it
+                                    if (hasConsentErr && it) {
+                                        fieldError = fieldError - "consent"
+                                        errorMessage = null
+                                    }
+                                },
+                                colors = CheckboxDefaults.colors(
+                                    checkedColor = AuthCyan,
+                                    uncheckedColor = AuthMuted,
+                                    checkmarkColor = AuthBg
+                                )
+                            )
+                            Row(Modifier.padding(start = 4.dp)) {
+                                Text("I agree to the ", color = AuthMuted, fontSize = 12.sp)
+                                TextButton(
+                                    onClick = onNavigatePrivacyPolicy,
+                                    contentPadding = PaddingValues(0.dp),
+                                    modifier = Modifier.defaultMinSize(minWidth = 0.dp, minHeight = 0.dp)
+                                ) {
+                                    Text("Privacy Policy", color = AuthCyan, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                }
+                                Text(" & ", color = AuthMuted, fontSize = 12.sp)
+                                TextButton(
+                                    onClick = onNavigateTermsConditions,
+                                    contentPadding = PaddingValues(0.dp),
+                                    modifier = Modifier.defaultMinSize(minWidth = 0.dp, minHeight = 0.dp)
+                                ) {
+                                    Text("Terms", color = AuthCyan, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                }
+                            }
+                        }
+                        if (hasConsentErr) {
+                            Text("You must accept the terms to continue", color = Color(0xFFF87171), fontSize = 10.sp, modifier = Modifier.padding(start = 12.dp, top = 2.dp))
+                        }
+                    }
+
                     // Forgot Password link (login mode only)
                     if (isLoginMode) {
                         Spacer(Modifier.height(4.dp))
@@ -1033,9 +1080,10 @@ fun AuthScreen(
                                 if (ownerName.isBlank()) errs["ownerName"] = true
                                 if (email.isBlank()) errs["email"] = true
                                 if (password.isBlank()) errs["password"] = true
+                                if (!consentChecked) errs["consent"] = true
                                 if (errs.isNotEmpty()) {
                                     fieldError = errs
-                                    errorMessage = "Please fill all required fields."
+                                    errorMessage = "Please fill all required fields and accept the terms."
                                     isLoading = false
                                     return@Button
                                 }

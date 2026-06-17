@@ -704,7 +704,7 @@ private fun PlanCard(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(38.dp)
+                    .height(48.dp)
                     .clip(RoundedCornerShape(10.dp))
                     .background(
                         brush = if (plan.isPopular || plan.isPremium)
