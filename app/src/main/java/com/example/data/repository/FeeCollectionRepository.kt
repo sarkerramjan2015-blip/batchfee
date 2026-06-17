@@ -2,6 +2,7 @@ package com.example.data.repository
 
 import androidx.room.withTransaction
 import com.example.data.database.AppDatabase
+import com.example.data.firestore.FinanceSyncHelper
 import com.example.data.models.FeeEntity
 import com.example.data.models.PaymentEntity
 import com.example.data.models.ReceiptEntity
@@ -56,6 +57,7 @@ class FeeCollectionRepository(private val db: AppDatabase) {
             updatedAtMs = now,
             cancelledAtMs = null
         )
+        FinanceSyncHelper.upsertFee(fee)
         db.feeDao().insertFee(fee)
         fee
     }
@@ -106,6 +108,7 @@ class FeeCollectionRepository(private val db: AppDatabase) {
             updatedAtMs = now,
             cancelledAtMs = null
         )
+        FinanceSyncHelper.upsertFee(fee)
         db.feeDao().insertFee(fee)
 
         if (collectedAmount <= 0.0) {
@@ -200,6 +203,7 @@ class FeeCollectionRepository(private val db: AppDatabase) {
             status = statusForAdjustedFee(adjustedDue, fee.paidAmount),
             updatedAtMs = now
         )
+        FinanceSyncHelper.upsertFee(adjustedFee)
         db.feeDao().updateFee(adjustedFee)
 
         collectFromFee(
@@ -256,45 +260,46 @@ class FeeCollectionRepository(private val db: AppDatabase) {
             status = statusAfterPayment(newDue),
             updatedAtMs = now
         )
+        FinanceSyncHelper.upsertFee(updatedFee)
         db.feeDao().updateFee(updatedFee)
 
         val paymentId = UUID.randomUUID().toString()
         val receiptNumber = "REC-$now"
-        db.paymentDao().insertPayment(
-            PaymentEntity(
-                id = paymentId,
-                instituteId = instituteId,
-                feeId = fee.id,
-                studentId = fee.studentId,
-                amount = normalizedAmount,
-                paymentMethod = paymentMethod.lowercase(),
-                transactionId = null,
-                receiptNumber = receiptNumber,
-                paymentDateMs = paymentDateMs,
-                collectedByUserId = collectedByUserId,
-                status = "completed",
-                note = note,
-                createdAtMs = now,
-                updatedAtMs = now
-            )
+        val payment = PaymentEntity(
+            id = paymentId,
+            instituteId = instituteId,
+            feeId = fee.id,
+            studentId = fee.studentId,
+            amount = normalizedAmount,
+            paymentMethod = paymentMethod.lowercase(),
+            transactionId = null,
+            receiptNumber = receiptNumber,
+            paymentDateMs = paymentDateMs,
+            collectedByUserId = collectedByUserId,
+            status = "completed",
+            note = note,
+            createdAtMs = now,
+            updatedAtMs = now
         )
-        db.receiptDao().insertReceipt(
-            ReceiptEntity(
-                id = UUID.randomUUID().toString(),
-                instituteId = instituteId,
-                paymentId = paymentId,
-                feeId = fee.id,
-                studentId = fee.studentId,
-                receiptNumber = receiptNumber,
-                receiptDateMs = paymentDateMs,
-                totalAmount = updatedFee.totalAmount,
-                paidAmount = updatedFee.paidAmount,
-                dueAmount = updatedFee.dueAmount,
-                paymentMethod = paymentMethod.lowercase(),
-                receiptText = receiptText ?: "Payment of $normalizedAmount received.",
-                createdAtMs = now
-            )
+        FinanceSyncHelper.upsertPayment(payment)
+        db.paymentDao().insertPayment(payment)
+        val receipt = ReceiptEntity(
+            id = UUID.randomUUID().toString(),
+            instituteId = instituteId,
+            paymentId = paymentId,
+            feeId = fee.id,
+            studentId = fee.studentId,
+            receiptNumber = receiptNumber,
+            receiptDateMs = paymentDateMs,
+            totalAmount = updatedFee.totalAmount,
+            paidAmount = updatedFee.paidAmount,
+            dueAmount = updatedFee.dueAmount,
+            paymentMethod = paymentMethod.lowercase(),
+            receiptText = receiptText ?: "Payment of $normalizedAmount received.",
+            createdAtMs = now
         )
+        FinanceSyncHelper.upsertReceipt(receipt)
+        db.receiptDao().insertReceipt(receipt)
         return FeeCollectionResult(paymentId, receiptNumber, updatedFee)
     }
 

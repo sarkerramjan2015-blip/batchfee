@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.data.database.AppDatabase
+import com.example.data.firestore.InstituteCacheRefreshManager
 import com.example.data.models.BatchEntity
 import com.example.data.models.FeeEntity
 import com.example.data.models.PaymentEntity
@@ -96,6 +97,7 @@ class BatchPaymentViewModel(private val db: AppDatabase) : ViewModel() {
         val instId = SessionManager.currentInstituteId.value ?: return
         _isLoading.value = true
         viewModelScope.launch {
+            InstituteCacheRefreshManager.refreshIfStale(db, instId)
             launch {
                 db.batchDao().getBatchById(batchId, instId).collect { _batch.value = it }
             }

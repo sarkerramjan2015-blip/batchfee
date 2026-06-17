@@ -99,6 +99,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.Row
 import com.example.data.database.AppDatabase
+import com.example.data.firestore.FinanceSyncHelper
+import com.example.data.firestore.InstituteCacheRefreshManager
 import com.example.data.models.BatchEntity
 import com.example.data.models.FeeEntity
 import com.example.data.models.PaymentEntity
@@ -266,6 +268,7 @@ fun UnifiedCollectScreen(
                 collectError = "No active institute session."
                 return@launch
             }
+            InstituteCacheRefreshManager.refreshIfStale(db, instId)
 
             val allFees = withContext(Dispatchers.IO) {
                 db.feeDao().getAllFeesOnce(instId)
@@ -323,6 +326,7 @@ fun UnifiedCollectScreen(
 
     LaunchedEffect(Unit) {
         val instId = SessionManager.currentInstituteId.value ?: return@LaunchedEffect
+        InstituteCacheRefreshManager.refreshIfStale(db, instId)
         allStudents = withContext(Dispatchers.IO) {
             db.studentDao().getStudentsByInstituteOnce(instId)
         }
@@ -713,6 +717,7 @@ fun UnifiedCollectScreen(
                             },
                             updatedAtMs = System.currentTimeMillis()
                         )
+                        FinanceSyncHelper.upsertFee(updatedFee)
                         db.feeDao().updateFee(updatedFee)
                         val updatedPayment = payment.copy(
                             amount = editRequest.amount,
@@ -721,27 +726,28 @@ fun UnifiedCollectScreen(
                             note = editRequest.note.ifBlank { null },
                             updatedAtMs = System.currentTimeMillis()
                         )
+                        FinanceSyncHelper.upsertPayment(updatedPayment)
                         db.paymentDao().insertPayment(updatedPayment)
                         db.receiptDao().getReceiptByPaymentIdOnce(instId, payment.id)?.let { receipt ->
-                            db.receiptDao().insertReceipt(
-                                receipt.copy(
-                                    totalAmount = updatedFee.totalAmount,
-                                    paidAmount = updatedPaid,
-                                    dueAmount = updatedDue,
-                                    receiptDateMs = editRequest.paymentDateMs,
-                                    paymentMethod = editRequest.method,
-                                    receiptText = buildHistoryReceiptText(
-                                        student = student,
-                                        item = item.copy(
-                                            payment = updatedPayment,
-                                            feePeriod = editRequest.feePeriod.trim(),
-                                            batchId = editRequest.batchId,
-                                            batchName = editRequest.batchName,
-                                            remainingDue = updatedDue
-                                        )
+                            val updatedReceipt = receipt.copy(
+                                totalAmount = updatedFee.totalAmount,
+                                paidAmount = updatedPaid,
+                                dueAmount = updatedDue,
+                                receiptDateMs = editRequest.paymentDateMs,
+                                paymentMethod = editRequest.method,
+                                receiptText = buildHistoryReceiptText(
+                                    student = student,
+                                    item = item.copy(
+                                        payment = updatedPayment,
+                                        feePeriod = editRequest.feePeriod.trim(),
+                                        batchId = editRequest.batchId,
+                                        batchName = editRequest.batchName,
+                                        remainingDue = updatedDue
                                     )
                                 )
                             )
+                            FinanceSyncHelper.upsertReceipt(updatedReceipt)
+                            db.receiptDao().insertReceipt(updatedReceipt)
                         }
                         editingHistoryItem = null
                         loadStudentLedger(student)

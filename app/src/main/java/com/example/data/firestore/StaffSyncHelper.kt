@@ -1,5 +1,6 @@
 package com.example.data.firestore
 
+import com.example.data.database.AppDatabase
 import com.example.data.models.StaffEntity
 import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.google.firebase.firestore.FirebaseFirestore
@@ -14,6 +15,9 @@ object StaffSyncHelper {
     private fun staffPath(instituteId: String, staffId: String) =
         "institutes/$instituteId/staffs/$staffId"
 
+    private fun staffCollection(instituteId: String) =
+        firestore.collection("institutes").document(instituteId).collection("staffs")
+
     suspend fun createStaff(staff: StaffEntity) {
         withContext(Dispatchers.IO) {
             try {
@@ -21,6 +25,7 @@ object StaffSyncHelper {
                     mapOf(
                         "staffCode" to staff.staffCode,
                         "fullName" to staff.fullName,
+                        "photoUri" to staff.photoUri,
                         "roleTitle" to staff.roleTitle,
                         "phone" to (staff.phone ?: ""),
                         "email" to (staff.email ?: ""),
@@ -29,9 +34,11 @@ object StaffSyncHelper {
                         "monthlySalary" to staff.monthlySalary,
                         "assignedBatchIds" to (staff.assignedBatchIds ?: ""),
                         "status" to staff.status,
+                        "notes" to (staff.notes ?: ""),
                         "permissions" to (staff.permissions ?: ""),
                         "createdAtMs" to staff.createdAtMs,
-                        "updatedAtMs" to staff.updatedAtMs
+                        "updatedAtMs" to staff.updatedAtMs,
+                        "archivedAtMs" to staff.archivedAtMs
                     )
                 ).await()
             } catch (e: Exception) {
@@ -45,16 +52,21 @@ object StaffSyncHelper {
             try {
                 firestore.document(staffPath(staff.instituteId, staff.id)).update(
                     mapOf(
+                        "staffCode" to staff.staffCode,
                         "fullName" to staff.fullName,
+                        "photoUri" to (staff.photoUri ?: ""),
                         "roleTitle" to staff.roleTitle,
                         "phone" to (staff.phone ?: ""),
                         "email" to (staff.email ?: ""),
                         "address" to (staff.address ?: ""),
+                        "joiningDateMs" to (staff.joiningDateMs ?: 0L),
                         "monthlySalary" to staff.monthlySalary,
                         "assignedBatchIds" to (staff.assignedBatchIds ?: ""),
                         "status" to staff.status,
+                        "notes" to (staff.notes ?: ""),
                         "permissions" to (staff.permissions ?: ""),
-                        "updatedAtMs" to staff.updatedAtMs
+                        "updatedAtMs" to staff.updatedAtMs,
+                        "archivedAtMs" to staff.archivedAtMs
                     )
                 ).await()
             } catch (e: Exception) {
@@ -69,6 +81,7 @@ object StaffSyncHelper {
                 firestore.document(staffPath(instituteId, staffId)).update(
                     mapOf(
                         "status" to "archived",
+                        "archivedAtMs" to System.currentTimeMillis(),
                         "updatedAtMs" to System.currentTimeMillis()
                     )
                 ).await()
@@ -85,13 +98,21 @@ object StaffSyncHelper {
     data class StaffFirestoreData(
         val staffCode: String = "",
         val fullName: String = "",
+        val photoUri: String = "",
         val roleTitle: String = "",
         val phone: String = "",
         val email: String = "",
+        val address: String = "",
+        val joiningDateMs: Long? = null,
+        val monthlySalary: Double = 0.0,
         val permissions: String = "",
         val assignedBatchIds: String = "",
         val status: String = "active",
-        val instituteId: String = ""
+        val notes: String = "",
+        val instituteId: String = "",
+        val createdAtMs: Long = 0L,
+        val updatedAtMs: Long = 0L,
+        val archivedAtMs: Long? = null
     )
 
     suspend fun fetchStaffFromFirestore(instituteId: String, staffId: String): StaffFirestoreData? {
@@ -102,17 +123,59 @@ object StaffSyncHelper {
                 StaffFirestoreData(
                     staffCode = doc.getString("staffCode") ?: "",
                     fullName = doc.getString("fullName") ?: "",
+                    photoUri = doc.getString("photoUri") ?: "",
                     roleTitle = doc.getString("roleTitle") ?: "",
                     phone = doc.getString("phone") ?: "",
                     email = doc.getString("email") ?: "",
+                    address = doc.getString("address") ?: "",
+                    joiningDateMs = (doc.get("joiningDateMs") as? Number)?.toLong(),
+                    monthlySalary = (doc.get("monthlySalary") as? Number)?.toDouble() ?: 0.0,
                     permissions = doc.getString("permissions") ?: "",
                     assignedBatchIds = doc.getString("assignedBatchIds") ?: "",
                     status = doc.getString("status") ?: "active",
-                    instituteId = instituteId
+                    notes = doc.getString("notes") ?: "",
+                    instituteId = instituteId,
+                    createdAtMs = (doc.get("createdAtMs") as? Number)?.toLong() ?: 0L,
+                    updatedAtMs = (doc.get("updatedAtMs") as? Number)?.toLong() ?: 0L,
+                    archivedAtMs = (doc.get("archivedAtMs") as? Number)?.toLong()
                 )
             } catch (e: Exception) {
                 FirebaseCrashlytics.getInstance().recordException(e)
                 null
+            }
+        }
+    }
+
+    suspend fun syncAllFromFirestore(db: AppDatabase, instituteId: String) {
+        withContext(Dispatchers.IO) {
+            try {
+                val snapshot = staffCollection(instituteId).get().await()
+                snapshot.documents.mapNotNull { doc ->
+                    val fullName = doc.getString("fullName") ?: return@mapNotNull null
+                    val staffCode = doc.getString("staffCode") ?: return@mapNotNull null
+                    StaffEntity(
+                        id = doc.id,
+                        instituteId = instituteId,
+                        staffCode = staffCode,
+                        fullName = fullName,
+                        photoUri = doc.getString("photoUri")?.takeIf { it.isNotBlank() },
+                        roleTitle = doc.getString("roleTitle") ?: "",
+                        phone = doc.getString("phone")?.takeIf { it.isNotBlank() },
+                        email = doc.getString("email")?.takeIf { it.isNotBlank() },
+                        address = doc.getString("address")?.takeIf { it.isNotBlank() },
+                        joiningDateMs = (doc.get("joiningDateMs") as? Number)?.toLong()?.takeIf { it > 0L },
+                        monthlySalary = (doc.get("monthlySalary") as? Number)?.toDouble() ?: 0.0,
+                        assignedBatchIds = doc.getString("assignedBatchIds")?.takeIf { it.isNotBlank() },
+                        status = doc.getString("status") ?: "active",
+                        notes = doc.getString("notes")?.takeIf { it.isNotBlank() },
+                        permissions = doc.getString("permissions")?.takeIf { it.isNotBlank() },
+                        createdAtMs = (doc.get("createdAtMs") as? Number)?.toLong() ?: System.currentTimeMillis(),
+                        updatedAtMs = (doc.get("updatedAtMs") as? Number)?.toLong() ?: System.currentTimeMillis(),
+                        archivedAtMs = (doc.get("archivedAtMs") as? Number)?.toLong()
+                    )
+                }.forEach { db.staffDao().insertStaff(it) }
+            } catch (e: Exception) {
+                FirebaseCrashlytics.getInstance().recordException(e)
             }
         }
     }

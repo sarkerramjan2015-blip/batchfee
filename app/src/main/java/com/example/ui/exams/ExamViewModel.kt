@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.data.database.AppDatabase
+import com.example.data.firestore.ExamSyncHelper
+import com.example.data.firestore.InstituteCacheRefreshManager
 import com.example.data.models.BatchEntity
 import com.example.data.models.ExamEntity
 import com.example.data.models.ResultEntity
@@ -50,6 +52,7 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
     private fun loadData() {
         val instId = SessionManager.currentInstituteId.value ?: return
         viewModelScope.launch {
+            InstituteCacheRefreshManager.refreshIfStale(db, instId)
             db.examDao().getExamsByInstitute(instId).collect { _exams.value = it }
         }
         viewModelScope.launch {
@@ -66,6 +69,7 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
         val instId = SessionManager.currentInstituteId.value ?: return
         _isLoading.value = true
         viewModelScope.launch {
+            InstituteCacheRefreshManager.refreshIfStale(db, instId)
             db.examDao().getExamById(examId, instId).collect { exam ->
                 _selectedExam.value = exam
                 if (exam != null) {
@@ -133,6 +137,7 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
             updatedAtMs = System.currentTimeMillis(), archivedAtMs = null
         )
         viewModelScope.launch {
+            ExamSyncHelper.upsertExam(exam)
             db.examDao().insertExam(exam)
             onSuccess()
         }
@@ -162,19 +167,19 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
         if (passingMarks > totalMarks) { onError("Passing marks cannot exceed total marks."); return }
 
         viewModelScope.launch {
-            db.examDao().updateExam(
-                currentExam.copy(
-                    instituteId = instId,
-                    batchId = batchId,
-                    examName = examName.trim(),
-                    subject = subject?.trim()?.takeIf { it.isNotEmpty() },
-                    examDateMs = examDateMs,
-                    totalMarks = totalMarks,
-                    passingMarks = passingMarks,
-                    teacherName = teacherName?.trim()?.takeIf { it.isNotEmpty() },
-                    updatedAtMs = System.currentTimeMillis()
-                )
+            val updated = currentExam.copy(
+                instituteId = instId,
+                batchId = batchId,
+                examName = examName.trim(),
+                subject = subject?.trim()?.takeIf { it.isNotEmpty() },
+                examDateMs = examDateMs,
+                totalMarks = totalMarks,
+                passingMarks = passingMarks,
+                teacherName = teacherName?.trim()?.takeIf { it.isNotEmpty() },
+                updatedAtMs = System.currentTimeMillis()
             )
+            ExamSyncHelper.upsertExam(updated)
+            db.examDao().updateExam(updated)
             onSuccess()
         }
     }
@@ -184,6 +189,9 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
         viewModelScope.launch {
             try {
                 val now = System.currentTimeMillis()
+                _selectedExam.value?.copy(archivedAtMs = now, updatedAtMs = now)?.let {
+                    ExamSyncHelper.upsertExam(it)
+                }
                 db.examDao().archiveExam(instId, examId, now)
                 onSuccess()
             } catch (e: Exception) {
@@ -218,10 +226,13 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
                     )
                 }
                 withContext(Dispatchers.IO) {
-                    results.forEach { db.resultDao().insertOrUpdateResult(it) }
-                    db.examDao().updateExam(
-                        _selectedExam.value!!.copy(status = "completed", updatedAtMs = now)
-                    )
+                    results.forEach {
+                        ExamSyncHelper.upsertResult(it)
+                        db.resultDao().insertOrUpdateResult(it)
+                    }
+                    val completedExam = _selectedExam.value!!.copy(status = "completed", updatedAtMs = now)
+                    ExamSyncHelper.upsertExam(completedExam)
+                    db.examDao().updateExam(completedExam)
                 }
                 loadExamDetails(examId)
                 onSuccess()
@@ -238,9 +249,9 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
             try {
                 withContext(Dispatchers.IO) {
                     results.forEach { item ->
-                        db.resultDao().insertOrUpdateResult(
-                            item.result!!.copy(published = true, updatedAtMs = System.currentTimeMillis())
-                        )
+                        val updated = item.result!!.copy(published = true, updatedAtMs = System.currentTimeMillis())
+                        ExamSyncHelper.upsertResult(updated)
+                        db.resultDao().insertOrUpdateResult(updated)
                     }
                 }
                 loadExamDetails(examId)

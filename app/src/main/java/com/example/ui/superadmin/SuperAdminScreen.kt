@@ -38,8 +38,15 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.database.AppDatabase
+import com.example.data.firebase.FirebaseAuthApi
+import com.example.data.firestore.AppUserSyncHelper
+import com.example.data.firestore.ManagedUserRecord
+import com.example.data.firestore.SubscriptionPlanSyncHelper
 import com.example.data.models.InstituteEntity
+import com.example.data.models.SubscriptionPlanEntity
 import com.example.data.models.SubscriptionRequest
+import com.example.data.models.UserEntity
+import com.example.domain.PasswordHasher
 import com.example.domain.SessionManager
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.crashlytics.FirebaseCrashlytics
@@ -47,6 +54,8 @@ import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
@@ -71,6 +80,35 @@ private val AccentPink = Color(0xFFF472B6)
 private val ElectricBlue = Color(0xFF3B82F6)
 
 private const val STANDARD_MONTHLY_FEE = 500.0
+private const val DEFAULT_TRIAL_PLAN_ID = "plan_free_trial"
+
+private fun humanizePlanId(planId: String): String = planId
+    .removePrefix("plan_")
+    .replace('_', ' ')
+    .split(' ')
+    .filter { it.isNotBlank() }
+    .joinToString(" ") { token -> token.replaceFirstChar { it.uppercase() } }
+
+private fun planDisplayName(planId: String, plans: List<SubscriptionPlanEntity>): String =
+    plans.firstOrNull { it.id == planId }?.name ?: humanizePlanId(planId)
+
+private fun planDisplayPrice(planId: String, plans: List<SubscriptionPlanEntity>): Double =
+    plans.firstOrNull { it.id == planId }?.priceBdt ?: STANDARD_MONTHLY_FEE
+
+private fun slugifyPlanName(name: String): String = buildString {
+    name.lowercase(Locale.getDefault()).forEach { ch ->
+        when {
+            ch.isLetterOrDigit() -> append(ch)
+            ch == ' ' || ch == '-' || ch == '_' -> append('_')
+        }
+    }
+}.replace(Regex("_+"), "_").trim('_')
+
+private fun formatMoneyValue(price: Double): String = if (price == price.toLong().toDouble()) {
+    price.toLong().toString()
+} else {
+    "%.0f".format(price)
+}
 
 // ── ViewModel ─────────────────────────────────────────────────
 data class SuperAdminStats(
@@ -98,9 +136,22 @@ data class InstituteStaffSummary(
     val email: String
 )
 
+data class ManagedUserSummary(
+    val id: String,
+    val name: String,
+    val email: String,
+    val role: String,
+    val instituteId: String? = null,
+    val createdAtMs: Long,
+    val status: String = "active"
+)
+
 class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
     private val _institutes = MutableStateFlow<List<InstituteCardData>>(emptyList())
     val institutes = _institutes.asStateFlow()
+
+    private val _subscriptionPlans = MutableStateFlow<List<SubscriptionPlanEntity>>(emptyList())
+    val subscriptionPlans = _subscriptionPlans.asStateFlow()
 
     private val _stats = MutableStateFlow(SuperAdminStats())
     val stats = _stats.asStateFlow()
@@ -120,17 +171,58 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
     private val _pendingRequests = MutableStateFlow<List<SubscriptionRequest>>(emptyList())
     val pendingRequests = _pendingRequests.asStateFlow()
 
+    private val _managedUsers = MutableStateFlow<List<ManagedUserSummary>>(emptyList())
+    val managedUsers = _managedUsers.asStateFlow()
+
     private val firestore = FirebaseFirestore.getInstance()
+    private var didBackfillManagedUsers = false
 
     val projectedRevenue: Double
         get() = _stats.value.totalRevenue
 
     init {
+        loadSubscriptionPlans()
         loadInstitutesRealtime()
         loadPendingRequestsRealtime()
+        loadManagedUsersRealtime()
     }
 
     fun clearOperationMsg() { _operationMsg.value = null }
+
+    private fun loadSubscriptionPlans() {
+        viewModelScope.launch {
+            db.subscriptionPlanDao().getAllPlans().collectLatest { plans ->
+                _subscriptionPlans.value = plans
+                recalculateStats(_institutes.value, plans)
+            }
+        }
+    }
+
+    private fun recalculateStats(
+        institutes: List<InstituteCardData>,
+        plans: List<SubscriptionPlanEntity> = _subscriptionPlans.value
+    ) {
+        val now = System.currentTimeMillis()
+        val planPriceMap = plans.associate { it.id to it.priceBdt }
+        val activeCount = institutes.count { card ->
+            card.entity.subscriptionStatus != "blocked" && card.entity.trialEndDateMs > now
+        }
+        val totalRevenue = institutes.sumOf { card ->
+            val entity = card.entity
+            if (entity.subscriptionStatus == "blocked" || entity.trialEndDateMs <= now) {
+                0.0
+            } else {
+                planPriceMap[entity.currentPlanId] ?: 0.0
+            }
+        }
+        _stats.value = SuperAdminStats(
+            totalInstitutes = institutes.size,
+            activeSubscriptions = activeCount,
+            totalRevenue = totalRevenue,
+            totalStudents = institutes.sumOf { it.studentCount },
+            totalStaff = institutes.sumOf { it.staffCount }
+        )
+    }
 
     private fun loadPendingRequestsRealtime() {
         firestore.collection("subscriptionRequests")
@@ -195,11 +287,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                 _operationMsg.value = "Approved ${request.instituteName} — ${request.requestedPlanId}"
                 // Generate receipt and trigger share
                 val receiptNumber = "SUB-${System.currentTimeMillis()}"
-                val planNames = mapOf(
-                    "plan_free_trial" to "Free Trial", "plan_starter" to "Starter",
-                    "plan_growth" to "Growth", "plan_pro" to "Pro", "plan_institute" to "Institute"
-                )
-                val planName = planNames[request.requestedPlanId] ?: request.requestedPlanId
+                val planName = planDisplayName(request.requestedPlanId, _subscriptionPlans.value)
                 val bitmap = withContext(Dispatchers.IO) {
                     createSubscriptionReceiptBitmap(
                         receiptNumber = receiptNumber,
@@ -270,7 +358,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
 
                     if (lastActive != null) activeMap[uid] = lastActive
 
-                    val currentPlanId = data["currentPlanId"] as? String ?: "plan_free_trial"
+                    val currentPlanId = data["currentPlanId"] as? String ?: DEFAULT_TRIAL_PLAN_ID
                     val storedStatus = data["subscriptionStatus"] as? String
                     val status = when {
                         !isActive -> "blocked"
@@ -309,39 +397,200 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                     )
                 }
 
-                val totalStudents = snapshot.documents.sumOf {
-                    ((it.data?.get("studentCount") as? Long) ?: 0L).toInt()
-                }
-                val totalStaff = snapshot.documents.sumOf {
-                    ((it.data?.get("staffCount") as? Long) ?: 0L).toInt()
-                }
-
-                val actualRevenue = snapshot.documents.sumOf { doc ->
-                    val planId = doc.data?.get("currentPlanId") as? String ?: "plan_free_trial"
-                    val isAct = (doc.data?.get("isActive") as? Boolean ?: true)
-                    val end = (doc.data?.get("trialEndDate") as? Long ?: now)
-                    if (isAct && end > now) {
-                        when (planId) {
-                            "plan_starter" -> 499.0
-                            "plan_growth" -> 999.0
-                            "plan_pro" -> 1999.0
-                            "plan_institute" -> 4999.0
-                            else -> 0.0
-                        }
-                    } else 0.0
-                }
-
                 _institutes.value = list
                 _lastActiveMap.value = activeMap
-                _stats.value = SuperAdminStats(
-                    totalInstitutes = list.size,
-                    activeSubscriptions = activeCount,
-                    totalRevenue = actualRevenue,
-                    totalStudents = totalStudents,
-                    totalStaff = totalStaff
-                )
+                recalculateStats(list)
                 _isLoading.value = false
+                if (!didBackfillManagedUsers) {
+                    didBackfillManagedUsers = true
+                    viewModelScope.launch {
+                        backfillManagedUsersFromInstitutes(snapshot.documents.mapNotNull { doc ->
+                            val data = doc.data ?: return@mapNotNull null
+                            val role = data["role"] as? String ?: return@mapNotNull null
+                            val mappedRole = when (role) {
+                                "owner" -> "InstituteOwner"
+                                "admin", "InstituteAdmin", "instituteAdmin", "institute_admin" -> "InstituteAdmin"
+                                "SuperAdmin", "superAdmin", "super_admin" -> "SuperAdmin"
+                                else -> null
+                            } ?: return@mapNotNull null
+                            val email = data["email"] as? String ?: return@mapNotNull null
+                            ManagedUserRecord(
+                                id = doc.id,
+                                name = (data["ownerName"] as? String)
+                                    ?: (data["instituteName"] as? String)
+                                    ?: email.substringBefore("@"),
+                                email = email,
+                                role = mappedRole,
+                                instituteId = if (mappedRole == "SuperAdmin") null else (data["instituteId"] as? String ?: doc.id),
+                                createdAtMs = (data["createdAt"] as? Long) ?: System.currentTimeMillis(),
+                                status = if ((data["isActive"] as? Boolean) == false) "blocked" else "active"
+                            )
+                        })
+                    }
+                }
             }
+    }
+
+    private suspend fun backfillManagedUsersFromInstitutes(records: List<ManagedUserRecord>) {
+        records.forEach { record ->
+            try {
+                AppUserSyncHelper.upsertManagedUser(record)
+                db.userDao().insertUser(
+                    UserEntity(
+                        id = record.id,
+                        instituteId = record.instituteId,
+                        name = record.name,
+                        email = record.email,
+                        passwordHash = "",
+                        role = record.role,
+                        createdAtMs = record.createdAtMs
+                    )
+                )
+            } catch (_: Exception) { }
+        }
+    }
+
+    private fun loadManagedUsersRealtime() {
+        firestore.collection("app_users")
+            .addSnapshotListener { snapshot, error ->
+                if (error != null || snapshot == null) return@addSnapshotListener
+                _managedUsers.value = snapshot.documents.mapNotNull { doc ->
+                    val email = doc.getString("email") ?: return@mapNotNull null
+                    val role = doc.getString("role") ?: return@mapNotNull null
+                    ManagedUserSummary(
+                        id = doc.id,
+                        name = doc.getString("name") ?: email.substringBefore("@"),
+                        email = email,
+                        role = role,
+                        instituteId = doc.getString("instituteId"),
+                        createdAtMs = (doc.get("createdAtMs") as? Number)?.toLong() ?: System.currentTimeMillis(),
+                        status = doc.getString("status") ?: "active"
+                    )
+                }.sortedWith(compareBy<ManagedUserSummary> { it.role }.thenBy { it.name.lowercase(Locale.getDefault()) })
+            }
+    }
+
+    fun createManagedUser(
+        name: String,
+        email: String,
+        role: String,
+        instituteId: String?,
+        password: String
+    ) {
+        val cleanName = name.trim()
+        val cleanEmail = email.trim().lowercase(Locale.getDefault())
+        val cleanPassword = password.trim()
+        val cleanInstituteId = instituteId?.trim()?.takeIf { it.isNotEmpty() }
+        when {
+            cleanName.isBlank() -> _operationMsg.value = "Name is required."
+            cleanEmail.isBlank() -> _operationMsg.value = "Email is required."
+            cleanPassword.length < 6 -> _operationMsg.value = "Password must be at least 6 characters."
+            role != "SuperAdmin" && cleanInstituteId == null -> _operationMsg.value = "Select an institute for this role."
+            else -> viewModelScope.launch {
+                try {
+                    val uid = FirebaseAuthApi.createUser(cleanEmail, cleanPassword)
+                    val now = System.currentTimeMillis()
+                    val record = ManagedUserRecord(
+                        id = uid,
+                        name = cleanName,
+                        email = cleanEmail,
+                        role = role,
+                        instituteId = cleanInstituteId,
+                        createdAtMs = now,
+                        status = "active"
+                    )
+                    AppUserSyncHelper.upsertManagedUser(record)
+                    db.userDao().insertUser(
+                        UserEntity(
+                            id = uid,
+                            instituteId = cleanInstituteId,
+                            name = cleanName,
+                            email = cleanEmail,
+                            passwordHash = PasswordHasher.hash(cleanPassword),
+                            role = role,
+                            createdAtMs = now
+                        )
+                    )
+                    if (role == "InstituteOwner" && cleanInstituteId != null) {
+                        firestore.collection("institutes").document(cleanInstituteId)
+                            .update(mapOf("ownerName" to cleanName, "email" to cleanEmail))
+                            .await()
+                    }
+                    _operationMsg.value = "$role account created for $cleanEmail"
+                } catch (e: FirebaseAuthApi.SignUpException) {
+                    _operationMsg.value = e.firebaseMessage
+                } catch (e: Exception) {
+                    FirebaseCrashlytics.getInstance().recordException(e)
+                    _operationMsg.value = "User create failed: ${e.message}"
+                }
+            }
+        }
+    }
+
+    fun updateManagedUser(
+        existing: ManagedUserSummary,
+        name: String,
+        role: String,
+        instituteId: String?,
+        password: String
+    ) {
+        val cleanName = name.trim()
+        val cleanInstituteId = instituteId?.trim()?.takeIf { it.isNotEmpty() }
+        val requestedPassword = password.trim()
+        when {
+            cleanName.isBlank() -> _operationMsg.value = "Name is required."
+            role != "SuperAdmin" && cleanInstituteId == null -> _operationMsg.value = "Select an institute for this role."
+            else -> viewModelScope.launch {
+                try {
+                    val updated = ManagedUserRecord(
+                        id = existing.id,
+                        name = cleanName,
+                        email = existing.email,
+                        role = role,
+                        instituteId = cleanInstituteId,
+                        createdAtMs = existing.createdAtMs,
+                        status = existing.status
+                    )
+                    AppUserSyncHelper.upsertManagedUser(updated)
+                    val currentLocal = db.userDao().getUserById(existing.id)
+                    if (currentLocal == null) {
+                        db.userDao().insertUser(
+                            UserEntity(
+                                id = existing.id,
+                                instituteId = cleanInstituteId,
+                                name = cleanName,
+                                email = existing.email,
+                                passwordHash = "",
+                                role = role,
+                                createdAtMs = existing.createdAtMs
+                            )
+                        )
+                    } else {
+                        db.userDao().updateUser(
+                            currentLocal.copy(
+                                instituteId = cleanInstituteId,
+                                name = cleanName,
+                                role = role
+                            )
+                        )
+                    }
+                    if (role == "InstituteOwner" && cleanInstituteId != null) {
+                        firestore.collection("institutes").document(cleanInstituteId)
+                            .update(mapOf("ownerName" to cleanName, "email" to existing.email))
+                            .await()
+                    }
+                    if (requestedPassword.isNotBlank()) {
+                        FirebaseAuth.getInstance().sendPasswordResetEmail(existing.email).await()
+                        _operationMsg.value = "User updated. Password reset email sent to ${existing.email}"
+                    } else {
+                        _operationMsg.value = "User updated successfully."
+                    }
+                } catch (e: Exception) {
+                    FirebaseCrashlytics.getInstance().recordException(e)
+                    _operationMsg.value = "User update failed: ${e.message}"
+                }
+            }
+        }
     }
 
     fun extendSubscription(instituteId: String, daysToAdd: Int) {
@@ -401,6 +650,71 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                 onDone()
             } catch (e: Exception) {
                 _operationMsg.value = "Failed: ${e.message}"
+            }
+        }
+    }
+
+    fun saveSubscriptionPlan(
+        existingPlanId: String?,
+        plan: SubscriptionPlanEntity
+    ) {
+        viewModelScope.launch {
+            try {
+                val duplicateName = _subscriptionPlans.value.any {
+                    it.id != existingPlanId && it.name.equals(plan.name, ignoreCase = true)
+                }
+                if (duplicateName) {
+                    _operationMsg.value = "A plan with this name already exists."
+                    return@launch
+                }
+
+                withContext(Dispatchers.IO) {
+                    if (existingPlanId != null && existingPlanId != plan.id) {
+                        val usingPlan = db.instituteDao().getAllInstitutes().first().filter { it.currentPlanId == existingPlanId }
+                        usingPlan.forEach { institute ->
+                            val updated = institute.copy(currentPlanId = plan.id)
+                            db.instituteDao().insertInstitute(updated)
+                            firestore.collection("institutes").document(institute.id)
+                                .update("currentPlanId", plan.id)
+                                .await()
+                        }
+                        SubscriptionPlanSyncHelper.deletePlan(existingPlanId)
+                        db.subscriptionPlanDao().deletePlanById(existingPlanId)
+                    }
+                    db.subscriptionPlanDao().insertPlans(listOf(plan))
+                    SubscriptionPlanSyncHelper.upsertPlans(listOf(plan))
+                }
+                _operationMsg.value = if (existingPlanId == null) {
+                    "Subscription plan created."
+                } else {
+                    "Subscription plan updated."
+                }
+            } catch (e: Exception) {
+                FirebaseCrashlytics.getInstance().recordException(e)
+                _operationMsg.value = "Plan save failed: ${e.message}"
+            }
+        }
+    }
+
+    fun deleteSubscriptionPlan(planId: String) {
+        if (planId == DEFAULT_TRIAL_PLAN_ID) {
+            _operationMsg.value = "Free Trial plan cannot be deleted."
+            return
+        }
+        if (_institutes.value.any { it.entity.currentPlanId == planId }) {
+            _operationMsg.value = "This plan is assigned to one or more institutes."
+            return
+        }
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    SubscriptionPlanSyncHelper.deletePlan(planId)
+                    db.subscriptionPlanDao().deletePlanById(planId)
+                }
+                _operationMsg.value = "Subscription plan deleted."
+            } catch (e: Exception) {
+                FirebaseCrashlytics.getInstance().recordException(e)
+                _operationMsg.value = "Plan delete failed: ${e.message}"
             }
         }
     }
@@ -518,8 +832,10 @@ class SuperAdminViewModelFactory(private val db: AppDatabase) : ViewModelProvide
 fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
     val viewModel: SuperAdminViewModel = viewModel(factory = SuperAdminViewModelFactory(db))
     val institutes by viewModel.institutes.collectAsState()
+    val subscriptionPlans by viewModel.subscriptionPlans.collectAsState()
     val stats by viewModel.stats.collectAsState()
     val pendingRequests by viewModel.pendingRequests.collectAsState()
+    val managedUsers by viewModel.managedUsers.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val operationMsg by viewModel.operationMsg.collectAsState()
     val projected = viewModel.projectedRevenue
@@ -532,6 +848,14 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
     var announceText by remember { mutableStateOf("") }
     var searchQuery by remember { mutableStateOf("") }
     var statusFilter by remember { mutableStateOf("all") }
+    var userSearchQuery by remember { mutableStateOf("") }
+    var userRoleFilter by remember { mutableStateOf("all") }
+    var showUserDialog by remember { mutableStateOf(false) }
+    var editingUser by remember { mutableStateOf<ManagedUserSummary?>(null) }
+    var editingPlan by remember { mutableStateOf<SubscriptionPlanEntity?>(null) }
+    var showPlanDialog by remember { mutableStateOf(false) }
+
+    val planNameById = remember(subscriptionPlans) { subscriptionPlans.associate { it.id to it.name } }
 
     val filteredInstitutes = remember(institutes, searchQuery, statusFilter) {
         institutes.filter { card ->
@@ -544,6 +868,17 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
                 (inst.email?.contains(searchQuery, ignoreCase = true) ?: false)
             val matchesFilter = statusFilter == "all" || inst.subscriptionStatus == statusFilter
             matchesSearch && matchesFilter
+        }
+    }
+    val instituteNameMap = remember(institutes) { institutes.associate { it.entity.id to it.entity.name } }
+    val filteredUsers = remember(managedUsers, userSearchQuery, userRoleFilter, instituteNameMap) {
+        managedUsers.filter { user ->
+            val matchesSearch = userSearchQuery.isBlank() ||
+                user.name.contains(userSearchQuery, ignoreCase = true) ||
+                user.email.contains(userSearchQuery, ignoreCase = true) ||
+                (instituteNameMap[user.instituteId]?.contains(userSearchQuery, ignoreCase = true) ?: false)
+            val matchesRole = userRoleFilter == "all" || user.role == userRoleFilter
+            matchesSearch && matchesRole
         }
     }
 
@@ -821,13 +1156,308 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
                 }
             } else {
                 items(filteredInstitutes, key = { it.entity.id }) { card ->
-                    InstituteCard(card, viewModel)
+                    InstituteCard(card, viewModel, subscriptionPlans)
                 }
+            }
+
+            item {
+                SubscriptionPlanSection(
+                    plans = subscriptionPlans,
+                    institutes = institutes,
+                    onCreate = {
+                        editingPlan = null
+                        showPlanDialog = true
+                    },
+                    onEdit = { plan ->
+                        editingPlan = plan
+                        showPlanDialog = true
+                    },
+                    onDelete = viewModel::deleteSubscriptionPlan
+                )
             }
 
             item { Spacer(Modifier.height(80.dp)) }
         }
     }
+
+    if (showPlanDialog) {
+        SubscriptionPlanEditorDialog(
+            initialPlan = editingPlan,
+            onDismiss = { showPlanDialog = false },
+            onSave = { existingId, plan ->
+                viewModel.saveSubscriptionPlan(existingId, plan)
+                showPlanDialog = false
+            }
+        )
+    }
+}
+
+@Composable
+private fun SubscriptionPlanSection(
+    plans: List<SubscriptionPlanEntity>,
+    institutes: List<InstituteCardData>,
+    onCreate: () -> Unit,
+    onEdit: (SubscriptionPlanEntity) -> Unit,
+    onDelete: (String) -> Unit
+) {
+    val planUsage = remember(institutes) { institutes.groupingBy { it.entity.currentPlanId }.eachCount() }
+    Column {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Subscription Plans", color = TextMuted, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            TextButton(onClick = onCreate) {
+                Icon(Icons.Filled.Add, null, tint = AccentCyan, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("New Plan", color = AccentCyan, fontWeight = FontWeight.Bold)
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        if (plans.isEmpty()) {
+            Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = CardBg)) {
+                Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
+                    Text("No subscription plans found yet.", color = TextMuted, fontSize = 13.sp)
+                }
+            }
+        } else {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                plans.forEach { plan ->
+                    Card(
+                        shape = RoundedCornerShape(14.dp),
+                        colors = CardDefaults.cardColors(containerColor = CardBg),
+                        border = BorderStroke(1.dp, BorderSub)
+                    ) {
+                        Column(Modifier.padding(14.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(plan.name, color = TextWhite, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                                    Text(plan.id, color = TextMuted, fontSize = 11.sp)
+                                }
+                                if (plan.tag.isNotBlank()) {
+                                    Box(
+                                        Modifier.clip(RoundedCornerShape(8.dp))
+                                            .background(AccentViolet.copy(alpha = 0.15f))
+                                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                                    ) {
+                                        Text(plan.tag, color = AccentViolet, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            Text(plan.description, color = TextMuted, fontSize = 12.sp)
+                            Spacer(Modifier.height(10.dp))
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                PlanMetricChip("BDT ${formatMoneyValue(plan.priceBdt)}")
+                                PlanMetricChip("${plan.maxStudents} students")
+                                PlanMetricChip("${plan.maxUsers} users")
+                                PlanMetricChip("${planUsage[plan.id] ?: 0} institutes")
+                            }
+                            Spacer(Modifier.height(10.dp))
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                                TextButton(onClick = { onEdit(plan) }) {
+                                    Text("Edit", color = AccentCyan, fontWeight = FontWeight.Bold)
+                                }
+                                TextButton(
+                                    onClick = { onDelete(plan.id) },
+                                    enabled = plan.id != DEFAULT_TRIAL_PLAN_ID && (planUsage[plan.id] ?: 0) == 0
+                                ) {
+                                    Text("Delete", color = AccentRed, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlanMetricChip(label: String) {
+    Box(
+        Modifier.clip(RoundedCornerShape(7.dp))
+            .background(AccentCyan.copy(alpha = 0.12f))
+            .padding(horizontal = 8.dp, vertical = 4.dp)
+    ) {
+        Text(label, color = AccentCyan, fontSize = 10.sp, fontWeight = FontWeight.Medium)
+    }
+}
+
+@Composable
+private fun SubscriptionPlanEditorDialog(
+    initialPlan: SubscriptionPlanEntity?,
+    onDismiss: () -> Unit,
+    onSave: (existingPlanId: String?, plan: SubscriptionPlanEntity) -> Unit
+) {
+    var name by remember(initialPlan) { mutableStateOf(initialPlan?.name ?: "") }
+    var planId by remember(initialPlan) { mutableStateOf(initialPlan?.id ?: "") }
+    var description by remember(initialPlan) { mutableStateOf(initialPlan?.description ?: "") }
+    var priceBdt by remember(initialPlan) { mutableStateOf(initialPlan?.priceBdt?.toString() ?: "") }
+    var priceInr by remember(initialPlan) { mutableStateOf(initialPlan?.priceInr?.toString() ?: "") }
+    var maxStudents by remember(initialPlan) { mutableStateOf(initialPlan?.maxStudents?.toString() ?: "100") }
+    var maxBatches by remember(initialPlan) { mutableStateOf(initialPlan?.maxBatches?.toString() ?: "10") }
+    var maxUsers by remember(initialPlan) { mutableStateOf(initialPlan?.maxUsers?.toString() ?: "3") }
+    var maxBranches by remember(initialPlan) { mutableStateOf(initialPlan?.maxBranches?.toString() ?: "1") }
+    var tag by remember(initialPlan) { mutableStateOf(initialPlan?.tag ?: "") }
+    var tierLevel by remember(initialPlan) { mutableStateOf(initialPlan?.tierLevel?.toString() ?: "1") }
+    var validationError by remember { mutableStateOf<String?>(null) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (initialPlan == null) "Create Subscription Plan" else "Edit Subscription Plan", color = TextWhite, fontWeight = FontWeight.Bold) },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                validationError?.let { Text(it, color = AccentRed, fontSize = 12.sp) }
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = {
+                        name = it
+                        if (initialPlan == null) {
+                            planId = "plan_${slugifyPlanName(it)}"
+                        }
+                    },
+                    label = { Text("Plan name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = planId,
+                    onValueChange = {
+                        val slug = slugifyPlanName(it)
+                        planId = if (slug.startsWith("plan_")) slug else "plan_$slug"
+                    },
+                    label = { Text("Plan ID") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = description,
+                    onValueChange = { description = it },
+                    label = { Text("Description") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = priceBdt,
+                        onValueChange = { if (it.isEmpty() || it.matches(Regex("^\\d*(\\.\\d{0,2})?$"))) priceBdt = it },
+                        label = { Text("BDT") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                    OutlinedTextField(
+                        value = priceInr,
+                        onValueChange = { if (it.isEmpty() || it.matches(Regex("^\\d*(\\.\\d{0,2})?$"))) priceInr = it },
+                        label = { Text("INR") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = maxStudents,
+                        onValueChange = { if (it.isEmpty() || it.matches(Regex("^\\d+$"))) maxStudents = it },
+                        label = { Text("Students") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                    OutlinedTextField(
+                        value = maxBatches,
+                        onValueChange = { if (it.isEmpty() || it.matches(Regex("^\\d+$"))) maxBatches = it },
+                        label = { Text("Batches") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = maxUsers,
+                        onValueChange = { if (it.isEmpty() || it.matches(Regex("^\\d+$"))) maxUsers = it },
+                        label = { Text("Users") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                    OutlinedTextField(
+                        value = maxBranches,
+                        onValueChange = { if (it.isEmpty() || it.matches(Regex("^\\d+$"))) maxBranches = it },
+                        label = { Text("Branches") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = tag,
+                        onValueChange = { tag = it },
+                        label = { Text("Tag") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                    OutlinedTextField(
+                        value = tierLevel,
+                        onValueChange = { if (it.isEmpty() || it.matches(Regex("^\\d+$"))) tierLevel = it },
+                        label = { Text("Tier") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                val normalizedId = planId.trim().ifBlank { "plan_${slugifyPlanName(name)}" }
+                val parsedPriceBdt = priceBdt.toDoubleOrNull()
+                val parsedPriceInr = priceInr.toDoubleOrNull() ?: 0.0
+                val parsedMaxStudents = maxStudents.toIntOrNull()
+                val parsedMaxBatches = maxBatches.toIntOrNull()
+                val parsedMaxUsers = maxUsers.toIntOrNull()
+                val parsedMaxBranches = maxBranches.toIntOrNull()
+                val parsedTierLevel = tierLevel.toIntOrNull()
+                validationError = when {
+                    name.isBlank() -> "Plan name is required."
+                    normalizedId == "plan_" || normalizedId.length < 6 -> "Plan ID is required."
+                    description.isBlank() -> "Description is required."
+                    parsedPriceBdt == null -> "Valid BDT price is required."
+                    parsedMaxStudents == null -> "Student limit is required."
+                    parsedMaxBatches == null -> "Batch limit is required."
+                    parsedMaxUsers == null -> "User limit is required."
+                    parsedMaxBranches == null -> "Branch limit is required."
+                    parsedTierLevel == null -> "Tier level is required."
+                    else -> null
+                }
+                if (validationError == null) {
+                    onSave(
+                        initialPlan?.id,
+                        SubscriptionPlanEntity(
+                            id = normalizedId,
+                            name = name.trim(),
+                            description = description.trim(),
+                            priceBdt = parsedPriceBdt,
+                            priceInr = parsedPriceInr,
+                            maxStudents = parsedMaxStudents,
+                            maxBatches = parsedMaxBatches,
+                            maxUsers = parsedMaxUsers,
+                            maxBranches = parsedMaxBranches,
+                            tag = tag.trim(),
+                            tierLevel = parsedTierLevel
+                        )
+                    )
+                }
+            }) {
+                Text("Save", color = AccentCyan, fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel", color = TextMuted) } },
+        containerColor = CardBg
+    )
 }
 
 @Composable
@@ -918,13 +1548,20 @@ private fun DetailRow(label: String, value: String, color: Color = TextMuted) {
 }
 
 @Composable
-private fun InstituteCard(card: InstituteCardData, viewModel: SuperAdminViewModel) {
+private fun InstituteCard(
+    card: InstituteCardData,
+    viewModel: SuperAdminViewModel,
+    subscriptionPlans: List<SubscriptionPlanEntity>
+) {
     val inst = card.entity
     val dateFormat = remember { SimpleDateFormat("dd MMM yyyy", Locale.getDefault()) }
     val statusColor = when (inst.subscriptionStatus) {
         "active" -> AccentGreen; "trial" -> AccentCyan; "expired" -> AccentRed; "blocked" -> AccentAmber; else -> TextMuted
     }
     val lastActive = viewModel.lastActiveLabel(inst.id)
+    val currentPlanName = remember(subscriptionPlans, inst.currentPlanId) {
+        planDisplayName(inst.currentPlanId, subscriptionPlans)
+    }
 
     var showExtendDialog by remember { mutableStateOf(false) }
     var extendDays by remember { mutableStateOf("30") }
@@ -955,7 +1592,7 @@ private fun InstituteCard(card: InstituteCardData, viewModel: SuperAdminViewMode
                             Text(inst.instituteCode, color = AccentViolet.copy(alpha = 0.8f), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                         }
                     }
-                    Text("Plan: ${inst.currentPlanId} · Joined ${dateFormat.format(Date(inst.createdAtMs))}", color = TextMuted, fontSize = 12.sp)
+                    Text("Plan: $currentPlanName · Joined ${dateFormat.format(Date(inst.createdAtMs))}", color = TextMuted, fontSize = 12.sp)
                 }
                 Box(Modifier.clip(RoundedCornerShape(8.dp)).background(statusColor.copy(alpha = 0.15f)).padding(horizontal = 10.dp, vertical = 4.dp)) {
                     Text(inst.subscriptionStatus.replaceFirstChar { it.uppercase() }, color = statusColor, fontSize = 11.sp, fontWeight = FontWeight.Bold)
@@ -1143,11 +1780,9 @@ private fun InstituteCard(card: InstituteCardData, viewModel: SuperAdminViewMode
 
     // ── Detail Sheet ──
     if (showDetailSheet) {
-        val planPrices = remember { mapOf(
-            "plan_free_trial" to 0.0, "plan_starter" to 499.0, "plan_growth" to 999.0,
-            "plan_pro" to 1999.0, "plan_institute" to 4999.0
-        )}
-        val planPrice = planPrices[inst.currentPlanId] ?: 500.0
+        val planPrice = remember(subscriptionPlans, inst.currentPlanId) {
+            planDisplayPrice(inst.currentPlanId, subscriptionPlans)
+        }
 
         AlertDialog(
             onDismissRequest = { showDetailSheet = false },
@@ -1195,7 +1830,7 @@ private fun InstituteCard(card: InstituteCardData, viewModel: SuperAdminViewMode
                     DetailRow("Phone", inst.phone ?: "N/A")
                     DetailRow("WhatsApp", inst.whatsappNumber ?: "N/A")
                     DetailRow("Email", inst.email ?: "N/A")
-                    DetailRow("Plan", "${inst.currentPlanId} (BDT ${NumberFormat.getNumberInstance(Locale.getDefault()).format(planPrice.toInt())})")
+                    DetailRow("Plan", "$currentPlanName (BDT ${NumberFormat.getNumberInstance(Locale.getDefault()).format(planPrice.toInt())})")
                     DetailRow("Status", inst.subscriptionStatus.replaceFirstChar { it.uppercase() }, when (inst.subscriptionStatus) {
                         "active" -> AccentGreen; "trial" -> AccentCyan; "expired" -> AccentRed; "blocked" -> AccentAmber; else -> TextMuted
                     })
@@ -1338,15 +1973,14 @@ private fun InstituteCard(card: InstituteCardData, viewModel: SuperAdminViewMode
         var editIsActive by remember { mutableStateOf(inst.subscriptionStatus != "blocked") }
         var editAddMonths by remember { mutableStateOf("0") }
 
-        val planOptions = remember { mapOf(
-            "plan_free_trial" to "Free Trial",
-            "plan_starter" to "Starter",
-            "plan_growth" to "Growth",
-            "plan_pro" to "Pro",
-            "plan_institute" to "Institute"
-        )}
+        val planOptions = remember(subscriptionPlans) {
+            subscriptionPlans.associate { it.id to it.name }
+        }
         var selectedPlanId by remember { mutableStateOf(inst.currentPlanId) }
-        var selectedPlanName by remember { mutableStateOf(planOptions[inst.currentPlanId] ?: "Default") }
+        var selectedPlanName by remember { mutableStateOf(planOptions[inst.currentPlanId] ?: humanizePlanId(inst.currentPlanId)) }
+        LaunchedEffect(planOptions, selectedPlanId) {
+            selectedPlanName = planOptions[selectedPlanId] ?: humanizePlanId(selectedPlanId)
+        }
 
         fun computedExpiryMs(): Long {
             val c = Calendar.getInstance()

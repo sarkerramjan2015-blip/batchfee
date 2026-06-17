@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.data.database.AppDatabase
+import com.example.data.firestore.InstituteCacheRefreshManager
+import com.example.data.firestore.SalarySyncHelper
 import com.example.data.models.SalaryEntity
 import com.example.data.models.StaffEntity
 import com.example.domain.SessionManager
@@ -27,6 +29,7 @@ class SalaryViewModel(private val db: AppDatabase) : ViewModel() {
     private fun loadData() {
         val instId = SessionManager.currentInstituteId.value ?: return
         viewModelScope.launch {
+            InstituteCacheRefreshManager.refreshIfStale(db, instId)
             db.salaryDao().getSalariesByInstitute(instId).collect { list ->
                 _salaries.value = list
             }
@@ -77,6 +80,7 @@ class SalaryViewModel(private val db: AppDatabase) : ViewModel() {
                 updatedAtMs = System.currentTimeMillis(),
                 cancelledAtMs = null
             )
+            SalarySyncHelper.upsertSalary(entity)
             db.salaryDao().insertSalary(entity)
             onSuccess()
         }
@@ -87,12 +91,14 @@ class SalaryViewModel(private val db: AppDatabase) : ViewModel() {
         viewModelScope.launch {
             val salary = db.salaryDao().getSalaryById(salaryId, instId)
             if (salary != null && salary.status == "unpaid") {
-                db.salaryDao().updateSalary(salary.copy(
+                val updated = salary.copy(
                     status = "paid",
                     paymentMethod = paymentMethod,
                     paymentDateMs = System.currentTimeMillis(),
                     updatedAtMs = System.currentTimeMillis()
-                ))
+                )
+                SalarySyncHelper.upsertSalary(updated)
+                db.salaryDao().updateSalary(updated)
             }
         }
     }

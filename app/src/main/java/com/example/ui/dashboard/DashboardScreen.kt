@@ -39,6 +39,8 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.database.AppDatabase
 import com.example.data.database.DemoDataSeeder
+import com.example.data.firestore.EnquirySyncHelper
+import com.example.data.firestore.InstituteCacheRefreshManager
 import com.example.data.models.InstituteEntity
 
 import com.example.domain.SessionManager
@@ -210,6 +212,7 @@ class DashboardViewModel(private val db: AppDatabase) : ViewModel() {
     private fun loadData() {
         viewModelScope.launch {
             val instId = SessionManager.currentInstituteId.value ?: return@launch
+            InstituteCacheRefreshManager.refreshIfStale(db, instId)
             launch {
                 db.instituteDao().getInstituteFlow(instId).collect { inst ->
                     _institute.value = inst
@@ -355,6 +358,7 @@ class DashboardViewModel(private val db: AppDatabase) : ViewModel() {
                     archivedAtMs = null
                 )
                 withContext(Dispatchers.IO) {
+                    EnquirySyncHelper.upsertEnquiry(enquiry)
                     db.enquiryDao().insertEnquiry(enquiry)
                 }
                 onSuccess()

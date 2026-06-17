@@ -32,6 +32,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.database.AppDatabase
+import com.example.data.firestore.BatchStudentSyncHelper
+import com.example.data.firestore.InstituteCacheRefreshManager
 import com.example.data.models.AttendanceEntity
 import com.example.data.models.PaymentEntity
 import com.example.data.models.StaffEntity
@@ -114,6 +116,7 @@ fun BatchDetailScreen(
     LaunchedEffect(batchId) { paymentVM.loadBatchDetail(batchId) }
     LaunchedEffect(instId, batchId, monthOffset) {
         val instituteId = instId ?: return@LaunchedEffect
+        InstituteCacheRefreshManager.refreshIfStale(db, instituteId)
         val range = monthRangeForOffset(monthOffset)
         launch {
             db.attendanceDao().getAttendanceForBatchByDateRange(instituteId, batchId, range.first, range.second)
@@ -1299,6 +1302,7 @@ fun EnrollStudentsScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
 
     LaunchedEffect(instId, batchId) {
         if (instId != null) {
+            InstituteCacheRefreshManager.refreshIfStale(db, instId)
             launch {
                 db.studentDao().getStudentsByInstitute(instId).collect { allStudents = it }
             }
@@ -1333,17 +1337,17 @@ fun EnrollStudentsScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
                             Button(onClick = {
                                 if (instId != null) {
                                     scope.launch {
-                                        db.batchStudentDao().enrollStudent(
-                                            com.example.data.models.BatchStudentEntity(
-                                                id = UUID.randomUUID().toString(),
-                                                instituteId = instId,
-                                                batchId = batchId,
-                                                studentId = s.id,
-                                                joinedAtMs = System.currentTimeMillis(),
-                                                status = "active",
-                                                leftAtMs = null
-                                            )
+                                        val enrollment = com.example.data.models.BatchStudentEntity(
+                                            id = UUID.randomUUID().toString(),
+                                            instituteId = instId,
+                                            batchId = batchId,
+                                            studentId = s.id,
+                                            joinedAtMs = System.currentTimeMillis(),
+                                            status = "active",
+                                            leftAtMs = null
                                         )
+                                        BatchStudentSyncHelper.upsertEnrollment(enrollment)
+                                        db.batchStudentDao().enrollStudent(enrollment)
                                     }
                                 }
                             }) { Text("Add") }

@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.database.AppDatabase
+import com.example.data.firestore.InstituteCacheRefreshManager
 import com.example.data.models.BatchEntity
 import com.example.domain.SessionManager
 import kotlinx.coroutines.launch
@@ -64,6 +65,7 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
         val editId = batchId
         val instituteId = instId
         if (editId != null && instituteId != null) {
+            InstituteCacheRefreshManager.refreshIfStale(db, instituteId)
             db.batchDao().getBatchById(editId, instituteId).collect { batch ->
                 editingBatch = batch
                 if (batch != null && loadedBatchId != batch.id) {

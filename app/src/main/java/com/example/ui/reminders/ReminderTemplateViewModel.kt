@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.data.database.AppDatabase
+import com.example.data.firestore.InstituteCacheRefreshManager
+import com.example.data.firestore.ReminderTemplateSyncHelper
 import com.example.data.models.ReminderTemplateEntity
 import com.example.domain.SessionManager
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -21,6 +23,7 @@ class ReminderTemplateViewModel(private val db: AppDatabase) : ViewModel() {
     private fun loadTemplates() {
         viewModelScope.launch {
             val instId = SessionManager.currentInstituteId.value ?: return@launch
+            InstituteCacheRefreshManager.refreshIfStale(db, instId)
             db.reminderTemplateDao().getTemplatesForInstitute(instId).collect { list ->
                 _templates.value = list
             }

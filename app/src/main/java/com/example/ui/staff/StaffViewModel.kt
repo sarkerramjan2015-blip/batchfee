@@ -11,6 +11,7 @@ import com.example.domain.PasswordHasher
 import com.example.domain.SessionManager
 import com.example.domain.StaffPermissions
 import com.example.data.firebase.FirebaseAuthApi
+import com.example.data.firestore.InstituteCacheRefreshManager
 import com.example.data.firestore.InstituteSyncHelper
 import com.example.data.firestore.StaffSyncHelper
 import kotlinx.coroutines.Dispatchers
@@ -49,6 +50,7 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
         viewModelScope.launch {
             val instId = SessionManager.currentInstituteId.value ?: return@launch
             _isLoading.value = true
+            InstituteCacheRefreshManager.refreshIfStale(db, instId)
             db.staffDao().getStaffByInstitute(instId).collect { list ->
                 _staffList.value = list
                 _isLoading.value = false
@@ -59,6 +61,7 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
     private fun loadBatches() {
         viewModelScope.launch {
             val instId = SessionManager.currentInstituteId.value ?: return@launch
+            InstituteCacheRefreshManager.refreshIfStale(db, instId)
             db.batchDao().getBatchesByInstitute(instId).collect { list ->
                 _batches.value = list
             }
@@ -68,6 +71,7 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
     fun loadStaffById(staffId: String) {
         viewModelScope.launch {
             val instId = SessionManager.currentInstituteId.value ?: return@launch
+            InstituteCacheRefreshManager.refreshIfStale(db, instId)
             db.staffDao().getStaffById(staffId, instId).collect { staff ->
                 _selectedStaff.value = staff
             }
@@ -301,7 +305,9 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
         if (!SessionManager.isAdmin()) return
         viewModelScope.launch {
             val instId = SessionManager.currentInstituteId.value ?: return@launch
-            db.staffDao().archiveStaff(instId, staffId, System.currentTimeMillis())
+            val archivedAt = System.currentTimeMillis()
+            db.staffDao().archiveStaff(instId, staffId, archivedAt)
+            launch { StaffSyncHelper.archiveStaff(instId, staffId) }
             try {
                 val count = withContext(Dispatchers.IO) {
                     db.staffDao().getStaffByInstituteAsList(instId).size

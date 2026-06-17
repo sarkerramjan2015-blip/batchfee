@@ -48,6 +48,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.database.AppDatabase
+import com.example.data.firestore.InstituteCacheRefreshManager
 import com.example.data.models.BatchEntity
 import com.example.data.models.FeeEntity
 import com.example.data.models.InstituteEntity
@@ -408,6 +409,7 @@ fun CreateFeeScreen(db: AppDatabase, onBack: () -> Unit) {
     
     LaunchedEffect(instId) {
         if(instId != null) {
+            InstituteCacheRefreshManager.refreshIfStale(db, instId)
             db.studentDao().getStudentsByInstitute(instId).collect { students = it }
         }
     }
@@ -595,10 +597,15 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
 
     // ── Load fee ──
     LaunchedEffect(instId, feeId) {
-        if (instId != null) { fee = db.feeDao().getFeeById(feeId, instId); isLoading = false }
+        if (instId != null) {
+            InstituteCacheRefreshManager.refreshIfStale(db, instId)
+            fee = db.feeDao().getFeeById(feeId, instId)
+            isLoading = false
+        }
     }
     LaunchedEffect(instId) {
         if (instId != null) {
+            InstituteCacheRefreshManager.refreshIfStale(db, instId)
             db.instituteDao().getInstituteFlow(instId).collect { institute = it }
         }
     }
@@ -1186,10 +1193,14 @@ fun ReceiptDetailScreen(db: AppDatabase, paymentId: String, onBack: () -> Unit) 
     var discountPercent by remember { mutableDoubleStateOf(0.0) }
 
     LaunchedEffect(instId, paymentId) {
-        if (instId != null) db.receiptDao().getReceiptByPaymentId(instId, paymentId).collect { receipt = it }
+        if (instId != null) {
+            InstituteCacheRefreshManager.refreshIfStale(db, instId)
+            db.receiptDao().getReceiptByPaymentId(instId, paymentId).collect { receipt = it }
+        }
     }
     LaunchedEffect(instId) {
         if (instId != null) {
+            InstituteCacheRefreshManager.refreshIfStale(db, instId)
             db.instituteDao().getInstituteFlow(instId).collect { institute = it }
         }
     }

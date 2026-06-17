@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.data.database.AppDatabase
+import com.example.data.firestore.EnquirySyncHelper
+import com.example.data.firestore.InstituteCacheRefreshManager
 import com.example.data.models.EnquiryEntity
 import com.example.domain.SessionManager
 import kotlinx.coroutines.Dispatchers
@@ -44,6 +46,7 @@ class EnquiryViewModel(private val db: AppDatabase) : ViewModel() {
         viewModelScope.launch {
             val instId = SessionManager.currentInstituteId.value ?: return@launch
             _isLoading.value = true
+            InstituteCacheRefreshManager.refreshIfStale(db, instId)
             db.enquiryDao().getEnquiriesByInstitute(instId).collect { list ->
                 _allEnquiries.value = list
 
@@ -69,12 +72,12 @@ class EnquiryViewModel(private val db: AppDatabase) : ViewModel() {
         viewModelScope.launch {
             try {
                 withContext(Dispatchers.IO) {
-                    db.enquiryDao().updateEnquiry(
-                        enquiry.copy(
-                            status = newStatus,
-                            updatedAtMs = System.currentTimeMillis()
-                        )
+                    val updated = enquiry.copy(
+                        status = newStatus,
+                        updatedAtMs = System.currentTimeMillis()
                     )
+                    EnquirySyncHelper.upsertEnquiry(updated)
+                    db.enquiryDao().updateEnquiry(updated)
                 }
             } catch (e: Exception) {
                 onError(e.message ?: "Failed to update status")
@@ -114,6 +117,7 @@ class EnquiryViewModel(private val db: AppDatabase) : ViewModel() {
                     archivedAtMs = null
                 )
                 withContext(Dispatchers.IO) {
+                    EnquirySyncHelper.upsertEnquiry(enquiry)
                     db.enquiryDao().insertEnquiry(enquiry)
                 }
                 onSuccess()

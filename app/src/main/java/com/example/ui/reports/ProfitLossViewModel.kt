@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.data.database.AppDatabase
+import com.example.data.firestore.InstituteCacheRefreshManager
 import com.example.domain.SessionManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -22,6 +23,9 @@ class ProfitLossViewModel(private val db: AppDatabase) : ViewModel() {
 
     private fun loadData() {
         val instId = SessionManager.currentInstituteId.value ?: return
+        viewModelScope.launch {
+            InstituteCacheRefreshManager.refreshIfStale(db, instId)
+        }
         
         viewModelScope.launch {
             db.paymentDao().getRecentPayments(instId).collect { payments ->

@@ -7,6 +7,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.data.database.AppDatabase
+import com.example.data.firestore.InstituteCacheRefreshManager
 import com.example.data.models.FeeEntity
 import com.example.data.repository.FeeCollectionRepository
 import com.example.domain.appendInstituteSignature
@@ -69,6 +70,7 @@ class FeeViewModel(private val db: AppDatabase) : ViewModel() {
     private fun loadData() {
         viewModelScope.launch {
             val instId = SessionManager.currentInstituteId.value ?: return@launch
+            InstituteCacheRefreshManager.refreshIfStale(db, instId)
             launch {
                 db.feeDao().getAllFees(instId).collect { _feeList.value = it }
             }

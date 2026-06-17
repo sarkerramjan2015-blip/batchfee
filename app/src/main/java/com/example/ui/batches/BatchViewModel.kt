@@ -4,11 +4,16 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.data.database.AppDatabase
+import com.example.data.firestore.BatchSyncHelper
+import com.example.data.firestore.CoreDataSyncCoordinator
+import com.example.data.firestore.InstituteSyncHelper
 import com.example.data.models.BatchEntity
 import com.example.domain.SessionManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.UUID
 
 class BatchViewModel(private val db: AppDatabase) : ViewModel() {
@@ -22,6 +27,7 @@ class BatchViewModel(private val db: AppDatabase) : ViewModel() {
     private fun loadBatches() {
         viewModelScope.launch {
             val instId = SessionManager.currentInstituteId.value ?: return@launch
+            CoreDataSyncCoordinator.refreshInstituteCache(db, instId)
             db.batchDao().getBatchesByInstitute(instId).collect {
                 _batchList.value = it
             }
@@ -61,7 +67,14 @@ class BatchViewModel(private val db: AppDatabase) : ViewModel() {
             archivedAtMs = null
         )
         viewModelScope.launch {
+            BatchSyncHelper.upsertBatch(batch)
             db.batchDao().insertBatch(batch)
+            try {
+                val count = withContext(Dispatchers.IO) {
+                    db.batchDao().getBatchesByInstituteOnce(instId).size
+                }
+                InstituteSyncHelper.updateBatchCount(instId, count)
+            } catch (_: Exception) { }
             onSuccess()
         }
     }
@@ -76,7 +89,9 @@ class BatchViewModel(private val db: AppDatabase) : ViewModel() {
             return
         }
         viewModelScope.launch {
-            db.batchDao().updateBatch(batch.copy(updatedAtMs = System.currentTimeMillis()))
+            val updated = batch.copy(updatedAtMs = System.currentTimeMillis())
+            BatchSyncHelper.upsertBatch(updated)
+            db.batchDao().updateBatch(updated)
             onSuccess()
         }
     }

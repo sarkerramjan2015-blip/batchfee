@@ -4,6 +4,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.data.database.AppDatabase
+import com.example.data.firestore.CoreDataSyncCoordinator
+import com.example.data.firestore.InstituteCacheRefreshManager
+import com.example.data.firestore.StudentSyncHelper
 import com.example.data.models.BatchEntity
 import com.example.data.models.StudentEntity
 import com.example.domain.SessionManager
@@ -32,6 +35,7 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
     private fun loadStudents() {
         viewModelScope.launch {
             val instId = SessionManager.currentInstituteId.value ?: return@launch
+            CoreDataSyncCoordinator.refreshInstituteCache(db, instId)
             db.studentDao().getStudentsByInstitute(instId).collect {
                 _studentList.value = it
             }
@@ -41,6 +45,7 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
     private fun loadBatches() {
         viewModelScope.launch {
             val instId = SessionManager.currentInstituteId.value ?: return@launch
+            InstituteCacheRefreshManager.refreshIfStale(db, instId)
             db.batchDao().getBatchesByInstitute(instId).collect {
                 _batchList.value = it
             }
@@ -104,6 +109,7 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
             archivedAtMs = null
         )
         viewModelScope.launch {
+            StudentSyncHelper.upsertStudent(student)
             db.studentDao().insertStudent(student)
             try {
                 val count = withContext(Dispatchers.IO) {
@@ -117,6 +123,7 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
 
     suspend fun loadStudent(studentId: String): StudentEntity? {
         val instId = SessionManager.currentInstituteId.value ?: return null
+        InstituteCacheRefreshManager.refreshIfStale(db, instId)
         return db.studentDao().getStudentById(studentId, instId).firstOrNull()
     }
 
@@ -161,6 +168,7 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
                 photoUri = photoUri,
                 updatedAtMs = System.currentTimeMillis()
             )
+            StudentSyncHelper.upsertStudent(updated)
             db.studentDao().updateStudent(updated)
             onSuccess()
         }

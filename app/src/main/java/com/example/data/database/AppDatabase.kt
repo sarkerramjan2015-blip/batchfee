@@ -9,6 +9,8 @@ import com.example.BuildConfig
 import com.example.data.dao.InstituteDao
 import com.example.data.dao.SubscriptionPlanDao
 import com.example.data.dao.UserDao
+import com.example.data.firestore.ReminderTemplateSyncHelper
+import com.example.data.firestore.SubscriptionPlanSyncHelper
 import com.example.data.models.InstituteEntity
 import com.example.data.models.SubscriptionPlanEntity
 import com.example.data.models.UserEntity
@@ -402,6 +404,9 @@ abstract class AppDatabase : RoomDatabase() {
                  )
              )
              dao.insertPlans(plans)
+             try {
+                 SubscriptionPlanSyncHelper.upsertPlans(plans)
+             } catch (_: Exception) { }
         }
 
         suspend fun populateSuperAdmin(userDao: UserDao, instituteDao: InstituteDao) {
@@ -1036,25 +1041,21 @@ abstract class AppDatabase : RoomDatabase() {
             // ════════════════════════════════════════════════════════
             // 9.  REMINDER TEMPLATES (3)
             // ════════════════════════════════════════════════════════
-            db.reminderTemplateDao().insertTemplate(
+            listOf(
                 com.example.data.models.ReminderTemplateEntity(
                     id = "demo_reminder_1", instituteId = demoInstituteId,
                     title = "Monthly Fee Reminder",
                     type = "Fee",
                     messageTemplate = "Dear Guardian, kindly pay the monthly fee of {amount} BDT for {studentName} by {dueDate}. — BatchFee",
                     isDefault = true, createdAtMs = now, updatedAtMs = now
-                )
-            )
-            db.reminderTemplateDao().insertTemplate(
+                ),
                 com.example.data.models.ReminderTemplateEntity(
                     id = "demo_reminder_2", instituteId = demoInstituteId,
                     title = "Birthday Wish",
                     type = "Birthday",
                     messageTemplate = "Happy Birthday, {studentName}! Wishing you a fantastic day from all of us at {instituteName}. 🎂",
                     isDefault = true, createdAtMs = now, updatedAtMs = now
-                )
-            )
-            db.reminderTemplateDao().insertTemplate(
+                ),
                 com.example.data.models.ReminderTemplateEntity(
                     id = "demo_reminder_3", instituteId = demoInstituteId,
                     title = "Exam Schedule Alert",
@@ -1062,7 +1063,12 @@ abstract class AppDatabase : RoomDatabase() {
                     messageTemplate = "Dear Guardian, {studentName}'s exam ({examName}) is on {examDate}. Please ensure attendance. — {instituteName}",
                     isDefault = false, createdAtMs = now, updatedAtMs = now
                 )
-            )
+            ).forEach { template ->
+                db.reminderTemplateDao().insertTemplate(template)
+                try {
+                    ReminderTemplateSyncHelper.upsertTemplate(template)
+                } catch (_: Exception) { }
+            }
 
             try {
                 val firestore = com.google.firebase.firestore.FirebaseFirestore.getInstance()

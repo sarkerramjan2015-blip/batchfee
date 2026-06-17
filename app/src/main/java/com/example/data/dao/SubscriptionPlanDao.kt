@@ -17,4 +17,17 @@ interface SubscriptionPlanDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertPlans(plans: List<SubscriptionPlanEntity>)
+
+    @Query("DELETE FROM subscription_plans WHERE id = :planId")
+    suspend fun deletePlanById(planId: String)
+
+    @Query("DELETE FROM subscription_plans")
+    suspend fun clearAll()
+
+    suspend fun replaceAll(plans: List<SubscriptionPlanEntity>) {
+        clearAll()
+        if (plans.isNotEmpty()) {
+            insertPlans(plans)
+        }
+    }
 }

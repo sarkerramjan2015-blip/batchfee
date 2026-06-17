@@ -36,6 +36,10 @@ import androidx.core.content.FileProvider
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.example.data.database.AppDatabase
+import com.example.data.firestore.BatchStudentSyncHelper
+import com.example.data.firestore.InstituteCacheRefreshManager
+import com.example.data.firestore.InstituteSyncHelper
+import com.example.data.firestore.StudentSyncHelper
 import com.example.data.models.BatchEntity
 import com.example.data.models.BatchStudentEntity
 import com.example.data.models.FeeEntity
@@ -45,7 +49,6 @@ import com.example.data.repository.FeeCollectionRepository
 import com.example.domain.appendInstituteSignature
 import com.example.domain.loadInstituteSignature
 import com.example.domain.SessionManager
-import com.example.data.firestore.InstituteSyncHelper
 import com.example.ui.components.buildWhatsAppUrl
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -142,6 +145,7 @@ fun StudentProfileScreen(
     // ── Load data ────────────────────────────────────────────
     LaunchedEffect(instId, studentId) {
         if (instId != null) {
+            InstituteCacheRefreshManager.refreshIfStale(db, instId)
             launch {
                 db.studentDao().getStudentById(studentId, instId).collect { student = it }
             }
@@ -927,6 +931,7 @@ fun StudentProfileScreen(
                 var allBatches by remember { mutableStateOf<List<BatchEntity>>(emptyList()) }
                 LaunchedEffect(instId) {
                     if (instId != null) {
+                        InstituteCacheRefreshManager.refreshIfStale(db, instId)
                         db.batchDao().getBatchesByInstitute(instId).collect { allBatches = it }
                     }
                 }
@@ -963,6 +968,7 @@ fun StudentProfileScreen(
                                                             status = "active",
                                                             leftAtMs = null
                                                         )
+                                                        BatchStudentSyncHelper.upsertEnrollment(enrollment)
                                                         db.batchStudentDao().enrollStudent(enrollment)
                                                         // Refresh enrolled set
                                                         enrolledBatchIds = enrolledBatchIds + batch.id
@@ -1097,6 +1103,7 @@ fun StudentProfileScreen(
                                         StudentMenuConfirmAction.Close -> currentStudent.copy(status = "inactive", updatedAtMs = System.currentTimeMillis())
                                         StudentMenuConfirmAction.Delete -> currentStudent.copy(archivedAtMs = System.currentTimeMillis(), updatedAtMs = System.currentTimeMillis())
                                     }
+                                    StudentSyncHelper.upsertStudent(updated)
                                     db.studentDao().updateStudent(updated)
                                     try {
                                         val count = withContext(Dispatchers.IO) {

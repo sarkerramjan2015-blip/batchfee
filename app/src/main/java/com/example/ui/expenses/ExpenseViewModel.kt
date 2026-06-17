@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.data.database.AppDatabase
+import com.example.data.firestore.ExpenseSyncHelper
+import com.example.data.firestore.InstituteCacheRefreshManager
 import com.example.data.models.ExpenseEntity
 import com.example.domain.SessionManager
 import kotlinx.coroutines.Dispatchers
@@ -32,6 +34,7 @@ class ExpenseViewModel(private val db: AppDatabase) : ViewModel() {
     private fun loadExpenses() {
         val instId = SessionManager.currentInstituteId.value ?: return
         viewModelScope.launch {
+            InstituteCacheRefreshManager.refreshIfStale(db, instId)
             db.expenseDao().getExpensesByInstitute(instId).collect { list ->
                 _expenses.value = list
                 computeSummary(list)
@@ -86,6 +89,7 @@ class ExpenseViewModel(private val db: AppDatabase) : ViewModel() {
         viewModelScope.launch {
             try {
                 withContext(Dispatchers.IO) {
+                    ExpenseSyncHelper.upsertExpense(expense)
                     db.expenseDao().insertExpense(expense)
                 }
                 onSuccess()

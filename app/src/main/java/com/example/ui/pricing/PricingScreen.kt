@@ -26,11 +26,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.database.AppDatabase
 import com.example.domain.SessionManager
+import com.example.data.models.SubscriptionPlanEntity
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.firstOrNull
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -39,11 +42,11 @@ import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
 import androidx.compose.ui.platform.LocalContext
+import com.example.data.firestore.InstituteCacheRefreshManager
 import com.example.data.models.SubscriptionRequest
 import com.example.data.repository.SubscriptionRepository
 import kotlinx.coroutines.launch
 import java.net.URLEncoder
-import java.util.UUID
 
 // ── BatchFee Plan Data ──────────────────────────────────────────
 data class BatchFeePlan(
@@ -165,6 +168,7 @@ fun PricingScreen(
         val instId = SessionManager.currentInstituteId.value
         if (instId != null) {
             instituteId = instId
+            InstituteCacheRefreshManager.refreshIfStale(db, instId)
             val inst = db.instituteDao().getInstituteFlow(instId).firstOrNull()
             inst?.let {
                 instituteName = it.name

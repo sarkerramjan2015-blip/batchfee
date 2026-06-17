@@ -41,6 +41,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.database.AppDatabase
+import com.example.data.firestore.AppUserSyncHelper
+import com.example.data.firestore.CoreDataSyncCoordinator
 import com.example.data.models.InstituteEntity
 import com.example.data.models.UserEntity
 import com.example.domain.BiometricAuthManager
@@ -244,6 +246,9 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                 android.util.Log.d("AUTH_LOGIN", "AUTH OK: uid=$uid")
 
                 // ── Fetch or rebuild local user record ──
+                val managedUser = withContext(Dispatchers.IO) {
+                    AppUserSyncHelper.fetchManagedUser(uid)
+                }
                 var localUser = db.userDao().getUserById(uid)
                 val firestoreUserDoc = withContext(Dispatchers.IO) {
                     FirebaseFirestore.getInstance()
@@ -255,7 +260,70 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                 val instituteId: String?
                 var staffPermissions: String? = null
 
-                if (firestoreUserDoc.exists()) {
+                if (managedUser != null && managedUser.role != "Staff") {
+                    role = managedUser.role
+                    instituteId = managedUser.instituteId ?: uid
+
+                    if (localUser == null) {
+                        localUser = UserEntity(
+                            id = uid,
+                            instituteId = managedUser.instituteId,
+                            name = managedUser.name,
+                            email = managedUser.email,
+                            passwordHash = PasswordHasher.hash(passwordHash),
+                            role = managedUser.role,
+                            createdAtMs = managedUser.createdAtMs
+                        )
+                        db.userDao().insertUser(localUser)
+                    } else if (
+                        localUser.name != managedUser.name ||
+                        localUser.email != managedUser.email ||
+                        localUser.role != managedUser.role ||
+                        localUser.instituteId != managedUser.instituteId
+                    ) {
+                        localUser = localUser.copy(
+                            instituteId = managedUser.instituteId,
+                            name = managedUser.name,
+                            email = managedUser.email,
+                            role = managedUser.role
+                        )
+                        db.userDao().updateUser(localUser)
+                    }
+
+                    if (role != "SuperAdmin" && !instituteId.isNullOrBlank()) {
+                        val canonicalInstituteDoc = withContext(Dispatchers.IO) {
+                            FirebaseFirestore.getInstance()
+                                .collection("institutes").document(instituteId)
+                                .get().await()
+                        }
+                        if (canonicalInstituteDoc.exists()) {
+                            val data = canonicalInstituteDoc.data ?: emptyMap()
+                            val now = System.currentTimeMillis()
+                            val currentPlanId = data["currentPlanId"] as? String ?: "plan_free_trial"
+                            val subscriptionStatus = data["subscriptionStatus"] as? String
+                                ?: if (currentPlanId == "plan_free_trial") "trial" else "active"
+                            db.instituteDao().insertInstitute(
+                                InstituteEntity(
+                                    id = instituteId,
+                                    name = data["instituteName"] as? String ?: "Institute",
+                                    currentPlanId = currentPlanId,
+                                    subscriptionStatus = subscriptionStatus,
+                                    trialStartDateMs = data["createdAt"] as? Long ?: now,
+                                    trialEndDateMs = data["trialEndDate"] as? Long ?: (now + 15L * 24 * 60 * 60 * 1000),
+                                    currentPeriodEndMs = (data["currentPeriodEndMs"] as? Long)
+                                        ?: (data["trialEndDate"] as? Long ?: (now + 15L * 24 * 60 * 60 * 1000)),
+                                    createdAtMs = data["createdAt"] as? Long ?: now,
+                                    phone = data["phone"] as? String,
+                                    whatsappNumber = data["whatsappNumber"] as? String,
+                                    ownerName = data["ownerName"] as? String,
+                                    email = data["email"] as? String,
+                                    instituteCode = data["instituteCode"] as? String,
+                                    securityPin = data["securityPin"] as? String
+                                )
+                            )
+                        }
+                    }
+                } else if (firestoreUserDoc.exists()) {
                     val data = firestoreUserDoc.data ?: emptyMap()
                     role = when (val r = data["role"] as? String) {
                         "owner" -> "InstituteOwner"
@@ -366,20 +434,20 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                         instituteId = foundInstId,
                         staffCode = foundStaff.staffCode,
                         fullName = foundStaff.fullName,
-                        photoUri = null,
+                        photoUri = foundStaff.photoUri.takeIf { it.isNotBlank() },
                         roleTitle = foundStaff.roleTitle,
                         phone = foundStaff.phone.takeIf { it.isNotBlank() },
                         email = foundStaff.email.takeIf { it.isNotBlank() },
-                        address = null,
-                        joiningDateMs = null,
-                        monthlySalary = 0.0,
+                        address = foundStaff.address.takeIf { it.isNotBlank() },
+                        joiningDateMs = foundStaff.joiningDateMs,
+                        monthlySalary = foundStaff.monthlySalary,
                         assignedBatchIds = foundStaff.assignedBatchIds.takeIf { it.isNotBlank() },
                         status = foundStaff.status,
-                        notes = null,
+                        notes = foundStaff.notes.takeIf { it.isNotBlank() },
                         permissions = foundStaff.permissions.takeIf { it.isNotBlank() },
-                        createdAtMs = System.currentTimeMillis(),
-                        updatedAtMs = System.currentTimeMillis(),
-                        archivedAtMs = null
+                        createdAtMs = foundStaff.createdAtMs.takeIf { it > 0L } ?: System.currentTimeMillis(),
+                        updatedAtMs = foundStaff.updatedAtMs.takeIf { it > 0L } ?: System.currentTimeMillis(),
+                        archivedAtMs = foundStaff.archivedAtMs
                     )
                     db.staffDao().insertStaff(staffEntity)
                 }
@@ -396,6 +464,9 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                 }
 
                 SessionManager.login(uid, instituteId ?: "", role, staffPermissions)
+                viewModelScope.launch(Dispatchers.IO) {
+                    CoreDataSyncCoordinator.refreshInstituteCache(db, instituteId ?: "")
+                }
                 onSuccess(role)
 
             } catch (e: FirebaseAuthException) {

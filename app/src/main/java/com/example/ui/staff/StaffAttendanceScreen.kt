@@ -42,6 +42,8 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.database.AppDatabase
+import com.example.data.firestore.AttendanceSyncHelper
+import com.example.data.firestore.InstituteCacheRefreshManager
 import com.example.data.models.StaffAttendanceEntity
 import com.example.data.models.StaffEntity
 import com.example.domain.SessionManager
@@ -85,6 +87,7 @@ class StaffAttendanceViewModel(private val db: AppDatabase) : ViewModel() {
         val start = startOfDay(System.currentTimeMillis())
         val end = start + 24L * 60 * 60 * 1000
         viewModelScope.launch {
+            InstituteCacheRefreshManager.refreshIfStale(db, instId)
             db.staffDao().getActiveStaff(instId).collect { _staff.value = it }
         }
         viewModelScope.launch {
@@ -113,6 +116,7 @@ class StaffAttendanceViewModel(private val db: AppDatabase) : ViewModel() {
                     createdAtMs = now,
                     updatedAtMs = now
                 )
+            AttendanceSyncHelper.upsertStaffAttendance(record)
             db.staffAttendanceDao().insertOrUpdateAttendance(record)
         }
     }

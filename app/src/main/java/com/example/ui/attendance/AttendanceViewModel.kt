@@ -7,6 +7,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.data.database.AppDatabase
+import com.example.data.firestore.AttendanceSyncHelper
+import com.example.data.firestore.InstituteCacheRefreshManager
 import com.example.data.models.AbsentMessageEntity
 import com.example.data.models.AttendanceEntity
 import com.example.data.models.BatchEntity
@@ -146,6 +148,7 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
     private fun loadBatches() {
         viewModelScope.launch {
             val instId = SessionManager.currentInstituteId.value ?: return@launch
+            InstituteCacheRefreshManager.refreshIfStale(db, instId)
             db.batchDao().getBatchesByInstitute(instId).collect { allBatches ->
                 if (isAdmin()) _batches.value = allBatches
                 else {
@@ -164,6 +167,7 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
     fun loadBatchStudentsAndAttendance(batchId: String, dateMs: Long) {
         val instId = SessionManager.currentInstituteId.value ?: return
         val startDay = startOfDay(dateMs)
+        viewModelScope.launch { InstituteCacheRefreshManager.refreshIfStale(db, instId) }
         viewModelScope.launch { db.batchDao().getBatchById(batchId, instId).collect { _currentBatch.value = it } }
         viewModelScope.launch { db.batchStudentDao().getStudentsForBatch(batchId, instId).collect { _students.value = it } }
         viewModelScope.launch {
@@ -192,6 +196,7 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
                     markedByUserId = currentUserId,
                     createdAtMs = System.currentTimeMillis(), updatedAtMs = System.currentTimeMillis()
                 )
+            AttendanceSyncHelper.upsertAttendance(record)
             db.attendanceDao().insertOrUpdateAttendance(record)
         }
     }
@@ -211,6 +216,7 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
                         markedByUserId = currentUserId,
                         createdAtMs = System.currentTimeMillis(), updatedAtMs = System.currentTimeMillis()
                     )
+                AttendanceSyncHelper.upsertAttendance(record)
                 db.attendanceDao().insertOrUpdateAttendance(record)
             }
         }
@@ -231,6 +237,7 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
                         markedByUserId = currentUserId,
                         createdAtMs = System.currentTimeMillis(), updatedAtMs = System.currentTimeMillis()
                     )
+                AttendanceSyncHelper.upsertAttendance(record)
                 db.attendanceDao().insertOrUpdateAttendance(record)
             }
         }
@@ -238,7 +245,11 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
 
     fun undoAttendance(studentId: String, dateMs: Long, batchId: String) {
         val instId = SessionManager.currentInstituteId.value ?: return
-        viewModelScope.launch { db.attendanceDao().deleteAttendance(instId, studentId, batchId, startOfDay(dateMs)) }
+        viewModelScope.launch {
+            val day = startOfDay(dateMs)
+            AttendanceSyncHelper.deleteAttendance(instId, studentId, batchId, day)
+            db.attendanceDao().deleteAttendance(instId, studentId, batchId, day)
+        }
     }
 
     fun sendAbsentMessage(
@@ -265,14 +276,14 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
                 removeSendingId(studentId)
                 onSent(); return@launch
             }
-            db.absentMessageDao().insertMessage(
-                AbsentMessageEntity(
-                    id = UUID.randomUUID().toString(), instituteId = instId,
-                    batchId = batchId, studentId = studentId, attendanceDateMs = startDay,
-                    messageType = channel, messageText = msg, sentByUserId = userId,
-                    status = "sent", createdAtMs = System.currentTimeMillis()
-                )
+            val message = AbsentMessageEntity(
+                id = UUID.randomUUID().toString(), instituteId = instId,
+                batchId = batchId, studentId = studentId, attendanceDateMs = startDay,
+                messageType = channel, messageText = msg, sentByUserId = userId,
+                status = "sent", createdAtMs = System.currentTimeMillis()
             )
+            AttendanceSyncHelper.upsertAbsentMessage(message)
+            db.absentMessageDao().insertMessage(message)
             try {
                 val encoded = URLEncoder.encode(msg, "UTF-8")
                 when (channel) {
@@ -349,6 +360,7 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
     fun loadDailySummaries(dateMs: Long = System.currentTimeMillis()) {
         val instId = SessionManager.currentInstituteId.value ?: return
         val selectedDay = startOfDay(dateMs)
+        viewModelScope.launch { InstituteCacheRefreshManager.refreshIfStale(db, instId) }
         viewModelScope.launch {
             db.batchDao().getBatchesByInstitute(instId).collect { allBatches ->
                 val assignedIds = if (isAdmin()) allBatches.map { it.id }.toSet() else getStaffAssignedBatchIds()
@@ -385,6 +397,7 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
     fun loadMonthlySummaries() {
         val instId = SessionManager.currentInstituteId.value ?: return
         val (start, end) = getCurrentMonthRange()
+        viewModelScope.launch { InstituteCacheRefreshManager.refreshIfStale(db, instId) }
         viewModelScope.launch {
             db.batchDao().getBatchesByInstitute(instId).collect { allBatches ->
                 val assignedIds = if (isAdmin()) allBatches.map { it.id }.toSet() else getStaffAssignedBatchIds()
@@ -413,6 +426,7 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
         val instId = SessionManager.currentInstituteId.value ?: return
         val (start, end) = getCurrentMonthRange()
         viewModelScope.launch {
+            InstituteCacheRefreshManager.refreshIfStale(db, instId)
             val batch = db.batchDao().getBatchById(batchId, instId).firstOrNull() ?: return@launch
             val students = db.batchStudentDao().getStudentsForBatch(batchId, instId).firstOrNull() ?: return@launch
             val activeDayCount = db.attendanceDao().getAttendanceByInstituteDateRange(instId, start, end)
@@ -436,6 +450,7 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
     fun loadStudentHistory(studentId: String, batchId: String) {
         val instId = SessionManager.currentInstituteId.value ?: return
         viewModelScope.launch {
+            InstituteCacheRefreshManager.refreshIfStale(db, instId)
             db.attendanceDao().getAttendanceForStudent(instId, studentId, batchId).collect { _studentHistory.value = it }
         }
     }

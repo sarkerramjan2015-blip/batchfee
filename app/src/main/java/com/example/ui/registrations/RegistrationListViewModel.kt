@@ -4,7 +4,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.data.database.AppDatabase
+import com.example.data.firestore.InstituteSyncHelper
 import com.example.data.firestore.RegistrationRepository
+import com.example.data.firestore.StudentSyncHelper
 import com.example.data.models.PendingRegistration
 import com.example.data.models.StudentEntity
 import com.example.domain.SessionManager
@@ -97,7 +99,10 @@ class RegistrationListViewModel(private val db: AppDatabase) : ViewModel() {
                     archivedAtMs = null
                 )
 
+                StudentSyncHelper.upsertStudent(student)
                 db.studentDao().insertStudent(student)
+                val count = db.studentDao().getStudentsByInstituteOnce(instId).size
+                InstituteSyncHelper.updateStudentCount(instId, count)
                 repository.deletePendingRegistration(instId, registration.requestId)
                 _snackbarMessage.value = "${registration.fullName} approved and added to students."
             } catch (e: Exception) {

@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.data.database.AppDatabase
+import com.example.data.firestore.InstituteCacheRefreshManager
 import com.example.data.models.StudentEntity
 import com.example.domain.SessionManager
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -25,6 +26,7 @@ class BirthdayViewModel(private val db: AppDatabase) : ViewModel() {
     private fun loadData() {
         val instId = SessionManager.currentInstituteId.value ?: return
         viewModelScope.launch {
+            InstituteCacheRefreshManager.refreshIfStale(db, instId)
             db.studentDao().getStudentsByInstitute(instId).collect { students ->
                 val today = Calendar.getInstance()
                 val withDays = students

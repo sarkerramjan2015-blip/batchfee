@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.data.database.AppDatabase
+import com.example.data.firestore.InstituteCacheRefreshManager
 import com.example.data.models.PaymentEntity
 import com.example.data.models.StudentEntity
 import com.example.domain.SessionManager
@@ -45,6 +46,7 @@ class ReportsViewModel(private val db: AppDatabase) : ViewModel() {
         viewModelScope.launch {
             val instId = SessionManager.currentInstituteId.value ?: return@launch
             _isLoading.value = true
+            InstituteCacheRefreshManager.refreshIfStale(db, instId)
 
             launch {
                 db.studentDao().countStudents(instId).collect {
