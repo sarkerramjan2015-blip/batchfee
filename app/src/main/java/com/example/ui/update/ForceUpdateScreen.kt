@@ -1,4 +1,4 @@
-package com.example.ui.update
+﻿package com.batchfee.edu.ui.update
 
 import android.content.Intent
 import android.net.Uri
@@ -148,7 +148,7 @@ fun ForceUpdateScreen(requiredVersion: Int) {
             Spacer(Modifier.height(16.dp))
 
             Text(
-                "Online-only operation · You must update to proceed",
+                "Online-only operation Â· You must update to proceed",
                 color = TextMuted.copy(alpha = 0.5f),
                 fontSize = 11.sp,
                 textAlign = TextAlign.Center
@@ -156,3 +156,4 @@ fun ForceUpdateScreen(requiredVersion: Int) {
         }
     }
 }
+

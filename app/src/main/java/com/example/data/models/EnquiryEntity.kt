@@ -1,4 +1,4 @@
-package com.example.data.models
+﻿package com.batchfee.edu.data.models
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey
@@ -17,3 +17,4 @@ data class EnquiryEntity(
     val updatedAtMs: Long,
     val archivedAtMs: Long?
 )
+

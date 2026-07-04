@@ -1,4 +1,4 @@
-package com.example.ui.components
+﻿package com.batchfee.edu.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -35,31 +35,31 @@ private val AccentRed     = Color(0xFFEF4444)
 data class CountryCode(val code: String, val flag: String, val name: String)
 
 val COUNTRY_CODES = listOf(
-    CountryCode("+880", "🇧🇩", "Bangladesh"),
-    CountryCode("+91", "🇮🇳", "India"),
-    CountryCode("+1", "🇺🇸", "USA / Canada"),
-    CountryCode("+44", "🇬🇧", "UK"),
-    CountryCode("+61", "🇦🇺", "Australia"),
-    CountryCode("+971", "🇦🇪", "UAE"),
-    CountryCode("+966", "🇸🇦", "Saudi Arabia"),
-    CountryCode("+974", "🇶🇦", "Qatar"),
-    CountryCode("+965", "🇰🇼", "Kuwait"),
-    CountryCode("+968", "🇴🇲", "Oman"),
-    CountryCode("+973", "🇧🇭", "Bahrain"),
-    CountryCode("+60", "🇲🇾", "Malaysia"),
-    CountryCode("+65", "🇸🇬", "Singapore"),
-    CountryCode("+92", "🇵🇰", "Pakistan"),
-    CountryCode("+94", "🇱🇰", "Sri Lanka"),
-    CountryCode("+977", "🇳🇵", "Nepal"),
-    CountryCode("+81", "🇯🇵", "Japan"),
-    CountryCode("+82", "🇰🇷", "South Korea"),
-    CountryCode("+86", "🇨🇳", "China"),
-    CountryCode("+49", "🇩🇪", "Germany"),
-    CountryCode("+33", "🇫🇷", "France"),
-    CountryCode("+39", "🇮🇹", "Italy"),
-    CountryCode("+34", "🇪🇸", "Spain"),
-    CountryCode("+7", "🇷🇺", "Russia"),
-    CountryCode("+55", "🇧🇷", "Brazil"),
+    CountryCode("+880", "ðŸ‡§ðŸ‡©", "Bangladesh"),
+    CountryCode("+91", "ðŸ‡®ðŸ‡³", "India"),
+    CountryCode("+1", "ðŸ‡ºðŸ‡¸", "USA / Canada"),
+    CountryCode("+44", "ðŸ‡¬ðŸ‡§", "UK"),
+    CountryCode("+61", "ðŸ‡¦ðŸ‡º", "Australia"),
+    CountryCode("+971", "ðŸ‡¦ðŸ‡ª", "UAE"),
+    CountryCode("+966", "ðŸ‡¸ðŸ‡¦", "Saudi Arabia"),
+    CountryCode("+974", "ðŸ‡¶ðŸ‡¦", "Qatar"),
+    CountryCode("+965", "ðŸ‡°ðŸ‡¼", "Kuwait"),
+    CountryCode("+968", "ðŸ‡´ðŸ‡²", "Oman"),
+    CountryCode("+973", "ðŸ‡§ðŸ‡­", "Bahrain"),
+    CountryCode("+60", "ðŸ‡²ðŸ‡¾", "Malaysia"),
+    CountryCode("+65", "ðŸ‡¸ðŸ‡¬", "Singapore"),
+    CountryCode("+92", "ðŸ‡µðŸ‡°", "Pakistan"),
+    CountryCode("+94", "ðŸ‡±ðŸ‡°", "Sri Lanka"),
+    CountryCode("+977", "ðŸ‡³ðŸ‡µ", "Nepal"),
+    CountryCode("+81", "ðŸ‡¯ðŸ‡µ", "Japan"),
+    CountryCode("+82", "ðŸ‡°ðŸ‡·", "South Korea"),
+    CountryCode("+86", "ðŸ‡¨ðŸ‡³", "China"),
+    CountryCode("+49", "ðŸ‡©ðŸ‡ª", "Germany"),
+    CountryCode("+33", "ðŸ‡«ðŸ‡·", "France"),
+    CountryCode("+39", "ðŸ‡®ðŸ‡¹", "Italy"),
+    CountryCode("+34", "ðŸ‡ªðŸ‡¸", "Spain"),
+    CountryCode("+7", "ðŸ‡·ðŸ‡º", "Russia"),
+    CountryCode("+55", "ðŸ‡§ðŸ‡·", "Brazil"),
 )
 
 @Composable
@@ -72,7 +72,7 @@ fun PhoneInputField(
     modifier: Modifier = Modifier,
     singleLine: Boolean = true
 ) {
-    // Parse existing value: "+8801712345678" → code="+880", local="1712345678"
+    // Parse existing value: "+8801712345678" â†’ code="+880", local="1712345678"
     val parsed = remember(value) { parsePhoneNumber(value) }
     var showPicker by remember { mutableStateOf(false) }
     var selectedCode by remember(value) { mutableStateOf(parsed.first) }
@@ -204,3 +204,4 @@ fun buildWhatsAppUrl(phone: String?, message: String): String {
     return if (cleanNumber != null) "https://wa.me/$cleanNumber?text=$encoded"
            else "https://wa.me/?text=$encoded"
 }
+

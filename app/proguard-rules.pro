@@ -20,20 +20,20 @@
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
 
-# ── Firebase ──
+# â”€â”€ Firebase â”€â”€
 -keep class com.google.firebase.** { *; }
 -dontwarn com.google.firebase.**
 -keepattributes Signature
 -keepattributes *Annotation*
 
-# ── Firebase App Check ──
+# â”€â”€ Firebase App Check â”€â”€
 -keep class com.google.firebase.appcheck.** { *; }
 
-# ── Keep serializable models (Room, Moshi) ──
--keep class com.example.data.models.** { *; }
--keep class com.example.ui.navigation.** { *; }
+# â”€â”€ Keep serializable models (Room, Moshi) â”€â”€
+-keep class com.batchfee.edu.data.models.** { *; }
+-keep class com.batchfee.edu.ui.navigation.** { *; }
 
-# ── Keep Kotlin serialization ──
+# â”€â”€ Keep Kotlin serialization â”€â”€
 -keepattributes *Annotation*, InnerClasses
 -dontnote kotlinx.serialization.AnnotationsKt
 -keepclassmembers class kotlinx.serialization.json.** { *** Companion; }

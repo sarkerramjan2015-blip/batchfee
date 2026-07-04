@@ -1,4 +1,4 @@
-package com.example.ui.dashboard
+﻿package com.batchfee.edu.ui.dashboard
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
@@ -80,3 +80,4 @@ fun GlobalNotificationCard() {
     }
     Spacer(Modifier.height(10.dp))
 }
+

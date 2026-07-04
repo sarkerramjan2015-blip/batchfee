@@ -1,15 +1,15 @@
-package com.example.ui.batches
+﻿package com.batchfee.edu.ui.batches
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import com.example.data.database.AppDatabase
-import com.example.data.firestore.InstituteCacheRefreshManager
-import com.example.data.models.BatchEntity
-import com.example.data.models.FeeEntity
-import com.example.data.models.PaymentEntity
-import com.example.data.models.StudentEntity
-import com.example.domain.SessionManager
+import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
+import com.batchfee.edu.data.models.BatchEntity
+import com.batchfee.edu.data.models.FeeEntity
+import com.batchfee.edu.data.models.PaymentEntity
+import com.batchfee.edu.data.models.StudentEntity
+import com.batchfee.edu.domain.SessionManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
@@ -74,14 +74,14 @@ class BatchPaymentViewModel(private val db: AppDatabase) : ViewModel() {
     private val _isLoading = MutableStateFlow(false)
     val isLoading = _isLoading.asStateFlow()
 
-    // ── This-month stats (computed from studentsWithFee) ──────
+    // â”€â”€ This-month stats (computed from studentsWithFee) â”€â”€â”€â”€â”€â”€
     private val _paidThisMonthCount = MutableStateFlow(0)
     val paidThisMonthCount = _paidThisMonthCount.asStateFlow()
 
     private val _dueThisMonthCount = MutableStateFlow(0)
     val dueThisMonthCount = _dueThisMonthCount.asStateFlow()
 
-    // ── Sent-message tracking (prevents duplicate sends) ─────
+    // â”€â”€ Sent-message tracking (prevents duplicate sends) â”€â”€â”€â”€â”€
     private val _sentMessageIds = MutableStateFlow<Set<String>>(emptySet())
     val sentMessageIds = _sentMessageIds.asStateFlow()
 
@@ -94,10 +94,10 @@ class BatchPaymentViewModel(private val db: AppDatabase) : ViewModel() {
     val isSendingAll = _isSendingAll.asStateFlow()
 
     fun loadBatchDetail(batchId: String) {
-        val instId = SessionManager.currentInstituteId.value ?: return
+            val instId = SessionManager.currentInstituteId.value ?: return
         _isLoading.value = true
         viewModelScope.launch {
-            InstituteCacheRefreshManager.refreshIfStale(db, instId)
+            InstituteCacheRefreshManager.forceRefresh(db, instId)
             launch {
                 db.batchDao().getBatchById(batchId, instId).collect { _batch.value = it }
             }
@@ -155,3 +155,4 @@ class BatchPaymentViewModelFactory(private val db: AppDatabase) : ViewModelProvi
         throw IllegalArgumentException()
     }
 }
+

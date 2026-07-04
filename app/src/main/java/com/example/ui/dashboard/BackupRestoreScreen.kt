@@ -1,4 +1,4 @@
-package com.example.ui.dashboard
+﻿package com.batchfee.edu.ui.dashboard
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
@@ -49,3 +49,4 @@ fun BackupRestoreScreen(onBack: () -> Unit, onNavigateToPricing: () -> Unit) {
         }
     }
 }
+

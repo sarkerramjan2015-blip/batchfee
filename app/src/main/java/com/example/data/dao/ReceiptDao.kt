@@ -1,7 +1,7 @@
-package com.example.data.dao
+package com.batchfee.edu.data.dao
 
 import androidx.room.*
-import com.example.data.models.ReceiptEntity
+import com.batchfee.edu.data.models.ReceiptEntity
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -14,4 +14,7 @@ interface ReceiptDao {
 
     @Query("SELECT * FROM receipts WHERE instituteId = :instituteId AND paymentId = :paymentId LIMIT 1")
     suspend fun getReceiptByPaymentIdOnce(instituteId: String, paymentId: String): ReceiptEntity?
+
+    @Query("DELETE FROM receipts WHERE instituteId = :instituteId AND feeId IN (:feeIds)")
+    suspend fun deleteReceiptsByFeeIds(instituteId: String, feeIds: List<String>)
 }

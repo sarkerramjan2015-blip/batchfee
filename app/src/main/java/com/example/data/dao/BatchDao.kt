@@ -1,7 +1,7 @@
-package com.example.data.dao
+package com.batchfee.edu.data.dao
 
 import androidx.room.*
-import com.example.data.models.BatchEntity
+import com.batchfee.edu.data.models.BatchEntity
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -26,4 +26,7 @@ interface BatchDao {
 
     @Query("UPDATE batches SET archivedAtMs = :archivedAtMs, updatedAtMs = :updatedAtMs WHERE id = :batchId AND instituteId = :instituteId")
     suspend fun archiveBatch(batchId: String, instituteId: String, archivedAtMs: Long, updatedAtMs: Long)
+
+    @Query("DELETE FROM batches WHERE id = :batchId AND instituteId = :instituteId")
+    suspend fun deleteBatch(batchId: String, instituteId: String)
 }

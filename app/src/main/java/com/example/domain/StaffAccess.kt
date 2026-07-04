@@ -1,4 +1,4 @@
-package com.example.domain
+﻿package com.batchfee.edu.domain
 
 data class StaffPermissionOption(
     val key: String,
@@ -128,3 +128,4 @@ object AccessControl {
         return required.any { SessionManager.hasPermission(it) }
     }
 }
+

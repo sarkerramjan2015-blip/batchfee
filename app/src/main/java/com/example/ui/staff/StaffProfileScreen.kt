@@ -1,4 +1,4 @@
-package com.example.ui.staff
+﻿package com.batchfee.edu.ui.staff
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -24,11 +24,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.data.database.AppDatabase
-import com.example.domain.SessionManager
-import com.example.domain.StaffPermissions
+import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.domain.SessionManager
+import com.batchfee.edu.domain.StaffPermissions
 
-// ── Colors ──────────────────────────────────────────────────────
+// â”€â”€ Colors â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 private val BgColor      = Color(0xFF07111F)
 private val CardBg        = Color(0xFF0F172A)
 private val BorderSub     = Color(0xFF1E293B)
@@ -239,3 +239,4 @@ private fun InfoRow(label: String, value: String) {
         Text(value, color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.Medium)
     }
 }
+

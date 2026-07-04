@@ -1,13 +1,13 @@
-package com.example.ui.expenses
+﻿package com.batchfee.edu.ui.expenses
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import com.example.data.database.AppDatabase
-import com.example.data.firestore.ExpenseSyncHelper
-import com.example.data.firestore.InstituteCacheRefreshManager
-import com.example.data.models.ExpenseEntity
-import com.example.domain.SessionManager
+import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.firestore.ExpenseSyncHelper
+import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
+import com.batchfee.edu.data.models.ExpenseEntity
+import com.batchfee.edu.domain.SessionManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -106,3 +106,4 @@ class ExpenseViewModelFactory(private val db: AppDatabase) : ViewModelProvider.F
         throw IllegalArgumentException()
     }
 }
+

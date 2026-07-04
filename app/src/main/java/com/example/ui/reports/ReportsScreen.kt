@@ -1,4 +1,4 @@
-package com.example.ui.reports
+﻿package com.batchfee.edu.ui.reports
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -22,8 +22,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.data.database.AppDatabase
-import com.example.data.models.PaymentEntity
+import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.models.PaymentEntity
 import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -87,7 +87,7 @@ fun ReportsScreen(db: AppDatabase, onBack: () -> Unit) {
                 contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                // ── Summary header ────────────────────────
+                // â”€â”€ Summary header â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                 item {
                     Card(
                         modifier = Modifier.fillMaxWidth()
@@ -131,7 +131,7 @@ fun ReportsScreen(db: AppDatabase, onBack: () -> Unit) {
                     }
                 }
 
-                // ── Student count pill ────────────────────
+                // â”€â”€ Student count pill â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                 item {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -281,3 +281,4 @@ private fun formatAmount(amount: Double): String {
         maximumFractionDigits = 0
     }.format(amount)
 }
+

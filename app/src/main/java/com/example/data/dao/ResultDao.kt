@@ -1,10 +1,10 @@
-package com.example.data.dao
+package com.batchfee.edu.data.dao
 
 import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
-import com.example.data.models.ResultEntity
+import com.batchfee.edu.data.models.ResultEntity
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -14,4 +14,7 @@ interface ResultDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertOrUpdateResult(result: ResultEntity)
+
+    @Query("DELETE FROM results WHERE instituteId = :instituteId AND batchId = :batchId")
+    suspend fun deleteResultsForBatch(instituteId: String, batchId: String)
 }

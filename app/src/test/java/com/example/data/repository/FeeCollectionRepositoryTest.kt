@@ -1,10 +1,10 @@
-package com.example.data.repository
+﻿package com.batchfee.edu.data.repository
 
 import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
-import com.example.data.database.AppDatabase
-import com.example.data.models.FeeEntity
+import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.models.FeeEntity
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -254,3 +254,4 @@ class FeeCollectionRepositoryTest {
         const val MONEY_DELTA = 0.0001
     }
 }
+

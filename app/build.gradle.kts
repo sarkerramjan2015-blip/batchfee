@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
   alias(libs.plugins.android.application)
     id("org.jetbrains.kotlin.android")
@@ -10,26 +12,36 @@ plugins {
   kotlin("plugin.serialization") version "2.2.10"
 }
 
+val keystorePropertiesFile = rootProject.file("keystore.properties")
+val keystoreProperties = Properties()
+val hasReleaseKeystore = keystorePropertiesFile.exists().also { exists ->
+  if (exists) {
+    keystorePropertiesFile.inputStream().use { keystoreProperties.load(it) }
+  }
+}
+
 android {
-  namespace = "com.example"
+  namespace = "com.batchfee.edu"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   defaultConfig {
-    applicationId = "com.aistudio.batchfee.vksndf"
+    applicationId = "com.batchfee.edu"
     minSdk = 24
     targetSdk = 36
-    versionCode = 4
-    versionName = "1.3"
+    versionCode = 5
+    versionName = "1.4"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
 
   signingConfigs {
-    create("release") {
-      storeFile = file("batchfee-release.jks")
-      storePassword = "batchfee123"
-      keyAlias = "batchfee"
-      keyPassword = "batchfee123"
+    if (hasReleaseKeystore) {
+      create("release") {
+        storeFile = file(keystoreProperties["storeFile"] as String)
+        storePassword = keystoreProperties["storePassword"] as String
+        keyAlias = keystoreProperties["keyAlias"] as String
+        keyPassword = keystoreProperties["keyPassword"] as String
+      }
     }
   }
 
@@ -39,7 +51,11 @@ android {
       isMinifyEnabled = true
       isShrinkResources = true
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-      signingConfig = signingConfigs.getByName("release")
+      signingConfig = if (hasReleaseKeystore) {
+        signingConfigs.getByName("release")
+      } else {
+        signingConfigs.getByName("debug")
+      }
     }
   }
   compileOptions {

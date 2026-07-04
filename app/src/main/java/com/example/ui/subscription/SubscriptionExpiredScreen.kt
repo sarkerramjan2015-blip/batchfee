@@ -1,4 +1,4 @@
-package com.example.ui.subscription
+﻿package com.batchfee.edu.ui.subscription
 
 import android.content.Intent
 import android.net.Uri
@@ -21,9 +21,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.data.database.AppDatabase
-import com.example.data.models.InstituteEntity
-import com.example.domain.SessionManager
+import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.models.InstituteEntity
+import com.batchfee.edu.domain.SessionManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.net.URLEncoder
@@ -211,3 +211,4 @@ fun SubscriptionExpiredScreen(db: AppDatabase, onRenew: () -> Unit, onLogout: ()
         }
     }
 }
+

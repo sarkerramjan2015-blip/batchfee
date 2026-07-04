@@ -1,4 +1,4 @@
-package com.example.ui.registrations
+﻿package com.batchfee.edu.ui.registrations
 
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -27,8 +27,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.data.database.AppDatabase
-import com.example.data.models.PendingRegistration
+import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.models.PendingRegistration
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -88,7 +88,7 @@ fun RegistrationListScreen(
                 .fillMaxSize()
                 .padding(horizontal = 20.dp)
         ) {
-            // ── Generate Link Button ──
+            // â”€â”€ Generate Link Button â”€â”€
             Button(
                 onClick = {
                     val url = viewModel.generateRegistrationLink()
@@ -124,7 +124,7 @@ fun RegistrationListScreen(
                 modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
             )
 
-            // ── Pending Count ──
+            // â”€â”€ Pending Count â”€â”€
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -154,7 +154,7 @@ fun RegistrationListScreen(
 
             HorizontalDivider(color = BorderSub, modifier = Modifier.padding(bottom = 4.dp))
 
-            // ── List ──
+            // â”€â”€ List â”€â”€
             if (isLoading && pendingList.isEmpty()) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
@@ -206,7 +206,7 @@ fun RegistrationListScreen(
         }
     }
 
-    // ── Detail BottomSheet ──
+    // â”€â”€ Detail BottomSheet â”€â”€
     selectedRegistration?.let { reg ->
         RegistrationDetailSheet(
             registration = reg,
@@ -222,7 +222,7 @@ fun RegistrationListScreen(
         )
     }
 
-    // ── Reject Confirmation Dialog ──
+    // â”€â”€ Reject Confirmation Dialog â”€â”€
     showConfirmReject?.let { reg ->
         AlertDialog(
             onDismissRequest = { showConfirmReject = null },
@@ -357,3 +357,4 @@ private fun RegistrationCard(
         }
     }
 }
+

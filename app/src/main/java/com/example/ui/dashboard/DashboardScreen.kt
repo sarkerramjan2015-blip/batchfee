@@ -1,4 +1,4 @@
-package com.example.ui.dashboard
+﻿package com.batchfee.edu.ui.dashboard
 
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
@@ -37,19 +37,19 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.data.database.AppDatabase
-import com.example.data.database.DemoDataSeeder
-import com.example.data.firestore.EnquirySyncHelper
-import com.example.data.firestore.InstituteCacheRefreshManager
-import com.example.data.models.InstituteEntity
+import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.database.DemoDataSeeder
+import com.batchfee.edu.data.firestore.EnquirySyncHelper
+import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
+import com.batchfee.edu.data.models.InstituteEntity
 
-import com.example.domain.SessionManager
+import com.batchfee.edu.domain.SessionManager
 import com.google.firebase.firestore.FirebaseFirestore
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import com.example.ui.components.BatchFeeBottomNav
-import com.example.domain.AccessControl
+import com.batchfee.edu.ui.components.BatchFeeBottomNav
+import com.batchfee.edu.domain.AccessControl
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
@@ -67,11 +67,11 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.UUID
-import com.example.ui.attendance.AttendanceViewModel
-import com.example.ui.attendance.AttendanceViewModelFactory
-import com.example.ui.attendance.BatchAttendanceSummary
-import com.example.ui.attendance.StaffAttendanceSummary
-import com.example.ui.attendance.getCurrentMonthRange
+import com.batchfee.edu.ui.attendance.AttendanceViewModel
+import com.batchfee.edu.ui.attendance.AttendanceViewModelFactory
+import com.batchfee.edu.ui.attendance.BatchAttendanceSummary
+import com.batchfee.edu.ui.attendance.StaffAttendanceSummary
+import com.batchfee.edu.ui.attendance.getCurrentMonthRange
 
 private val DashboardBg = Color(0xFF07111F)
 private val DashboardCard = Color(0xFF0F172A)
@@ -201,11 +201,11 @@ class DashboardViewModel(private val db: AppDatabase) : ViewModel() {
     val enquirySummary = _enquirySummary.asStateFlow()
 
     // Logged-in admin/owner user (for profile popup). Read-only; no schema change.
-    private val _currentUser = MutableStateFlow<com.example.data.models.UserEntity?>(null)
+    private val _currentUser = MutableStateFlow<com.batchfee.edu.data.models.UserEntity?>(null)
     val currentUser = _currentUser.asStateFlow()
 
     // Active subscription plan for the institute (for profile popup).
-    private val _currentPlan = MutableStateFlow<com.example.data.models.SubscriptionPlanEntity?>(null)
+    private val _currentPlan = MutableStateFlow<com.batchfee.edu.data.models.SubscriptionPlanEntity?>(null)
     val currentPlan = _currentPlan.asStateFlow()
 
     init {
@@ -352,7 +352,7 @@ class DashboardViewModel(private val db: AppDatabase) : ViewModel() {
         viewModelScope.launch {
             try {
                 val now = System.currentTimeMillis()
-                val enquiry = com.example.data.models.EnquiryEntity(
+                val enquiry = com.batchfee.edu.data.models.EnquiryEntity(
                     id = UUID.randomUUID().toString(),
                     instituteId = instId,
                     name = cleanName,
@@ -454,7 +454,7 @@ fun DashboardScreen(
             .any { AccessControl.canAccessRoute(it) }
     }
 
-    // ── Edit / Image / Switch state for profile popup ────────
+    // â”€â”€ Edit / Image / Switch state for profile popup â”€â”€â”€â”€â”€â”€â”€â”€
     var showEditDialog by remember { mutableStateOf(false) }
     var showPhotoPicker by remember { mutableStateOf(false) }
     var isSavingProfile by remember { mutableStateOf(false) }
@@ -490,7 +490,7 @@ fun DashboardScreen(
         contract = ActivityResultContracts.GetContent()
     ) { uri -> if (uri != null) editProfilePhotoUri = uri }
 
-    // ── Attendance state (shared with dialog) ──────────────
+    // â”€â”€ Attendance state (shared with dialog) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     val attVM: AttendanceViewModel = viewModel(factory = AttendanceViewModelFactory(db))
     val attSummaries by attVM.dailyBatchSummaries.collectAsState()
     val staffSum by attVM.dailyStaffAttendanceSummary.collectAsState()
@@ -591,7 +591,7 @@ fun DashboardScreen(
                             }
                         }
                         Spacer(Modifier.height(12.dp))
-                        // Students row — navigates to Students list
+                        // Students row â€” navigates to Students list
                         OverviewRow(
                             icon = Icons.Filled.School,
                             label = "Students",
@@ -600,7 +600,7 @@ fun DashboardScreen(
                             onClick = { safeNavigate("StudentsRoute") }
                         )
                         HorizontalDivider(color = DashboardStroke, modifier = Modifier.padding(vertical = 8.dp))
-                        // Batches row — navigates to Batch list
+                        // Batches row â€” navigates to Batch list
                         OverviewRow(
                             icon = Icons.Filled.Class,
                             label = "Batches",
@@ -609,7 +609,7 @@ fun DashboardScreen(
                             onClick = { safeNavigate("BatchesRoute") }
                         )
                         HorizontalDivider(color = DashboardStroke, modifier = Modifier.padding(vertical = 8.dp))
-                        // Staff row — navigates to Staff list
+                        // Staff row â€” navigates to Staff list
                         OverviewRow(
                             icon = Icons.Filled.Group,
                             label = "Staff",
@@ -655,9 +655,9 @@ fun DashboardScreen(
 
                 Spacer(modifier = Modifier.height(14.dp))
 
-                // ── Live Attendance Summary ────────────────────
+                // â”€â”€ Live Attendance Summary â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-                // ── Main attendance card ───────────────────────
+                // â”€â”€ Main attendance card â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                 Card(
                     modifier = Modifier.fillMaxWidth().shadow(3.dp, RoundedCornerShape(16.dp), spotColor = AccentCyan.copy(0.10f)),
                     shape = RoundedCornerShape(16.dp),
@@ -681,10 +681,10 @@ fun DashboardScreen(
                                 Text("Loading...", color = TextSecondary, fontSize = 12.sp)
                             }
                         } else if (studentOverall != null && studentOverall.markedCount > 0) {
-                            // ── Student segmented bar ──────────────
+                            // â”€â”€ Student segmented bar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                             AttendanceSegmentedBar(studentOverall, "Students")
                             Spacer(Modifier.height(12.dp))
-                            // ── Staff segmented bar ────────────────
+                            // â”€â”€ Staff segmented bar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                             StaffSegmentedBar(staffSum)
                         } else {
                             Column(Modifier.fillMaxWidth().padding(vertical = 12.dp),
@@ -698,7 +698,7 @@ fun DashboardScreen(
                 }
                 Spacer(Modifier.height(12.dp))
 
-                // ── Mini Cards (Student + Staff marking) ────────
+                // â”€â”€ Mini Cards (Student + Staff marking) â”€â”€â”€â”€â”€â”€â”€â”€
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     val sMarked = studentOverall?.markedCount ?: 0
                     val sTotal = studentOverall?.totalStudents ?: 0
@@ -710,7 +710,7 @@ fun DashboardScreen(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // ── Financial Collection Cards ────────────────
+                // â”€â”€ Financial Collection Cards â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -763,7 +763,7 @@ fun DashboardScreen(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // ── Due Fees & Pending Card ─────────────────────
+                // â”€â”€ Due Fees & Pending Card â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                 Card(
                     modifier = Modifier.fillMaxWidth().clickable { safeNavigate("DueFeesRoute") },
                     shape = RoundedCornerShape(16.dp),
@@ -888,7 +888,7 @@ fun DashboardScreen(
             }
         }
 
-        // ── Batch Detail Dialog ────────────────────────────
+        // â”€â”€ Batch Detail Dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if (selectedBatchId != null) {
             val bid = selectedBatchId!!
             val batchSum = attSummaries.find { it.batchId == bid }
@@ -1070,7 +1070,7 @@ fun DashboardScreen(
                             }
                         }
                         
-                        // Avatar — clickable to change profile photo via camera or gallery
+                        // Avatar â€” clickable to change profile photo via camera or gallery
                         Box(
                             modifier = Modifier
                                 .align(Alignment.BottomStart)
@@ -1193,7 +1193,7 @@ fun DashboardScreen(
                                     Spacer(Modifier.width(8.dp))
                                     Column {
                                         Text(currentPlan?.name ?: if (isTrial) "Free Trial" else "Active Plan", color = AccentBlue, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                                        Text("$statusLabel · $remainingDays days remaining", color = TextSecondary, fontSize = 10.sp)
+                                        Text("$statusLabel Â· $remainingDays days remaining", color = TextSecondary, fontSize = 10.sp)
                                     }
                                 }
                                 Spacer(Modifier.height(8.dp))
@@ -1323,7 +1323,7 @@ fun DashboardScreen(
                                 val encodedMessage = URLEncoder.encode(message, "UTF-8")
                                 val url = "https://wa.me/8801518657869?text=$encodedMessage"
                                 val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
-                                // Uses ACTION_VIEW — WhatsApp will handle if installed, browser fallback otherwise
+                                // Uses ACTION_VIEW â€” WhatsApp will handle if installed, browser fallback otherwise
                                 context.startActivity(intent)
                             },
                             modifier = Modifier
@@ -1345,7 +1345,7 @@ fun DashboardScreen(
         }
     }
 
-    // ── Edit Institute Dialog ────────────────────────────────
+    // â”€â”€ Edit Institute Dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if (showPhotoPicker) {
         AlertDialog(
             onDismissRequest = { showPhotoPicker = false },
@@ -2660,7 +2660,7 @@ private fun OverviewRow(
     inactive: Int,
     onClick: () -> Unit
 ) {
-    // ── Glow / shining animation ───────────────────────────
+    // â”€â”€ Glow / shining animation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // ShimmerOffset sweeps a highlight across the button from left to right
     val infiniteTransition = rememberInfiniteTransition(label = "overviewGlow_$label")
     val shimmerOffset by infiniteTransition.animateFloat(
@@ -2713,7 +2713,7 @@ private fun OverviewRow(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                // Glowing icon — color pulses with glowAlpha
+                // Glowing icon â€” color pulses with glowAlpha
                 Icon(
                     icon,
                     contentDescription = null,
@@ -2726,7 +2726,7 @@ private fun OverviewRow(
                     modifier = Modifier.size(24.dp)
                 )
                 Spacer(Modifier.width(12.dp))
-                // Label text — gently pulses toward a lighter cyan-white
+                // Label text â€” gently pulses toward a lighter cyan-white
                 Text(
                     label,
                     color = androidx.compose.ui.graphics.lerp(TextPrimary, AccentCyan, glowAlpha * 0.3f),
@@ -2782,7 +2782,7 @@ private fun MiniCard(title: String, subtitle: String, progress: Float, textProgr
     }
 }
 
-// ── New attendance composables ──────────────────────────────
+// â”€â”€ New attendance composables â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @Composable
 private fun AttendanceSegmentedBar(sum: BatchAttendanceSummary, label: String) {
@@ -2953,7 +2953,7 @@ private fun ShortcutItem(label: String, icon: ImageVector, modifier: Modifier = 
     }
 }
 
-// ── Animated counter that counts up on first render ─────────────
+// â”€â”€ Animated counter that counts up on first render â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 @Composable
 private fun AnimatedCounter(
     target: Double,
@@ -3033,7 +3033,7 @@ fun MoreScreen(
             }
         }
         Spacer(Modifier.height(24.dp))
-        // Secret Demo Data button — only visible for specific admin account
+        // Secret Demo Data button â€” only visible for specific admin account
         val currentUserEmail by SessionManager.currentUserId.collectAsState()
         var userEmail by remember { mutableStateOf<String?>(null) }
         val scope = rememberCoroutineScope()
@@ -3080,4 +3080,5 @@ fun MoreScreen(
         Spacer(Modifier.height(100.dp))
     }
 }
+
 

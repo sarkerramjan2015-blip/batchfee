@@ -1,6 +1,6 @@
-package com.example.data.firestore
+﻿package com.batchfee.edu.data.firestore
 
-import com.example.data.models.UserEntity
+import com.batchfee.edu.data.models.UserEntity
 import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.Dispatchers
@@ -69,3 +69,4 @@ object AppUserSyncHelper {
             createdAtMs = record.createdAtMs
         )
 }
+

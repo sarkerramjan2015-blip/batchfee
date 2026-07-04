@@ -1,4 +1,4 @@
-package com.example.ui.navigation
+﻿package com.batchfee.edu.ui.navigation
 
 import kotlinx.serialization.Serializable
 
@@ -82,3 +82,4 @@ object BillingRoute
 @Serializable object SettingsRoute
 
 @Serializable object StudentRegistrationRoute
+

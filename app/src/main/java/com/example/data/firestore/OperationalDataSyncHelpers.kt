@@ -1,21 +1,21 @@
-package com.example.data.firestore
+﻿package com.batchfee.edu.data.firestore
 
-import com.example.data.database.AppDatabase
-import com.example.data.models.AbsentMessageEntity
-import com.example.data.models.AttendanceEntity
-import com.example.data.models.BatchStudentEntity
-import com.example.data.models.EnquiryEntity
-import com.example.data.models.ExamEntity
-import com.example.data.models.ExpenseEntity
-import com.example.data.models.FeeEntity
-import com.example.data.models.AuditLogEntity
-import com.example.data.models.PaymentEntity
-import com.example.data.models.ReceiptEntity
-import com.example.data.models.ReminderTemplateEntity
-import com.example.data.models.ResultEntity
-import com.example.data.models.SalaryEntity
-import com.example.data.models.StaffAttendanceEntity
-import com.example.data.models.SubscriptionPlanEntity
+import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.models.AbsentMessageEntity
+import com.batchfee.edu.data.models.AttendanceEntity
+import com.batchfee.edu.data.models.BatchStudentEntity
+import com.batchfee.edu.data.models.EnquiryEntity
+import com.batchfee.edu.data.models.ExamEntity
+import com.batchfee.edu.data.models.ExpenseEntity
+import com.batchfee.edu.data.models.FeeEntity
+import com.batchfee.edu.data.models.AuditLogEntity
+import com.batchfee.edu.data.models.PaymentEntity
+import com.batchfee.edu.data.models.ReceiptEntity
+import com.batchfee.edu.data.models.ReminderTemplateEntity
+import com.batchfee.edu.data.models.ResultEntity
+import com.batchfee.edu.data.models.SalaryEntity
+import com.batchfee.edu.data.models.StaffAttendanceEntity
+import com.batchfee.edu.data.models.SubscriptionPlanEntity
 import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.Dispatchers
@@ -823,3 +823,4 @@ object SubscriptionPlanSyncHelper {
         }
     }
 }
+

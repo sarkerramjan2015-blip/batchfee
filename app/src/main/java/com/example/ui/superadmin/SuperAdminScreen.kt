@@ -1,4 +1,4 @@
-package com.example.ui.superadmin
+﻿package com.batchfee.edu.ui.superadmin
 
 import android.content.Context
 import android.content.Intent
@@ -39,17 +39,17 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.data.database.AppDatabase
-import com.example.data.firebase.FirebaseAuthApi
-import com.example.data.firestore.AppUserSyncHelper
-import com.example.data.firestore.ManagedUserRecord
-import com.example.data.firestore.SubscriptionPlanSyncHelper
-import com.example.data.models.InstituteEntity
-import com.example.data.models.SubscriptionPlanEntity
-import com.example.data.models.SubscriptionRequest
-import com.example.data.models.UserEntity
-import com.example.domain.PasswordHasher
-import com.example.domain.SessionManager
+import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.firebase.FirebaseAuthApi
+import com.batchfee.edu.data.firestore.AppUserSyncHelper
+import com.batchfee.edu.data.firestore.ManagedUserRecord
+import com.batchfee.edu.data.firestore.SubscriptionPlanSyncHelper
+import com.batchfee.edu.data.models.InstituteEntity
+import com.batchfee.edu.data.models.SubscriptionPlanEntity
+import com.batchfee.edu.data.models.SubscriptionRequest
+import com.batchfee.edu.data.models.UserEntity
+import com.batchfee.edu.domain.PasswordHasher
+import com.batchfee.edu.domain.SessionManager
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.google.firebase.firestore.FirebaseFirestore
@@ -67,7 +67,7 @@ import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.util.*
 
-// ── Theme ────────────────────────────────────────────────────
+// â”€â”€ Theme â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 private val BgColor = Color(0xFF0F0F14)
 private val CardBg = Color(0xFF1A1A24)
 private val BorderSub = Color(0xFF2A2A38)
@@ -112,7 +112,7 @@ private fun formatMoneyValue(price: Double): String = if (price == price.toLong(
     "%.0f".format(price)
 }
 
-// ── ViewModel ─────────────────────────────────────────────────
+// â”€â”€ ViewModel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 data class SuperAdminStats(
     val totalInstitutes: Int = 0,
     val activeSubscriptions: Int = 0,
@@ -265,12 +265,12 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                 android.util.Log.d("SUPERADMIN", "approveRequest: instituteId=${request.instituteId}, requestId=${request.requestId}, planId=${request.requestedPlanId}, durationMonths=${request.durationMonths}")
                 val approvedAt = System.currentTimeMillis()
                 val newEnd = withContext(Dispatchers.IO) {
-                    val repo = com.example.data.repository.SubscriptionRepository(firestore)
+                    val repo = com.batchfee.edu.data.repository.SubscriptionRepository(firestore)
                     val reviewerUserId = SessionManager.currentUserId.value ?: "sys_super_admin_1"
                     android.util.Log.d("SUPERADMIN", "approveRequest DBG: approving subscriptionRequests/${request.requestId}")
                     repo.approveRequest(request.requestId, reviewerUserId)
                     val end = approvedAt + (request.durationMonths * 30L * 24 * 60 * 60 * 1000)
-                    android.util.Log.d("SUPERADMIN", "approveRequest DBG: updating institutes/${request.instituteId} → plan=${request.requestedPlanId}, end=$end")
+                    android.util.Log.d("SUPERADMIN", "approveRequest DBG: updating institutes/${request.instituteId} â†’ plan=${request.requestedPlanId}, end=$end")
                     firestore.collection("institutes").document(request.instituteId)
                         .update(
                             mapOf(
@@ -306,7 +306,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                         )
                     )
                 }
-                _operationMsg.value = "Approved ${request.instituteName} — ${request.requestedPlanId}"
+                _operationMsg.value = "Approved ${request.instituteName} â€” ${request.requestedPlanId}"
                 // Store receipt data for manual share
                 val planName = planDisplayName(request.requestedPlanId, _subscriptionPlans.value)
                 val instDoc = withContext(Dispatchers.IO) {
@@ -344,7 +344,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
         viewModelScope.launch {
             try {
                 withContext(Dispatchers.IO) {
-                    val repo = com.example.data.repository.SubscriptionRepository(firestore)
+                    val repo = com.batchfee.edu.data.repository.SubscriptionRepository(firestore)
                     val reviewerUserId = SessionManager.currentUserId.value ?: "sys_super_admin_1"
                     repo.rejectRequest(request.requestId, reviewerUserId, note)
                 }
@@ -651,7 +651,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
         }
     }
 
-    // ── Trash / Remove Institute ─────────────────────────────
+    // â”€â”€ Trash / Remove Institute â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     private val _trashedInstitutes = MutableStateFlow<List<InstituteCardData>>(emptyList())
     val trashedInstitutes = _trashedInstitutes.asStateFlow()
 
@@ -974,7 +974,7 @@ class SuperAdminViewModelFactory(private val db: AppDatabase) : ViewModelProvide
     }
 }
 
-// ── Screen ────────────────────────────────────────────────────
+// â”€â”€ Screen â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
@@ -1066,7 +1066,7 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
         ) {
             item { Spacer(Modifier.height(4.dp)) }
 
-            // ── Platform Overview ──
+            // â”€â”€ Platform Overview â”€â”€
             item {
                 Text("Platform Overview", color = TextMuted, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(8.dp))
@@ -1081,7 +1081,7 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
                 }
             }
 
-            // ── Total Revenue ──
+            // â”€â”€ Total Revenue â”€â”€
             item {
                 RevenueCard("Total Revenue",
                     if (isLoading) "..." else "BDT ${NumberFormat.getNumberInstance(Locale.getDefault()).apply { maximumFractionDigits = 0 }.format(stats.totalRevenue)}",
@@ -1089,12 +1089,12 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
                 )
             }
 
-            // ── Projected Revenue (Prediction) ──
+            // â”€â”€ Projected Revenue (Prediction) â”€â”€
             item {
                 ProjectedRevenueCard(projected, stats.activeSubscriptions)
             }
 
-            // ── Live trend bars ──
+            // â”€â”€ Live trend bars â”€â”€
             item {
                 val pulseAnim = rememberInfiniteTransition()
                 val bar1 by pulseAnim.animateFloat(0.6f, 1f, infiniteRepeatable(tween(1200), RepeatMode.Reverse))
@@ -1111,7 +1111,7 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
                 }
             }
 
-            // ── Global Broadcast ──
+            // â”€â”€ Global Broadcast â”€â”€
             item {
                 Text("System Broadcast", color = TextMuted, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(8.dp))
@@ -1156,12 +1156,12 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
                 }
             }
 
-            // ── Pending Requests ──
+            // â”€â”€ Pending Requests â”€â”€
             if (pendingRequests.isNotEmpty()) {
                 item {
                     Spacer(Modifier.height(4.dp))
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        Text("Pending Requests · ${pendingRequests.size}", color = AccentAmber, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        Text("Pending Requests Â· ${pendingRequests.size}", color = AccentAmber, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                     }
                     Spacer(Modifier.height(6.dp))
                 }
@@ -1179,8 +1179,8 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
                                 }
                             }
                             Spacer(Modifier.height(4.dp))
-                            Text("${req.requestedPlanId} · ${req.durationMonths} Month(s) · BDT ${"%.0f".format(req.amountPaid)}", color = TextMuted, fontSize = 12.sp)
-                            Text("${req.paymentMethod} · TrxID: ***${req.transactionLast4} · ${req.ownerName}", color = TextMuted, fontSize = 11.sp)
+                            Text("${req.requestedPlanId} Â· ${req.durationMonths} Month(s) Â· BDT ${"%.0f".format(req.amountPaid)}", color = TextMuted, fontSize = 12.sp)
+                            Text("${req.paymentMethod} Â· TrxID: ***${req.transactionLast4} Â· ${req.ownerName}", color = TextMuted, fontSize = 11.sp)
                             Spacer(Modifier.height(10.dp))
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
                                 var rejectNote by remember { mutableStateOf("") }
@@ -1228,11 +1228,11 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
                 }
             }
 
-            // ── Institute list ──
+            // â”€â”€ Institute list â”€â”€
             item {
                 Spacer(Modifier.height(4.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Text("All Institutes · ${filteredInstitutes.size}", color = TextMuted, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    Text("All Institutes Â· ${filteredInstitutes.size}", color = TextMuted, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                     if (searchQuery.isNotBlank() || statusFilter != "all") {
                         TextButton(onClick = { searchQuery = ""; statusFilter = "all" }) {
                             Text("Clear", color = AccentCyan, fontSize = 12.sp)
@@ -1241,7 +1241,7 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
                 }
             }
 
-            // ── Search bar ──
+            // â”€â”€ Search bar â”€â”€
             item {
                 OutlinedTextField(
                     value = searchQuery,
@@ -1263,7 +1263,7 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
                 )
             }
 
-            // ── Filter chips ──
+            // â”€â”€ Filter chips â”€â”€
             item {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     val filters = listOf(
@@ -1313,12 +1313,12 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
                 }
             }
 
-            // ── Trash Section ──
+            // â”€â”€ Trash Section â”€â”€
             if (trashedInstitutes.isNotEmpty()) {
                 item {
                     Spacer(Modifier.height(8.dp))
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        Text("Trash · ${trashedInstitutes.size}", color = AccentRed, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        Text("Trash Â· ${trashedInstitutes.size}", color = AccentRed, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                         LaunchedEffect(Unit) { viewModel.clearExpiredTrash() }
                     }
                     Spacer(Modifier.height(6.dp))
@@ -1404,7 +1404,7 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
         )
     }
 
-    // ── Receipt Dialog ──
+    // â”€â”€ Receipt Dialog â”€â”€
     if (showReceiptDialog) {
         val context = LocalContext.current
         val data = receiptData
@@ -1427,12 +1427,12 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
                         ) {
                             Column(Modifier.padding(12.dp)) {
                                 Text(r.instituteName, color = TextWhite, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                                Text("${r.planName} · ${r.durationMonths} Month(s)", color = AccentCyan, fontSize = 12.sp)
+                                Text("${r.planName} Â· ${r.durationMonths} Month(s)", color = AccentCyan, fontSize = 12.sp)
                                 Spacer(Modifier.height(4.dp))
                                 Text("BDT ${"%,.0f".format(r.amountPaid)}", color = AccentGreen, fontSize = 22.sp, fontWeight = FontWeight.Bold)
                                 Spacer(Modifier.height(2.dp))
-                                Text("${r.paymentMethod.uppercase()} · Trx: ***${r.transactionLast4}", color = TextMuted, fontSize = 11.sp)
-                                Text("${SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(r.startDateMs))} — ${SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(r.endDateMs))}", color = TextMuted, fontSize = 11.sp)
+                                Text("${r.paymentMethod.uppercase()} Â· Trx: ***${r.transactionLast4}", color = TextMuted, fontSize = 11.sp)
+                                Text("${SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(r.startDateMs))} â€” ${SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(r.endDateMs))}", color = TextMuted, fontSize = 11.sp)
                             }
                         }
                     }
@@ -1805,7 +1805,7 @@ private fun RevenueCard(title: String, amount: String, color: Color, icon: Image
     }
 }
 
-// ── Projected Revenue (Prediction Card) ───────────────────────
+// â”€â”€ Projected Revenue (Prediction Card) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 @Composable
 private fun ProjectedRevenueCard(amount: Double, activeCount: Int) {
     val pulseAnim = rememberInfiniteTransition()
@@ -1824,14 +1824,14 @@ private fun ProjectedRevenueCard(amount: Double, activeCount: Int) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.size(8.dp).clip(RoundedCornerShape(4.dp)).background(AccentViolet.copy(alpha = glowAlpha)))
                         Spacer(Modifier.width(6.dp))
-                        Text("PREDICTION · AI", color = AccentViolet.copy(alpha = 0.8f), fontSize = 10.sp, letterSpacing = 1.sp, fontWeight = FontWeight.Bold)
+                        Text("PREDICTION Â· AI", color = AccentViolet.copy(alpha = 0.8f), fontSize = 10.sp, letterSpacing = 1.sp, fontWeight = FontWeight.Bold)
                     }
                     Spacer(Modifier.height(10.dp))
                     Text("BDT ${NumberFormat.getNumberInstance(Locale.getDefault()).apply { maximumFractionDigits = 0 }.format(amount)}",
                         color = TextWhite, fontSize = 28.sp, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(4.dp))
                     Text("Expected Next Month Revenue", color = TextMuted, fontSize = 13.sp)
-                    Text("Based on $activeCount active subscriptions × avg BDT ${NumberFormat.getNumberInstance(Locale.getDefault()).format(avgFee.toInt())}",
+                    Text("Based on $activeCount active subscriptions Ã— avg BDT ${NumberFormat.getNumberInstance(Locale.getDefault()).format(avgFee.toInt())}",
                         color = TextMuted.copy(alpha = 0.6f), fontSize = 11.sp)
                 }
                 Box(Modifier.size(48.dp).clip(RoundedCornerShape(14.dp)).background(AccentViolet.copy(alpha = 0.12f)), contentAlignment = Alignment.Center) {
@@ -1852,7 +1852,7 @@ private fun ProjectedRevenueCard(amount: Double, activeCount: Int) {
     }
 }
 
-// ── Institute Card ────────────────────────────────────────────
+// â”€â”€ Institute Card â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 @Composable
 private fun DetailRow(label: String, value: String, color: Color = TextMuted) {
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 2.dp)) {
@@ -1907,7 +1907,7 @@ private fun InstituteCard(
                             Text(inst.instituteCode, color = AccentViolet.copy(alpha = 0.8f), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                         }
                     }
-                    Text("Plan: $currentPlanName · Joined ${dateFormat.format(Date(inst.createdAtMs))}", color = TextMuted, fontSize = 12.sp)
+                    Text("Plan: $currentPlanName Â· Joined ${dateFormat.format(Date(inst.createdAtMs))}", color = TextMuted, fontSize = 12.sp)
                 }
                 Box(Modifier.clip(RoundedCornerShape(8.dp)).background(statusColor.copy(alpha = 0.15f)).padding(horizontal = 10.dp, vertical = 4.dp)) {
                     Text(inst.subscriptionStatus.replaceFirstChar { it.uppercase() }, color = statusColor, fontSize = 11.sp, fontWeight = FontWeight.Bold)
@@ -1983,7 +1983,7 @@ private fun InstituteCard(
                 }
             }
 
-            // ── Per-institute counts ──
+            // â”€â”€ Per-institute counts â”€â”€
             Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Box(Modifier.clip(RoundedCornerShape(6.dp)).background(AccentCyan.copy(alpha = 0.12f)).padding(horizontal = 10.dp, vertical = 4.dp)) {
@@ -2189,7 +2189,7 @@ private fun InstituteCard(
         }
     }
 
-    // ── Detail Sheet ──
+    // â”€â”€ Detail Sheet â”€â”€
     if (showDetailSheet) {
         val planPrice = remember(subscriptionPlans, inst.currentPlanId) {
             planDisplayPrice(inst.currentPlanId, subscriptionPlans)
@@ -2261,7 +2261,7 @@ private fun InstituteCard(
                                     Icon(Icons.Filled.VisibilityOff, null, tint = TextMuted, modifier = Modifier.size(14.dp))
                                 }
                             } else {
-                                Text("••••••", color = TextMuted, fontSize = 12.sp)
+                                Text("â€¢â€¢â€¢â€¢â€¢â€¢", color = TextMuted, fontSize = 12.sp)
                                 IconButton(onClick = { revealPin = true }, modifier = Modifier.size(20.dp)) {
                                     Icon(Icons.Filled.Visibility, null, tint = AccentAmber, modifier = Modifier.size(14.dp))
                                 }
@@ -2269,7 +2269,7 @@ private fun InstituteCard(
                         }
                     }
 
-                    // ── Staff list (fetched from Firestore) ──
+                    // â”€â”€ Staff list (fetched from Firestore) â”€â”€
                     var staffList by remember { mutableStateOf<List<InstituteStaffSummary>?>(null) }
                     LaunchedEffect(inst.id) { viewModel.loadInstituteStaff(inst.id) { staffList = it } }
 
@@ -2303,7 +2303,7 @@ private fun InstituteCard(
                                     Spacer(Modifier.width(8.dp))
                                     Column(Modifier.weight(1f)) {
                                         Text(s.fullName, color = TextWhite, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-                                        Text("${s.roleTitle} · ${s.staffCode}", color = TextMuted, fontSize = 10.sp)
+                                        Text("${s.roleTitle} Â· ${s.staffCode}", color = TextMuted, fontSize = 10.sp)
                                     }
                                     Box(
                                         Modifier.clip(RoundedCornerShape(4.dp)).background(
@@ -2463,7 +2463,7 @@ private fun InstituteCard(
                             singleLine = true,
                             modifier = Modifier.weight(1f)
                         )
-                        Text("→ ${SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(computedExpiryMs()))}", color = AccentCyan, fontSize = 11.sp, modifier = Modifier.weight(1f))
+                        Text("â†’ ${SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(computedExpiryMs()))}", color = AccentCyan, fontSize = 11.sp, modifier = Modifier.weight(1f))
                     }
 
                     HorizontalDivider(color = BorderSub, modifier = Modifier.padding(vertical = 4.dp))
@@ -2520,7 +2520,7 @@ private fun InstituteCard(
         )
     }
 
-    // ── Share receipt event ──────────────────────────────
+    // â”€â”€ Share receipt event â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     val context = LocalContext.current
     val shareEvent by viewModel.shareReceiptEvent.collectAsState()
     LaunchedEffect(shareEvent) {
@@ -2531,7 +2531,7 @@ private fun InstituteCard(
     }
 }
 
-// ── Subscription Receipt PDF ─────────────────────────────
+// â”€â”€ Subscription Receipt PDF â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 private fun generateSubscriptionReceiptPdf(context: Context, r: SubscriptionReceiptData): File {
     val document = PdfDocument()
     val page = document.startPage(PdfDocument.PageInfo.Builder(595, 842, 1).create()) // A4
@@ -2554,7 +2554,7 @@ private fun generateSubscriptionReceiptPdf(context: Context, r: SubscriptionRece
     val bold = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 13f; color = textDark; isFakeBoldText = true }
     val whiteText = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 14f; color = white; isFakeBoldText = true }
 
-    // ── Header ──
+    // â”€â”€ Header â”€â”€
     fill.color = darkBg
     canvas.drawRect(0f, 0f, w, 140f, fill)
     whiteText.textSize = 22f
@@ -2562,9 +2562,9 @@ private fun generateSubscriptionReceiptPdf(context: Context, r: SubscriptionRece
     whiteText.textSize = 13f
     canvas.drawText(r.instituteName, 40f, 80f, whiteText)
     whiteText.textSize = 10f
-    canvas.drawText("Receipt #: ${r.receiptNumber}  •  ${dateFmt.format(Date(r.startDateMs))}", 40f, 100f, whiteText)
+    canvas.drawText("Receipt #: ${r.receiptNumber}  â€¢  ${dateFmt.format(Date(r.startDateMs))}", 40f, 100f, whiteText)
 
-    // ── Institute Owner Info ──
+    // â”€â”€ Institute Owner Info â”€â”€
     var y = 170f
     fill.color = lightBg
     canvas.drawRect(30f, y - 5, w - 30f, y + 65f, fill)
@@ -2577,7 +2577,7 @@ private fun generateSubscriptionReceiptPdf(context: Context, r: SubscriptionRece
     if (r.instituteCode.isNotBlank()) canvas.drawText("Institute Code: ${r.instituteCode}", 240f, y + 30f, text)
     if (r.instituteAddress.isNotBlank()) canvas.drawText("Address: ${r.instituteAddress}", 240f, y + 42f, text)
 
-    // ── Plan Details ──
+    // â”€â”€ Plan Details â”€â”€
     y += 85f
     bold.textSize = 14f
     canvas.drawText("Subscription Details", 40f, y, bold)
@@ -2587,7 +2587,7 @@ private fun generateSubscriptionReceiptPdf(context: Context, r: SubscriptionRece
     val rows = listOf(
         "Plan" to r.planName,
         "Duration" to "${r.durationMonths} Month(s)",
-        "Period" to "${dateFmt.format(Date(r.startDateMs))} — ${dateFmt.format(Date(r.endDateMs))}",
+        "Period" to "${dateFmt.format(Date(r.startDateMs))} â€” ${dateFmt.format(Date(r.endDateMs))}",
         "Amount Paid" to "BDT ${"%,.0f".format(r.amountPaid)}",
         "Payment Method" to r.paymentMethod.uppercase(),
         "Transaction Ref" to "***${r.transactionLast4}"
@@ -2602,26 +2602,26 @@ private fun generateSubscriptionReceiptPdf(context: Context, r: SubscriptionRece
         y += if (label == "Amount Paid") 24f else 18f
     }
 
-    // ── Status ──
+    // â”€â”€ Status â”€â”€
     y += 15f
     fill.color = lightBg
     canvas.drawRect(40f, y, w - 40f, y + 30f, fill)
     bold.textSize = 12f; bold.color = green
     canvas.drawText("STATUS: APPROVED & ACTIVE", 50f, y + 19f, bold)
 
-    // ── Expiry Warning ──
+    // â”€â”€ Expiry Warning â”€â”€
     y += 50f
     bold.textSize = 11f; bold.color = red
     canvas.drawText("Subscription Expires:", 40f, y, bold)
     bold.textSize = 13f
     canvas.drawText(dateFmt.format(Date(r.endDateMs)), 200f, y, bold)
 
-    // ── Footer ──
+    // â”€â”€ Footer â”€â”€
     y = h - 50f
     fill.color = gray200; canvas.drawRect(40f, y, w - 40f, y + 1f, fill)
     y += 15f
     text.textSize = 9f; text.color = muted
-    canvas.drawText("Generated by BatchFee Super Admin  •  This is a computer-generated receipt.", 40f, y + 5f, text)
+    canvas.drawText("Generated by BatchFee Super Admin  â€¢  This is a computer-generated receipt.", 40f, y + 5f, text)
 
     document.finishPage(page)
     val file = File(context.cacheDir, "sub_receipt_${r.receiptNumber}.pdf")
@@ -2630,7 +2630,7 @@ private fun generateSubscriptionReceiptPdf(context: Context, r: SubscriptionRece
     return file
 }
 
-// ── Subscription Receipt Bitmap (Canvas) ──────────────────
+// â”€â”€ Subscription Receipt Bitmap (Canvas) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 private fun createSubscriptionReceiptBitmap(
     receiptNumber: String,
     instituteName: String,
@@ -2656,7 +2656,7 @@ private fun createSubscriptionReceiptBitmap(
     // White background
     c.drawColor(white)
 
-    // ── Header bar ──
+    // â”€â”€ Header bar â”€â”€
     val headerBg = Paint().apply { color = darkBg }
     c.drawRect(0f, 0f, w.toFloat(), 120f, headerBg)
 
@@ -2674,7 +2674,7 @@ private fun createSubscriptionReceiptBitmap(
     c.drawText("BatchFee Subscription", 95f, 70f, headerSub)
     c.drawText("Management Platform", 95f, 88f, headerSub)
 
-    // ── Title ──
+    // â”€â”€ Title â”€â”€
     val titlePaint = Paint().apply { color = darkBg; textSize = 26f; typeface = Typeface.DEFAULT_BOLD; isAntiAlias = true; textAlign = Paint.Align.CENTER }
     c.drawText("SUBSCRIPTION RECEIPT", w / 2f, 160f, titlePaint)
 
@@ -2691,7 +2691,7 @@ private fun createSubscriptionReceiptBitmap(
     c.drawText(dateFmt.format(Date(startDateMs)), c2, y, vlu); y += lh + 10f
     c.drawLine(c1, y, w - 40f, y, div); y += 24f
 
-    // ── Plan details ──
+    // â”€â”€ Plan details â”€â”€
     c.drawText("Plan", c1, y, lbl)
     c.drawText(planName, c2, y, vlu); y += lh
     c.drawText("Duration", c1, y, lbl)
@@ -2700,7 +2700,7 @@ private fun createSubscriptionReceiptBitmap(
     c.drawText("${dateFmt.format(Date(startDateMs))} - ${dateFmt.format(Date(endDateMs))}", c2, y, Paint().apply { color = darkBg; textSize = 17f; isAntiAlias = true }); y += lh + 10f
     c.drawLine(c1, y, w - 40f, y, div); y += 24f
 
-    // ── Payment ──
+    // â”€â”€ Payment â”€â”€
     c.drawText("Amount Paid", c1, y, lbl)
     c.drawText("BDT ${"%,.0f".format(amountPaid)}", c2, y, Paint().apply { color = cyan; textSize = 26f; typeface = Typeface.DEFAULT_BOLD; isAntiAlias = true }); y += lh + 8f
     c.drawText("Method", c1, y, lbl)
@@ -2709,11 +2709,11 @@ private fun createSubscriptionReceiptBitmap(
     c.drawText("***$transactionLast4", c2, y, vlu); y += lh + 10f
     c.drawLine(c1, y, w - 40f, y, div); y += 24f
 
-    // ── Expiry ──
+    // â”€â”€ Expiry â”€â”€
     c.drawText("Expiry Date", c1, y, lbl)
     c.drawText(dateFmt.format(Date(endDateMs)), c2, y, Paint().apply { color = android.graphics.Color.parseColor("#F87171"); textSize = 20f; typeface = Typeface.DEFAULT_BOLD; isAntiAlias = true }); y += lh + 10f
 
-    // ── Footer ──
+    // â”€â”€ Footer â”€â”€
     c.drawLine(c1, y, w - 40f, y, div); y += 30f
     val foot = Paint().apply { color = muted; textSize = 14f; isAntiAlias = true; textAlign = Paint.Align.CENTER }
     c.drawText("Generated by BatchFee Super Admin", w / 2f, y, foot); y += 22f
@@ -2747,3 +2747,4 @@ private fun shareSubscriptionReceipt(context: Context, bitmap: Bitmap, phone: St
         }, "Share Receipt"))
     }
 }
+

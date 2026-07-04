@@ -1,4 +1,4 @@
-package com.example.ui.batches
+﻿package com.batchfee.edu.ui.batches
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -24,13 +24,13 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.data.database.AppDatabase
-import com.example.data.firestore.InstituteCacheRefreshManager
-import com.example.data.models.BatchEntity
-import com.example.domain.SessionManager
+import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
+import com.batchfee.edu.data.models.BatchEntity
+import com.batchfee.edu.domain.SessionManager
 import kotlinx.coroutines.launch
 
-// ── Colors (matching PricingScreen) ─────────────────────────────
+// â”€â”€ Colors (matching PricingScreen) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 private val BgColor      = Color(0xFF07111F)
 private val CardBg        = Color(0xFF0F172A)
 private val CardBgAlt     = Color(0xFF111827)
@@ -65,7 +65,7 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
         val editId = batchId
         val instituteId = instId
         if (editId != null && instituteId != null) {
-            InstituteCacheRefreshManager.refreshIfStale(db, instituteId)
+            InstituteCacheRefreshManager.forceRefresh(db, instituteId)
             db.batchDao().getBatchById(editId, instituteId).collect { batch ->
                 editingBatch = batch
                 if (batch != null && loadedBatchId != batch.id) {
@@ -103,7 +103,7 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp, vertical = 16.dp)
         ) {
-            // ── Header ──────────────────────────────────────
+            // â”€â”€ Header â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     modifier = Modifier
@@ -130,7 +130,7 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
 
             Spacer(Modifier.height(24.dp))
 
-            // ── Batch Name ──────────────────────────────────
+            // â”€â”€ Batch Name â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             SectionLabel("Batch Name *")
             DarkTextField(
                 value = name,
@@ -144,7 +144,7 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
 
             Spacer(Modifier.height(16.dp))
 
-            // ── Monthly Fee ─────────────────────────────────
+            // â”€â”€ Monthly Fee â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             SectionLabel("Monthly Fee (BDT) *")
             Row(verticalAlignment = Alignment.CenterVertically) {
                 DarkTextField(
@@ -172,7 +172,7 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
 
             Spacer(Modifier.height(16.dp))
 
-            // ── Description ─────────────────────────────────
+            // â”€â”€ Description â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             SectionLabel("Description (optional)")
             DarkTextField(
                 value = description,
@@ -184,7 +184,7 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
 
             Spacer(Modifier.height(28.dp))
 
-            // ── Info card ───────────────────────────────────
+            // â”€â”€ Info card â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(14.dp),
@@ -206,7 +206,7 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
 
             Spacer(Modifier.height(24.dp))
 
-            // ── Save Button ─────────────────────────────────
+            // â”€â”€ Save Button â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -277,7 +277,7 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
     }
 }
 
-// ── Helpers ─────────────────────────────────────────────────────
+// â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 @Composable
 private fun SectionLabel(text: String) {
     Text(
@@ -327,3 +327,4 @@ private fun DarkTextField(
         shape = RoundedCornerShape(12.dp)
     )
 }
+

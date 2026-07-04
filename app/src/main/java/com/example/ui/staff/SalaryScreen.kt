@@ -1,4 +1,4 @@
-package com.example.ui.staff
+﻿package com.batchfee.edu.ui.staff
 
 import android.content.Context
 import android.content.Intent
@@ -39,16 +39,16 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.data.database.AppDatabase
-import com.example.data.models.StaffEntity
-import com.example.data.models.SalaryEntity
-import com.example.domain.SessionManager
+import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.models.StaffEntity
+import com.batchfee.edu.data.models.SalaryEntity
+import com.batchfee.edu.domain.SessionManager
 import java.io.File
 import java.text.SimpleDateFormat
 import kotlinx.coroutines.runBlocking
 import java.util.*
 
-// ── Colors ──────────────────────────────────────────────────────
+// â”€â”€ Colors â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 private val BgColor      = Color(0xFF07111F)
 private val CardBg        = Color(0xFF0F172A)
 private val CardBgAlt     = Color(0xFF111827)
@@ -261,7 +261,7 @@ fun GenerateSalaryScreen(db: AppDatabase, onBack: () -> Unit) {
             var monthExpanded by remember { mutableStateOf(false) }
             val monthOptions = remember {
                 val cal = Calendar.getInstance()
-                val list = mutableListOf<Pair<String, String>>() // label → value
+                val list = mutableListOf<Pair<String, String>>() // label â†’ value
                 for (i in -6..6) {
                     val c = cal.clone() as Calendar
                     c.add(Calendar.MONTH, i)
@@ -380,7 +380,7 @@ fun GenerateSalaryScreen(db: AppDatabase, onBack: () -> Unit) {
 
 @Composable
 private fun SalaryReceiptDialog(
-    salary: com.example.data.models.SalaryEntity,
+    salary: com.batchfee.edu.data.models.SalaryEntity,
     staffName: String,
     instName: String,
     instCode: String,
@@ -460,7 +460,7 @@ private fun SalaryReceiptDialog(
     }
 }
 
-private fun generateSalaryReceiptPdf(context: Context, salary: com.example.data.models.SalaryEntity, staffName: String, instName: String, instCode: String, instPhone: String): File {
+private fun generateSalaryReceiptPdf(context: Context, salary: com.batchfee.edu.data.models.SalaryEntity, staffName: String, instName: String, instCode: String, instPhone: String): File {
     val document = PdfDocument()
     val page = document.startPage(PdfDocument.PageInfo.Builder(340, 544, 1).create())
     val canvas = page.canvas
@@ -482,7 +482,7 @@ private fun generateSalaryReceiptPdf(context: Context, salary: com.example.data.
     whiteText.textSize = 10f
     canvas.drawText("STAFF SALARY RECEIPT", 20f, 70f, whiteText)
     whiteText.textSize = 9f
-    canvas.drawText("$instCode  •  $instPhone", 20f, 90f, whiteText)
+    canvas.drawText("$instCode  â€¢  $instPhone", 20f, 90f, whiteText)
     fill.color = white
 
     // Staff info section
@@ -529,7 +529,7 @@ private fun generateSalaryReceiptPdf(context: Context, salary: com.example.data.
     // Footer
     y += 20
     text.textSize = 9f; text.color = textMuted
-    canvas.drawText("Thank you  •  $instName", 20f, y, text)
+    canvas.drawText("Thank you  â€¢  $instName", 20f, y, text)
 
     document.finishPage(page)
     val file = File(context.cacheDir, "salary_receipt_${salary.salaryMonth.replace(" ", "_")}.pdf")
@@ -552,3 +552,4 @@ private fun darkFieldColors() = OutlinedTextFieldDefaults.colors(
     focusedContainerColor = CardBgAlt, unfocusedContainerColor = CardBgAlt, cursorColor = Cyan,
     focusedLabelColor = Cyan, unfocusedLabelColor = TextMuted
 )
+

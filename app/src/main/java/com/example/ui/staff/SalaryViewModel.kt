@@ -1,14 +1,14 @@
-package com.example.ui.staff
+﻿package com.batchfee.edu.ui.staff
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import com.example.data.database.AppDatabase
-import com.example.data.firestore.InstituteCacheRefreshManager
-import com.example.data.firestore.SalarySyncHelper
-import com.example.data.models.SalaryEntity
-import com.example.data.models.StaffEntity
-import com.example.domain.SessionManager
+import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
+import com.batchfee.edu.data.firestore.SalarySyncHelper
+import com.batchfee.edu.data.models.SalaryEntity
+import com.batchfee.edu.data.models.StaffEntity
+import com.batchfee.edu.domain.SessionManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.firstOrNull
@@ -110,3 +110,4 @@ class SalaryViewModelFactory(private val db: AppDatabase) : ViewModelProvider.Fa
         throw IllegalArgumentException("Unknown ViewModel class")
     }
 }
+

@@ -1,19 +1,19 @@
-package com.example.ui.staff
+﻿package com.batchfee.edu.ui.staff
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import com.example.data.database.AppDatabase
-import com.example.data.models.BatchEntity
-import com.example.data.models.StaffEntity
-import com.example.data.models.UserEntity
-import com.example.domain.PasswordHasher
-import com.example.domain.SessionManager
-import com.example.domain.StaffPermissions
-import com.example.data.firebase.FirebaseAuthApi
-import com.example.data.firestore.InstituteCacheRefreshManager
-import com.example.data.firestore.InstituteSyncHelper
-import com.example.data.firestore.StaffSyncHelper
+import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.models.BatchEntity
+import com.batchfee.edu.data.models.StaffEntity
+import com.batchfee.edu.data.models.UserEntity
+import com.batchfee.edu.domain.PasswordHasher
+import com.batchfee.edu.domain.SessionManager
+import com.batchfee.edu.domain.StaffPermissions
+import com.batchfee.edu.data.firebase.FirebaseAuthApi
+import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
+import com.batchfee.edu.data.firestore.InstituteSyncHelper
+import com.batchfee.edu.data.firestore.StaffSyncHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -182,7 +182,7 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
                         createdAtMs = now
                     )
                 )
-                // Sync to Firestore (non-blocking — best-effort)
+                // Sync to Firestore (non-blocking â€” best-effort)
                 launch { StaffSyncHelper.createStaff(staff) }
                 launch {
                     try {
@@ -328,3 +328,4 @@ class StaffViewModelFactory(private val db: AppDatabase) : ViewModelProvider.Fac
         throw IllegalArgumentException("Unknown ViewModel class")
     }
 }
+

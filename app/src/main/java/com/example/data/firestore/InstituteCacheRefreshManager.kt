@@ -1,6 +1,6 @@
-package com.example.data.firestore
+﻿package com.batchfee.edu.data.firestore
 
-import com.example.data.database.AppDatabase
+import com.batchfee.edu.data.database.AppDatabase
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -38,3 +38,4 @@ object InstituteCacheRefreshManager {
         CoreDataSyncCoordinator.refreshInstituteCache(db, instituteId)
     }
 }
+

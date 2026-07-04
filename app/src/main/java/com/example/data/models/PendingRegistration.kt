@@ -1,4 +1,4 @@
-package com.example.data.models
+﻿package com.batchfee.edu.data.models
 
 data class PendingRegistration(
     val requestId: String = "",
@@ -15,3 +15,4 @@ data class PendingRegistration(
     val submittedAt: Long = System.currentTimeMillis(),
     val status: String = "pending"
 )
+

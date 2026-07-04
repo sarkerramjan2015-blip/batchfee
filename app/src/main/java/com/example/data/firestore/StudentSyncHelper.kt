@@ -1,7 +1,7 @@
-package com.example.data.firestore
+﻿package com.batchfee.edu.data.firestore
 
-import com.example.data.database.AppDatabase
-import com.example.data.models.StudentEntity
+import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.models.StudentEntity
 import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.Dispatchers
@@ -24,7 +24,7 @@ object StudentSyncHelper {
                     .await()
             } catch (e: Exception) {
                 FirebaseCrashlytics.getInstance().recordException(e)
-                // Best-effort sync — don't crash local operations
+                // Best-effort sync â€” don't crash local operations
             }
         }
     }
@@ -102,3 +102,4 @@ object StudentSyncHelper {
     private fun com.google.firebase.firestore.DocumentSnapshot.getLongCompat(field: String): Long? =
         (get(field) as? Number)?.toLong()
 }
+

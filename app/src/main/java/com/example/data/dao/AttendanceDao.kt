@@ -1,7 +1,7 @@
-package com.example.data.dao
+package com.batchfee.edu.data.dao
 
 import androidx.room.*
-import com.example.data.models.AttendanceEntity
+import com.batchfee.edu.data.models.AttendanceEntity
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -26,4 +26,7 @@ interface AttendanceDao {
 
     @Query("DELETE FROM attendance WHERE instituteId = :instituteId AND studentId = :studentId AND batchId = :batchId AND attendanceDateMs = :dateMs")
     suspend fun deleteAttendance(instituteId: String, studentId: String, batchId: String, dateMs: Long)
+
+    @Query("DELETE FROM attendance WHERE instituteId = :instituteId AND batchId = :batchId")
+    suspend fun deleteAttendanceForBatch(instituteId: String, batchId: String)
 }

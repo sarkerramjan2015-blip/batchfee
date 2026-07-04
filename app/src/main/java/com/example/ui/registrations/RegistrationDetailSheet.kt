@@ -1,4 +1,4 @@
-package com.example.ui.registrations
+﻿package com.batchfee.edu.ui.registrations
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -15,7 +15,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.data.models.PendingRegistration
+import com.batchfee.edu.data.models.PendingRegistration
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -127,3 +127,4 @@ private fun DetailField(label: String, value: String) {
         }
     }
 }
+

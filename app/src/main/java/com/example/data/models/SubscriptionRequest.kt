@@ -1,4 +1,4 @@
-package com.example.data.models
+﻿package com.batchfee.edu.data.models
 
 data class SubscriptionRequest(
     val requestId: String,
@@ -54,3 +54,4 @@ data class SubscriptionRequest(
         "reviewerNote" to (reviewerNote ?: "")
     )
 }
+

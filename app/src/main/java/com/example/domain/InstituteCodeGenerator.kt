@@ -1,4 +1,4 @@
-package com.example.domain
+﻿package com.batchfee.edu.domain
 
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.Dispatchers
@@ -52,3 +52,4 @@ object InstituteCodeGenerator {
         }
     }
 }
+

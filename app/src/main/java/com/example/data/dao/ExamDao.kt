@@ -1,11 +1,11 @@
-package com.example.data.dao
+package com.batchfee.edu.data.dao
 
 import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Update
-import com.example.data.models.ExamEntity
+import com.batchfee.edu.data.models.ExamEntity
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -24,4 +24,7 @@ interface ExamDao {
 
     @Query("UPDATE exams SET archivedAtMs = :archivedAtMs, updatedAtMs = :archivedAtMs WHERE id = :examId AND instituteId = :instituteId")
     suspend fun archiveExam(instituteId: String, examId: String, archivedAtMs: Long)
+
+    @Query("DELETE FROM exams WHERE instituteId = :instituteId AND batchId = :batchId")
+    suspend fun deleteExamsForBatch(instituteId: String, batchId: String)
 }

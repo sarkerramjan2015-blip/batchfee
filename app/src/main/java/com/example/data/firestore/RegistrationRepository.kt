@@ -1,6 +1,6 @@
-package com.example.data.firestore
+﻿package com.batchfee.edu.data.firestore
 
-import com.example.data.models.PendingRegistration
+import com.batchfee.edu.data.models.PendingRegistration
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -81,3 +81,4 @@ class RegistrationRepository {
         }
     }
 }
+

@@ -1,4 +1,4 @@
-package com.example.ui.fees
+﻿package com.batchfee.edu.ui.fees
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -26,9 +26,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.data.database.AppDatabase
+import com.batchfee.edu.data.database.AppDatabase
 
-// ── Premium palette ───────────────────────────────────────────
+// â”€â”€ Premium palette â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 private val BgColor      = Color(0xFF07111F)
 private val CardBg        = Color(0xFF0F172A)
 private val CardBgAlt     = Color(0xFF111827)
@@ -44,7 +44,7 @@ private val AccentAmberBg = Color(0xFFF59E0B).copy(alpha = 0.10f)
 private val AccentGreen   = Color(0xFF10B981)
 private val AccentGreenBg = Color(0xFF10B981).copy(alpha = 0.10f)
 
-// ── Helper: Short month+year label for month-wise cards ─────
+// â”€â”€ Helper: Short month+year label for month-wise cards â”€â”€â”€â”€â”€
 private fun shortMonthLabel(period: String): String {
     val parts = period.trim().split("\\s+".toRegex())
     if (parts.size < 2) return period
@@ -88,9 +88,9 @@ fun FeeDashboardScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp, vertical = 12.dp)
         ) {
-            // ═════════════════════════════════════════════════════
-            //  SECTION 1: Total Due Amount — Read-Only Card
-            // ═════════════════════════════════════════════════════
+            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+            //  SECTION 1: Total Due Amount â€” Read-Only Card
+            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -139,9 +139,9 @@ fun FeeDashboardScreen(
 
             if (totalDueAmount > 0) {
 
-                // ═════════════════════════════════════════════════
-                //  SECTION 2: Month-Wise Breakdown — Read-Only
-                // ═════════════════════════════════════════════════
+                // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+                //  SECTION 2: Month-Wise Breakdown â€” Read-Only
+                // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
                 Text(
                     "Month-wise Breakdown",
                     color = TextWhite,
@@ -192,9 +192,9 @@ fun FeeDashboardScreen(
 
                 Spacer(Modifier.height(20.dp))
 
-                // ═════════════════════════════════════════════════
-                //  SECTION 3: Pending Dues List — Read-Only
-                // ═════════════════════════════════════════════════
+                // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+                //  SECTION 3: Pending Dues List â€” Read-Only
+                // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -227,7 +227,7 @@ fun FeeDashboardScreen(
                         border = BorderStroke(1.dp, BorderSub)
                     ) {
                         Column(modifier = Modifier.padding(14.dp)) {
-                            // ── Student header ──
+                            // â”€â”€ Student header â”€â”€
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -267,7 +267,7 @@ fun FeeDashboardScreen(
 
                             Spacer(Modifier.height(8.dp))
 
-                            // ── Period breakdown ──
+                            // â”€â”€ Period breakdown â”€â”€
                             fees.forEach { fee ->
                                 Row(
                                     modifier = Modifier
@@ -300,7 +300,7 @@ fun FeeDashboardScreen(
 
                             Spacer(Modifier.height(10.dp))
 
-                            // ── SMS / WhatsApp notification buttons ──
+                            // â”€â”€ SMS / WhatsApp notification buttons â”€â”€
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -354,7 +354,7 @@ fun FeeDashboardScreen(
                     }
                 }
             } else {
-                // ── No pending dues ──
+                // â”€â”€ No pending dues â”€â”€
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -387,9 +387,9 @@ fun FeeDashboardScreen(
 
             Spacer(Modifier.height(16.dp))
 
-            // ═════════════════════════════════════════════════════
+            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
             //  SECTION 4: Total Collected Summary
-            // ═════════════════════════════════════════════════════
+            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -426,9 +426,9 @@ fun FeeDashboardScreen(
                 }
             }
 
-            // ═════════════════════════════════════════════════════
+            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
             //  SECTION 5: Action Buttons
-            // ═════════════════════════════════════════════════════
+            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -476,3 +476,4 @@ fun FeeDashboardScreen(
         }
     }
 }
+

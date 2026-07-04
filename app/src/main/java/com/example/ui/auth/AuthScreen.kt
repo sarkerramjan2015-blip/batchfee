@@ -1,4 +1,4 @@
-package com.example.ui.auth
+﻿package com.batchfee.edu.ui.auth
 
 import android.content.Context
 import androidx.compose.animation.*
@@ -35,26 +35,26 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.BuildConfig
-import com.example.R
+import com.batchfee.edu.BuildConfig
+import com.batchfee.edu.R
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.data.database.AppDatabase
-import com.example.data.firestore.AppUserSyncHelper
-import com.example.data.firestore.CoreDataSyncCoordinator
-import com.example.data.models.InstituteEntity
-import com.example.data.models.UserEntity
-import com.example.domain.BiometricAuthManager
-import com.example.domain.DemoAuthRepository
-import com.example.domain.PasswordHasher
-import com.example.domain.SessionManager
+import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.firestore.AppUserSyncHelper
+import com.batchfee.edu.data.firestore.CoreDataSyncCoordinator
+import com.batchfee.edu.data.models.InstituteEntity
+import com.batchfee.edu.data.models.UserEntity
+import com.batchfee.edu.domain.BiometricAuthManager
+import com.batchfee.edu.domain.DemoAuthRepository
+import com.batchfee.edu.domain.PasswordHasher
+import com.batchfee.edu.domain.SessionManager
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseAuthException
 import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreException
-import com.example.data.firestore.StaffSyncHelper
+import com.batchfee.edu.data.firestore.StaffSyncHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -104,7 +104,7 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                 val now = System.currentTimeMillis()
                 val fifteenDaysMs = 15L * 24 * 60 * 60 * 1000
 
-                // Write to Firestore FIRST — fail early if network/rules issue
+                // Write to Firestore FIRST â€” fail early if network/rules issue
                 withContext(Dispatchers.IO) {
                     val firestore = FirebaseFirestore.getInstance()
                     firestore.collection("institutes").document(uid).set(
@@ -180,7 +180,7 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                 onError(message)
             } catch (e: FirebaseFirestoreException) {
                 FirebaseCrashlytics.getInstance().recordException(e)
-                // Firestore write failed but Auth succeeded — cleanup auth user
+                // Firestore write failed but Auth succeeded â€” cleanup auth user
                 try {
                     FirebaseAuth.getInstance().currentUser?.delete()
                 } catch (_: Exception) { }
@@ -210,13 +210,13 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                 val hasAt = input.contains("@")
                 android.util.Log.d("AUTH_LOGIN", "LOGIN: credential=$input, hasAt=$hasAt, password length=${cleanPassword.length}")
 
-                // ── SMART ROUTING: Email vs Staff ID ──
+                // â”€â”€ SMART ROUTING: Email vs Staff ID â”€â”€
                 val firebaseEmail: String
                 if (hasAt) {
                     // Direct email login
                     firebaseEmail = input
                 } else {
-                    // Staff ID — resolve to email via Room DB
+                    // Staff ID â€” resolve to email via Room DB
                     val staff = db.staffDao().getStaffByCodeOnce(input.uppercase())
                     if (staff == null) {
                         android.util.Log.w("AUTH_LOGIN", "Staff ID not found: $input")
@@ -232,7 +232,7 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                     firebaseEmail = staffEmail
                 }
 
-                // ── Firebase Auth ──
+                // â”€â”€ Firebase Auth â”€â”€
                 android.util.Log.d("AUTH_LOGIN", "Calling signInWithEmailAndPassword: email=$firebaseEmail")
                 val authResult = withContext(Dispatchers.IO) {
                     // Sign out any stale session first to avoid credential expiry errors
@@ -245,7 +245,7 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                     ?: throw IllegalStateException("Firebase Auth returned null UID")
                 android.util.Log.d("AUTH_LOGIN", "AUTH OK: uid=$uid")
 
-                // ── Fetch or rebuild local user record ──
+                // â”€â”€ Fetch or rebuild local user record â”€â”€
                 val managedUser = withContext(Dispatchers.IO) {
                     AppUserSyncHelper.fetchManagedUser(uid)
                 }
@@ -369,13 +369,13 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                         )
                     }
                 } else if (localUser != null && localUser.role != "Staff") {
-                    // Firestore doc missing but user exists in local Room — offline/legacy fallback
+                    // Firestore doc missing but user exists in local Room â€” offline/legacy fallback
                     android.util.Log.w("AUTH_LOGIN", "Firestore doc not found but local user exists: uid=$uid, role=${localUser.role}")
                     role = localUser.role
                     instituteId = localUser.instituteId
                     staffPermissions = null
                 } else {
-                    // Not an institute — check if staff
+                    // Not an institute â€” check if staff
                     // Try all staff subcollections (worst case iterates, but staff count is small)
                     var foundStaff: StaffSyncHelper.StaffFirestoreData? = null
                     var foundInstId: String? = null
@@ -429,7 +429,7 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                         db.userDao().insertUser(localUser)
                     }
                     // Sync staff to local Room
-                    val staffEntity = com.example.data.models.StaffEntity(
+                    val staffEntity = com.batchfee.edu.data.models.StaffEntity(
                         id = uid,
                         instituteId = foundInstId,
                         staffCode = foundStaff.staffCode,
@@ -1249,7 +1249,7 @@ fun AuthScreen(
                         Text("Privacy Policy", color = AuthCyan, fontSize = 12.sp)
                     }
                     Text(
-                        text = "·",
+                        text = "Â·",
                         color = AuthMuted.copy(alpha = 0.75f),
                         fontSize = 12.sp
                     )
@@ -1280,7 +1280,7 @@ fun AuthScreen(
                         contentColor = AuthCyan.copy(alpha = 0.75f)
                     )
                 ) {
-                    Text("💬", fontSize = 13.sp)
+                    Text("ðŸ’¬", fontSize = 13.sp)
                     Spacer(Modifier.width(8.dp))
                     Text(
                         "Chat on WhatsApp: +880 1518657869",
@@ -1294,7 +1294,7 @@ fun AuthScreen(
                 Spacer(Modifier.height(12.dp))
 
                 Text(
-                    text = "v" + BuildConfig.VERSION_NAME + " · BatchFee",
+                    text = "v" + BuildConfig.VERSION_NAME + " Â· BatchFee",
                     style = MaterialTheme.typography.labelSmall,
                     color = AuthMuted.copy(alpha = 0.5f),
                     textAlign = TextAlign.Center
@@ -1305,3 +1305,4 @@ fun AuthScreen(
         }
     }
 }
+

@@ -1,4 +1,4 @@
-package com.example.ui.students
+﻿package com.batchfee.edu.ui.students
 
 import android.content.Context
 import android.content.Intent
@@ -7,7 +7,6 @@ import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.pdf.PdfDocument
 import android.net.Uri
-import android.widget.Toast
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -40,17 +39,16 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
-import com.example.R
-import com.example.data.database.AppDatabase
-import com.example.data.firestore.InstituteCacheRefreshManager
-import com.example.data.models.InstituteEntity
-import com.example.data.models.StudentEntity
-import com.example.domain.SessionManager
+import com.batchfee.edu.R
+import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
+import com.batchfee.edu.data.models.InstituteEntity
+import com.batchfee.edu.data.models.StudentEntity
+import com.batchfee.edu.domain.SessionManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.net.URLEncoder
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -311,38 +309,6 @@ fun IdCardPreviewScreen(db: AppDatabase, type: String, studentId: String, onBack
                     Text("Print ID Card", fontWeight = FontWeight.Bold)
                 }
 
-                Spacer(Modifier.height(10.dp))
-
-                // WhatsApp button
-                Button(
-                    onClick = {
-                        var handled = false
-                        try {
-                            val pdfFile = generateIdCardPdf(context, s, instName, instCode, instPhone)
-                            val pdfUri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", pdfFile)
-                            val shareIntent = Intent(Intent.ACTION_SEND)
-                            shareIntent.type = "application/pdf"
-                            shareIntent.putExtra(Intent.EXTRA_STREAM, pdfUri)
-                            shareIntent.putExtra(Intent.EXTRA_TEXT, "ID Card - ${s.fullName}")
-                            shareIntent.setPackage("com.whatsapp")
-                            if (shareIntent.resolveActivity(context.packageManager) != null) {
-                                context.startActivity(shareIntent)
-                                handled = true
-                            }
-                        } catch (_: Exception) { }
-                        if (!handled) {
-                            Toast.makeText(context, "WhatsApp not installed. Use Print to share.", Toast.LENGTH_SHORT).show()
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth().height(48.dp),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF25D366))
-                ) {
-                    Icon(Icons.Filled.Phone, null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Share on WhatsApp", fontWeight = FontWeight.Bold)
-                }
-
                 Spacer(Modifier.height(24.dp))
             }
         }
@@ -450,3 +416,4 @@ private fun generateIdCardPdf(context: Context, student: StudentEntity, institut
     document.close()
     return file
 }
+

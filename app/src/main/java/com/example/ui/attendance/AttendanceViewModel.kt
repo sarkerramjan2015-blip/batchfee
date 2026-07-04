@@ -1,4 +1,4 @@
-package com.example.ui.attendance
+﻿package com.batchfee.edu.ui.attendance
 
 import android.content.Context
 import android.content.Intent
@@ -6,16 +6,16 @@ import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import com.example.data.database.AppDatabase
-import com.example.data.firestore.AttendanceSyncHelper
-import com.example.data.firestore.InstituteCacheRefreshManager
-import com.example.data.models.AbsentMessageEntity
-import com.example.data.models.AttendanceEntity
-import com.example.data.models.BatchEntity
-import com.example.data.models.StudentEntity
-import com.example.domain.appendInstituteSignature
-import com.example.domain.loadInstituteSignature
-import com.example.domain.SessionManager
+import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.firestore.AttendanceSyncHelper
+import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
+import com.batchfee.edu.data.models.AbsentMessageEntity
+import com.batchfee.edu.data.models.AttendanceEntity
+import com.batchfee.edu.data.models.BatchEntity
+import com.batchfee.edu.data.models.StudentEntity
+import com.batchfee.edu.domain.appendInstituteSignature
+import com.batchfee.edu.domain.loadInstituteSignature
+import com.batchfee.edu.domain.SessionManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.firstOrNull
@@ -343,7 +343,7 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
 
     private fun buildStaffSummary(
         totalStaff: Int,
-        records: List<com.example.data.models.StaffAttendanceEntity>,
+        records: List<com.batchfee.edu.data.models.StaffAttendanceEntity>,
         expectedStaffDays: Int
     ): StaffAttendanceSummary {
         return StaffAttendanceSummary(
@@ -462,3 +462,4 @@ class AttendanceViewModelFactory(private val db: AppDatabase) : ViewModelProvide
         throw IllegalArgumentException()
     }
 }
+

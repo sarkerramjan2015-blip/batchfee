@@ -1,4 +1,4 @@
-package com.example
+﻿package com.batchfee.edu
 
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -6,6 +6,7 @@ import org.junit.Test
 class MainActivityTest {
     @Test
     fun mainActivityClassNameIsStable() {
-        assertEquals("com.example.MainActivity", MainActivity::class.java.name)
+        assertEquals("com.batchfee.edu.MainActivity", MainActivity::class.java.name)
     }
 }
+

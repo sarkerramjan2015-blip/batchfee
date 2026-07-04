@@ -1,4 +1,4 @@
-package com.example.ui.reminders
+﻿package com.batchfee.edu.ui.reminders
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -10,7 +10,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.data.database.AppDatabase
+import com.batchfee.edu.data.database.AppDatabase
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -42,3 +42,4 @@ fun ReminderTemplatesScreen(db: AppDatabase, onBack: () -> Unit) {
         }
     }
 }
+

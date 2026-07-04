@@ -1,11 +1,11 @@
-package com.example.data.repository
+﻿package com.batchfee.edu.data.repository
 
 import androidx.room.withTransaction
-import com.example.data.database.AppDatabase
-import com.example.data.firestore.FinanceSyncHelper
-import com.example.data.models.FeeEntity
-import com.example.data.models.PaymentEntity
-import com.example.data.models.ReceiptEntity
+import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.firestore.FinanceSyncHelper
+import com.batchfee.edu.data.models.FeeEntity
+import com.batchfee.edu.data.models.PaymentEntity
+import com.batchfee.edu.data.models.ReceiptEntity
 import java.util.UUID
 import kotlin.math.abs
 
@@ -337,3 +337,4 @@ class FeeCollectionRepository(private val db: AppDatabase) {
         const val EPSILON = 0.001
     }
 }
+

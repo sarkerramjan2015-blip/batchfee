@@ -1,23 +1,23 @@
-package com.example.data.database
+﻿package com.batchfee.edu.data.database
 
 import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.sqlite.db.SupportSQLiteDatabase
-import com.example.BuildConfig
-import com.example.data.dao.InstituteDao
-import com.example.data.dao.SubscriptionPlanDao
-import com.example.data.dao.UserDao
-import com.example.data.firestore.AppUserSyncHelper
-import com.example.data.firestore.ManagedUserRecord
-import com.example.data.firestore.ReminderTemplateSyncHelper
-import com.example.data.firestore.SubscriptionPlanSyncHelper
-import com.example.data.models.InstituteEntity
-import com.example.data.models.SubscriptionPlanEntity
-import com.example.data.models.UserEntity
-import com.example.domain.PasswordHasher
-import com.example.data.firebase.FirebaseAuthApi
+import com.batchfee.edu.BuildConfig
+import com.batchfee.edu.data.dao.InstituteDao
+import com.batchfee.edu.data.dao.SubscriptionPlanDao
+import com.batchfee.edu.data.dao.UserDao
+import com.batchfee.edu.data.firestore.AppUserSyncHelper
+import com.batchfee.edu.data.firestore.ManagedUserRecord
+import com.batchfee.edu.data.firestore.ReminderTemplateSyncHelper
+import com.batchfee.edu.data.firestore.SubscriptionPlanSyncHelper
+import com.batchfee.edu.data.models.InstituteEntity
+import com.batchfee.edu.data.models.SubscriptionPlanEntity
+import com.batchfee.edu.data.models.UserEntity
+import com.batchfee.edu.domain.PasswordHasher
+import com.batchfee.edu.data.firebase.FirebaseAuthApi
 import com.google.firebase.crashlytics.FirebaseCrashlytics
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -34,23 +34,23 @@ import java.util.Locale
         InstituteEntity::class,
         UserEntity::class,
         SubscriptionPlanEntity::class,
-        com.example.data.models.StudentEntity::class,
-        com.example.data.models.BatchEntity::class,
-        com.example.data.models.BatchStudentEntity::class,
-        com.example.data.models.AttendanceEntity::class,
-        com.example.data.models.FeeEntity::class,
-        com.example.data.models.PaymentEntity::class,
-        com.example.data.models.ReceiptEntity::class,
-        com.example.data.models.ReminderTemplateEntity::class,
-        com.example.data.models.StaffEntity::class,
-        com.example.data.models.StaffAttendanceEntity::class,
-        com.example.data.models.SalaryEntity::class,
-        com.example.data.models.ExpenseEntity::class,
-        com.example.data.models.ExamEntity::class,
-        com.example.data.models.ResultEntity::class,
-        com.example.data.models.AuditLogEntity::class,
-        com.example.data.models.AbsentMessageEntity::class,
-        com.example.data.models.EnquiryEntity::class
+        com.batchfee.edu.data.models.StudentEntity::class,
+        com.batchfee.edu.data.models.BatchEntity::class,
+        com.batchfee.edu.data.models.BatchStudentEntity::class,
+        com.batchfee.edu.data.models.AttendanceEntity::class,
+        com.batchfee.edu.data.models.FeeEntity::class,
+        com.batchfee.edu.data.models.PaymentEntity::class,
+        com.batchfee.edu.data.models.ReceiptEntity::class,
+        com.batchfee.edu.data.models.ReminderTemplateEntity::class,
+        com.batchfee.edu.data.models.StaffEntity::class,
+        com.batchfee.edu.data.models.StaffAttendanceEntity::class,
+        com.batchfee.edu.data.models.SalaryEntity::class,
+        com.batchfee.edu.data.models.ExpenseEntity::class,
+        com.batchfee.edu.data.models.ExamEntity::class,
+        com.batchfee.edu.data.models.ResultEntity::class,
+        com.batchfee.edu.data.models.AuditLogEntity::class,
+        com.batchfee.edu.data.models.AbsentMessageEntity::class,
+        com.batchfee.edu.data.models.EnquiryEntity::class
     ],
     version = 15,
     exportSchema = false
@@ -60,23 +60,23 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun instituteDao(): InstituteDao
     abstract fun userDao(): UserDao
     abstract fun subscriptionPlanDao(): SubscriptionPlanDao
-    abstract fun studentDao(): com.example.data.dao.StudentDao
-    abstract fun batchDao(): com.example.data.dao.BatchDao
-    abstract fun batchStudentDao(): com.example.data.dao.BatchStudentDao
-    abstract fun attendanceDao(): com.example.data.dao.AttendanceDao
-    abstract fun feeDao(): com.example.data.dao.FeeDao
-    abstract fun paymentDao(): com.example.data.dao.PaymentDao
-    abstract fun receiptDao(): com.example.data.dao.ReceiptDao
-    abstract fun reminderTemplateDao(): com.example.data.dao.ReminderTemplateDao
-    abstract fun staffDao(): com.example.data.dao.StaffDao
-    abstract fun staffAttendanceDao(): com.example.data.dao.StaffAttendanceDao
-    abstract fun salaryDao(): com.example.data.dao.SalaryDao
-    abstract fun expenseDao(): com.example.data.dao.ExpenseDao
-    abstract fun examDao(): com.example.data.dao.ExamDao
-    abstract fun resultDao(): com.example.data.dao.ResultDao
-    abstract fun auditLogDao(): com.example.data.dao.AuditLogDao
-    abstract fun absentMessageDao(): com.example.data.dao.AbsentMessageDao
-    abstract fun enquiryDao(): com.example.data.dao.EnquiryDao
+    abstract fun studentDao(): com.batchfee.edu.data.dao.StudentDao
+    abstract fun batchDao(): com.batchfee.edu.data.dao.BatchDao
+    abstract fun batchStudentDao(): com.batchfee.edu.data.dao.BatchStudentDao
+    abstract fun attendanceDao(): com.batchfee.edu.data.dao.AttendanceDao
+    abstract fun feeDao(): com.batchfee.edu.data.dao.FeeDao
+    abstract fun paymentDao(): com.batchfee.edu.data.dao.PaymentDao
+    abstract fun receiptDao(): com.batchfee.edu.data.dao.ReceiptDao
+    abstract fun reminderTemplateDao(): com.batchfee.edu.data.dao.ReminderTemplateDao
+    abstract fun staffDao(): com.batchfee.edu.data.dao.StaffDao
+    abstract fun staffAttendanceDao(): com.batchfee.edu.data.dao.StaffAttendanceDao
+    abstract fun salaryDao(): com.batchfee.edu.data.dao.SalaryDao
+    abstract fun expenseDao(): com.batchfee.edu.data.dao.ExpenseDao
+    abstract fun examDao(): com.batchfee.edu.data.dao.ExamDao
+    abstract fun resultDao(): com.batchfee.edu.data.dao.ResultDao
+    abstract fun auditLogDao(): com.batchfee.edu.data.dao.AuditLogDao
+    abstract fun absentMessageDao(): com.batchfee.edu.data.dao.AbsentMessageDao
+    abstract fun enquiryDao(): com.batchfee.edu.data.dao.EnquiryDao
 
     companion object {
         @Volatile
@@ -84,7 +84,7 @@ abstract class AppDatabase : RoomDatabase() {
 
         private val MIGRATION_7_8 = object : androidx.room.migration.Migration(7, 8) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                // No schema changes — establishing safe migration path for future versions
+                // No schema changes â€” establishing safe migration path for future versions
             }
         }
 
@@ -178,7 +178,7 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
-        // Cached real Firebase Auth UIDs — resolved once per process lifetime
+        // Cached real Firebase Auth UIDs â€” resolved once per process lifetime
         @Volatile
         var realAdminUid: String? = null
         @Volatile
@@ -219,7 +219,7 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         private suspend fun ensureFirebaseAuthAccounts() {
-            // ── SuperAdmin ──
+            // â”€â”€ SuperAdmin â”€â”€
             try {
                 realAdminUid = FirebaseAuthApi.createUser("superadmin@batchfee.app", "11223344")
                 seedFirestoreAndAppUser(realAdminUid!!, "superadmin@batchfee.app", "SuperAdmin", "BatchFee System")
@@ -236,7 +236,7 @@ abstract class AppDatabase : RoomDatabase() {
                 }
             }
 
-            // ── Demo Owner (fresh account: demo@batchfee.app) ──
+            // â”€â”€ Demo Owner (fresh account: demo@batchfee.app) â”€â”€
             try {
                 realOwnerUid = FirebaseAuthApi.createUser("demo@batchfee.app", "123456")
                 seedFirestoreAndAppUser(
@@ -455,7 +455,7 @@ abstract class AppDatabase : RoomDatabase() {
             val dayMs = 24L * 60 * 60 * 1000
             val rng = java.util.Random(42)
 
-            // ── Helper: start-of-day ──
+            // â”€â”€ Helper: start-of-day â”€â”€
             fun startOfDay(deltaDays: Long): Long {
                 val cal = Calendar.getInstance().apply {
                     timeInMillis = now + (deltaDays * dayMs)
@@ -465,7 +465,7 @@ abstract class AppDatabase : RoomDatabase() {
                 return cal.timeInMillis
             }
 
-            // ── Helper: month label ──
+            // â”€â”€ Helper: month label â”€â”€
             fun monthLabel(deltaMonths: Int): String {
                 val cal = Calendar.getInstance()
                 cal.add(Calendar.MONTH, deltaMonths)
@@ -477,10 +477,10 @@ abstract class AppDatabase : RoomDatabase() {
             val lastMonth = monthLabel(-1)
             val nextMonth = monthLabel(1)
 
-            // ════════════════════════════════════════════════════════
+            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
             // 1.  3 BATCHES
-            // ════════════════════════════════════════════════════════
-            val batch1 = com.example.data.models.BatchEntity(
+            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+            val batch1 = com.batchfee.edu.data.models.BatchEntity(
                 id = "demo_batch_1", instituteId = demoInstituteId,
                 batchCode = "HSC27ICT-1", name = "HSC 2027 ICT",
                 subject = "ICT", className = "HSC 2nd Year",
@@ -492,7 +492,7 @@ abstract class AppDatabase : RoomDatabase() {
                 description = "Full syllabus coverage for HSC 2027 ICT exam",
                 createdAtMs = now, updatedAtMs = now, archivedAtMs = null
             )
-            val batch2 = com.example.data.models.BatchEntity(
+            val batch2 = com.batchfee.edu.data.models.BatchEntity(
                 id = "demo_batch_2", instituteId = demoInstituteId,
                 batchCode = "SSC26MATH-1", name = "SSC 2026 Math",
                 subject = "Mathematics", className = "SSC",
@@ -501,10 +501,10 @@ abstract class AppDatabase : RoomDatabase() {
                 startDateMs = now - (180 * dayMs), endDateMs = now + (180 * dayMs),
                 scheduleDays = "Mon, Wed, Sat", startTime = "10:00", endTime = "12:00",
                 maxStudents = 25, status = "active",
-                description = "SSC 2026 Mathematics — creative & MCQ preparation",
+                description = "SSC 2026 Mathematics â€” creative & MCQ preparation",
                 createdAtMs = now, updatedAtMs = now, archivedAtMs = null
             )
-            val batch3 = com.example.data.models.BatchEntity(
+            val batch3 = com.batchfee.edu.data.models.BatchEntity(
                 id = "demo_batch_3", instituteId = demoInstituteId,
                 batchCode = "HSC27BIO-1", name = "HSC 2027 Biology",
                 subject = "Biology", className = "HSC 2nd Year",
@@ -513,16 +513,16 @@ abstract class AppDatabase : RoomDatabase() {
                 startDateMs = now - (90 * dayMs), endDateMs = now + (270 * dayMs),
                 scheduleDays = "Fri, Sat", startTime = "08:00", endTime = "10:00",
                 maxStudents = 20, status = "active",
-                description = "Biology 1st & 2nd paper — practical included",
+                description = "Biology 1st & 2nd paper â€” practical included",
                 createdAtMs = now, updatedAtMs = now, archivedAtMs = null
             )
             db.batchDao().insertBatch(batch1)
             db.batchDao().insertBatch(batch2)
             db.batchDao().insertBatch(batch3)
 
-            // ════════════════════════════════════════════════════════
+            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
             // 2.  20 STUDENTS + ENROLLMENTS
-            // ════════════════════════════════════════════════════════
+            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
             data class SeedStudent(
                 val name: String, val phone: String, val gender: String,
                 val batchIdx: Int, val bloodGroup: String, val school: String,
@@ -563,7 +563,7 @@ abstract class AppDatabase : RoomDatabase() {
                 val dobMs = now + (s.dobOffsetMonths * 30L * dayMs)
 
                 db.studentDao().insertStudent(
-                    com.example.data.models.StudentEntity(
+                    com.batchfee.edu.data.models.StudentEntity(
                         id = studentId, instituteId = demoInstituteId,
                         studentCode = code, fullName = s.name, photoUri = null,
                         gender = s.gender, dateOfBirthMs = dobMs,
@@ -580,7 +580,7 @@ abstract class AppDatabase : RoomDatabase() {
                     )
                 )
                 db.batchStudentDao().enrollStudent(
-                    com.example.data.models.BatchStudentEntity(
+                    com.batchfee.edu.data.models.BatchStudentEntity(
                         id = "demo_enroll_${i + 1}", instituteId = demoInstituteId,
                         batchId = batchId, studentId = studentId,
                         joinedAtMs = now - (90 * dayMs),
@@ -590,9 +590,9 @@ abstract class AppDatabase : RoomDatabase() {
                 )
             }
 
-            // ════════════════════════════════════════════════════════
+            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
             // 3.  STUDENT ATTENDANCE  (~120 records, last 6 school days)
-            // ════════════════════════════════════════════════════════
+            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
             val scheduleDays = listOf(
                 listOf(0, 2, 4),  // Sun, Tue, Thu (batch1)
                 listOf(1, 3, 6),  // Mon, Wed, Sat (batch2)
@@ -632,7 +632,7 @@ abstract class AppDatabase : RoomDatabase() {
                     }
                     attIdx++
                     db.attendanceDao().insertOrUpdateAttendance(
-                        com.example.data.models.AttendanceEntity(
+                        com.batchfee.edu.data.models.AttendanceEntity(
                             id = "demo_att_$attIdx", instituteId = demoInstituteId,
                             batchId = batchId, studentId = "demo_student_${i + 1}",
                             attendanceDateMs = attDate, status = status, note = null,
@@ -642,16 +642,16 @@ abstract class AppDatabase : RoomDatabase() {
                 }
             }
 
-            // ════════════════════════════════════════════════════════
+            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
             // 4.  FEES  (28 records with strategic distribution)
-            // ════════════════════════════════════════════════════════
+            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
             data class FeePlan(
                 val studentIdx: Int, val period: String, val feeType: String,
                 val base: Double, val paid: Double, val lateFee: Double, val status: String
             )
             // student -> batch fee: ICT=1500, MATH=1200, BIO=1800
             val feePlans = listOf(
-                // ── Fully paid current month (students 1-11) ──
+                // â”€â”€ Fully paid current month (students 1-11) â”€â”€
                 FeePlan(0, currentMonth, "Monthly", 1500.0, 1500.0, 0.0, "paid"),
                 FeePlan(1, currentMonth, "Monthly", 1500.0, 1500.0, 0.0, "paid"),
                 FeePlan(2, currentMonth, "Monthly", 1500.0, 1500.0, 0.0, "paid"),
@@ -663,32 +663,32 @@ abstract class AppDatabase : RoomDatabase() {
                 FeePlan(8, currentMonth, "Monthly", 1500.0, 1500.0, 0.0, "paid"),
                 FeePlan(9, currentMonth, "Monthly", 1500.0, 1500.0, 0.0, "paid"),
                 FeePlan(10, currentMonth, "Monthly", 1200.0, 1200.0, 0.0, "paid"),
-                // ── Partially paid current month (students 12-16) ──
+                // â”€â”€ Partially paid current month (students 12-16) â”€â”€
                 FeePlan(11, currentMonth, "Monthly", 1500.0, 800.0, 0.0, "partially_paid"),
                 FeePlan(12, currentMonth, "Monthly", 1500.0, 800.0, 0.0, "partially_paid"),
                 FeePlan(13, currentMonth, "Monthly", 1200.0, 700.0, 0.0, "partially_paid"),
                 FeePlan(14, currentMonth, "Monthly", 1200.0, 700.0, 0.0, "partially_paid"),
                 FeePlan(15, currentMonth, "Monthly", 1200.0, 700.0, 0.0, "partially_paid"),
-                // ── Last month overdue (students 12-16) ──
+                // â”€â”€ Last month overdue (students 12-16) â”€â”€
                 FeePlan(11, lastMonth, "Overdue", 1500.0, 0.0, 200.0, "overdue"),
                 FeePlan(12, lastMonth, "Overdue", 1500.0, 0.0, 200.0, "overdue"),
                 FeePlan(13, lastMonth, "Overdue", 1200.0, 0.0, 150.0, "overdue"),
                 FeePlan(14, lastMonth, "Overdue", 1200.0, 0.0, 150.0, "overdue"),
                 FeePlan(15, lastMonth, "Overdue", 1200.0, 0.0, 150.0, "overdue"),
-                // ── Advance paid next month (students 1, 10) ──
+                // â”€â”€ Advance paid next month (students 1, 10) â”€â”€
                 FeePlan(0, nextMonth, "Advance", 1500.0, 1500.0, 0.0, "paid"),
                 FeePlan(9, nextMonth, "Advance", 1500.0, 1500.0, 0.0, "paid"),
-                // ── Student 20 (index 19) current month paid ──
+                // â”€â”€ Student 20 (index 19) current month paid â”€â”€
                 FeePlan(19, currentMonth, "Monthly", 1800.0, 1800.0, 0.0, "paid"),
-                // ── Student 17-18 last month (paid with late fee) ──
+                // â”€â”€ Student 17-18 last month (paid with late fee) â”€â”€
                 FeePlan(16, lastMonth, "Monthly", 1200.0, 1350.0, 150.0, "paid"),
                 FeePlan(17, lastMonth, "Monthly", 1200.0, 1350.0, 150.0, "paid"),
-                // ── Student 17-18 current month paid ──
+                // â”€â”€ Student 17-18 current month paid â”€â”€
                 FeePlan(16, currentMonth, "Monthly", 1200.0, 1200.0, 0.0, "paid"),
                 FeePlan(17, currentMonth, "Monthly", 1200.0, 1200.0, 0.0, "paid"),
-                // ── Inactive student 19 (index 18) unpaid — close category ──
+                // â”€â”€ Inactive student 19 (index 18) unpaid â€” close category â”€â”€
                 FeePlan(18, currentMonth, "Monthly", 1800.0, 0.0, 0.0, "unpaid"),
-                // ── Cancelled fee ──
+                // â”€â”€ Cancelled fee â”€â”€
                 FeePlan(2, currentMonth, "Admission", 500.0, 0.0, 0.0, "cancelled"),
             )
 
@@ -704,7 +704,7 @@ abstract class AppDatabase : RoomDatabase() {
                 val dueDateMs = startOfDay(7)
 
                 db.feeDao().insertFee(
-                    com.example.data.models.FeeEntity(
+                    com.batchfee.edu.data.models.FeeEntity(
                         id = feeId, instituteId = demoInstituteId,
                         studentId = studentId,
                         batchId = batchIds[seed.getOrNull(fp.studentIdx)?.batchIdx ?: 0],
@@ -713,7 +713,7 @@ abstract class AppDatabase : RoomDatabase() {
                         discountAmount = 0.0, lateFeeAmount = fp.lateFee,
                         totalAmount = total, paidAmount = fp.paid,
                         dueAmount = due, status = status,
-                        note = if (status == "cancelled") "Cancelled — transferred to another batch" else null,
+                        note = if (status == "cancelled") "Cancelled â€” transferred to another batch" else null,
                         createdAtMs = now, updatedAtMs = now,
                         cancelledAtMs = if (status == "cancelled") now else null
                     )
@@ -725,7 +725,7 @@ abstract class AppDatabase : RoomDatabase() {
                     val methods = listOf("cash", "bkash", "nagad", "bank_transfer")
                     val method = methods[fi % methods.size]
                     db.paymentDao().insertPayment(
-                        com.example.data.models.PaymentEntity(
+                        com.batchfee.edu.data.models.PaymentEntity(
                             id = "demo_payment_$paymentCounter", instituteId = demoInstituteId,
                             feeId = feeId, studentId = studentId,
                             amount = fp.paid, paymentMethod = method,
@@ -738,36 +738,36 @@ abstract class AppDatabase : RoomDatabase() {
                         )
                     )
                     db.receiptDao().insertReceipt(
-                        com.example.data.models.ReceiptEntity(
+                        com.batchfee.edu.data.models.ReceiptEntity(
                             id = "demo_receipt_$paymentCounter", instituteId = demoInstituteId,
                             paymentId = "demo_payment_$paymentCounter", feeId = feeId,
                             studentId = studentId, receiptNumber = rcpt,
                             receiptDateMs = now, totalAmount = total,
                             paidAmount = fp.paid, dueAmount = due,
                             paymentMethod = method,
-                            receiptText = "Payment received — ${fp.period}",
+                            receiptText = "Payment received â€” ${fp.period}",
                             createdAtMs = now
                         )
                     )
                 }
             }
 
-            // ════════════════════════════════════════════════════════
+            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
             // 5.  EXPENSES  (8 records across last 2 months)
-            // ════════════════════════════════════════════════════════
+            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
             val expenses = listOf(
-                Triple("Utilities", "Electricity Bill — May", 2200.0),
-                Triple("Utilities", "Internet Bill — May", 1500.0),
-                Triple("Rent", "Office Rent — May", 12000.0),
-                Triple("Salary", "Staff Advance — May", 5000.0),
+                Triple("Utilities", "Electricity Bill â€” May", 2200.0),
+                Triple("Utilities", "Internet Bill â€” May", 1500.0),
+                Triple("Rent", "Office Rent â€” May", 12000.0),
+                Triple("Salary", "Staff Advance â€” May", 5000.0),
                 Triple("Supplies", "Stationery & Books", 1200.0),
                 Triple("Supplies", "Whiteboard Markers (pack of 12)", 600.0),
-                Triple("Maintenance", "AC Repair — Room 2", 3500.0),
-                Triple("Marketing", "Facebook Ads — Organic Reach", 2000.0)
+                Triple("Maintenance", "AC Repair â€” Room 2", 3500.0),
+                Triple("Marketing", "Facebook Ads â€” Organic Reach", 2000.0)
             )
             expenses.forEachIndexed { i, (cat, title, amt) ->
                 db.expenseDao().insertExpense(
-                    com.example.data.models.ExpenseEntity(
+                    com.batchfee.edu.data.models.ExpenseEntity(
                         id = "demo_expense_${i + 1}", instituteId = demoInstituteId,
                         category = cat, title = title, amount = amt,
                         expenseDateMs = now - ((i + 1) * 3L * dayMs),
@@ -779,30 +779,30 @@ abstract class AppDatabase : RoomDatabase() {
                 )
             }
 
-            // ════════════════════════════════════════════════════════
+            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
             // 6.  EXAMS (3) + RESULTS (~20)
-            // ════════════════════════════════════════════════════════
-            val exam1 = com.example.data.models.ExamEntity(
+            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+            val exam1 = com.batchfee.edu.data.models.ExamEntity(
                 id = "demo_exam_1", instituteId = demoInstituteId,
-                batchId = "demo_batch_1", examName = "Monthly Test 1 — ICT",
+                batchId = "demo_batch_1", examName = "Monthly Test 1 â€” ICT",
                 subject = "ICT", examDateMs = startOfDay(5),
                 totalMarks = 100.0, passingMarks = 40.0,
                 teacherName = "Md. Hasan", note = "Chapters 1-3",
                 status = "scheduled",
                 createdAtMs = now, updatedAtMs = now, archivedAtMs = null
             )
-            val exam2 = com.example.data.models.ExamEntity(
+            val exam2 = com.batchfee.edu.data.models.ExamEntity(
                 id = "demo_exam_2", instituteId = demoInstituteId,
-                batchId = "demo_batch_1", examName = "Chapter 1-3 Review — ICT",
+                batchId = "demo_batch_1", examName = "Chapter 1-3 Review â€” ICT",
                 subject = "ICT", examDateMs = startOfDay(-10),
                 totalMarks = 50.0, passingMarks = 20.0,
                 teacherName = "Md. Hasan", note = null,
                 status = "completed",
                 createdAtMs = now, updatedAtMs = now, archivedAtMs = null
             )
-            val exam3 = com.example.data.models.ExamEntity(
+            val exam3 = com.batchfee.edu.data.models.ExamEntity(
                 id = "demo_exam_3", instituteId = demoInstituteId,
-                batchId = "demo_batch_2", examName = "Mid-Term — Mathematics",
+                batchId = "demo_batch_2", examName = "Mid-Term â€” Mathematics",
                 subject = "Mathematics", examDateMs = startOfDay(-15),
                 totalMarks = 100.0, passingMarks = 40.0,
                 teacherName = "Md. Karim", note = "Full syllabus so far",
@@ -824,12 +824,12 @@ abstract class AppDatabase : RoomDatabase() {
                 Triple("demo_student_7", 40.0, null),
                 Triple("demo_student_8", 28.0, null),
                 Triple("demo_student_9", 33.0, null),
-                Triple("demo_student_10", 48.0, "Top scorer — well done!")
+                Triple("demo_student_10", 48.0, "Top scorer â€” well done!")
             )
             ictResults.forEachIndexed { i, (sid, marks, remark) ->
                 val grade = when { marks >= 40 -> "A+"; marks >= 35 -> "A"; marks >= 30 -> "B"; marks >= 25 -> "C"; else -> "D" }
                 db.resultDao().insertOrUpdateResult(
-                    com.example.data.models.ResultEntity(
+                    com.batchfee.edu.data.models.ResultEntity(
                         id = "demo_result_ict_${i + 1}", instituteId = demoInstituteId,
                         examId = "demo_exam_2", batchId = "demo_batch_1",
                         studentId = sid, marksObtained = marks,
@@ -852,7 +852,7 @@ abstract class AppDatabase : RoomDatabase() {
             mathResults.forEachIndexed { i, (sid, marks, remark) ->
                 val grade = when { marks >= 80 -> "A+"; marks >= 70 -> "A"; marks >= 60 -> "B"; marks >= 50 -> "C"; else -> "D" }
                 db.resultDao().insertOrUpdateResult(
-                    com.example.data.models.ResultEntity(
+                    com.batchfee.edu.data.models.ResultEntity(
                         id = "demo_result_math_${i + 1}", instituteId = demoInstituteId,
                         examId = "demo_exam_3", batchId = "demo_batch_2",
                         studentId = sid, marksObtained = marks,
@@ -862,9 +862,9 @@ abstract class AppDatabase : RoomDatabase() {
                 )
             }
 
-            // ════════════════════════════════════════════════════════
+            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
             // 7.  STAFF (3) + STAFF ATTENDANCE + SALARIES + USER ENTITIES
-            // ════════════════════════════════════════════════════════
+            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
             data class SeedStaff(
                 val id: String, val code: String, val name: String, val roleTitle: String,
                 val phone: String, val salary: Double, val batchId: String?,
@@ -886,7 +886,7 @@ abstract class AppDatabase : RoomDatabase() {
             )
             staffSeed.forEach { s ->
                 db.staffDao().insertStaff(
-                    com.example.data.models.StaffEntity(
+                    com.batchfee.edu.data.models.StaffEntity(
                         id = s.id, instituteId = demoInstituteId,
                         staffCode = s.code, fullName = s.name,
                         photoUri = null, roleTitle = s.roleTitle,
@@ -918,7 +918,7 @@ abstract class AppDatabase : RoomDatabase() {
                     staffAttIdx++
                     val status = if (staffAttIdx == 7) "absent" else "present"
                     db.staffAttendanceDao().insertOrUpdateAttendance(
-                        com.example.data.models.StaffAttendanceEntity(
+                        com.batchfee.edu.data.models.StaffAttendanceEntity(
                             id = "demo_staff_att_$staffAttIdx", instituteId = demoInstituteId,
                             staffId = s.id, attendanceDateMs = attDate,
                             status = status, note = if (status == "absent") "Sick leave" else null,
@@ -934,7 +934,7 @@ abstract class AppDatabase : RoomDatabase() {
                     val status = if (si == 0 && mi == 0) "pending" else "paid"
                     val slipNo = "SLP-2026-${(si * 2 + mi + 1).toString().padStart(3, '0')}"
                     db.salaryDao().insertSalary(
-                        com.example.data.models.SalaryEntity(
+                        com.batchfee.edu.data.models.SalaryEntity(
                             id = "demo_salary_${si}_${mi}", instituteId = demoInstituteId,
                             staffId = s.id, salaryMonth = month,
                             basicSalary = s.salary, bonusAmount = if (mi == 0) 0.0 else 1000.0,
@@ -950,9 +950,9 @@ abstract class AppDatabase : RoomDatabase() {
                 }
             }
 
-            // ════════════════════════════════════════════════════════
+            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
             // 8.  ENQUIRIES (6)
-            // ════════════════════════════════════════════════════════
+            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
             val enquiries = listOf(
                 listOf("Rafiq Hasan", "+8801712345001", "ICT", "active", "2 days ago"),
                 listOf("Sumaiya Akter", "+8801812345002", "Mathematics", "active", "4 days ago"),
@@ -964,7 +964,7 @@ abstract class AppDatabase : RoomDatabase() {
             enquiries.forEachIndexed { i, e ->
                 val daysAgo = when (i) { 0 -> 2L; 1 -> 4L; 2 -> 6L; 3 -> 10L; 4 -> 20L; 5 -> 25L; else -> 1L }
                 db.enquiryDao().insertEnquiry(
-                    com.example.data.models.EnquiryEntity(
+                    com.batchfee.edu.data.models.EnquiryEntity(
                         id = "demo_enquiry_${i + 1}", instituteId = demoInstituteId,
                         name = e[0], phone = e[1], address = "Dhaka, Bangladesh",
                         subjectName = e[2],
@@ -975,29 +975,29 @@ abstract class AppDatabase : RoomDatabase() {
                 )
             }
 
-            // ════════════════════════════════════════════════════════
+            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
             // 9.  REMINDER TEMPLATES (3)
-            // ════════════════════════════════════════════════════════
+            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
             listOf(
-                com.example.data.models.ReminderTemplateEntity(
+                com.batchfee.edu.data.models.ReminderTemplateEntity(
                     id = "demo_reminder_1", instituteId = demoInstituteId,
                     title = "Monthly Fee Reminder",
                     type = "Fee",
-                    messageTemplate = "Dear Guardian, kindly pay the monthly fee of {amount} BDT for {studentName} by {dueDate}. — BatchFee",
+                    messageTemplate = "Dear Guardian, kindly pay the monthly fee of {amount} BDT for {studentName} by {dueDate}. â€” BatchFee",
                     isDefault = true, createdAtMs = now, updatedAtMs = now
                 ),
-                com.example.data.models.ReminderTemplateEntity(
+                com.batchfee.edu.data.models.ReminderTemplateEntity(
                     id = "demo_reminder_2", instituteId = demoInstituteId,
                     title = "Birthday Wish",
                     type = "Birthday",
-                    messageTemplate = "Happy Birthday, {studentName}! Wishing you a fantastic day from all of us at {instituteName}. 🎂",
+                    messageTemplate = "Happy Birthday, {studentName}! Wishing you a fantastic day from all of us at {instituteName}. ðŸŽ‚",
                     isDefault = true, createdAtMs = now, updatedAtMs = now
                 ),
-                com.example.data.models.ReminderTemplateEntity(
+                com.batchfee.edu.data.models.ReminderTemplateEntity(
                     id = "demo_reminder_3", instituteId = demoInstituteId,
                     title = "Exam Schedule Alert",
                     type = "Exam",
-                    messageTemplate = "Dear Guardian, {studentName}'s exam ({examName}) is on {examDate}. Please ensure attendance. — {instituteName}",
+                    messageTemplate = "Dear Guardian, {studentName}'s exam ({examName}) is on {examDate}. Please ensure attendance. â€” {instituteName}",
                     isDefault = false, createdAtMs = now, updatedAtMs = now
                 )
             ).forEach { template ->
@@ -1035,3 +1035,4 @@ abstract class AppDatabase : RoomDatabase() {
         }
     }
 }
+

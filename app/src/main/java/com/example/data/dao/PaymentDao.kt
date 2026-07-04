@@ -1,7 +1,7 @@
-package com.example.data.dao
+package com.batchfee.edu.data.dao
 
 import androidx.room.*
-import com.example.data.models.PaymentEntity
+import com.batchfee.edu.data.models.PaymentEntity
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -17,4 +17,7 @@ interface PaymentDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertPayment(payment: PaymentEntity)
+
+    @Query("DELETE FROM payments WHERE instituteId = :instituteId AND feeId IN (:feeIds)")
+    suspend fun deletePaymentsByFeeIds(instituteId: String, feeIds: List<String>)
 }

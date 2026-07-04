@@ -1,4 +1,4 @@
-package com.example.ui.students
+﻿package com.batchfee.edu.ui.students
 
 import android.content.Intent
 import android.graphics.Bitmap
@@ -36,11 +36,11 @@ import androidx.compose.ui.window.Dialog
 import androidx.core.content.FileProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
-import com.example.data.database.AppDatabase
-import com.example.data.models.StudentEntity
-import com.example.domain.SessionManager
-import com.example.domain.appendInstituteSignature
-import com.example.domain.loadInstituteSignature
+import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.models.StudentEntity
+import com.batchfee.edu.domain.SessionManager
+import com.batchfee.edu.domain.appendInstituteSignature
+import com.batchfee.edu.domain.loadInstituteSignature
 import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
@@ -61,7 +61,7 @@ private val TextMuted = Color(0xFF94A3B8)
 private val AccentGreen = Color(0xFF10B981)
 private val WAGreen = Color(0xFF25D366)
 
-// ── Birthday PNG Card Generator ────────────────────────────────
+// â”€â”€ Birthday PNG Card Generator â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 private fun generateBirthdayCard(
     studentName: String,
     age: Int,
@@ -203,7 +203,7 @@ private fun generateBirthdayCard(
     return FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
 }
 
-// ── Main Screen ─────────────────────────────────────────────────
+// â”€â”€ Main Screen â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BirthdayReminderScreen(db: AppDatabase, onBack: () -> Unit, onNavigateToPricing: () -> Unit) {
@@ -275,7 +275,7 @@ fun BirthdayReminderScreen(db: AppDatabase, onBack: () -> Unit, onNavigateToPric
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp, vertical = 12.dp)
         ) {
-            // ── Today's Birthdays ──────────────────────
+            // â”€â”€ Today's Birthdays â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             if (todayBirthdays.isNotEmpty()) {
                 SectionHeader("Today's Birthdays", AccentOrange)
                 Spacer(Modifier.height(10.dp))
@@ -290,7 +290,7 @@ fun BirthdayReminderScreen(db: AppDatabase, onBack: () -> Unit, onNavigateToPric
                 Spacer(Modifier.height(16.dp))
             }
 
-            // ── Upcoming Birthdays ────────────────────
+            // â”€â”€ Upcoming Birthdays â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             if (upcomingBirthdays.isNotEmpty()) {
                 SectionHeader("Upcoming Birthdays", Cyan)
                 Spacer(Modifier.height(10.dp))
@@ -308,7 +308,7 @@ fun BirthdayReminderScreen(db: AppDatabase, onBack: () -> Unit, onNavigateToPric
         }
     }
 
-    // ── Wish dialog ──────────────────────────────────
+    // â”€â”€ Wish dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if (wishDialogTarget != null) {
         val student = wishDialogTarget!!
         val age = viewModel.calculateAge(student.dateOfBirthMs ?: 0)
@@ -334,7 +334,7 @@ fun BirthdayReminderScreen(db: AppDatabase, onBack: () -> Unit, onNavigateToPric
                     )
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        "${student.fullName} · $birthDateStr · Turning $age",
+                        "${student.fullName} Â· $birthDateStr Â· Turning $age",
                         color = TextMuted,
                         fontSize = 13.sp
                     )
@@ -530,7 +530,7 @@ private fun BirthdayCard(
                     Icon(Icons.Filled.Cake, null, tint = AccentOrange, modifier = Modifier.size(14.dp))
                     Spacer(Modifier.width(4.dp))
                     Text(
-                        "$birthDateStr · Turning $age",
+                        "$birthDateStr Â· Turning $age",
                         color = TextMuted,
                         fontSize = 13.sp
                     )
@@ -598,3 +598,4 @@ private fun WishOptionCard(
         }
     }
 }
+

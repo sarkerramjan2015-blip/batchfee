@@ -1,4 +1,4 @@
-package com.example.data.models
+﻿package com.batchfee.edu.data.models
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey
@@ -18,3 +18,4 @@ data class SubscriptionPlanEntity(
     val tag: String, // e.g., "Popular", "Enterprise"
     val tierLevel: Int // 0=Free, 1=Starter, 2=Growth, 3=Pro, 4=Institute, 5=Enterprise
 )
+

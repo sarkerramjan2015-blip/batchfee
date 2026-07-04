@@ -1,4 +1,4 @@
-package com.example.ui.staff
+﻿package com.batchfee.edu.ui.staff
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -34,10 +34,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.data.database.AppDatabase
-import com.example.domain.SessionManager
-import com.example.domain.StaffPermissions
-import com.example.ui.components.PhoneInputField
+import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.domain.SessionManager
+import com.batchfee.edu.domain.StaffPermissions
+import com.batchfee.edu.ui.components.PhoneInputField
 
 private val BgColor = Color(0xFF07111F)
 private val CardBg = Color(0xFF0F172A)
@@ -220,7 +220,7 @@ fun AddEditStaffScreen(
                         val selected = batch.id in selectedBatchIds
                         SelectRow(
                             title = batch.name,
-                            subtitle = listOfNotNull(batch.subject, batch.className).joinToString(" • "),
+                            subtitle = listOfNotNull(batch.subject, batch.className).joinToString(" â€¢ "),
                             selected = selected,
                             onClick = {
                                 selectedBatchIds = if (selected) selectedBatchIds - batch.id else selectedBatchIds + batch.id
@@ -477,3 +477,4 @@ private fun darkFieldColors() = OutlinedTextFieldDefaults.colors(
     focusedLabelColor = Cyan,
     unfocusedLabelColor = TextMuted
 )
+

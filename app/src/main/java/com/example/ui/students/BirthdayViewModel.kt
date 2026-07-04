@@ -1,12 +1,12 @@
-package com.example.ui.students
+﻿package com.batchfee.edu.ui.students
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import com.example.data.database.AppDatabase
-import com.example.data.firestore.InstituteCacheRefreshManager
-import com.example.data.models.StudentEntity
-import com.example.domain.SessionManager
+import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
+import com.batchfee.edu.data.models.StudentEntity
+import com.batchfee.edu.domain.SessionManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -94,3 +94,4 @@ class BirthdayViewModelFactory(private val db: AppDatabase) : ViewModelProvider.
         throw IllegalArgumentException("Unknown ViewModel class")
     }
 }
+
