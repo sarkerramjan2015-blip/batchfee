@@ -1,16 +1,16 @@
-package com.example.ui.exams
+﻿package com.batchfee.edu.ui.exams
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import com.example.data.database.AppDatabase
-import com.example.data.firestore.ExamSyncHelper
-import com.example.data.firestore.InstituteCacheRefreshManager
-import com.example.data.models.BatchEntity
-import com.example.data.models.ExamEntity
-import com.example.data.models.ResultEntity
-import com.example.data.models.StudentEntity
-import com.example.domain.SessionManager
+import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.firestore.ExamSyncHelper
+import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
+import com.batchfee.edu.data.models.BatchEntity
+import com.batchfee.edu.data.models.ExamEntity
+import com.batchfee.edu.data.models.ResultEntity
+import com.batchfee.edu.data.models.StudentEntity
+import com.batchfee.edu.domain.SessionManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -330,3 +330,4 @@ class ExamViewModelFactory(private val db: AppDatabase) : ViewModelProvider.Fact
         throw IllegalArgumentException("Unknown ViewModel class")
     }
 }
+

@@ -1,4 +1,4 @@
-package com.example.ui.fees
+﻿package com.batchfee.edu.ui.fees
 
 import android.content.Intent
 import android.net.Uri
@@ -78,10 +78,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.data.database.AppDatabase
-import com.example.domain.SessionManager
-import com.example.domain.appendInstituteSignature
-import com.example.domain.loadInstituteSignature
+import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.domain.SessionManager
+import com.batchfee.edu.domain.appendInstituteSignature
+import com.batchfee.edu.domain.loadInstituteSignature
 import kotlinx.coroutines.launch
 import java.net.URLEncoder
 import java.text.NumberFormat
@@ -909,3 +909,4 @@ private fun buildDueFeeExportText(groups: List<DueStudentGroup>, totalDue: Doubl
             appendLine()
         }
     }
+

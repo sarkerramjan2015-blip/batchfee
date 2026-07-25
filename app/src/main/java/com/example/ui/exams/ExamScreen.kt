@@ -1,4 +1,4 @@
-package com.example.ui.exams
+﻿package com.batchfee.edu.ui.exams
 
 import android.content.Intent
 import android.net.Uri
@@ -34,8 +34,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.data.database.AppDatabase
-import com.example.data.models.ExamEntity
+import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.models.ExamEntity
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -56,9 +56,9 @@ private val AccentAmber = Color(0xFFF59E0B)
 private val AccentViolet = Color(0xFF8B5CF6)
 private val WAGreen = Color(0xFF25D366)
 
-// ═══════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 //  ExamListScreen
-// ═══════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ExamListScreen(db: AppDatabase, onBack: () -> Unit, onAddExam: () -> Unit, onNavigateToDetail: (String) -> Unit, onNavigateToPricing: () -> Unit) {
@@ -133,7 +133,7 @@ fun ExamListScreen(db: AppDatabase, onBack: () -> Unit, onAddExam: () -> Unit, o
                             Column(Modifier.weight(1f)) {
                                 Text(exam.examName, color = TextWhite, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 Text(
-                                    "${batch?.name ?: "Batch"} · ${dateFormat.format(Date(exam.examDateMs))}",
+                                    "${batch?.name ?: "Batch"} Â· ${dateFormat.format(Date(exam.examDateMs))}",
                                     color = TextMuted, fontSize = 12.sp
                                 )
                                 if (exam.subject != null) Text(exam.subject, color = TextMuted.copy(alpha = 0.7f), fontSize = 11.sp)
@@ -153,9 +153,9 @@ fun ExamListScreen(db: AppDatabase, onBack: () -> Unit, onAddExam: () -> Unit, o
     }
 }
 
-// ═══════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 //  CreateExamScreen
-// ═══════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddEditExamScreen(db: AppDatabase, examId: String? = null, onBack: () -> Unit) {
@@ -348,9 +348,9 @@ fun AddEditExamScreen(db: AppDatabase, examId: String? = null, onBack: () -> Uni
     }
 }
 
-// ═══════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 //  ExamDetailScreen  (mark entry + merit list + share)
-// ═══════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ExamDetailScreen(db: AppDatabase, examId: String, onBack: () -> Unit, onEdit: () -> Unit) {
@@ -435,7 +435,7 @@ fun ExamDetailScreen(db: AppDatabase, examId: String, onBack: () -> Unit, onEdit
                 modifier = Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState())
                     .padding(horizontal = 20.dp, vertical = 12.dp)
             ) {
-                // ── Exam info card ────────────────────
+                // â”€â”€ Exam info card â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                 val exam = selectedExam
                 if (exam != null) {
                     Card(
@@ -468,7 +468,7 @@ fun ExamDetailScreen(db: AppDatabase, examId: String, onBack: () -> Unit, onEdit
                     Spacer(Modifier.height(16.dp))
                 }
 
-                // ── Results / Mark Entry ────────────────
+                // â”€â”€ Results / Mark Entry â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Text(if (hasResults) "Results" else "Mark Entry", color = TextWhite, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                     if (canPublish) {
@@ -509,7 +509,7 @@ fun ExamDetailScreen(db: AppDatabase, examId: String, onBack: () -> Unit, onEdit
                     }
                 }
 
-                // ── Save button ────────────────────────
+                // â”€â”€ Save button â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                 if (!hasResults && studentResults.isNotEmpty()) {
                     Spacer(Modifier.height(16.dp))
                     val canSave = marksMap.values.any { (it.toDoubleOrNull() ?: -1.0) >= 0 }
@@ -538,7 +538,7 @@ fun ExamDetailScreen(db: AppDatabase, examId: String, onBack: () -> Unit, onEdit
         }
     }
 
-    // ── Merit list dialog ───────────────────────────
+    // â”€â”€ Merit list dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if (showMeritDialog && selectedExam != null) {
         val msg = viewModel.buildMeritMessage(selectedExam!!)
         Dialog(onDismissRequest = { showMeritDialog = false }) {
@@ -557,7 +557,7 @@ fun ExamDetailScreen(db: AppDatabase, examId: String, onBack: () -> Unit, onEdit
         }
     }
 
-    // ── Share sheet ─────────────────────────────────
+    // â”€â”€ Share sheet â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if (showShareSheet && selectedExam != null) {
         val exam = selectedExam!!
         val meritMsg = viewModel.buildMeritMessage(exam)
@@ -592,14 +592,14 @@ fun ExamDetailScreen(db: AppDatabase, examId: String, onBack: () -> Unit, onEdit
         }
     }
 
-    // ── Single student message dialog ───────────────
+    // â”€â”€ Single student message dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if (showStudentMessageDialog != null && selectedExam != null) {
         val item = showStudentMessageDialog!!
         val msg = viewModel.buildStudentMessage(item, selectedExam!!)
         Dialog(onDismissRequest = { showStudentMessageDialog = null }) {
             Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = CardBg), border = BorderStroke(1.dp, BorderSub)) {
                 Column(modifier = Modifier.padding(20.dp)) {
-                    Text("Result — ${item.student.fullName}", color = TextWhite, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    Text("Result â€” ${item.student.fullName}", color = TextWhite, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(8.dp))
                     Text(msg, color = TextMuted, fontSize = 13.sp, lineHeight = 20.sp)
                     Spacer(Modifier.height(16.dp))
@@ -660,15 +660,15 @@ fun ExamDetailScreen(db: AppDatabase, examId: String, onBack: () -> Unit, onEdit
     }
 }
 
-// ═══════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 //  Helper Composables
-// ═══════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 @Composable
 private fun ResultEntryRow(
-    position: Int, student: com.example.data.models.StudentEntity,
+    position: Int, student: com.batchfee.edu.data.models.StudentEntity,
     marksText: String, totalMarks: Double,
-    result: com.example.data.models.ResultEntity?,
+    result: com.batchfee.edu.data.models.ResultEntity?,
     onMarksChange: (String) -> Unit,
     onTap: () -> Unit
 ) {
@@ -750,7 +750,7 @@ private fun fieldColors() = OutlinedTextFieldDefaults.colors(
     cursorColor = Cyan, focusedLabelColor = Cyan, unfocusedLabelColor = TextMuted
 )
 
-// ── Helpers ─────────────────────────────────────────
+// â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 private fun formatNum(value: Double): String =
     if (value == value.toLong().toDouble()) value.toLong().toString() else "%.1f".format(value)
 
@@ -782,3 +782,4 @@ private fun sendSMS(context: android.content.Context, phone: String?, msg: Strin
         shareText(context, msg, "Share via SMS")
     }
 }
+

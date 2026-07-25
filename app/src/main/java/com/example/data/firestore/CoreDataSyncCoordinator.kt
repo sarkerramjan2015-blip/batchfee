@@ -1,6 +1,6 @@
-package com.example.data.firestore
+﻿package com.batchfee.edu.data.firestore
 
-import com.example.data.database.AppDatabase
+import com.batchfee.edu.data.database.AppDatabase
 import com.google.firebase.crashlytics.FirebaseCrashlytics
 
 object CoreDataSyncCoordinator {
@@ -27,3 +27,4 @@ object CoreDataSyncCoordinator {
         }
     }
 }
+

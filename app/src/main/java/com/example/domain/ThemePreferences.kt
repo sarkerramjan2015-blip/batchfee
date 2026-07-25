@@ -1,4 +1,4 @@
-package com.example.domain
+﻿package com.batchfee.edu.domain
 
 import android.content.Context
 import android.content.SharedPreferences
@@ -31,3 +31,4 @@ object ThemePreferences {
     fun isDark(context: Context): Boolean =
         context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean(KEY_DARK_MODE, false)
 }
+

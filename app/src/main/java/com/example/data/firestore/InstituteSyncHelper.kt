@@ -1,7 +1,7 @@
-package com.example.data.firestore
+﻿package com.batchfee.edu.data.firestore
 
-import com.example.data.database.AppDatabase
-import com.example.data.models.InstituteEntity
+import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.models.InstituteEntity
 import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.Dispatchers
@@ -82,3 +82,4 @@ object InstituteSyncHelper {
         }
     }
 }
+

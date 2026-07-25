@@ -1,4 +1,4 @@
-package com.example.ui.fees
+﻿package com.batchfee.edu.ui.fees
 
 import android.content.Context
 import android.content.Intent
@@ -6,13 +6,13 @@ import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import com.example.data.database.AppDatabase
-import com.example.data.firestore.InstituteCacheRefreshManager
-import com.example.data.models.FeeEntity
-import com.example.data.repository.FeeCollectionRepository
-import com.example.domain.appendInstituteSignature
-import com.example.domain.loadInstituteSignature
-import com.example.domain.SessionManager
+import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
+import com.batchfee.edu.data.models.FeeEntity
+import com.batchfee.edu.data.repository.FeeCollectionRepository
+import com.batchfee.edu.domain.appendInstituteSignature
+import com.batchfee.edu.domain.loadInstituteSignature
+import com.batchfee.edu.domain.SessionManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -304,3 +304,4 @@ class FeeViewModelFactory(private val db: AppDatabase) : ViewModelProvider.Facto
         throw IllegalArgumentException()
     }
 }
+

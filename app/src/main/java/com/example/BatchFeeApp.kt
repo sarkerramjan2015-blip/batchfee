@@ -1,8 +1,8 @@
-package com.example
+package com.batchfee.edu
 
 import android.app.Application
-import com.example.data.database.AppDatabase
-import com.example.domain.ThemePreferences
+import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.domain.ThemePreferences
 import com.google.firebase.FirebaseApp
 import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.google.firebase.firestore.FirebaseFirestore

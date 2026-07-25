@@ -1,9 +1,9 @@
-package com.example.data.dao
+package com.batchfee.edu.data.dao
 
 import androidx.room.*
-import com.example.data.models.BatchEntity
-import com.example.data.models.BatchStudentEntity
-import com.example.data.models.StudentEntity
+import com.batchfee.edu.data.models.BatchEntity
+import com.batchfee.edu.data.models.BatchStudentEntity
+import com.batchfee.edu.data.models.StudentEntity
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -22,4 +22,7 @@ interface BatchStudentDao {
 
     @Query("UPDATE batch_students SET status = 'removed', leftAtMs = :leftAtMs WHERE batchId = :batchId AND studentId = :studentId AND instituteId = :instituteId")
     suspend fun removeStudentFromBatch(batchId: String, studentId: String, instituteId: String, leftAtMs: Long)
+
+    @Query("DELETE FROM batch_students WHERE batchId = :batchId AND instituteId = :instituteId")
+    suspend fun deleteStudentsForBatch(batchId: String, instituteId: String)
 }

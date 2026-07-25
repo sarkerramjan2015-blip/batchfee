@@ -1,4 +1,4 @@
-package com.example.domain
+﻿package com.batchfee.edu.domain
 
 import java.security.MessageDigest
 import java.security.SecureRandom
@@ -41,3 +41,4 @@ object PasswordHasher {
         return String(hexChars)
     }
 }
+

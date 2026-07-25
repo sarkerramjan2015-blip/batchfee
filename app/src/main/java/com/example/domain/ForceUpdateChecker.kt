@@ -1,6 +1,6 @@
-package com.example.domain
+﻿package com.batchfee.edu.domain
 
-import com.example.BuildConfig
+import com.batchfee.edu.BuildConfig
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.tasks.await
 
@@ -30,7 +30,8 @@ object ForceUpdateChecker {
             }
         } catch (e: Exception) {
             e.printStackTrace()
-            UpdateResult.CheckFailed // offline or network error — allow entry
+            UpdateResult.CheckFailed // offline or network error â€” allow entry
         }
     }
 }
+

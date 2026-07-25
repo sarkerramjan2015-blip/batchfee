@@ -1,4 +1,4 @@
-package com.example.data.models
+﻿package com.batchfee.edu.data.models
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey
@@ -13,3 +13,4 @@ data class BatchStudentEntity(
     val status: String, // active, removed
     val leftAtMs: Long?
 )
+

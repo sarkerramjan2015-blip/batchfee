@@ -1,4 +1,4 @@
-package com.example.ui.legal
+﻿package com.batchfee.edu.ui.legal
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -244,3 +244,4 @@ private val termsSections = listOf(
         "BatchFee may update these terms as the app changes. Continued use of the app after changes means you accept the updated terms."
     )
 )
+

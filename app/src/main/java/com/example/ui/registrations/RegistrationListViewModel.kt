@@ -1,15 +1,15 @@
-package com.example.ui.registrations
+﻿package com.batchfee.edu.ui.registrations
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import com.example.data.database.AppDatabase
-import com.example.data.firestore.InstituteSyncHelper
-import com.example.data.firestore.RegistrationRepository
-import com.example.data.firestore.StudentSyncHelper
-import com.example.data.models.PendingRegistration
-import com.example.data.models.StudentEntity
-import com.example.domain.SessionManager
+import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.firestore.InstituteSyncHelper
+import com.batchfee.edu.data.firestore.RegistrationRepository
+import com.batchfee.edu.data.firestore.StudentSyncHelper
+import com.batchfee.edu.data.models.PendingRegistration
+import com.batchfee.edu.data.models.StudentEntity
+import com.batchfee.edu.domain.SessionManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -147,3 +147,4 @@ class RegistrationListViewModelFactory(private val db: AppDatabase) : ViewModelP
         throw IllegalArgumentException()
     }
 }
+

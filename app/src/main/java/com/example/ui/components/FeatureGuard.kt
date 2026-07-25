@@ -1,4 +1,4 @@
-package com.example.ui.components
+﻿package com.batchfee.edu.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -11,8 +11,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.example.data.models.SubscriptionPlanEntity
-import com.example.domain.FeatureManager
+import com.batchfee.edu.data.models.SubscriptionPlanEntity
+import com.batchfee.edu.domain.FeatureManager
 
 @Composable
 fun FeatureGuard(
@@ -68,3 +68,4 @@ fun LockedFeatureCard(modifier: Modifier = Modifier, onUpgradeClick: () -> Unit)
         }
     }
 }
+

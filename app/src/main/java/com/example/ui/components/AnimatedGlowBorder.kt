@@ -1,4 +1,4 @@
-package com.example.ui.components
+﻿package com.batchfee.edu.ui.components
 
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
@@ -76,3 +76,4 @@ fun AnimatedGlowBorder(
         }
     }
 }
+

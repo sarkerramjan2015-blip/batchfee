@@ -1,4 +1,4 @@
-package com.example.domain
+﻿package com.batchfee.edu.domain
 
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -92,3 +92,4 @@ object SessionManager {
             ?: emptySet()
     }
 }
+

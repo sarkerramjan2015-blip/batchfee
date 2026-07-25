@@ -1,4 +1,4 @@
-package com.example.ui.theme
+﻿package com.batchfee.edu.ui.theme
 
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -9,7 +9,7 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
-import com.example.domain.ThemePreferences
+import com.batchfee.edu.domain.ThemePreferences
 
 private val DarkColorScheme =
   darkColorScheme(
@@ -59,3 +59,4 @@ fun MyApplicationTheme(
 
   MaterialTheme(colorScheme = colorScheme, typography = Typography, content = content)
 }
+

@@ -1,6 +1,6 @@
-package com.example.domain
+﻿package com.batchfee.edu.domain
 
-import com.example.data.models.SubscriptionPlanEntity
+import com.batchfee.edu.data.models.SubscriptionPlanEntity
 
 /**
  * Handles SaaS feature locking logic on the client-side based on the current subscription plan.
@@ -53,3 +53,4 @@ object FeatureManager {
         return currentCount < plan.maxBatches
     }
 }
+

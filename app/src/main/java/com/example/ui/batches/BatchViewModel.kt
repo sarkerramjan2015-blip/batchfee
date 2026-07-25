@@ -1,15 +1,15 @@
-package com.example.ui.batches
+﻿package com.batchfee.edu.ui.batches
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import com.example.data.database.AppDatabase
-import com.example.data.firestore.BatchSyncHelper
-import com.example.data.firestore.CoreDataSyncCoordinator
-import com.example.data.firestore.InstituteCacheRefreshManager
-import com.example.data.firestore.InstituteSyncHelper
-import com.example.data.models.BatchEntity
-import com.example.domain.SessionManager
+import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.firestore.BatchSyncHelper
+import com.batchfee.edu.data.firestore.CoreDataSyncCoordinator
+import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
+import com.batchfee.edu.data.firestore.InstituteSyncHelper
+import com.batchfee.edu.data.models.BatchEntity
+import com.batchfee.edu.domain.SessionManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.firstOrNull
@@ -69,15 +69,19 @@ class BatchViewModel(private val db: AppDatabase) : ViewModel() {
             archivedAtMs = null
         )
         viewModelScope.launch {
-            BatchSyncHelper.upsertBatch(batch)
-            db.batchDao().insertBatch(batch)
             try {
-                val count = withContext(Dispatchers.IO) {
-                    db.batchDao().getBatchesByInstituteOnce(instId).size
-                }
-                InstituteSyncHelper.updateBatchCount(instId, count)
-            } catch (_: Exception) { }
-            onSuccess()
+                BatchSyncHelper.upsertBatch(batch)
+                db.batchDao().insertBatch(batch)
+                try {
+                    val count = withContext(Dispatchers.IO) {
+                        db.batchDao().getBatchesByInstituteOnce(instId).size
+                    }
+                    InstituteSyncHelper.updateBatchCount(instId, count)
+                } catch (_: Exception) { }
+                onSuccess()
+            } catch (e: Exception) {
+                onError(e.message ?: "Failed to save batch.")
+            }
         }
     }
 
@@ -91,10 +95,14 @@ class BatchViewModel(private val db: AppDatabase) : ViewModel() {
             return
         }
         viewModelScope.launch {
-            val updated = batch.copy(updatedAtMs = System.currentTimeMillis())
-            BatchSyncHelper.upsertBatch(updated)
-            db.batchDao().updateBatch(updated)
-            onSuccess()
+            try {
+                val updated = batch.copy(updatedAtMs = System.currentTimeMillis())
+                BatchSyncHelper.upsertBatch(updated)
+                db.batchDao().updateBatch(updated)
+                onSuccess()
+            } catch (e: Exception) {
+                onError(e.message ?: "Failed to update batch.")
+            }
         }
     }
 
@@ -106,9 +114,25 @@ class BatchViewModel(private val db: AppDatabase) : ViewModel() {
         }
         viewModelScope.launch {
             try {
-                val now = System.currentTimeMillis()
-                db.batchDao().archiveBatch(batch.id, instId, now, now)
-                BatchSyncHelper.archiveBatch(batch)
+                val feeIds = db.feeDao().getFeeIdsForBatch(instId, batch.id)
+                BatchSyncHelper.deleteBatchPermanently(batch)
+                if (feeIds.isNotEmpty()) {
+                    db.paymentDao().deletePaymentsByFeeIds(instId, feeIds)
+                    db.receiptDao().deleteReceiptsByFeeIds(instId, feeIds)
+                }
+                db.absentMessageDao().deleteMessagesForBatch(instId, batch.id)
+                db.attendanceDao().deleteAttendanceForBatch(instId, batch.id)
+                db.resultDao().deleteResultsForBatch(instId, batch.id)
+                db.examDao().deleteExamsForBatch(instId, batch.id)
+                db.batchStudentDao().deleteStudentsForBatch(batch.id, instId)
+                db.feeDao().deleteFeesForBatch(instId, batch.id)
+                db.batchDao().deleteBatch(batch.id, instId)
+                try {
+                    val count = withContext(Dispatchers.IO) {
+                        db.batchDao().getBatchesByInstituteOnce(instId).size
+                    }
+                    InstituteSyncHelper.updateBatchCount(instId, count)
+                } catch (_: Exception) { }
                 onSuccess()
             } catch (e: Exception) {
                 onError(e.message ?: "Failed to delete batch.")
@@ -144,7 +168,7 @@ class BatchViewModel(private val db: AppDatabase) : ViewModel() {
                 withContext(Dispatchers.IO) {
                     students.forEach { student ->
                         db.batchStudentDao().removeStudentFromBatch(fromBatch.id, student.id, instId, now)
-                        val enrollment = com.example.data.models.BatchStudentEntity(
+                        val enrollment = com.batchfee.edu.data.models.BatchStudentEntity(
                             id = UUID.randomUUID().toString(),
                             instituteId = instId,
                             batchId = toBatch.id,
@@ -171,3 +195,4 @@ class BatchViewModelFactory(private val db: AppDatabase) : ViewModelProvider.Fac
         throw IllegalArgumentException()
     }
 }
+

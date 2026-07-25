@@ -1,6 +1,6 @@
-package com.example.data.database
+﻿package com.batchfee.edu.data.database
 
-import com.example.data.models.*
+import com.batchfee.edu.data.models.*
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -41,7 +41,7 @@ object DemoDataSeeder {
         val firestore = FirebaseFirestore.getInstance()
         val now = System.currentTimeMillis()
 
-        // ── 1. Batches ──
+        // â”€â”€ 1. Batches â”€â”€
         val batch1 = BatchEntity(
             id = batch1Id, instituteId = instituteId, batchCode = "HSC27ICT-1",
             name = "HSC 27 ICT", subject = "ICT", className = "HSC 2nd Year",
@@ -61,7 +61,7 @@ object DemoDataSeeder {
             createdAtMs = now, updatedAtMs = now, archivedAtMs = null
         )
 
-        // ── 2. Students + Enrollments ──
+        // â”€â”€ 2. Students + Enrollments â”€â”€
         val studentEntities = students.mapIndexed { i, s ->
             val studentId = "demo_seed_student_${i + 1}"
             val batchId = if (i < 10) batch1Id else batch2Id
@@ -88,7 +88,7 @@ object DemoDataSeeder {
             )
         }
 
-        // ── 3. Attendance (last 5 dates) ──
+        // â”€â”€ 3. Attendance (last 5 dates) â”€â”€
         val attendanceRecords = mutableListOf<AttendanceEntity>()
         val random = Random(42)
         for (dayOffset in 1..5) {
@@ -109,7 +109,7 @@ object DemoDataSeeder {
             }
         }
 
-        // ── 4. Fees & Payments ──
+        // â”€â”€ 4. Fees & Payments â”€â”€
         val feeEntities = mutableListOf<FeeEntity>()
         val paymentEntities = mutableListOf<PaymentEntity>()
         val cal = Calendar.getInstance()
@@ -190,7 +190,7 @@ object DemoDataSeeder {
             }
         }
 
-        // ── 5. Write everything ──
+        // â”€â”€ 5. Write everything â”€â”€
         db.batchDao().insertBatch(batch1)
         db.batchDao().insertBatch(batch2)
         studentEntities.forEach { (stu, _, enroll) ->
@@ -202,3 +202,4 @@ object DemoDataSeeder {
         paymentEntities.forEach { db.paymentDao().insertPayment(it) }
     }
 }
+

@@ -1,4 +1,4 @@
-package com.example.ui.batches
+﻿package com.batchfee.edu.ui.batches
 
 import android.content.Intent
 import android.net.Uri
@@ -31,22 +31,22 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.data.database.AppDatabase
-import com.example.data.firestore.BatchStudentSyncHelper
-import com.example.data.firestore.InstituteCacheRefreshManager
-import com.example.data.models.AttendanceEntity
-import com.example.data.models.PaymentEntity
-import com.example.data.models.StaffEntity
-import com.example.domain.appendInstituteSignature
-import com.example.domain.loadInstituteSignature
-import com.example.domain.SessionManager
-import com.example.ui.components.buildWhatsAppUrl
+import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.firestore.BatchStudentSyncHelper
+import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
+import com.batchfee.edu.data.models.AttendanceEntity
+import com.batchfee.edu.data.models.PaymentEntity
+import com.batchfee.edu.data.models.StaffEntity
+import com.batchfee.edu.domain.appendInstituteSignature
+import com.batchfee.edu.domain.loadInstituteSignature
+import com.batchfee.edu.domain.SessionManager
+import com.batchfee.edu.ui.components.buildWhatsAppUrl
 import kotlinx.coroutines.launch
 import java.net.URLEncoder
 import java.text.SimpleDateFormat
 import java.util.*
 
-// ── Colors ──────────────────────────────────────────────────────
+// â”€â”€ Colors â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 private val BgColor      = Color(0xFF07111F)
 private val CardBg        = Color(0xFF0F172A)
 private val BorderSub     = Color(0xFF1E293B)
@@ -72,6 +72,7 @@ fun BatchDetailScreen(
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
     val instId = SessionManager.currentInstituteId.collectAsState().value
+    val batchVM: BatchViewModel = viewModel(factory = BatchViewModelFactory(db))
     val paymentVM: BatchPaymentViewModel = viewModel(factory = BatchPaymentViewModelFactory(db))
     val batch by paymentVM.batch.collectAsState()
     val studentsWF by paymentVM.studentsWithFee.collectAsState()
@@ -117,7 +118,7 @@ fun BatchDetailScreen(
     LaunchedEffect(batchId) { paymentVM.loadBatchDetail(batchId) }
     LaunchedEffect(instId, batchId, monthOffset) {
         val instituteId = instId ?: return@LaunchedEffect
-        InstituteCacheRefreshManager.refreshIfStale(db, instituteId)
+        InstituteCacheRefreshManager.forceRefresh(db, instituteId)
         val range = monthRangeForOffset(monthOffset)
         launch {
             db.attendanceDao().getAttendanceForBatchByDateRange(instituteId, batchId, range.first, range.second)
@@ -133,7 +134,7 @@ fun BatchDetailScreen(
         }
     }
 
-    // ── Filter + sort + search ────────────────────────────
+    // â”€â”€ Filter + sort + search â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     val monthlyFee = batch?.monthlyFeeAmount ?: 0.0
     val displayedStudents = remember(studentsWF, searchQuery, filterStatus, sortBy) {
         var list = when (filterStatus) {
@@ -156,11 +157,11 @@ fun BatchDetailScreen(
         }
     }
 
-    // ── Send message helpers ──────────────────────────────
+    // â”€â”€ Send message helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     fun buildDueMessage(target: BatchStudentWithFee): String {
         val months = target.monthsDue(monthlyFee)
         val monthText = if (months > 1) "$months months" else (target.fee?.feePeriod ?: "this month")
-        return "Dear Parent, Fee for ${target.student.fullName} — " +
+        return "Dear Parent, Fee for ${target.student.fullName} â€” " +
                 "$monthText due: BDT ${target.dueAmount.toLong()}. " +
                 "Batch: ${batch?.name ?: ""}. Please clear at your earliest. - BatchFee"
     }
@@ -206,7 +207,7 @@ fun BatchDetailScreen(
                 val lines = due.joinToString("\n") { s ->
                     "${
                         s.student.fullName
-                    } — Due BDT ${s.dueAmount.toLong()} (${s.fee?.feePeriod ?: "N/A"})"
+                    } â€” Due BDT ${s.dueAmount.toLong()} (${s.fee?.feePeriod ?: "N/A"})"
                 }
                 val msg = appendInstituteSignature("$batchName\nDue Fees:\n$lines", instituteSignature)
                 when (channel) {
@@ -238,7 +239,7 @@ fun BatchDetailScreen(
         )
     }
 
-    // ── Scaffold ─────────────────────────────────────────
+    // â”€â”€ Scaffold â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     Scaffold(
         containerColor = BgColor,
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -295,7 +296,7 @@ fun BatchDetailScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp, vertical = 10.dp)
         ) {
-            // ── Batch Summary Card ────────────────────────
+            // â”€â”€ Batch Summary Card â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             val batchFeeIds = studentsWF.mapNotNull { it.fee?.id }.toSet()
             val batchPayments = recentPayments.filter { it.feeId in batchFeeIds }
             BatchDashboardSummary(
@@ -345,7 +346,7 @@ fun BatchDetailScreen(
                 )
             }
 
-            // ── Search bar ────────────────────────────────
+            // â”€â”€ Search bar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             OutlinedTextField(
                 value = searchQuery,
                 onValueChange = { searchQuery = it },
@@ -358,7 +359,7 @@ fun BatchDetailScreen(
             )
             Spacer(Modifier.height(8.dp))
 
-            // ── Filters + sort ────────────────────────────
+            // â”€â”€ Filters + sort â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically) {
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -390,7 +391,7 @@ fun BatchDetailScreen(
             }
             Spacer(Modifier.height(10.dp))
 
-            // ── Student list ──────────────────────────────
+            // â”€â”€ Student list â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             if (displayedStudents.isEmpty()) {
                 Box(Modifier.fillMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) {
                     Text(
@@ -433,7 +434,7 @@ fun BatchDetailScreen(
         }
     }
 
-    // ── Payment History Dialog ────────────────────────────
+    // â”€â”€ Payment History Dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if (showBatchMenu) {
         BatchMenuDialog(
             onDismiss = { showBatchMenu = false },
@@ -451,7 +452,7 @@ fun BatchDetailScreen(
             },
             onDelete = {
                 showBatchMenu = false
-                scope.launch { snackbarHostState.showSnackbar("Delete batch needs strong confirmation; not enabled yet.") }
+                showDeleteDialog = true
             },
             onAssignedStudents = {
                 showBatchMenu = false
@@ -465,7 +466,7 @@ fun BatchDetailScreen(
         AlertDialog(
             onDismissRequest = { showPaymentHistoryFor = null },
             containerColor = CardBg,
-            title = { Text("Payment History — $studentName", color = TextWhite, fontSize = 16.sp) },
+            title = { Text("Payment History â€” $studentName", color = TextWhite, fontSize = 16.sp) },
             text = {
                 if (historyPayments.isEmpty()) {
                     Text("No payments recorded.", color = TextMuted)
@@ -527,7 +528,7 @@ fun BatchDetailScreen(
                 Button(
                     onClick = {
                         isDeleting = true
-                        (paymentVM as BatchViewModel).deleteBatch(
+                        batchVM.deleteBatch(
                             batch = batchEntity,
                             onError = { msg ->
                                 isDeleting = false
@@ -558,7 +559,7 @@ fun BatchDetailScreen(
         )
     }
 
-    // ── Single student channel choice dialog ─────────────
+    // â”€â”€ Single student channel choice dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if (sendMessageTarget != null) {
         val target = sendMessageTarget!!
         AlertDialog(
@@ -570,7 +571,7 @@ fun BatchDetailScreen(
                     val months = target.monthsDue(monthlyFee)
                     val monthLabel = if (months > 1) "$months months" else (target.fee?.feePeriod ?: "this month")
                     Text(
-                        "${target.student.fullName} — $monthLabel due: BDT ${target.dueAmount.toLong()}",
+                        "${target.student.fullName} â€” $monthLabel due: BDT ${target.dueAmount.toLong()}",
                         color = TextMuted, fontSize = 13.sp
                     )
                     Spacer(Modifier.height(12.dp))
@@ -606,7 +607,7 @@ fun BatchDetailScreen(
         )
     }
 
-    // ── Send-all channel choice dialog ────────────────────
+    // â”€â”€ Send-all channel choice dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if (sendAllDueChoice) {
         val dueStudents = studentsWF.filter { it.dueAmount > 0 }
         AlertDialog(
@@ -638,7 +639,7 @@ fun BatchDetailScreen(
     }
 }
 
-// ── Reusable components ─────────────────────────────────────────
+// â”€â”€ Reusable components â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @Composable
 private fun BatchMenuDialog(
@@ -738,7 +739,7 @@ private fun BatchDashboardSummary(
     onReport: () -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-        // ── Batch header card ────────────────────────
+        // â”€â”€ Batch header card â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         Card(
             modifier = Modifier.fillMaxWidth()
                 .shadow(4.dp, RoundedCornerShape(14.dp), spotColor = Cyan.copy(alpha = 0.20f)),
@@ -774,7 +775,7 @@ private fun BatchDashboardSummary(
             }
         }
 
-        // ── Key metrics row ──────────────────────────
+        // â”€â”€ Key metrics row â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -784,7 +785,7 @@ private fun BatchDashboardSummary(
             MetricCard("Due", "$dueCount", "Total due", if (dueCount > 0) AccentRed else TextMuted, Modifier.weight(1f))
         }
 
-        // ── Collections card ──────────────────────────
+        // â”€â”€ Collections card â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(14.dp),
@@ -817,7 +818,7 @@ private fun BatchDashboardSummary(
             }
         }
 
-        // ── Attendance summary ────────────────────────
+        // â”€â”€ Attendance summary â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if (attendance.isNotEmpty()) {
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -854,7 +855,7 @@ private fun BatchDashboardSummary(
             }
         }
 
-        // ── Allowed staff ─────────────────────────────
+        // â”€â”€ Allowed staff â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if (allowedStaff.isNotEmpty()) {
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -1285,7 +1286,7 @@ private fun BatchStudentCard(
                 }
             } else {
                 Spacer(Modifier.height(4.dp))
-                Text("No fee created — BDT ${"%.0f".format(monthlyFee)}/mo", color = TextMuted, fontSize = 11.sp)
+                Text("No fee created â€” BDT ${"%.0f".format(monthlyFee)}/mo", color = TextMuted, fontSize = 11.sp)
             }
 
             Spacer(Modifier.height(8.dp))
@@ -1356,15 +1357,15 @@ private fun SummaryStatSmall(label: String, value: String, color: Color) {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 //  EnrollStudentsScreen  (unchanged)
-// ═══════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EnrollStudentsScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
     val instId = SessionManager.currentInstituteId.collectAsState().value
-    var allStudents by remember { mutableStateOf<List<com.example.data.models.StudentEntity>>(emptyList()) }
-    var enrolledStudents by remember { mutableStateOf<List<com.example.data.models.StudentEntity>>(emptyList()) }
+    var allStudents by remember { mutableStateOf<List<com.batchfee.edu.data.models.StudentEntity>>(emptyList()) }
+    var enrolledStudents by remember { mutableStateOf<List<com.batchfee.edu.data.models.StudentEntity>>(emptyList()) }
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(instId, batchId) {
@@ -1404,7 +1405,7 @@ fun EnrollStudentsScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
                             Button(onClick = {
                                 if (instId != null) {
                                     scope.launch {
-                                        val enrollment = com.example.data.models.BatchStudentEntity(
+                                        val enrollment = com.batchfee.edu.data.models.BatchStudentEntity(
                                             id = UUID.randomUUID().toString(),
                                             instituteId = instId,
                                             batchId = batchId,
@@ -1425,3 +1426,4 @@ fun EnrollStudentsScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
         }
     }
 }
+

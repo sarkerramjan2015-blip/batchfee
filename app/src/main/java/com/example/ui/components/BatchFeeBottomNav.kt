@@ -1,4 +1,4 @@
-package com.example.ui.components
+﻿package com.batchfee.edu.ui.components
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.*
@@ -25,8 +25,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.sp
-import com.example.domain.AccessControl
-import com.example.domain.SessionManager
+import com.batchfee.edu.domain.AccessControl
+import com.batchfee.edu.domain.SessionManager
 
 private val NavBg = Color(0xFF081422)
 private val BorderSub = Color(0xFF1E293B)
@@ -241,3 +241,4 @@ private fun BottomNavItem(
         )
     }
 }
+

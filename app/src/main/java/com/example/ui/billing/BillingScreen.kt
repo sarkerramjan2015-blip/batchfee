@@ -1,4 +1,4 @@
-package com.example.ui.billing
+﻿package com.batchfee.edu.ui.billing
 
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
@@ -24,12 +24,12 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.data.database.AppDatabase
-import com.example.data.models.InstituteEntity
-import com.example.data.models.SubscriptionPlanEntity
-import com.example.data.models.SubscriptionRequest
-import com.example.data.repository.SubscriptionRepository
-import com.example.domain.SessionManager
+import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.models.InstituteEntity
+import com.batchfee.edu.data.models.SubscriptionPlanEntity
+import com.batchfee.edu.data.models.SubscriptionRequest
+import com.batchfee.edu.data.repository.SubscriptionRepository
+import com.batchfee.edu.domain.SessionManager
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -253,8 +253,8 @@ fun BillingScreen(
                             }
                         }
                         Spacer(Modifier.height(6.dp))
-                        Text("Plan: ${req.requestedPlanId} · ${req.durationMonths} Month(s)", color = TextMuted, fontSize = 12.sp)
-                        Text("Amount: BDT ${"%.0f".format(req.amountPaid)} · ${req.paymentMethod}", color = TextMuted, fontSize = 12.sp)
+                        Text("Plan: ${req.requestedPlanId} Â· ${req.durationMonths} Month(s)", color = TextMuted, fontSize = 12.sp)
+                        Text("Amount: BDT ${"%.0f".format(req.amountPaid)} Â· ${req.paymentMethod}", color = TextMuted, fontSize = 12.sp)
                         if (req.reviewerNote != null) {
                             Spacer(Modifier.height(4.dp))
                             Text("Note: ${req.reviewerNote}", color = TextMuted, fontSize = 11.sp)
@@ -284,3 +284,4 @@ fun BillingScreen(
         }
     }
 }
+

@@ -1,4 +1,4 @@
-package com.example.ui.students
+﻿package com.batchfee.edu.ui.students
 
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -71,8 +71,8 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
-import com.example.data.database.AppDatabase
-import com.example.ui.components.COUNTRY_CODES
+import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.ui.components.COUNTRY_CODES
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -856,3 +856,4 @@ private fun composeStudentPhone(countryCode: String, localNumber: String): Strin
     val clean = cleanStudentLocalNumber(localNumber, countryCode)
     return if (clean.isBlank()) "" else "$countryCode$clean"
 }
+

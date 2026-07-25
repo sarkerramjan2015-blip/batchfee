@@ -1,4 +1,4 @@
-package com.example.ui.enquiries
+﻿package com.batchfee.edu.ui.enquiries
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -28,9 +28,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.data.database.AppDatabase
-import com.example.data.models.EnquiryEntity
-import com.example.domain.SessionManager
+import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.models.EnquiryEntity
+import com.batchfee.edu.domain.SessionManager
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -133,7 +133,7 @@ fun EnquiryListScreen(
                 contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                // ── Summary row ────────────────────────────
+                // â”€â”€ Summary row â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                 item {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -149,7 +149,7 @@ fun EnquiryListScreen(
                     Spacer(Modifier.height(10.dp))
                 }
 
-                // ── Filter chips ────────────────────────────
+                // â”€â”€ Filter chips â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                 item {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -229,7 +229,7 @@ fun EnquiryListScreen(
         }
     }
 
-    // ── Add enquiry dialog ─────────────────────────────
+    // â”€â”€ Add enquiry dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if (showAddDialog) {
         Dialog(onDismissRequest = { showAddDialog = false }) {
             Card(
@@ -317,7 +317,7 @@ fun EnquiryListScreen(
         }
     }
 
-    // ── Status change dialog ────────────────────────────
+    // â”€â”€ Status change dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if (showStatusDialog && selectedEnquiry != null) {
         val e = selectedEnquiry!!
         val statusLabel = when {
@@ -507,7 +507,7 @@ private fun EnquiryCard(
                 )
                 Spacer(Modifier.height(2.dp))
                 Text(
-                    "${enquiry.phone} · ${enquiry.subjectName}",
+                    "${enquiry.phone} Â· ${enquiry.subjectName}",
                     color = TextMuted, fontSize = 12.sp,
                     maxLines = 1, overflow = TextOverflow.Ellipsis
                 )
@@ -575,3 +575,4 @@ private fun fieldColors() = OutlinedTextFieldDefaults.colors(
     focusedLabelColor = Cyan,
     unfocusedLabelColor = TextMuted
 )
+

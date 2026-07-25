@@ -1,4 +1,4 @@
-package com.example.data.models
+﻿package com.batchfee.edu.data.models
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey
@@ -15,3 +15,4 @@ data class UserEntity(
     val failedAttempts: Int = 0,
     val lockedUntilMs: Long? = null
 )
+

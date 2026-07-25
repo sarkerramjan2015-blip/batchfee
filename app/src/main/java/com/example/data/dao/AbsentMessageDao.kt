@@ -1,7 +1,7 @@
-package com.example.data.dao
+package com.batchfee.edu.data.dao
 
 import androidx.room.*
-import com.example.data.models.AbsentMessageEntity
+import com.batchfee.edu.data.models.AbsentMessageEntity
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -17,4 +17,7 @@ interface AbsentMessageDao {
 
     @Query("SELECT COUNT(*) FROM absent_messages WHERE instituteId = :instituteId AND studentId = :studentId AND attendanceDateMs = :dateMs")
     suspend fun hasMessageForStudentDate(instituteId: String, studentId: String, dateMs: Long): Int
+
+    @Query("DELETE FROM absent_messages WHERE instituteId = :instituteId AND batchId = :batchId")
+    suspend fun deleteMessagesForBatch(instituteId: String, batchId: String)
 }

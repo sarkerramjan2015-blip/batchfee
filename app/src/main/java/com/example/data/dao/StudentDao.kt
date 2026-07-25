@@ -1,7 +1,7 @@
-package com.example.data.dao
+package com.batchfee.edu.data.dao
 
 import androidx.room.*
-import com.example.data.models.StudentEntity
+import com.batchfee.edu.data.models.StudentEntity
 import kotlinx.coroutines.flow.Flow
 
 @Dao

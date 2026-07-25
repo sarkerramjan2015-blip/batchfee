@@ -1,10 +1,10 @@
-package com.example.data.dao
+package com.batchfee.edu.data.dao
 
 import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
-import com.example.data.models.UserEntity
+import com.batchfee.edu.data.models.UserEntity
 import kotlinx.coroutines.flow.Flow
 
 @Dao

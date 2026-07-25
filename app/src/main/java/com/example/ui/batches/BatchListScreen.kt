@@ -1,4 +1,4 @@
-package com.example.ui.batches
+﻿package com.batchfee.edu.ui.batches
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -23,13 +23,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.data.database.AppDatabase
-import com.example.data.models.FeeEntity
-import com.example.domain.SessionManager
+import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.models.FeeEntity
+import com.batchfee.edu.domain.SessionManager
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
-// ── Colors ── matching StudentListScreen premium palette ────────
+// â”€â”€ Colors â”€â”€ matching StudentListScreen premium palette â”€â”€â”€â”€â”€â”€â”€â”€
 private val BgColor      = Color(0xFF07111F)
 private val CardBg        = Color(0xFF0F172A)
 private val BorderSub     = Color(0xFF1E293B)
@@ -42,7 +42,7 @@ private val WAGreen       = Color(0xFF25D366)
 private val AccentGreen   = Color(0xFF22C55E)
 private val AccentRed     = Color(0xFFEF4444)
 
-// ── Per-batch this-month stats ──────────────────────────────────
+// â”€â”€ Per-batch this-month stats â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 private data class BatchMonthStats(
     val enrolled: Int = 0,
     val paidThisMonth: Int = 0,
@@ -182,7 +182,7 @@ fun BatchListScreen(
 
 @Composable
 private fun BatchCard(
-    batch: com.example.data.models.BatchEntity,
+    batch: com.batchfee.edu.data.models.BatchEntity,
     enrolled: Int,
     paidThisMonth: Int,
     dueThisMonth: Int,
@@ -219,7 +219,7 @@ private fun BatchCard(
                     batch.name, color = TextWhite, fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
                     maxLines = 1, overflow = TextOverflow.Ellipsis
                 )
-                Text("BDT ${"%.0f".format(batch.monthlyFeeAmount)}/mo · $enrolled students", color = TextMuted, fontSize = 12.sp)
+                Text("BDT ${"%.0f".format(batch.monthlyFeeAmount)}/mo Â· $enrolled students", color = TextMuted, fontSize = 12.sp)
             }
             Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -240,3 +240,4 @@ private fun StatChip(label: String, value: String, color: Color) {
         Text(label, color = TextMuted, fontSize = 10.sp)
     }
 }
+

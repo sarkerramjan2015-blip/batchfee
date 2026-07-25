@@ -1,4 +1,4 @@
-package com.example.ui.dashboard
+﻿package com.batchfee.edu.ui.dashboard
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -24,15 +24,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.data.database.AppDatabase
-import com.example.BuildConfig
-import com.example.domain.BiometricAuthManager
-import com.example.domain.DataExporter
-import com.example.domain.ThemePreferences
+import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.BuildConfig
+import com.batchfee.edu.domain.BiometricAuthManager
+import com.batchfee.edu.domain.DataExporter
+import com.batchfee.edu.domain.ThemePreferences
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
-// ── Premium palette (matching other polished screens) ───────────
+// â”€â”€ Premium palette (matching other polished screens) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 private val BgColor      = Color(0xFF07111F)
 private val CardBg        = Color(0xFF0F172A)
 private val BorderSub     = Color(0xFF1E293B)
@@ -270,7 +270,7 @@ fun SettingsScreen(
     }
 }
 
-// polish: reusable settings row — clickable rows get a chevron and ripple
+// polish: reusable settings row â€” clickable rows get a chevron and ripple
 @Composable
 private fun SettingsRow(
     title: String,
@@ -330,3 +330,4 @@ private fun SettingsSwitchRow(
         )
     }
 }
+

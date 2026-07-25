@@ -1,4 +1,4 @@
-package com.example.domain
+﻿package com.batchfee.edu.domain
 
 import android.content.Context
 import android.content.ContextWrapper
@@ -129,3 +129,4 @@ object BiometricAuthManager {
         prompt.authenticate(promptInfo)
     }
 }
+

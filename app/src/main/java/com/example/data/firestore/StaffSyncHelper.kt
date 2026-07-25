@@ -1,7 +1,7 @@
-package com.example.data.firestore
+﻿package com.batchfee.edu.data.firestore
 
-import com.example.data.database.AppDatabase
-import com.example.data.models.StaffEntity
+import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.models.StaffEntity
 import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.Dispatchers
@@ -180,3 +180,4 @@ object StaffSyncHelper {
         }
     }
 }
+

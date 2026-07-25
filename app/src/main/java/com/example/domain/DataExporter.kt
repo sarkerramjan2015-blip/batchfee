@@ -1,11 +1,11 @@
-package com.example.domain
+﻿package com.batchfee.edu.domain
 
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
 import androidx.core.content.FileProvider
-import com.example.data.database.AppDatabase
+import com.batchfee.edu.data.database.AppDatabase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -95,3 +95,4 @@ object DataExporter {
         return if (v.contains(",") || v.contains("\"") || v.contains("\n")) "\"${v.replace("\"", "\"\"")}\"" else v
     }
 }
+

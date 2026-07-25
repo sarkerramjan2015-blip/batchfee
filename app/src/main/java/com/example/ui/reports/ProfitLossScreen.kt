@@ -1,4 +1,4 @@
-package com.example.ui.reports
+﻿package com.batchfee.edu.ui.reports
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
@@ -8,8 +8,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.data.database.AppDatabase
-import com.example.ui.components.FeatureGuard
+import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.ui.components.FeatureGuard
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -59,3 +59,4 @@ fun ProfitLossScreen(db: AppDatabase, onBack: () -> Unit, onNavigateToPricing: (
             }
         }
 }
+

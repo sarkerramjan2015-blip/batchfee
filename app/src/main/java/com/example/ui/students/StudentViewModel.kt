@@ -1,19 +1,19 @@
-package com.example.ui.students
+﻿package com.batchfee.edu.ui.students
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import com.example.data.database.AppDatabase
-import com.example.data.firestore.CoreDataSyncCoordinator
-import com.example.data.firestore.InstituteCacheRefreshManager
-import com.example.data.firestore.StudentSyncHelper
-import com.example.data.models.BatchEntity
-import com.example.data.models.StudentEntity
-import com.example.domain.SessionManager
-import com.example.data.firestore.InstituteSyncHelper
-import com.example.data.firestore.BatchStudentSyncHelper
-import com.example.data.firestore.FinanceSyncHelper
-import com.example.data.models.BatchStudentEntity
+import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.firestore.CoreDataSyncCoordinator
+import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
+import com.batchfee.edu.data.firestore.StudentSyncHelper
+import com.batchfee.edu.data.models.BatchEntity
+import com.batchfee.edu.data.models.StudentEntity
+import com.batchfee.edu.domain.SessionManager
+import com.batchfee.edu.data.firestore.InstituteSyncHelper
+import com.batchfee.edu.data.firestore.BatchStudentSyncHelper
+import com.batchfee.edu.data.firestore.FinanceSyncHelper
+import com.batchfee.edu.data.models.BatchStudentEntity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -252,3 +252,4 @@ class StudentViewModelFactory(private val db: AppDatabase) : ViewModelProvider.F
         throw IllegalArgumentException()
     }
 }
+

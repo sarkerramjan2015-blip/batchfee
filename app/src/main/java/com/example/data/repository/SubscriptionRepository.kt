@@ -1,6 +1,6 @@
-package com.example.data.repository
+﻿package com.batchfee.edu.data.repository
 
-import com.example.data.models.SubscriptionRequest
+import com.batchfee.edu.data.models.SubscriptionRequest
 import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.tasks.await
@@ -86,3 +86,4 @@ class SubscriptionRepository(private val firestore: FirebaseFirestore = Firebase
         const val COLLECTION = "subscriptionRequests"
     }
 }
+

@@ -1,4 +1,4 @@
-package com.example.ui.students
+﻿package com.batchfee.edu.ui.students
 
 import android.content.Intent
 import android.net.Uri
@@ -32,14 +32,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.data.database.AppDatabase
-import com.example.data.models.StudentEntity
-import com.example.domain.appendInstituteSignature
-import com.example.domain.loadInstituteSignature
-import com.example.domain.SessionManager
+import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.models.StudentEntity
+import com.batchfee.edu.domain.appendInstituteSignature
+import com.batchfee.edu.domain.loadInstituteSignature
+import com.batchfee.edu.domain.SessionManager
 import kotlinx.coroutines.launch
 
-// ── Colors (matching PricingScreen premium theme) ───────────────
+// â”€â”€ Colors (matching PricingScreen premium theme) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 private val BgColor      = Color(0xFF07111F)
 private val CardBg        = Color(0xFF0F172A)
 private val CardBgAlt     = Color(0xFF111827)
@@ -201,7 +201,7 @@ fun StudentListScreen(
                 .fillMaxSize()
                 .padding(horizontal = 20.dp, vertical = 8.dp)
         ) {
-            // ── Search bar ───────────────────────────────────
+            // â”€â”€ Search bar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             if (showSearch || searchQuery.isNotBlank()) {
                 OutlinedTextField(
                     value = searchQuery,
@@ -232,7 +232,7 @@ fun StudentListScreen(
                 Spacer(Modifier.height(4.dp))
             }
 
-            // ── Student count ────────────────────────────────
+            // â”€â”€ Student count â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             Row(
                 modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -263,7 +263,7 @@ fun StudentListScreen(
                 }
             }
 
-            // ── Student list ─────────────────────────────────
+            // â”€â”€ Student list â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             if (filteredStudents.isEmpty()) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
@@ -477,7 +477,7 @@ fun StudentListScreen(
     }
 }
 
-// ── Student Card ────────────────────────────────────────────────
+// â”€â”€ Student Card â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 @Composable
 private fun FilterChoiceRow(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
@@ -694,3 +694,4 @@ private fun StudentCard(student: StudentEntity, onClick: () -> Unit) {
         }
     }
 }
+

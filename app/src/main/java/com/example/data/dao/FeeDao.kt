@@ -1,7 +1,7 @@
-package com.example.data.dao
+package com.batchfee.edu.data.dao
 
 import androidx.room.*
-import com.example.data.models.FeeEntity
+import com.batchfee.edu.data.models.FeeEntity
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -21,7 +21,7 @@ interface FeeDao {
     @Query("SELECT * FROM fees WHERE instituteId = :instituteId AND studentId = :studentId AND cancelledAtMs IS NULL ORDER BY dueDateMs DESC")
     fun getFeesByStudent(instituteId: String, studentId: String): Flow<List<FeeEntity>>
 
-    // ── Batch-wise fee queries ──────────────────────────────
+    // â”€â”€ Batch-wise fee queries â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     @Query("SELECT f.* FROM fees f INNER JOIN batch_students bs ON f.studentId = bs.studentId WHERE bs.batchId = :batchId AND f.instituteId = :instituteId AND f.cancelledAtMs IS NULL AND bs.status = 'active' ORDER BY f.dueDateMs DESC")
     fun getFeesByBatch(batchId: String, instituteId: String): Flow<List<FeeEntity>>
 
@@ -51,4 +51,10 @@ interface FeeDao {
 
     @Query("SELECT * FROM fees WHERE instituteId = :instituteId AND studentId = :studentId AND batchId = :batchId AND cancelledAtMs IS NULL")
     suspend fun getFeesByStudentOnce(instituteId: String, studentId: String, batchId: String): List<FeeEntity>
+
+    @Query("SELECT id FROM fees WHERE instituteId = :instituteId AND batchId = :batchId AND cancelledAtMs IS NULL")
+    suspend fun getFeeIdsForBatch(instituteId: String, batchId: String): List<String>
+
+    @Query("DELETE FROM fees WHERE instituteId = :instituteId AND batchId = :batchId")
+    suspend fun deleteFeesForBatch(instituteId: String, batchId: String)
 }

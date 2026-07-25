@@ -1,4 +1,4 @@
-package com.example
+﻿package com.batchfee.edu
 
 import android.os.Bundle
 import androidx.activity.compose.setContent
@@ -17,22 +17,22 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
-import com.example.domain.AccessControl
-import com.example.domain.ForceUpdateChecker
-import com.example.domain.PasswordHasher
-import com.example.domain.SessionManager
-import com.example.domain.ThemePreferences
-import com.example.ui.auth.AuthScreen
-import com.example.ui.billing.BillingScreen
-import com.example.ui.dashboard.DashboardScreen
-import com.example.ui.legal.PrivacyPolicyScreen
-import com.example.ui.legal.TermsConditionsScreen
-import com.example.ui.navigation.*
-import com.example.ui.pricing.PricingScreen
-import com.example.ui.superadmin.SuperAdminScreen
-import com.example.ui.subscription.SubscriptionExpiredScreen
-import com.example.ui.theme.MyApplicationTheme
-import com.example.ui.update.ForceUpdateScreen
+import com.batchfee.edu.domain.AccessControl
+import com.batchfee.edu.domain.ForceUpdateChecker
+import com.batchfee.edu.domain.PasswordHasher
+import com.batchfee.edu.domain.SessionManager
+import com.batchfee.edu.domain.ThemePreferences
+import com.batchfee.edu.ui.auth.AuthScreen
+import com.batchfee.edu.ui.billing.BillingScreen
+import com.batchfee.edu.ui.dashboard.DashboardScreen
+import com.batchfee.edu.ui.legal.PrivacyPolicyScreen
+import com.batchfee.edu.ui.legal.TermsConditionsScreen
+import com.batchfee.edu.ui.navigation.*
+import com.batchfee.edu.ui.pricing.PricingScreen
+import com.batchfee.edu.ui.superadmin.SuperAdminScreen
+import com.batchfee.edu.ui.subscription.SubscriptionExpiredScreen
+import com.batchfee.edu.ui.theme.MyApplicationTheme
+import com.batchfee.edu.ui.update.ForceUpdateScreen
 import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.Dispatchers
@@ -61,7 +61,7 @@ class MainActivity : FragmentActivity() {
                 ) {
                     var forceUpdate by remember { mutableStateOf<Int?>(null) }
 
-                    // ── Force Update Check ──
+                    // â”€â”€ Force Update Check â”€â”€
                     if (forceUpdate != null) {
                         ForceUpdateScreen(requiredVersion = forceUpdate!!)
                     } else {
@@ -81,7 +81,7 @@ class MainActivity : FragmentActivity() {
 }
 
 @Composable
-private fun MainAppContent(appDb: com.example.data.database.AppDatabase) {
+private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
     val navController = rememberNavController()
     val lifecycleOwner = LocalLifecycleOwner.current
     val isLoggedIn by SessionManager.currentUserId.collectAsState()
@@ -200,7 +200,7 @@ private fun MainAppContent(appDb: com.example.data.database.AppDatabase) {
         
         composable<DashboardRoute> {
             var currentTab by remember { mutableStateOf("DashboardRoute") }
-            com.example.ui.dashboard.DashboardTabsScreen(
+            com.batchfee.edu.ui.dashboard.DashboardTabsScreen(
                 db = appDb,
                 currentRoute = currentTab,
                 onNavigate = navigate@ { route ->
@@ -217,23 +217,23 @@ private fun MainAppContent(appDb: com.example.data.database.AppDatabase) {
                             "DueFeesRoute" -> navController.navigate(DueFeesRoute)
                             "CreateFeeRoute" -> navController.navigate(CreateFeeRoute)
                             "UnifiedCollectRoute" -> navController.navigate(UnifiedCollectRoute)
-                            "AttendanceRoute" -> navController.navigate(com.example.ui.navigation.AttendanceRoute)
-                            "AttendanceReportRoute" -> navController.navigate(com.example.ui.navigation.AttendanceReportRoute)
-                            "ReportsRoute" -> navController.navigate(com.example.ui.navigation.ReportsRoute)
-                            "ReminderTemplatesRoute" -> navController.navigate(com.example.ui.navigation.ReminderTemplatesRoute)
-                            "StaffRoute" -> navController.navigate(com.example.ui.navigation.StaffRoute)
-                            "AddStaffRoute" -> navController.navigate(com.example.ui.navigation.AddStaffRoute)
-                            "StaffAttendanceRoute" -> navController.navigate(com.example.ui.navigation.StaffAttendanceRoute)
-                            "SalaryRoute" -> navController.navigate(com.example.ui.navigation.SalaryRoute)
-                            "ExpensesRoute" -> navController.navigate(com.example.ui.navigation.ExpensesRoute)
-                            "AddExpenseRoute" -> navController.navigate(com.example.ui.navigation.AddExpenseRoute)
-                            "ProfitLossRoute" -> navController.navigate(com.example.ui.navigation.ProfitLossRoute)
-                            "ExamsRoute" -> navController.navigate(com.example.ui.navigation.ExamsRoute)
-                            "CreateExamRoute" -> navController.navigate(com.example.ui.navigation.CreateExamRoute)
-                            "IdCardGeneratorRoute" -> navController.navigate(com.example.ui.navigation.IdCardGeneratorRoute)
-                            "BirthdayReminderRoute" -> navController.navigate(com.example.ui.navigation.BirthdayReminderRoute)
-                            "SettingsRoute" -> navController.navigate(com.example.ui.navigation.SettingsRoute)
-                            "EnquiryListRoute" -> navController.navigate(com.example.ui.navigation.EnquiryListRoute)
+                            "AttendanceRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.AttendanceRoute)
+                            "AttendanceReportRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.AttendanceReportRoute)
+                            "ReportsRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.ReportsRoute)
+                            "ReminderTemplatesRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.ReminderTemplatesRoute)
+                            "StaffRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.StaffRoute)
+                            "AddStaffRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.AddStaffRoute)
+                            "StaffAttendanceRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.StaffAttendanceRoute)
+                            "SalaryRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.SalaryRoute)
+                            "ExpensesRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.ExpensesRoute)
+                            "AddExpenseRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.AddExpenseRoute)
+                            "ProfitLossRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.ProfitLossRoute)
+                            "ExamsRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.ExamsRoute)
+                            "CreateExamRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.CreateExamRoute)
+                            "IdCardGeneratorRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.IdCardGeneratorRoute)
+                            "BirthdayReminderRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.BirthdayReminderRoute)
+                            "SettingsRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.SettingsRoute)
+                            "EnquiryListRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.EnquiryListRoute)
                             else -> {
                                 if (route.startsWith("TakeAttendanceRoute:")) {
                                     route.substringAfter(":").takeIf { it.isNotBlank() }?.let { batchId ->
@@ -256,7 +256,7 @@ private fun MainAppContent(appDb: com.example.data.database.AppDatabase) {
         }
         
         composable<StudentsRoute> {
-            com.example.ui.students.StudentListScreen(
+            com.batchfee.edu.ui.students.StudentListScreen(
                 db = appDb,
                 onBack = { navController.popBackStack() },
                 onAddStudent = { navController.navigate(AddStudentRoute) },
@@ -266,12 +266,12 @@ private fun MainAppContent(appDb: com.example.data.database.AppDatabase) {
         }
         
         composable<AddStudentRoute> {
-            com.example.ui.students.AddEditStudentScreen(db = appDb, onBack = { navController.popBackStack() })
+            com.batchfee.edu.ui.students.AddEditStudentScreen(db = appDb, onBack = { navController.popBackStack() })
         }
 
         composable<EditStudentRoute> { backStackEntry ->
             val route = backStackEntry.toRoute<EditStudentRoute>()
-            com.example.ui.students.AddEditStudentScreen(
+            com.batchfee.edu.ui.students.AddEditStudentScreen(
                 db = appDb,
                 studentId = route.studentId,
                 onBack = { navController.popBackStack() }
@@ -280,7 +280,7 @@ private fun MainAppContent(appDb: com.example.data.database.AppDatabase) {
         
         composable<StudentProfileRoute> { backStackEntry ->
             val route = backStackEntry.toRoute<StudentProfileRoute>()
-            com.example.ui.students.StudentProfileScreen(
+            com.batchfee.edu.ui.students.StudentProfileScreen(
                 db = appDb,
                 studentId = route.studentId,
                 onBack = { navController.popBackStack() },
@@ -290,7 +290,7 @@ private fun MainAppContent(appDb: com.example.data.database.AppDatabase) {
         }
         
         composable<BatchesRoute> {
-            com.example.ui.batches.BatchListScreen(
+            com.batchfee.edu.ui.batches.BatchListScreen(
                 db = appDb,
                 onBack = { navController.popBackStack() },
                 onAddBatch = { navController.navigate(AddBatchRoute) },
@@ -299,12 +299,12 @@ private fun MainAppContent(appDb: com.example.data.database.AppDatabase) {
         }
         
         composable<AddBatchRoute> {
-            com.example.ui.batches.AddEditBatchScreen(db = appDb, onBack = { navController.popBackStack() })
+            com.batchfee.edu.ui.batches.AddEditBatchScreen(db = appDb, onBack = { navController.popBackStack() })
         }
 
         composable<EditBatchRoute> { backStackEntry ->
             val route = backStackEntry.toRoute<EditBatchRoute>()
-            com.example.ui.batches.AddEditBatchScreen(
+            com.batchfee.edu.ui.batches.AddEditBatchScreen(
                 db = appDb,
                 batchId = route.batchId,
                 onBack = { navController.popBackStack() }
@@ -313,7 +313,7 @@ private fun MainAppContent(appDb: com.example.data.database.AppDatabase) {
         
         composable<BatchDetailRoute> { backStackEntry ->
             val route = backStackEntry.toRoute<BatchDetailRoute>()
-            com.example.ui.batches.BatchDetailScreen(
+            com.batchfee.edu.ui.batches.BatchDetailScreen(
                 db = appDb,
                 batchId = route.batchId,
                 onBack = { navController.popBackStack() },
@@ -324,7 +324,7 @@ private fun MainAppContent(appDb: com.example.data.database.AppDatabase) {
         
         composable<EnrollStudentsRoute> { backStackEntry ->
             val route = backStackEntry.toRoute<EnrollStudentsRoute>()
-            com.example.ui.batches.EnrollStudentsScreen(
+            com.batchfee.edu.ui.batches.EnrollStudentsScreen(
                 db = appDb,
                 batchId = route.batchId,
                 onBack = { navController.popBackStack() }
@@ -332,7 +332,7 @@ private fun MainAppContent(appDb: com.example.data.database.AppDatabase) {
         }
         
         composable<FeeDashboardRoute> {
-            com.example.ui.fees.FeeDashboardScreen(
+            com.batchfee.edu.ui.fees.FeeDashboardScreen(
                 db = appDb,
                 onBack = { navController.popBackStack() },
                 onNavigateDueFees = { navController.navigate(UnifiedCollectRoute) },
@@ -342,11 +342,11 @@ private fun MainAppContent(appDb: com.example.data.database.AppDatabase) {
         }
         
         composable<CreateFeeRoute> {
-            com.example.ui.fees.CreateFeeScreen(db = appDb, onBack = { navController.popBackStack() })
+            com.batchfee.edu.ui.fees.CreateFeeScreen(db = appDb, onBack = { navController.popBackStack() })
         }
         
         composable<DueFeesRoute> {
-            com.example.ui.fees.DueFeeListScreen(
+            com.batchfee.edu.ui.fees.DueFeeListScreen(
                 db = appDb,
                 onBack = { navController.popBackStack() }
             )
@@ -354,7 +354,7 @@ private fun MainAppContent(appDb: com.example.data.database.AppDatabase) {
         
         composable<CollectPaymentRoute> { backStackEntry ->
             val route = backStackEntry.toRoute<CollectPaymentRoute>()
-            com.example.ui.fees.CollectPaymentScreen(
+            com.batchfee.edu.ui.fees.CollectPaymentScreen(
                 db = appDb,
                 feeId = route.feeId,
                 onBack = { navController.popBackStack() },
@@ -367,11 +367,11 @@ private fun MainAppContent(appDb: com.example.data.database.AppDatabase) {
         
         composable<ReceiptDetailRoute> { backStackEntry ->
             val route = backStackEntry.toRoute<ReceiptDetailRoute>()
-            com.example.ui.fees.ReceiptDetailScreen(db = appDb, paymentId = route.paymentId, onBack = { navController.popBackStack() })
+            com.batchfee.edu.ui.fees.ReceiptDetailScreen(db = appDb, paymentId = route.paymentId, onBack = { navController.popBackStack() })
         }
         
         composable<UnifiedCollectRoute> {
-            com.example.ui.fees.UnifiedCollectScreen(
+            com.batchfee.edu.ui.fees.UnifiedCollectScreen(
                 db = appDb,
                 onBack = { navController.popBackStack() },
                 onCollectPayment = { feeId -> navController.navigate(CollectPaymentRoute(feeId)) }
@@ -379,15 +379,15 @@ private fun MainAppContent(appDb: com.example.data.database.AppDatabase) {
         }
         
         composable<ReportsRoute> {
-            com.example.ui.reports.ReportsScreen(db = appDb, onBack = { navController.popBackStack() })
+            com.batchfee.edu.ui.reports.ReportsScreen(db = appDb, onBack = { navController.popBackStack() })
         }
         
         composable<ReminderTemplatesRoute> {
-            com.example.ui.reminders.ReminderTemplatesScreen(db = appDb, onBack = { navController.popBackStack() })
+            com.batchfee.edu.ui.reminders.ReminderTemplatesScreen(db = appDb, onBack = { navController.popBackStack() })
         }
         
         composable<AttendanceRoute> {
-            com.example.ui.attendance.AttendanceBatchSelectScreen(
+            com.batchfee.edu.ui.attendance.AttendanceBatchSelectScreen(
                 db = appDb,
                 onBack = { navController.popBackStack() },
                 onSelectBatch = { batchId -> navController.navigate(TakeAttendanceRoute(batchId)) }
@@ -396,15 +396,15 @@ private fun MainAppContent(appDb: com.example.data.database.AppDatabase) {
         
         composable<TakeAttendanceRoute> { backStackEntry ->
             val route = backStackEntry.toRoute<TakeAttendanceRoute>()
-            com.example.ui.attendance.TakeAttendanceScreen(db = appDb, batchId = route.batchId, onBack = { navController.popBackStack() })
+            com.batchfee.edu.ui.attendance.TakeAttendanceScreen(db = appDb, batchId = route.batchId, onBack = { navController.popBackStack() })
         }
         
         composable<AttendanceReportRoute> {
-            com.example.ui.attendance.AttendanceReportScreen(db = appDb, onBack = { navController.popBackStack() })
+            com.batchfee.edu.ui.attendance.AttendanceReportScreen(db = appDb, onBack = { navController.popBackStack() })
         }
         
         composable<StaffRoute> {
-            com.example.ui.staff.StaffListScreen(
+            com.batchfee.edu.ui.staff.StaffListScreen(
                 db = appDb,
                 onBack = { navController.popBackStack() },
                 onAddStaff = { navController.navigate(AddStaffRoute) },
@@ -419,7 +419,7 @@ private fun MainAppContent(appDb: com.example.data.database.AppDatabase) {
                     ?.toRoute<StaffProfileRoute>()
                     ?.staffId
             }.getOrNull()
-            com.example.ui.staff.AddEditStaffScreen(
+            com.batchfee.edu.ui.staff.AddEditStaffScreen(
                 db = appDb,
                 staffId = staffId,
                 onBack = { navController.popBackStack() }
@@ -428,7 +428,7 @@ private fun MainAppContent(appDb: com.example.data.database.AppDatabase) {
 
         composable<EditStaffRoute> { backStackEntry ->
             val route = backStackEntry.toRoute<EditStaffRoute>()
-            com.example.ui.staff.AddEditStaffScreen(
+            com.batchfee.edu.ui.staff.AddEditStaffScreen(
                 db = appDb,
                 staffId = route.staffId,
                 onBack = { navController.popBackStack() }
@@ -437,7 +437,7 @@ private fun MainAppContent(appDb: com.example.data.database.AppDatabase) {
         
         composable<StaffProfileRoute> { backStackEntry ->
             val route = backStackEntry.toRoute<StaffProfileRoute>()
-            com.example.ui.staff.StaffProfileScreen(
+            com.batchfee.edu.ui.staff.StaffProfileScreen(
                 db = appDb,
                 staffId = route.staffId,
                 onBack = { navController.popBackStack() },
@@ -446,21 +446,21 @@ private fun MainAppContent(appDb: com.example.data.database.AppDatabase) {
         }
 
         composable<StaffAttendanceRoute> {
-            com.example.ui.staff.StaffAttendanceScreen(
+            com.batchfee.edu.ui.staff.StaffAttendanceScreen(
                 db = appDb,
                 onBack = { navController.popBackStack() }
             )
         }
 
         composable<StaffAttendanceReportRoute> {
-            com.example.ui.staff.StaffAttendanceScreen(
+            com.batchfee.edu.ui.staff.StaffAttendanceScreen(
                 db = appDb,
                 onBack = { navController.popBackStack() }
             )
         }
         
         composable<SalaryRoute> {
-            com.example.ui.staff.SalaryDashboardScreen(
+            com.batchfee.edu.ui.staff.SalaryDashboardScreen(
                 db = appDb,
                 onBack = { navController.popBackStack() },
                 onGenerate = { navController.navigate(GenerateSalaryRoute) },
@@ -469,11 +469,11 @@ private fun MainAppContent(appDb: com.example.data.database.AppDatabase) {
         }
         
         composable<GenerateSalaryRoute> {
-            com.example.ui.staff.GenerateSalaryScreen(db = appDb, onBack = { navController.popBackStack() })
+            com.batchfee.edu.ui.staff.GenerateSalaryScreen(db = appDb, onBack = { navController.popBackStack() })
         }
         
         composable<ExpensesRoute> {
-            com.example.ui.expenses.ExpenseListScreen(
+            com.batchfee.edu.ui.expenses.ExpenseListScreen(
                 db = appDb,
                 onBack = { navController.popBackStack() },
                 onAddExpense = { navController.navigate(AddExpenseRoute) },
@@ -482,15 +482,15 @@ private fun MainAppContent(appDb: com.example.data.database.AppDatabase) {
         }
         
         composable<AddExpenseRoute> {
-            com.example.ui.expenses.AddEditExpenseScreen(db = appDb, onBack = { navController.popBackStack() })
+            com.batchfee.edu.ui.expenses.AddEditExpenseScreen(db = appDb, onBack = { navController.popBackStack() })
         }
         
         composable<ProfitLossRoute> {
-            com.example.ui.reports.ProfitLossScreen(db = appDb, onBack = { navController.popBackStack() }, onNavigateToPricing = { navController.navigate(PricingRoute) })
+            com.batchfee.edu.ui.reports.ProfitLossScreen(db = appDb, onBack = { navController.popBackStack() }, onNavigateToPricing = { navController.navigate(PricingRoute) })
         }
         
         composable<ExamsRoute> {
-            com.example.ui.exams.ExamListScreen(
+            com.batchfee.edu.ui.exams.ExamListScreen(
                 db = appDb,
                 onBack = { navController.popBackStack() },
                 onAddExam = { navController.navigate(CreateExamRoute) },
@@ -500,12 +500,12 @@ private fun MainAppContent(appDb: com.example.data.database.AppDatabase) {
         }
         
         composable<CreateExamRoute> {
-            com.example.ui.exams.AddEditExamScreen(db = appDb, onBack = { navController.popBackStack() })
+            com.batchfee.edu.ui.exams.AddEditExamScreen(db = appDb, onBack = { navController.popBackStack() })
         }
 
         composable<EditExamRoute> { backStackEntry ->
             val route = backStackEntry.toRoute<EditExamRoute>()
-            com.example.ui.exams.AddEditExamScreen(
+            com.batchfee.edu.ui.exams.AddEditExamScreen(
                 db = appDb,
                 examId = route.examId,
                 onBack = { navController.popBackStack() }
@@ -514,7 +514,7 @@ private fun MainAppContent(appDb: com.example.data.database.AppDatabase) {
 
         composable<ExamDetailRoute> { backStackEntry ->
             val route = backStackEntry.toRoute<ExamDetailRoute>()
-            com.example.ui.exams.ExamDetailScreen(
+            com.batchfee.edu.ui.exams.ExamDetailScreen(
                 db = appDb,
                 examId = route.examId,
                 onBack = { navController.popBackStack() },
@@ -523,7 +523,7 @@ private fun MainAppContent(appDb: com.example.data.database.AppDatabase) {
         }
         
         composable<IdCardGeneratorRoute> {
-            com.example.ui.students.IdCardGeneratorScreen(
+            com.batchfee.edu.ui.students.IdCardGeneratorScreen(
                 db = appDb,
                 onBack = { navController.popBackStack() },
                 onNavigateToPreview = { type, id -> navController.navigate(IdCardPreviewRoute(type, id)) },
@@ -533,15 +533,15 @@ private fun MainAppContent(appDb: com.example.data.database.AppDatabase) {
         
         composable<IdCardPreviewRoute> { backStackEntry ->
             val route = backStackEntry.toRoute<IdCardPreviewRoute>()
-            com.example.ui.students.IdCardPreviewScreen(db = appDb, type = route.type, studentId = route.id, onBack = { navController.popBackStack() })
+            com.batchfee.edu.ui.students.IdCardPreviewScreen(db = appDb, type = route.type, studentId = route.id, onBack = { navController.popBackStack() })
         }
         
         composable<BirthdayReminderRoute> {
-            com.example.ui.students.BirthdayReminderScreen(db = appDb, onBack = { navController.popBackStack() }, onNavigateToPricing = { navController.navigate(PricingRoute) })
+            com.batchfee.edu.ui.students.BirthdayReminderScreen(db = appDb, onBack = { navController.popBackStack() }, onNavigateToPricing = { navController.navigate(PricingRoute) })
         }
         
         composable<EnquiryListRoute> {
-            com.example.ui.enquiries.EnquiryListScreen(
+            com.batchfee.edu.ui.enquiries.EnquiryListScreen(
                 db = appDb,
                 onBack = { navController.popBackStack() },
                 onAddEnquiry = { /* handled by Dashboard dialog */ }
@@ -549,26 +549,26 @@ private fun MainAppContent(appDb: com.example.data.database.AppDatabase) {
         }
 
         composable<BackupRestoreRoute> {
-            com.example.ui.dashboard.BackupRestoreScreen(onBack = { navController.popBackStack() }, onNavigateToPricing = { navController.navigate(PricingRoute) })
+            com.batchfee.edu.ui.dashboard.BackupRestoreScreen(onBack = { navController.popBackStack() }, onNavigateToPricing = { navController.navigate(PricingRoute) })
         }
         
         composable<SettingsRoute> {
-            com.example.ui.dashboard.SettingsScreen(
+            com.batchfee.edu.ui.dashboard.SettingsScreen(
                 db = appDb,
                 onBack = { navController.popBackStack() },
                 onNavigate = { routeStr ->
                     when(routeStr) {
                         "BillingRoute" -> navController.navigate(BillingRoute)
-                        "ReminderTemplatesRoute" -> navController.navigate(com.example.ui.navigation.ReminderTemplatesRoute)
-                        "BackupRestoreRoute" -> navController.navigate(com.example.ui.navigation.BackupRestoreRoute)
-                        "StudentRegistrationRoute" -> navController.navigate(com.example.ui.navigation.StudentRegistrationRoute)
+                        "ReminderTemplatesRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.ReminderTemplatesRoute)
+                        "BackupRestoreRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.BackupRestoreRoute)
+                        "StudentRegistrationRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.StudentRegistrationRoute)
                     }
                 }
             )
         }
         
         composable<StudentRegistrationRoute> {
-            com.example.ui.registrations.RegistrationListScreen(
+            com.batchfee.edu.ui.registrations.RegistrationListScreen(
                 db = appDb,
                 onBack = { navController.popBackStack() }
             )
@@ -634,3 +634,4 @@ private suspend fun checkSubscriptionExpired(instituteId: String): Boolean {
         false
     }
 }
+

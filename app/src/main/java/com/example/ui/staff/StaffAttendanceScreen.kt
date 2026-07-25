@@ -1,4 +1,4 @@
-package com.example.ui.staff
+﻿package com.batchfee.edu.ui.staff
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -41,14 +41,14 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.data.database.AppDatabase
-import com.example.data.firestore.AttendanceSyncHelper
-import com.example.data.firestore.InstituteCacheRefreshManager
-import com.example.data.models.StaffAttendanceEntity
-import com.example.data.models.StaffEntity
-import com.example.domain.SessionManager
-import com.example.domain.StaffPermissions
-import com.example.ui.attendance.startOfDay
+import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.firestore.AttendanceSyncHelper
+import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
+import com.batchfee.edu.data.models.StaffAttendanceEntity
+import com.batchfee.edu.data.models.StaffEntity
+import com.batchfee.edu.domain.SessionManager
+import com.batchfee.edu.domain.StaffPermissions
+import com.batchfee.edu.ui.attendance.startOfDay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -325,3 +325,4 @@ private fun AttendanceChip(
         )
     )
 }
+

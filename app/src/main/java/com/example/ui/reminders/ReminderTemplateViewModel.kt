@@ -1,13 +1,13 @@
-package com.example.ui.reminders
+﻿package com.batchfee.edu.ui.reminders
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import com.example.data.database.AppDatabase
-import com.example.data.firestore.InstituteCacheRefreshManager
-import com.example.data.firestore.ReminderTemplateSyncHelper
-import com.example.data.models.ReminderTemplateEntity
-import com.example.domain.SessionManager
+import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
+import com.batchfee.edu.data.firestore.ReminderTemplateSyncHelper
+import com.batchfee.edu.data.models.ReminderTemplateEntity
+import com.batchfee.edu.domain.SessionManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -37,3 +37,4 @@ class ReminderTemplateViewModelFactory(private val db: AppDatabase) : ViewModelP
         throw IllegalArgumentException()
     }
 }
+

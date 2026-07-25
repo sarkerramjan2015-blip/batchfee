@@ -1,6 +1,6 @@
 # 📱 BatchFee — Google Play Store Publishing Guide
 
-> **Version:** 1.3 (versionCode 4)
+> **Version:** 1.4 (versionCode 5)
 > **Updated:** June 9, 2026
 > **For:** Senior Developer (Oni Bhai) — Play Store Console Publisher
 
