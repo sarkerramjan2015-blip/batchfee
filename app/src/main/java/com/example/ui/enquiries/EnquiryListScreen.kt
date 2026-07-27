@@ -1,4 +1,4 @@
-﻿package com.batchfee.edu.ui.enquiries
+package com.batchfee.edu.ui.enquiries
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -133,7 +133,7 @@ fun EnquiryListScreen(
                 contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                // â”€â”€ Summary row â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                // ── Summary row ────────────────────────────
                 item {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -149,7 +149,7 @@ fun EnquiryListScreen(
                     Spacer(Modifier.height(10.dp))
                 }
 
-                // â”€â”€ Filter chips â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                // ── Filter chips ────────────────────────────
                 item {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -229,7 +229,7 @@ fun EnquiryListScreen(
         }
     }
 
-    // â”€â”€ Add enquiry dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Add enquiry dialog ─────────────────────────────
     if (showAddDialog) {
         Dialog(onDismissRequest = { showAddDialog = false }) {
             Card(
@@ -317,7 +317,7 @@ fun EnquiryListScreen(
         }
     }
 
-    // â”€â”€ Status change dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Status change dialog ────────────────────────────
     if (showStatusDialog && selectedEnquiry != null) {
         val e = selectedEnquiry!!
         val statusLabel = when {
@@ -507,7 +507,7 @@ private fun EnquiryCard(
                 )
                 Spacer(Modifier.height(2.dp))
                 Text(
-                    "${enquiry.phone} Â· ${enquiry.subjectName}",
+                    "${enquiry.phone} · ${enquiry.subjectName}",
                     color = TextMuted, fontSize = 12.sp,
                     maxLines = 1, overflow = TextOverflow.Ellipsis
                 )

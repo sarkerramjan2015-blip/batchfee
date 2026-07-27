@@ -1,4 +1,4 @@
-﻿package com.batchfee.edu.ui.staff
+package com.batchfee.edu.ui.staff
 
 import android.content.Context
 import android.content.Intent
@@ -48,7 +48,7 @@ import java.text.SimpleDateFormat
 import kotlinx.coroutines.runBlocking
 import java.util.*
 
-// â”€â”€ Colors â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Colors ──────────────────────────────────────────────────────
 private val BgColor      = Color(0xFF07111F)
 private val CardBg        = Color(0xFF0F172A)
 private val CardBgAlt     = Color(0xFF111827)
@@ -261,7 +261,7 @@ fun GenerateSalaryScreen(db: AppDatabase, onBack: () -> Unit) {
             var monthExpanded by remember { mutableStateOf(false) }
             val monthOptions = remember {
                 val cal = Calendar.getInstance()
-                val list = mutableListOf<Pair<String, String>>() // label â†’ value
+                val list = mutableListOf<Pair<String, String>>() // label → value
                 for (i in -6..6) {
                     val c = cal.clone() as Calendar
                     c.add(Calendar.MONTH, i)
@@ -482,7 +482,7 @@ private fun generateSalaryReceiptPdf(context: Context, salary: com.batchfee.edu.
     whiteText.textSize = 10f
     canvas.drawText("STAFF SALARY RECEIPT", 20f, 70f, whiteText)
     whiteText.textSize = 9f
-    canvas.drawText("$instCode  â€¢  $instPhone", 20f, 90f, whiteText)
+    canvas.drawText("$instCode  •  $instPhone", 20f, 90f, whiteText)
     fill.color = white
 
     // Staff info section
@@ -529,7 +529,7 @@ private fun generateSalaryReceiptPdf(context: Context, salary: com.batchfee.edu.
     // Footer
     y += 20
     text.textSize = 9f; text.color = textMuted
-    canvas.drawText("Thank you  â€¢  $instName", 20f, y, text)
+    canvas.drawText("Thank you  •  $instName", 20f, y, text)
 
     document.finishPage(page)
     val file = File(context.cacheDir, "salary_receipt_${salary.salaryMonth.replace(" ", "_")}.pdf")

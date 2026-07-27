@@ -1,4 +1,4 @@
-﻿package com.batchfee.edu.ui.auth
+package com.batchfee.edu.ui.auth
 
 import android.content.Context
 import androidx.compose.animation.*
@@ -42,7 +42,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.data.firestore.AppUserSyncHelper
-import com.batchfee.edu.data.firestore.CoreDataSyncCoordinator
+import com.batchfee.edu.data.firestore.InstituteSyncHelper
 import com.batchfee.edu.data.models.InstituteEntity
 import com.batchfee.edu.data.models.UserEntity
 import com.batchfee.edu.domain.BiometricAuthManager
@@ -63,6 +63,24 @@ import kotlinx.coroutines.withContext
 import androidx.lifecycle.viewModelScope
 
 class AuthViewModel(private val db: AppDatabase) : ViewModel() {
+
+    /**
+     * A dashboard is only safe to enter after its institute has been resolved.
+     * This prevents a real account from rendering cached/demo placeholders while
+     * its actual profile is still being synchronized.
+     */
+    private suspend fun resolveInstituteBeforeNavigation(instituteId: String?, role: String) {
+        if (role == "SuperAdmin") return
+        val resolvedInstituteId = instituteId?.takeIf { it.isNotBlank() }
+            ?: throw IllegalStateException("Your institute profile could not be resolved. Please try again.")
+
+        withContext(Dispatchers.IO) {
+            InstituteSyncHelper.syncInstituteFromFirestore(db, resolvedInstituteId)
+            checkNotNull(db.instituteDao().getInstitute(resolvedInstituteId)) {
+                "Your institute profile is still unavailable. Please try again."
+            }
+        }
+    }
     
     fun trackDemoLogin(accountType: String) {
         viewModelScope.launch {
@@ -104,7 +122,7 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                 val now = System.currentTimeMillis()
                 val fifteenDaysMs = 15L * 24 * 60 * 60 * 1000
 
-                // Write to Firestore FIRST â€” fail early if network/rules issue
+                // Write to Firestore FIRST — fail early if network/rules issue
                 withContext(Dispatchers.IO) {
                     val firestore = FirebaseFirestore.getInstance()
                     firestore.collection("institutes").document(uid).set(
@@ -180,7 +198,7 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                 onError(message)
             } catch (e: FirebaseFirestoreException) {
                 FirebaseCrashlytics.getInstance().recordException(e)
-                // Firestore write failed but Auth succeeded â€” cleanup auth user
+                // Firestore write failed but Auth succeeded — cleanup auth user
                 try {
                     FirebaseAuth.getInstance().currentUser?.delete()
                 } catch (_: Exception) { }
@@ -210,13 +228,13 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                 val hasAt = input.contains("@")
                 android.util.Log.d("AUTH_LOGIN", "LOGIN: credential=$input, hasAt=$hasAt, password length=${cleanPassword.length}")
 
-                // â”€â”€ SMART ROUTING: Email vs Staff ID â”€â”€
+                // ── SMART ROUTING: Email vs Staff ID ──
                 val firebaseEmail: String
                 if (hasAt) {
                     // Direct email login
                     firebaseEmail = input
                 } else {
-                    // Staff ID â€” resolve to email via Room DB
+                    // Staff ID — resolve to email via Room DB
                     val staff = db.staffDao().getStaffByCodeOnce(input.uppercase())
                     if (staff == null) {
                         android.util.Log.w("AUTH_LOGIN", "Staff ID not found: $input")
@@ -232,7 +250,7 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                     firebaseEmail = staffEmail
                 }
 
-                // â”€â”€ Firebase Auth â”€â”€
+                // ── Firebase Auth ──
                 android.util.Log.d("AUTH_LOGIN", "Calling signInWithEmailAndPassword: email=$firebaseEmail")
                 val authResult = withContext(Dispatchers.IO) {
                     // Sign out any stale session first to avoid credential expiry errors
@@ -245,7 +263,7 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                     ?: throw IllegalStateException("Firebase Auth returned null UID")
                 android.util.Log.d("AUTH_LOGIN", "AUTH OK: uid=$uid")
 
-                // â”€â”€ Fetch or rebuild local user record â”€â”€
+                // ── Fetch or rebuild local user record ──
                 val managedUser = withContext(Dispatchers.IO) {
                     AppUserSyncHelper.fetchManagedUser(uid)
                 }
@@ -369,13 +387,13 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                         )
                     }
                 } else if (localUser != null && localUser.role != "Staff") {
-                    // Firestore doc missing but user exists in local Room â€” offline/legacy fallback
+                    // Firestore doc missing but user exists in local Room — offline/legacy fallback
                     android.util.Log.w("AUTH_LOGIN", "Firestore doc not found but local user exists: uid=$uid, role=${localUser.role}")
                     role = localUser.role
                     instituteId = localUser.instituteId
                     staffPermissions = null
                 } else {
-                    // Not an institute â€” check if staff
+                    // Not an institute — check if staff
                     // Try all staff subcollections (worst case iterates, but staff count is small)
                     var foundStaff: StaffSyncHelper.StaffFirestoreData? = null
                     var foundInstId: String? = null
@@ -474,10 +492,8 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                     db.userDao().resetFailedAttempts(firebaseEmail)
                 }
 
+                resolveInstituteBeforeNavigation(instituteId, role)
                 SessionManager.login(uid, instituteId ?: "", role, staffPermissions)
-                viewModelScope.launch(Dispatchers.IO) {
-                    CoreDataSyncCoordinator.refreshInstituteCache(db, instituteId ?: "")
-                }
                 onSuccess(role)
 
             } catch (e: FirebaseAuthException) {
@@ -552,6 +568,7 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                     null
                 }
 
+                resolveInstituteBeforeNavigation(instituteId, user.role)
                 SessionManager.login(user.id, instituteId, user.role, staffPermissions)
                 BiometricAuthManager.refreshCurrentSession(appContext, user.email)
                 onSuccess(user.role)
@@ -1034,21 +1051,31 @@ fun AuthScreen(
                                 modifier = Modifier.fillMaxWidth()
                             )
                         }
-                    } else if (sessionNotice != null) {
+                    } else if (isLoginMode && sessionNotice != null) {
                         Spacer(Modifier.height(12.dp))
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(AuthBlue.copy(alpha = 0.14f))
-                                .border(1.dp, AuthCyan.copy(alpha = 0.35f), RoundedCornerShape(10.dp))
-                                .padding(10.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(
+                                    Brush.horizontalGradient(
+                                        listOf(
+                                            Color(0xFFFFE4E6).copy(alpha = 0.18f),
+                                            Color(0xFFFECACA).copy(alpha = 0.12f)
+                                        )
+                                    )
+                                )
+                                .border(1.dp, Color(0xFFFB7185).copy(alpha = 0.38f), RoundedCornerShape(12.dp))
+                                .padding(horizontal = 12.dp, vertical = 10.dp)
                         ) {
                             Text(
                                 sessionNotice,
-                                color = AuthCyan,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Medium,
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    brush = Brush.horizontalGradient(
+                                        listOf(Color(0xFFFF8A80), Color(0xFFFF5C73))
+                                    )
+                                ),
+                                fontWeight = FontWeight.SemiBold,
                                 textAlign = TextAlign.Center,
                                 modifier = Modifier.fillMaxWidth()
                             )
@@ -1249,7 +1276,7 @@ fun AuthScreen(
                         Text("Privacy Policy", color = AuthCyan, fontSize = 12.sp)
                     }
                     Text(
-                        text = "Â·",
+                        text = "·",
                         color = AuthMuted.copy(alpha = 0.75f),
                         fontSize = 12.sp
                     )
@@ -1280,7 +1307,7 @@ fun AuthScreen(
                         contentColor = AuthCyan.copy(alpha = 0.75f)
                     )
                 ) {
-                    Text("ðŸ’¬", fontSize = 13.sp)
+                    Text("💬", fontSize = 13.sp)
                     Spacer(Modifier.width(8.dp))
                     Text(
                         "Chat on WhatsApp: +880 1518657869",
@@ -1294,7 +1321,7 @@ fun AuthScreen(
                 Spacer(Modifier.height(12.dp))
 
                 Text(
-                    text = "v" + BuildConfig.VERSION_NAME + " Â· BatchFee",
+                    text = "v" + BuildConfig.VERSION_NAME + " · BatchFee",
                     style = MaterialTheme.typography.labelSmall,
                     color = AuthMuted.copy(alpha = 0.5f),
                     textAlign = TextAlign.Center

@@ -1,4 +1,4 @@
-﻿package com.batchfee.edu.ui.students
+package com.batchfee.edu.ui.students
 
 import android.content.Intent
 import android.net.Uri
@@ -58,7 +58,7 @@ import java.net.URLEncoder
 import java.text.SimpleDateFormat
 import java.util.*
 
-// â”€â”€ Colors â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Colors ──────────────────────────────────────────────────────
 private val BgColor      = Color(0xFF07111F)
 private val CardBg        = Color(0xFF0F172A)
 private val CardBgAlt     = Color(0xFF111827)
@@ -76,7 +76,7 @@ private val DashboardLine = Color(0x5522D3EE)
 private val DashboardSoft = Color(0x1A22D3EE)
 private val DangerRed     = Color(0xFFEF4444)
 
-// â”€â”€ Screen â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Screen ──────────────────────────────────────────────────────
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun StudentProfileScreen(
@@ -109,13 +109,13 @@ fun StudentProfileScreen(
         instituteSignature = loadInstituteSignature(db, instId)
     }
 
-    // â”€â”€ Batch dialog state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Batch dialog state ──────────────────────────────────
     var showBatchDialog by remember { mutableStateOf(false) }
 
-    // â”€â”€ Shift dialog state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Shift dialog state ───────────────────────────────────
     var showShiftDialog by remember { mutableStateOf(false) }
 
-    // â”€â”€ Fee collection state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Fee collection state ─────────────────────────────────
     var showFeeForm by remember { mutableStateOf(false) }
     val feeRepository = remember { FeeCollectionRepository(db) }
     var selectedBatchId by remember { mutableStateOf<String?>(null) }
@@ -131,7 +131,7 @@ fun StudentProfileScreen(
     var receiptText by remember { mutableStateOf<String?>(null) }
     var feeErrorMessage by remember { mutableStateOf<String?>(null) }
 
-    // â”€â”€ Receipt image upload state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Receipt image upload state ───────────────────────────
     var receiptImageUri by remember { mutableStateOf<Uri?>(null) }
     val tempReceiptFile = remember { File(context.cacheDir, "receipt_${UUID.randomUUID()}.jpg").apply { parentFile?.mkdirs() } }
     val tempReceiptUri = remember {
@@ -145,7 +145,7 @@ fun StudentProfileScreen(
     ) { uri -> if (uri != null) receiptImageUri = uri }
     var showReceiptImagePicker by remember { mutableStateOf(false) }
 
-    // â”€â”€ Load data â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Load data ────────────────────────────────────────────
     LaunchedEffect(instId, studentId) {
         if (instId != null) {
             InstituteCacheRefreshManager.refreshIfStale(db, instId)
@@ -179,7 +179,7 @@ fun StudentProfileScreen(
         }
     }
 
-    // â”€â”€ Scaffold â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Scaffold ─────────────────────────────────────────────
     Scaffold(
         containerColor = BgColor,
         topBar = {
@@ -237,7 +237,7 @@ fun StudentProfileScreen(
                 )
 
                 if (false) {
-                // â”€â”€ Photo + Student Code â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                // ── Photo + Student Code ──────────────────────
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
@@ -275,7 +275,7 @@ fun StudentProfileScreen(
 
                 Spacer(Modifier.height(20.dp))
 
-                // â”€â”€ Action Buttons â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                // ── Action Buttons ────────────────────────────
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -302,7 +302,7 @@ fun StudentProfileScreen(
 
                 Spacer(Modifier.height(20.dp))
 
-                // â”€â”€ Fee Summary Card â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                // ── Fee Summary Card ───────────────────────────
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(14.dp),
@@ -325,7 +325,7 @@ fun StudentProfileScreen(
 
                 Spacer(Modifier.height(20.dp))
 
-                // â”€â”€ Inline Fee Collection Form â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                // ── Inline Fee Collection Form ─────────────────
                 if (showFeeForm) {
                     // Auto-select first batch on open
                     LaunchedEffect(batches) {
@@ -443,7 +443,7 @@ fun StudentProfileScreen(
                                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                     colors = darkFieldColors()
                                 )
-                                // Discount dropdown (10%â€“80%)
+                                // Discount dropdown (10%–80%)
                                 Box(modifier = Modifier.weight(1f)) {
                                     OutlinedTextField(
                                         value = "$discountPercent%",
@@ -540,7 +540,7 @@ fun StudentProfileScreen(
 
                             Spacer(Modifier.height(14.dp))
 
-                            // â”€â”€ Receipt image upload section â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                            // ── Receipt image upload section ───────────────
                             Spacer(Modifier.height(10.dp))
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text("Receipt Photo (optional)", color = TextMuted, fontSize = 12.sp)
@@ -590,7 +590,7 @@ fun StudentProfileScreen(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
-                                // SAVE â€” creates Fee + Payment + Receipt via FeeViewModel
+                                // SAVE — creates Fee + Payment + Receipt via FeeViewModel
                                 Box(
                                     modifier = Modifier
                                         .weight(1f)
@@ -689,22 +689,22 @@ fun StudentProfileScreen(
                                                 val due = (total - paid).coerceAtLeast(0.0)
                                                 // Build receipt text for Print/Share
                                                 val rText = buildString {
-                                                    appendLine("â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•")
+                                                    appendLine("═══════════════════════")
                                                     appendLine("  BatchFee - Fee Receipt")
-                                                    appendLine("â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•")
+                                                    appendLine("═══════════════════════")
                                                     appendLine("Student : ${s.fullName}")
                                                     appendLine("ID      : ${s.studentCode}")
                                                     appendLine("Phone   : ${s.phone ?: "N/A"}")
                                                     appendLine("Batch   : ${batches.find { it.id == selectedBatchId }?.name ?: "N/A"}")
                                                     appendLine("Period  : $feePeriod")
                                                     appendLine("Date    : ${SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(paymentDateMs))}")
-                                                    appendLine("â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€")
+                                                    appendLine("───────────────────────")
                                                     appendLine("Fee     : BDT ${base.toLong()}")
                                                     appendLine("Discount: BDT ${discountAmt.toLong()} (${discountPct}%)")
                                                     appendLine("Total   : BDT ${total.toLong()}")
                                                     appendLine("Paid    : BDT ${paid.toLong()}")
                                                     appendLine("Due     : BDT ${due.toLong()}")
-                                                    appendLine("â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•")
+                                                    appendLine("═══════════════════════")
                                                 }
                                                 receiptText = rText
                                             }
@@ -718,7 +718,7 @@ fun StudentProfileScreen(
                                     }
                                 }
 
-                                // PRINT â€” share receipt as text via system print/share chooser
+                                // PRINT — share receipt as text via system print/share chooser
                                 Box(
                                     modifier = Modifier
                                         .weight(1f)
@@ -728,13 +728,13 @@ fun StudentProfileScreen(
                                         .border(1.dp, SkyBlue.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
                                         .clickable {
                                             val msg = receiptText ?: buildString {
-                                                appendLine("â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•")
+                                                appendLine("═══════════════════════")
                                                 appendLine("  BatchFee - Fee Receipt")
-                                                appendLine("â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•")
+                                                appendLine("═══════════════════════")
                                                 appendLine("Student : ${s.fullName}")
                                                 appendLine("Period  : $feePeriod")
                                                 appendLine("Fee     : BDT ${feeAmount}")
-                                                appendLine("â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•")
+                                                appendLine("═══════════════════════")
                                             }
                                             val printIntent = Intent(Intent.ACTION_SEND).apply {
                                                 type = "text/plain"
@@ -752,7 +752,7 @@ fun StudentProfileScreen(
                                     }
                                 }
 
-                                // SHARE â€” open WhatsApp directly to student's phone number
+                                // SHARE — open WhatsApp directly to student's phone number
                                 Box(
                                     modifier = Modifier
                                         .weight(1f)
@@ -846,7 +846,7 @@ fun StudentProfileScreen(
                     Spacer(Modifier.height(20.dp))
                 }
 
-                // â”€â”€ Info Sections â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                // ── Info Sections ──────────────────────────────
                 SectionHeader("Personal Info")
                 InfoCard {
                     InfoRow("Full Name", s.fullName)
@@ -912,7 +912,7 @@ fun StudentProfileScreen(
 
                 Spacer(Modifier.height(14.dp))
 
-                // â”€â”€ Notes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                // ── Notes ──────────────────────────────────────
                 val cleanNotes = s.notes?.let { n ->
                     if (n.startsWith("WhatsApp: ")) n.split("\n", limit = 2).getOrElse(1) { "" }.trim()
                     else n
@@ -929,7 +929,7 @@ fun StudentProfileScreen(
                 }
             }
 
-            // â”€â”€ Batch Assignment Dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── Batch Assignment Dialog ────────────────────────
             if (showBatchDialog) {
                 var allBatches by remember { mutableStateOf<List<BatchEntity>>(emptyList()) }
                 LaunchedEffect(instId) {
@@ -1007,7 +1007,7 @@ fun StudentProfileScreen(
                 )
             }
 
-            // â”€â”€ Shift Batch Dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── Shift Batch Dialog ────────────────────────────
             if (showShiftDialog) {
                 var allBatches by remember { mutableStateOf<List<BatchEntity>>(emptyList()) }
                 var selectedNewBatchId by remember { mutableStateOf<String?>(null) }
@@ -1054,7 +1054,7 @@ fun StudentProfileScreen(
                                         Column(modifier = Modifier.weight(1f)) {
                                             Text(batch.name, color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                                             Text(
-                                                "Monthly: BDT ${"%.0f".format(batch.monthlyFeeAmount)} Â· Status: ${batch.status}",
+                                                "Monthly: BDT ${"%.0f".format(batch.monthlyFeeAmount)} · Status: ${batch.status}",
                                                 color = TextMuted, fontSize = 11.sp
                                             )
                                         }
@@ -1237,7 +1237,7 @@ fun StudentProfileScreen(
     }
 }
 
-// â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Helpers ─────────────────────────────────────────────────────
 private enum class StudentMenuConfirmAction {
     Close,
     Delete
@@ -1612,7 +1612,7 @@ private fun StudentDashboardContent(
                     Spacer(Modifier.height(7.dp))
                     Text(primaryBatch?.name ?: "No Batch Assigned", color = TextWhite, fontSize = 19.sp, fontWeight = FontWeight.Bold)
                     Text(
-                        if (primaryBatch != null) "Batch Fee â€¢ Monthly â€¢ ${primaryBatch.monthlyFeeAmount.toLong()}" else "Assign a batch to see fee details",
+                        if (primaryBatch != null) "Batch Fee • Monthly • ${primaryBatch.monthlyFeeAmount.toLong()}" else "Assign a batch to see fee details",
                         color = TextMuted,
                         fontSize = 13.sp
                     )
@@ -1862,7 +1862,7 @@ private fun FeePaymentRow(payment: PaymentEntity) {
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Bold
             )
-            Text("${payment.paymentMethod.replaceFirstChar { it.uppercase() }} â€¢ ${payment.receiptNumber}", color = TextMuted, fontSize = 12.sp)
+            Text("${payment.paymentMethod.replaceFirstChar { it.uppercase() }} • ${payment.receiptNumber}", color = TextMuted, fontSize = 12.sp)
         }
         Text(payment.amount.toLong().toString(), color = WAGreen, fontSize = 16.sp, fontWeight = FontWeight.Bold)
     }

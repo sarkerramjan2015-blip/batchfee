@@ -1,4 +1,4 @@
-﻿package com.batchfee.edu.ui.dashboard
+package com.batchfee.edu.ui.dashboard
 
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
@@ -25,6 +25,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -98,6 +100,13 @@ private data class AddMenuOption(
     val route: String
 )
 
+private data class DashboardBootstrapSnapshot(
+    val institute: InstituteEntity,
+    val studentCount: Int,
+    val batchCount: Int,
+    val staffCount: Int
+)
+
 private fun formatRelativeTime(timeMs: Long): String {
     val diff = System.currentTimeMillis() - timeMs
     return when {
@@ -164,6 +173,12 @@ private fun isLeapYear(year: Int) =
     (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
 
 class DashboardViewModel(private val db: AppDatabase) : ViewModel() {
+    private val _isBootstrapReady = MutableStateFlow(false)
+    val isBootstrapReady = _isBootstrapReady.asStateFlow()
+
+    private val _bootstrapError = MutableStateFlow<String?>(null)
+    val bootstrapError = _bootstrapError.asStateFlow()
+
     private val _institute = MutableStateFlow<InstituteEntity?>(null)
     val institute = _institute.asStateFlow()
     
@@ -214,8 +229,37 @@ class DashboardViewModel(private val db: AppDatabase) : ViewModel() {
 
     private fun loadData() {
         viewModelScope.launch {
+            val sessionUserId = SessionManager.currentUserId.value ?: return@launch
             val instId = SessionManager.currentInstituteId.value ?: return@launch
-            InstituteCacheRefreshManager.refreshIfStale(db, instId)
+
+            val bootstrap = try {
+                withContext(Dispatchers.IO) {
+                    // Refresh the current institute scope before taking the first visible snapshot.
+                    InstituteCacheRefreshManager.forceRefresh(db, instId)
+                    DashboardBootstrapSnapshot(
+                        institute = checkNotNull(db.instituteDao().getInstitute(instId)),
+                        studentCount = db.studentDao().getStudentsByInstituteOnce(instId).size,
+                        batchCount = db.batchDao().getBatchesByInstituteOnce(instId).size,
+                        staffCount = db.staffDao().getStaffByInstituteAsList(instId).size
+                    )
+                }
+            } catch (e: Exception) {
+                _bootstrapError.value = "Unable to load your institute dashboard."
+                return@launch
+            }
+
+            // A completed request for a previous account must never unlock this dashboard.
+            if (
+                SessionManager.currentUserId.value != sessionUserId ||
+                SessionManager.currentInstituteId.value != instId
+            ) return@launch
+
+            _institute.value = bootstrap.institute
+            _studentCount.value = bootstrap.studentCount
+            _batchCount.value = bootstrap.batchCount
+            _staffCount.value = bootstrap.staffCount
+            _isBootstrapReady.value = true
+
             launch {
                 db.instituteDao().getInstituteFlow(instId).collect { inst ->
                     _institute.value = inst
@@ -417,6 +461,94 @@ fun DashboardTabsScreen(
     }
 }
 
+@Composable
+private fun DashboardBootstrapLoading(errorMessage: String?) {
+    val loaderTransition = rememberInfiniteTransition(label = "dashboardBootstrapLoader")
+    val ringRotation by loaderTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1450, easing = LinearEasing)
+        ),
+        label = "dashboardBootstrapRotation"
+    )
+    val ringSweep by loaderTransition.animateFloat(
+        initialValue = 78f,
+        targetValue = 286f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1450, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "dashboardBootstrapSweep"
+    )
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(DashboardBg),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            if (errorMessage == null) {
+                Canvas(modifier = Modifier.size(132.dp)) {
+                    val ringStroke = 8.dp.toPx()
+                    val glowStroke = 20.dp.toPx()
+                    val diameter = size.minDimension - glowStroke
+                    val topLeft = Offset(
+                        x = (size.width - diameter) / 2f,
+                        y = (size.height - diameter) / 2f
+                    )
+                    val ringSize = Size(diameter, diameter)
+                    val ringColors = listOf(AccentCyan, AccentSky, AccentBlue)
+
+                    drawArc(
+                        color = DashboardStroke.copy(alpha = 0.9f),
+                        startAngle = 0f,
+                        sweepAngle = 360f,
+                        useCenter = false,
+                        topLeft = topLeft,
+                        size = ringSize,
+                        style = Stroke(width = ringStroke)
+                    )
+                    drawArc(
+                        brush = Brush.sweepGradient(ringColors.map { it.copy(alpha = 0.20f) }),
+                        startAngle = ringRotation,
+                        sweepAngle = ringSweep,
+                        useCenter = false,
+                        topLeft = topLeft,
+                        size = ringSize,
+                        style = Stroke(width = glowStroke, cap = StrokeCap.Round)
+                    )
+                    drawArc(
+                        brush = Brush.sweepGradient(ringColors),
+                        startAngle = ringRotation,
+                        sweepAngle = ringSweep,
+                        useCenter = false,
+                        topLeft = topLeft,
+                        size = ringSize,
+                        style = Stroke(width = ringStroke, cap = StrokeCap.Round)
+                    )
+                }
+                Spacer(Modifier.height(24.dp))
+                Text(
+                    text = "Preparing your institute\u2026",
+                    color = TextPrimary,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Spacer(Modifier.height(7.dp))
+                Text(
+                    text = "Loading your latest data securely",
+                    color = TextSecondary,
+                    fontSize = 12.sp
+                )
+            } else {
+                Text(errorMessage, color = TextSecondary, fontSize = 14.sp, textAlign = TextAlign.Center)
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DashboardScreen(
@@ -435,6 +567,13 @@ fun DashboardScreen(
     val currentUser by viewModel.currentUser.collectAsState()
     val currentPlan by viewModel.currentPlan.collectAsState()
     val subscriptionRemainingDays by viewModel.subscriptionRemainingDays.collectAsState()
+    val isBootstrapReady by viewModel.isBootstrapReady.collectAsState()
+    val bootstrapError by viewModel.bootstrapError.collectAsState()
+
+    if (!isBootstrapReady) {
+        DashboardBootstrapLoading(bootstrapError)
+        return
+    }
 
     var showFabMenu by remember { mutableStateOf(false) }
     var showProfilePopup by remember { mutableStateOf(false) }
@@ -454,7 +593,7 @@ fun DashboardScreen(
             .any { AccessControl.canAccessRoute(it) }
     }
 
-    // â”€â”€ Edit / Image / Switch state for profile popup â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Edit / Image / Switch state for profile popup ────────
     var showEditDialog by remember { mutableStateOf(false) }
     var showPhotoPicker by remember { mutableStateOf(false) }
     var isSavingProfile by remember { mutableStateOf(false) }
@@ -490,7 +629,7 @@ fun DashboardScreen(
         contract = ActivityResultContracts.GetContent()
     ) { uri -> if (uri != null) editProfilePhotoUri = uri }
 
-    // â”€â”€ Attendance state (shared with dialog) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Attendance state (shared with dialog) ──────────────
     val attVM: AttendanceViewModel = viewModel(factory = AttendanceViewModelFactory(db))
     val attSummaries by attVM.dailyBatchSummaries.collectAsState()
     val staffSum by attVM.dailyStaffAttendanceSummary.collectAsState()
@@ -591,7 +730,7 @@ fun DashboardScreen(
                             }
                         }
                         Spacer(Modifier.height(12.dp))
-                        // Students row â€” navigates to Students list
+                        // Students row — navigates to Students list
                         OverviewRow(
                             icon = Icons.Filled.School,
                             label = "Students",
@@ -600,7 +739,7 @@ fun DashboardScreen(
                             onClick = { safeNavigate("StudentsRoute") }
                         )
                         HorizontalDivider(color = DashboardStroke, modifier = Modifier.padding(vertical = 8.dp))
-                        // Batches row â€” navigates to Batch list
+                        // Batches row — navigates to Batch list
                         OverviewRow(
                             icon = Icons.Filled.Class,
                             label = "Batches",
@@ -609,7 +748,7 @@ fun DashboardScreen(
                             onClick = { safeNavigate("BatchesRoute") }
                         )
                         HorizontalDivider(color = DashboardStroke, modifier = Modifier.padding(vertical = 8.dp))
-                        // Staff row â€” navigates to Staff list
+                        // Staff row — navigates to Staff list
                         OverviewRow(
                             icon = Icons.Filled.Group,
                             label = "Staff",
@@ -655,9 +794,9 @@ fun DashboardScreen(
 
                 Spacer(modifier = Modifier.height(14.dp))
 
-                // â”€â”€ Live Attendance Summary â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                // ── Live Attendance Summary ────────────────────
 
-                // â”€â”€ Main attendance card â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                // ── Main attendance card ───────────────────────
                 Card(
                     modifier = Modifier.fillMaxWidth().shadow(3.dp, RoundedCornerShape(16.dp), spotColor = AccentCyan.copy(0.10f)),
                     shape = RoundedCornerShape(16.dp),
@@ -681,10 +820,10 @@ fun DashboardScreen(
                                 Text("Loading...", color = TextSecondary, fontSize = 12.sp)
                             }
                         } else if (studentOverall != null && studentOverall.markedCount > 0) {
-                            // â”€â”€ Student segmented bar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                            // ── Student segmented bar ──────────────
                             AttendanceSegmentedBar(studentOverall, "Students")
                             Spacer(Modifier.height(12.dp))
-                            // â”€â”€ Staff segmented bar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                            // ── Staff segmented bar ────────────────
                             StaffSegmentedBar(staffSum)
                         } else {
                             Column(Modifier.fillMaxWidth().padding(vertical = 12.dp),
@@ -698,7 +837,7 @@ fun DashboardScreen(
                 }
                 Spacer(Modifier.height(12.dp))
 
-                // â”€â”€ Mini Cards (Student + Staff marking) â”€â”€â”€â”€â”€â”€â”€â”€
+                // ── Mini Cards (Student + Staff marking) ────────
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     val sMarked = studentOverall?.markedCount ?: 0
                     val sTotal = studentOverall?.totalStudents ?: 0
@@ -710,7 +849,7 @@ fun DashboardScreen(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // â”€â”€ Financial Collection Cards â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                // ── Financial Collection Cards ────────────────
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -763,7 +902,7 @@ fun DashboardScreen(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // â”€â”€ Due Fees & Pending Card â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                // ── Due Fees & Pending Card ─────────────────────
                 Card(
                     modifier = Modifier.fillMaxWidth().clickable { safeNavigate("DueFeesRoute") },
                     shape = RoundedCornerShape(16.dp),
@@ -888,7 +1027,7 @@ fun DashboardScreen(
             }
         }
 
-        // â”€â”€ Batch Detail Dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ── Batch Detail Dialog ────────────────────────────
         if (selectedBatchId != null) {
             val bid = selectedBatchId!!
             val batchSum = attSummaries.find { it.batchId == bid }
@@ -1070,7 +1209,7 @@ fun DashboardScreen(
                             }
                         }
                         
-                        // Avatar â€” clickable to change profile photo via camera or gallery
+                        // Avatar — clickable to change profile photo via camera or gallery
                         Box(
                             modifier = Modifier
                                 .align(Alignment.BottomStart)
@@ -1106,7 +1245,7 @@ fun DashboardScreen(
                     // Profile Info (compact)
                     Column(modifier = Modifier.padding(horizontal = 20.dp)) {
                         Text(
-                            institute?.name ?: "BatchFee Demo Institute",
+                            institute?.name.orEmpty(),
                             color = Color.White,
                             fontSize = 18.sp,
                             fontWeight = FontWeight.Bold
@@ -1193,7 +1332,7 @@ fun DashboardScreen(
                                     Spacer(Modifier.width(8.dp))
                                     Column {
                                         Text(currentPlan?.name ?: if (isTrial) "Free Trial" else "Active Plan", color = AccentBlue, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                                        Text("$statusLabel Â· $remainingDays days remaining", color = TextSecondary, fontSize = 10.sp)
+                                        Text("$statusLabel · $remainingDays days remaining", color = TextSecondary, fontSize = 10.sp)
                                     }
                                 }
                                 Spacer(Modifier.height(8.dp))
@@ -1318,12 +1457,12 @@ fun DashboardScreen(
                         OutlinedButton(
                             onClick = {
                                 // Build WhatsApp deep-link: wa.me phone + URL-encoded message
-                                val instituteName = institute?.name ?: "BatchFee Institute"
+                                val instituteName = institute?.name.orEmpty()
                                 val message = "Hello Developer, Institute: $instituteName"
                                 val encodedMessage = URLEncoder.encode(message, "UTF-8")
                                 val url = "https://wa.me/8801518657869?text=$encodedMessage"
                                 val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
-                                // Uses ACTION_VIEW â€” WhatsApp will handle if installed, browser fallback otherwise
+                                // Uses ACTION_VIEW — WhatsApp will handle if installed, browser fallback otherwise
                                 context.startActivity(intent)
                             },
                             modifier = Modifier
@@ -1345,7 +1484,7 @@ fun DashboardScreen(
         }
     }
 
-    // â”€â”€ Edit Institute Dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Edit Institute Dialog ────────────────────────────────
     if (showPhotoPicker) {
         AlertDialog(
             onDismissRequest = { showPhotoPicker = false },
@@ -1920,7 +2059,7 @@ private fun DashboardHeader(
                     .clickable(onClick = onProfileClick)
             ) {
                 Text(
-                    institute?.name ?: "BatchFee Institute",
+                    institute?.name.orEmpty(),
                     color = TextPrimary,
                     style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                     maxLines = 1,
@@ -2660,7 +2799,7 @@ private fun OverviewRow(
     inactive: Int,
     onClick: () -> Unit
 ) {
-    // â”€â”€ Glow / shining animation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Glow / shining animation ───────────────────────────
     // ShimmerOffset sweeps a highlight across the button from left to right
     val infiniteTransition = rememberInfiniteTransition(label = "overviewGlow_$label")
     val shimmerOffset by infiniteTransition.animateFloat(
@@ -2713,7 +2852,7 @@ private fun OverviewRow(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                // Glowing icon â€” color pulses with glowAlpha
+                // Glowing icon — color pulses with glowAlpha
                 Icon(
                     icon,
                     contentDescription = null,
@@ -2726,7 +2865,7 @@ private fun OverviewRow(
                     modifier = Modifier.size(24.dp)
                 )
                 Spacer(Modifier.width(12.dp))
-                // Label text â€” gently pulses toward a lighter cyan-white
+                // Label text — gently pulses toward a lighter cyan-white
                 Text(
                     label,
                     color = androidx.compose.ui.graphics.lerp(TextPrimary, AccentCyan, glowAlpha * 0.3f),
@@ -2782,7 +2921,7 @@ private fun MiniCard(title: String, subtitle: String, progress: Float, textProgr
     }
 }
 
-// â”€â”€ New attendance composables â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── New attendance composables ──────────────────────────────
 
 @Composable
 private fun AttendanceSegmentedBar(sum: BatchAttendanceSummary, label: String) {
@@ -2953,7 +3092,7 @@ private fun ShortcutItem(label: String, icon: ImageVector, modifier: Modifier = 
     }
 }
 
-// â”€â”€ Animated counter that counts up on first render â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Animated counter that counts up on first render ─────────────
 @Composable
 private fun AnimatedCounter(
     target: Double,
@@ -3033,7 +3172,7 @@ fun MoreScreen(
             }
         }
         Spacer(Modifier.height(24.dp))
-        // Secret Demo Data button â€” only visible for specific admin account
+        // Secret Demo Data button — only visible for specific admin account
         val currentUserEmail by SessionManager.currentUserId.collectAsState()
         var userEmail by remember { mutableStateOf<String?>(null) }
         val scope = rememberCoroutineScope()

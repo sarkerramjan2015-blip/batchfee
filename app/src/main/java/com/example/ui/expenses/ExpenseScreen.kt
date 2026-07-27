@@ -1,4 +1,4 @@
-﻿package com.batchfee.edu.ui.expenses
+package com.batchfee.edu.ui.expenses
 
 import android.app.DatePickerDialog
 import android.widget.Toast
@@ -34,7 +34,7 @@ import java.text.SimpleDateFormat
 import java.util.*
 import kotlin.math.absoluteValue
 
-// â”€â”€ Theme â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Theme ────────────────────────────────────────────────────
 private val BgColor = Color(0xFF0F0F14)
 private val CardBg = Color(0xFF1A1A24)
 private val BorderSub = Color(0xFF2A2A38)
@@ -62,10 +62,10 @@ private val allCategories = listOf("Rent", "Electricity", "Internet", "Staff Sal
 private val paymentMethods = listOf("Cash", "bKash", "Nagad", "Bank Transfer")
 
 private fun amountColor(amount: Double) = Color(0xFFFF6B6B)
-private fun shortDateFormat(ms: Long): String = SimpleDateFormat("MMM dd, yyyy 'Â·' hh:mm a", Locale.getDefault()).format(Date(ms))
+private fun shortDateFormat(ms: Long): String = SimpleDateFormat("MMM dd, yyyy '·' hh:mm a", Locale.getDefault()).format(Date(ms))
 private fun dayDateFormat(ms: Long): String = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(ms))
 
-// â”€â”€ Expense List Screen â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Expense List Screen ──────────────────────────────────────
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ExpenseListScreen(db: AppDatabase, onBack: () -> Unit, onAddExpense: () -> Unit, onNavigateToPricing: () -> Unit) {
@@ -106,10 +106,10 @@ fun ExpenseListScreen(db: AppDatabase, onBack: () -> Unit, onAddExpense: () -> U
         LazyColumn(modifier = Modifier.padding(padding).fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             item { Spacer(Modifier.height(4.dp)) }
 
-            // â”€â”€ Section header â”€â”€
+            // ── Section header ──
             item {
                 Text(
-                    "All Expenses Â· ${expenses.size} records",
+                    "All Expenses · ${expenses.size} records",
                     color = TextMuted,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold,
@@ -117,7 +117,7 @@ fun ExpenseListScreen(db: AppDatabase, onBack: () -> Unit, onAddExpense: () -> U
                 )
             }
 
-            // â”€â”€ List â”€â”€
+            // ── List ──
             if (expenses.isEmpty()) {
                 item {
                     Box(modifier = Modifier.fillMaxWidth().padding(vertical = 48.dp), contentAlignment = Alignment.Center) {
@@ -135,7 +135,7 @@ fun ExpenseListScreen(db: AppDatabase, onBack: () -> Unit, onAddExpense: () -> U
                 }
             }
 
-            // â”€â”€ Summary cards (at bottom) â”€â”€
+            // ── Summary cards (at bottom) ──
             item {
                 Spacer(Modifier.height(8.dp))
                 HorizontalDivider(color = BorderSub, thickness = 1.dp)
@@ -222,7 +222,7 @@ private fun ExpenseCard(expense: com.batchfee.edu.data.models.ExpenseEntity) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(expense.category, color = TextMuted, fontSize = 12.sp)
                     if (expense.paymentMethod != null) {
-                        Text(" Â· ", color = TextMuted, fontSize = 12.sp)
+                        Text(" · ", color = TextMuted, fontSize = 12.sp)
                         Text(expense.paymentMethod, color = TextMuted, fontSize = 12.sp)
                     }
                 }
@@ -243,7 +243,7 @@ private fun ExpenseCard(expense: com.batchfee.edu.data.models.ExpenseEntity) {
     }
 }
 
-// â”€â”€ Add / Edit Expense Screen â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Add / Edit Expense Screen ─────────────────────────────────
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddEditExpenseScreen(db: AppDatabase, onBack: () -> Unit) {
@@ -279,7 +279,7 @@ fun AddEditExpenseScreen(db: AppDatabase, onBack: () -> Unit) {
         ) {
             item { Spacer(Modifier.height(4.dp)) }
 
-            // â”€â”€ Amount â”€â”€
+            // ── Amount ──
             item {
                 FieldLabel("Amount (BDT)")
                 OutlinedTextField(
@@ -295,7 +295,7 @@ fun AddEditExpenseScreen(db: AppDatabase, onBack: () -> Unit) {
                 )
             }
 
-            // â”€â”€ Title â”€â”€
+            // ── Title ──
             item {
                 FieldLabel("Expense Title")
                 OutlinedTextField(
@@ -307,7 +307,7 @@ fun AddEditExpenseScreen(db: AppDatabase, onBack: () -> Unit) {
                 )
             }
 
-            // â”€â”€ Category â”€â”€
+            // ── Category ──
             item {
                 FieldLabel("Category")
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -340,7 +340,7 @@ fun AddEditExpenseScreen(db: AppDatabase, onBack: () -> Unit) {
                 }
             }
 
-            // â”€â”€ Date picker â”€â”€
+            // ── Date picker ──
             item {
                 FieldLabel("Date")
                 Card(
@@ -362,7 +362,7 @@ fun AddEditExpenseScreen(db: AppDatabase, onBack: () -> Unit) {
                 }
             }
 
-            // â”€â”€ Payment method â”€â”€
+            // ── Payment method ──
             item {
                 FieldLabel("Payment Method")
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -380,7 +380,7 @@ fun AddEditExpenseScreen(db: AppDatabase, onBack: () -> Unit) {
                 }
             }
 
-            // â”€â”€ Save â”€â”€
+            // ── Save ──
             item {
                 Spacer(Modifier.height(8.dp))
                 Button(

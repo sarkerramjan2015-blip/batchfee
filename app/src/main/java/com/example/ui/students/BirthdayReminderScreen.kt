@@ -1,4 +1,4 @@
-﻿package com.batchfee.edu.ui.students
+package com.batchfee.edu.ui.students
 
 import android.content.Intent
 import android.graphics.Bitmap
@@ -61,7 +61,7 @@ private val TextMuted = Color(0xFF94A3B8)
 private val AccentGreen = Color(0xFF10B981)
 private val WAGreen = Color(0xFF25D366)
 
-// â”€â”€ Birthday PNG Card Generator â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Birthday PNG Card Generator ────────────────────────────────
 private fun generateBirthdayCard(
     studentName: String,
     age: Int,
@@ -203,7 +203,7 @@ private fun generateBirthdayCard(
     return FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
 }
 
-// â”€â”€ Main Screen â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Main Screen ─────────────────────────────────────────────────
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BirthdayReminderScreen(db: AppDatabase, onBack: () -> Unit, onNavigateToPricing: () -> Unit) {
@@ -275,7 +275,7 @@ fun BirthdayReminderScreen(db: AppDatabase, onBack: () -> Unit, onNavigateToPric
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp, vertical = 12.dp)
         ) {
-            // â”€â”€ Today's Birthdays â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── Today's Birthdays ──────────────────────
             if (todayBirthdays.isNotEmpty()) {
                 SectionHeader("Today's Birthdays", AccentOrange)
                 Spacer(Modifier.height(10.dp))
@@ -290,7 +290,7 @@ fun BirthdayReminderScreen(db: AppDatabase, onBack: () -> Unit, onNavigateToPric
                 Spacer(Modifier.height(16.dp))
             }
 
-            // â”€â”€ Upcoming Birthdays â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── Upcoming Birthdays ────────────────────
             if (upcomingBirthdays.isNotEmpty()) {
                 SectionHeader("Upcoming Birthdays", Cyan)
                 Spacer(Modifier.height(10.dp))
@@ -308,7 +308,7 @@ fun BirthdayReminderScreen(db: AppDatabase, onBack: () -> Unit, onNavigateToPric
         }
     }
 
-    // â”€â”€ Wish dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Wish dialog ──────────────────────────────────
     if (wishDialogTarget != null) {
         val student = wishDialogTarget!!
         val age = viewModel.calculateAge(student.dateOfBirthMs ?: 0)
@@ -334,7 +334,7 @@ fun BirthdayReminderScreen(db: AppDatabase, onBack: () -> Unit, onNavigateToPric
                     )
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        "${student.fullName} Â· $birthDateStr Â· Turning $age",
+                        "${student.fullName} · $birthDateStr · Turning $age",
                         color = TextMuted,
                         fontSize = 13.sp
                     )
@@ -530,7 +530,7 @@ private fun BirthdayCard(
                     Icon(Icons.Filled.Cake, null, tint = AccentOrange, modifier = Modifier.size(14.dp))
                     Spacer(Modifier.width(4.dp))
                     Text(
-                        "$birthDateStr Â· Turning $age",
+                        "$birthDateStr · Turning $age",
                         color = TextMuted,
                         fontSize = 13.sp
                     )

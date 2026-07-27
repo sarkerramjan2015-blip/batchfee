@@ -1,4 +1,4 @@
-﻿package com.batchfee.edu.ui.staff
+package com.batchfee.edu.ui.staff
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -220,7 +220,7 @@ fun AddEditStaffScreen(
                         val selected = batch.id in selectedBatchIds
                         SelectRow(
                             title = batch.name,
-                            subtitle = listOfNotNull(batch.subject, batch.className).joinToString(" â€¢ "),
+                            subtitle = listOfNotNull(batch.subject, batch.className).joinToString(" • "),
                             selected = selected,
                             onClick = {
                                 selectedBatchIds = if (selected) selectedBatchIds - batch.id else selectedBatchIds + batch.id

@@ -1,4 +1,4 @@
-﻿package com.batchfee.edu.data.firestore
+package com.batchfee.edu.data.firestore
 
 import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.data.models.StudentEntity
@@ -24,7 +24,7 @@ object StudentSyncHelper {
                     .await()
             } catch (e: Exception) {
                 FirebaseCrashlytics.getInstance().recordException(e)
-                // Best-effort sync â€” don't crash local operations
+                // Best-effort sync — don't crash local operations
             }
         }
     }

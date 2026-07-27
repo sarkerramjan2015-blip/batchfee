@@ -1,4 +1,4 @@
-﻿package com.batchfee.edu.ui.fees
+package com.batchfee.edu.ui.fees
 
 import android.content.Context
 import android.content.Intent
@@ -64,7 +64,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-// â”€â”€ Premium palette (matching other polished screens) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Premium palette (matching other polished screens) ───────────
 private val BgColor      = Color(0xFF07111F)
 private val CardBg        = Color(0xFF0F172A)
 private val CardBgAlt     = Color(0xFF111827)
@@ -99,7 +99,7 @@ private fun SectionLabel(text: String) {
     )
 }
 
-// â”€â”€ Helper: Month/Year data â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Helper: Month/Year data ─────────────────────────────────────
 private data class MonthYear(val month: Int, val year: Int, val label: String)
 
 private fun generateMonthOptions(): List<MonthYear> {
@@ -123,7 +123,7 @@ private fun parseFeePeriod(period: String): Pair<Int, Int>? {
     return Pair(monthIdx, year)
 }
 
-// â”€â”€ Helper: Image processing â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Helper: Image processing ────────────────────────────────────
 private fun compressAndResizeBitmap(context: Context, uri: Uri, maxSize: Int = 800): Bitmap? {
     val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
@@ -137,7 +137,7 @@ private fun compressAndResizeBitmap(context: Context, uri: Uri, maxSize: Int = 8
     return if (scale < 1f) Bitmap.createScaledBitmap(bmp, (bmp.width * scale).toInt(), (bmp.height * scale).toInt(), true) else bmp
 }
 
-// â”€â”€ Helper: PDF receipt generation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Helper: PDF receipt generation ───────────────────────────────
 private fun generatePdfReceipt(
     context: Context,
     receiptNumber: String,
@@ -209,7 +209,7 @@ private fun generatePdfReceipt(
     return FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
 }
 
-// â”€â”€ Helper: Receipt bitmap for sharing â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Helper: Receipt bitmap for sharing ───────────────────────────
 private fun createReceiptBitmap(
     context: Context,
     receiptNumber: String, studentName: String, batchName: String, feePeriod: String,
@@ -268,7 +268,7 @@ private fun createReceiptBitmap(
     return bmp
 }
 
-// â”€â”€ Helper: WhatsApp / share â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Helper: WhatsApp / share ─────────────────────────────────────
 private fun shareReceiptImage(context: Context, bitmap: Bitmap, phone: String?) {
     val file = File(context.cacheDir, "receipt_share_${System.currentTimeMillis()}.jpg")
     FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.JPEG, 95, it) }
@@ -339,7 +339,7 @@ private fun buildReceiptMessage(
     appendLine("Payment Mode: ${paymentMethod.uppercase()}")
 }
 
-// â”€â”€ Reusable dropdown composable â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Reusable dropdown composable ─────────────────────────────────
 @Composable
 private fun <T> PremiumDropdown(
     label: String,
@@ -392,9 +392,9 @@ private fun <T> PremiumDropdown(
     }
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ═══════════════════════════════════════════════════════════════
 //  CreateFeeScreen  (unchanged)
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ═══════════════════════════════════════════════════════════════
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CreateFeeScreen(db: AppDatabase, onBack: () -> Unit) {
@@ -548,9 +548,9 @@ fun CreateFeeScreen(db: AppDatabase, onBack: () -> Unit) {
     }
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ═══════════════════════════════════════════════════════════════
 //  CollectPaymentScreen  (enhanced)
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ═══════════════════════════════════════════════════════════════
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onNavigateReceipt: (String) -> Unit) {
@@ -559,7 +559,7 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    // â”€â”€ Data â”€â”€
+    // ── Data ──
     var fee by remember { mutableStateOf<FeeEntity?>(null) }
     var student by remember { mutableStateOf<StudentEntity?>(null) }
     var institute by remember { mutableStateOf<InstituteEntity?>(null) }
@@ -567,7 +567,7 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
     var selectedBatchId by remember { mutableStateOf<String?>(null) }
     var isLoading by remember { mutableStateOf(true) }
 
-    // â”€â”€ Calculations â”€â”€
+    // ── Calculations ──
     val monthOptions = remember { generateMonthOptions() }
     var startMonthIdx by remember { mutableIntStateOf(monthOptions.lastIndex - 1) }
     var endMonthIdx by remember { mutableIntStateOf(monthOptions.lastIndex - 1) }
@@ -584,18 +584,18 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
         "Rc-${(System.currentTimeMillis() % 1000000).toString().padStart(6, '0')}"
     }
 
-    // â”€â”€ Image â”€â”€
+    // ── Image ──
     var paymentBitmap by remember { mutableStateOf<Bitmap?>(null) }
     val galleryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) paymentBitmap = compressAndResizeBitmap(context, uri)
     }
 
-    // â”€â”€ UI state â”€â”€
+    // ── UI state ──
     var errorMsg by remember { mutableStateOf<String?>(null) }
     var savedPaymentId by remember { mutableStateOf<String?>(null) }
     var savedReceipt by remember { mutableStateOf<ReceiptEntity?>(null) }
 
-    // â”€â”€ Load fee â”€â”€
+    // ── Load fee ──
     LaunchedEffect(instId, feeId) {
         if (instId != null) {
             InstituteCacheRefreshManager.refreshIfStale(db, instId)
@@ -609,12 +609,12 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
             db.instituteDao().getInstituteFlow(instId).collect { institute = it }
         }
     }
-    // â”€â”€ Load student â”€â”€
+    // ── Load student ──
     LaunchedEffect(instId, fee?.studentId) {
         val sid = fee?.studentId ?: return@LaunchedEffect
         if (instId != null) db.studentDao().getStudentById(sid, instId).collect { student = it }
     }
-    // â”€â”€ Load batches â”€â”€
+    // ── Load batches ──
     LaunchedEffect(instId, fee?.studentId) {
         val sid = fee?.studentId ?: return@LaunchedEffect
         if (instId != null) {
@@ -627,7 +627,7 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
             }
         }
     }
-    // â”€â”€ Parse fee period â†’ default month indices â”€â”€
+    // ── Parse fee period → default month indices ──
     LaunchedEffect(fee, monthOptions.size) {
         if (fee != null && startMonthIdx == monthOptions.lastIndex - 1 && endMonthIdx == monthOptions.lastIndex - 1) {
             parseFeePeriod(fee!!.feePeriod)?.let { (m, y) ->
@@ -637,7 +637,7 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
         }
     }
 
-    // â”€â”€ Reactive math â”€â”€
+    // ── Reactive math ──
     val selectedBatch = batches.find { it.id == selectedBatchId }
     val isDirectFee = fee?.batchId == null
     val batchFee = if (isDirectFee) fee?.baseAmount ?: 0.0 else selectedBatch?.monthlyFeeAmount ?: 0.0
@@ -654,7 +654,7 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
         if (!manualAmountEdit) collectedAmount = if (dueAmount > 0) String.format("%.0f", dueAmount) else ""
     }
 
-    // â”€â”€ Scaffold â”€â”€
+    // ── Scaffold ──
     Scaffold(
         containerColor = BgColor,
         topBar = {
@@ -673,7 +673,7 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
                 Text("Fee not found.", color = TextMuted)
             }
             savedPaymentId != null -> {
-                // â”€â”€ Success state â”€â”€
+                // ── Success state ──
                 Column(
                     Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState())
                         .padding(horizontal = 20.dp, vertical = 12.dp),
@@ -819,7 +819,7 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
                 }
             }
             else -> {
-                // â”€â”€ Collection form â”€â”€
+                // ── Collection form ──
                 val f = fee!!
                 Column(
                     Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState())
@@ -837,7 +837,7 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
                             Icon(Icons.Filled.Person, null, tint = Cyan, modifier = Modifier.size(20.dp))
                             Spacer(Modifier.width(10.dp))
                             Column {
-                                Text(student?.fullName ?: "Loadingâ€¦", color = TextWhite, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                Text(student?.fullName ?: "Loading…", color = TextWhite, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                                 if (!student?.phone.isNullOrBlank()) {
                                     Text("Phone: ${student!!.phone}", color = TextMuted, fontSize = 13.sp)
                                 }
@@ -868,7 +868,7 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
                         options = batches,
                         selectedOption = selectedBatch,
                         onOptionSelected = { selectedBatchId = it.id },
-                        optionLabel = { "${it.name} â€” BDT ${"%.0f".format(it.monthlyFeeAmount)}" },
+                        optionLabel = { "${it.name} — BDT ${"%.0f".format(it.monthlyFeeAmount)}" },
                         enabled = batches.isNotEmpty()
                     )
                     if (batches.isEmpty()) {
@@ -921,7 +921,7 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
                     ) {
                         Column(Modifier.padding(16.dp)) {
                             SummaryRow("Batch Fee / month", "BDT ${"%.0f".format(batchFee)}")
-                            SummaryRow("Ã— $numMonths months", "BDT ${"%.0f".format(baseAmount)}")
+                            SummaryRow("× $numMonths months", "BDT ${"%.0f".format(baseAmount)}")
                             if (discountPercent > 0) {
                                 SummaryRow("Discount (${discountPercent.toInt()}%)", "- BDT ${"%.2f".format(discountAmount)}", isDiscount = true)
                             }
@@ -1031,7 +1031,7 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
                             fontWeight = FontWeight.Bold
                         )
                         Spacer(Modifier.width(12.dp))
-                        Text("â€¢", color = TextMuted, fontSize = 22.sp)
+                        Text("•", color = TextMuted, fontSize = 22.sp)
                         Spacer(Modifier.width(12.dp))
                         Icon(Icons.Filled.Savings, contentDescription = null, tint = Color(0xFFFFA3A3), modifier = Modifier.size(28.dp))
                         Spacer(Modifier.width(8.dp))
@@ -1079,7 +1079,7 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
                                     return@TextButton
                                 }
                                 val periodLabel = if (startMonthIdx == endMonthIdx) monthOptions[startMonthIdx].label
-                                else "${monthOptions[startMonthIdx].label} â€“ ${monthOptions[endMonthIdx].label}"
+                                else "${monthOptions[startMonthIdx].label} – ${monthOptions[endMonthIdx].label}"
                                 viewModel.updateFeeAndCollectPayment(
                                     feeId = feeId,
                                     newBaseAmount = baseAmount,
@@ -1176,9 +1176,9 @@ private fun ReceiptRow(label: String, value: String) {
     }
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ═══════════════════════════════════════════════════════════════
 //  ReceiptDetailScreen  (enhanced with Print & Share)
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ═══════════════════════════════════════════════════════════════
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ReceiptDetailScreen(db: AppDatabase, paymentId: String, onBack: () -> Unit) {

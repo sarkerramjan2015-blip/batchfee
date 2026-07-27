@@ -1,4 +1,4 @@
-﻿package com.batchfee.edu.ui.reports
+package com.batchfee.edu.ui.reports
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -87,7 +87,7 @@ fun ReportsScreen(db: AppDatabase, onBack: () -> Unit) {
                 contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                // â”€â”€ Summary header â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                // ── Summary header ────────────────────────
                 item {
                     Card(
                         modifier = Modifier.fillMaxWidth()
@@ -131,7 +131,7 @@ fun ReportsScreen(db: AppDatabase, onBack: () -> Unit) {
                     }
                 }
 
-                // â”€â”€ Student count pill â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                // ── Student count pill ────────────────────
                 item {
                     Row(
                         modifier = Modifier.fillMaxWidth(),

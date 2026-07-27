@@ -1,4 +1,4 @@
-﻿package com.batchfee.edu.ui.dashboard
+package com.batchfee.edu.ui.dashboard
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -32,7 +32,7 @@ import com.batchfee.edu.domain.ThemePreferences
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
-// â”€â”€ Premium palette (matching other polished screens) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Premium palette (matching other polished screens) ───────────
 private val BgColor      = Color(0xFF07111F)
 private val CardBg        = Color(0xFF0F172A)
 private val BorderSub     = Color(0xFF1E293B)
@@ -270,7 +270,7 @@ fun SettingsScreen(
     }
 }
 
-// polish: reusable settings row â€” clickable rows get a chevron and ripple
+// polish: reusable settings row — clickable rows get a chevron and ripple
 @Composable
 private fun SettingsRow(
     title: String,

@@ -1,4 +1,4 @@
-﻿package com.batchfee.edu.ui.students
+package com.batchfee.edu.ui.students
 
 import android.content.Intent
 import android.net.Uri
@@ -39,7 +39,7 @@ import com.batchfee.edu.domain.loadInstituteSignature
 import com.batchfee.edu.domain.SessionManager
 import kotlinx.coroutines.launch
 
-// â”€â”€ Colors (matching PricingScreen premium theme) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Colors (matching PricingScreen premium theme) ───────────────
 private val BgColor      = Color(0xFF07111F)
 private val CardBg        = Color(0xFF0F172A)
 private val CardBgAlt     = Color(0xFF111827)
@@ -201,7 +201,7 @@ fun StudentListScreen(
                 .fillMaxSize()
                 .padding(horizontal = 20.dp, vertical = 8.dp)
         ) {
-            // â”€â”€ Search bar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── Search bar ───────────────────────────────────
             if (showSearch || searchQuery.isNotBlank()) {
                 OutlinedTextField(
                     value = searchQuery,
@@ -232,7 +232,7 @@ fun StudentListScreen(
                 Spacer(Modifier.height(4.dp))
             }
 
-            // â”€â”€ Student count â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── Student count ────────────────────────────────
             Row(
                 modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -263,7 +263,7 @@ fun StudentListScreen(
                 }
             }
 
-            // â”€â”€ Student list â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── Student list ─────────────────────────────────
             if (filteredStudents.isEmpty()) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
@@ -477,7 +477,7 @@ fun StudentListScreen(
     }
 }
 
-// â”€â”€ Student Card â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Student Card ────────────────────────────────────────────────
 @Composable
 private fun FilterChoiceRow(
     icon: androidx.compose.ui.graphics.vector.ImageVector,

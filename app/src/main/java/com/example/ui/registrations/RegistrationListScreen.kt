@@ -1,4 +1,4 @@
-﻿package com.batchfee.edu.ui.registrations
+package com.batchfee.edu.ui.registrations
 
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -88,7 +88,7 @@ fun RegistrationListScreen(
                 .fillMaxSize()
                 .padding(horizontal = 20.dp)
         ) {
-            // â”€â”€ Generate Link Button â”€â”€
+            // ── Generate Link Button ──
             Button(
                 onClick = {
                     val url = viewModel.generateRegistrationLink()
@@ -124,7 +124,7 @@ fun RegistrationListScreen(
                 modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
             )
 
-            // â”€â”€ Pending Count â”€â”€
+            // ── Pending Count ──
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -154,7 +154,7 @@ fun RegistrationListScreen(
 
             HorizontalDivider(color = BorderSub, modifier = Modifier.padding(bottom = 4.dp))
 
-            // â”€â”€ List â”€â”€
+            // ── List ──
             if (isLoading && pendingList.isEmpty()) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
@@ -206,7 +206,7 @@ fun RegistrationListScreen(
         }
     }
 
-    // â”€â”€ Detail BottomSheet â”€â”€
+    // ── Detail BottomSheet ──
     selectedRegistration?.let { reg ->
         RegistrationDetailSheet(
             registration = reg,
@@ -222,7 +222,7 @@ fun RegistrationListScreen(
         )
     }
 
-    // â”€â”€ Reject Confirmation Dialog â”€â”€
+    // ── Reject Confirmation Dialog ──
     showConfirmReject?.let { reg ->
         AlertDialog(
             onDismissRequest = { showConfirmReject = null },

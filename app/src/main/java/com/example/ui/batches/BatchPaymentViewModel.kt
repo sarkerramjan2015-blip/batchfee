@@ -1,4 +1,4 @@
-﻿package com.batchfee.edu.ui.batches
+package com.batchfee.edu.ui.batches
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -74,14 +74,14 @@ class BatchPaymentViewModel(private val db: AppDatabase) : ViewModel() {
     private val _isLoading = MutableStateFlow(false)
     val isLoading = _isLoading.asStateFlow()
 
-    // â”€â”€ This-month stats (computed from studentsWithFee) â”€â”€â”€â”€â”€â”€
+    // ── This-month stats (computed from studentsWithFee) ──────
     private val _paidThisMonthCount = MutableStateFlow(0)
     val paidThisMonthCount = _paidThisMonthCount.asStateFlow()
 
     private val _dueThisMonthCount = MutableStateFlow(0)
     val dueThisMonthCount = _dueThisMonthCount.asStateFlow()
 
-    // â”€â”€ Sent-message tracking (prevents duplicate sends) â”€â”€â”€â”€â”€
+    // ── Sent-message tracking (prevents duplicate sends) ─────
     private val _sentMessageIds = MutableStateFlow<Set<String>>(emptySet())
     val sentMessageIds = _sentMessageIds.asStateFlow()
 

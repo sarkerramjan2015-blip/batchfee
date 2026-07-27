@@ -1,4 +1,4 @@
-﻿package com.batchfee.edu.ui.staff
+package com.batchfee.edu.ui.staff
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -182,7 +182,7 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
                         createdAtMs = now
                     )
                 )
-                // Sync to Firestore (non-blocking â€” best-effort)
+                // Sync to Firestore (non-blocking — best-effort)
                 launch { StaffSyncHelper.createStaff(staff) }
                 launch {
                     try {

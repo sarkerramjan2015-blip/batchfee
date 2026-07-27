@@ -4,8 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.batchfee.edu.data.database.AppDatabase
-import com.batchfee.edu.data.firestore.CoreDataSyncCoordinator
 import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
+import com.batchfee.edu.data.firestore.InstituteRefreshScope
 import com.batchfee.edu.data.firestore.StudentSyncHelper
 import com.batchfee.edu.data.models.BatchEntity
 import com.batchfee.edu.data.models.StudentEntity
@@ -38,20 +38,28 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
     private fun loadStudents() {
         viewModelScope.launch {
             val instId = SessionManager.currentInstituteId.value ?: return@launch
-            InstituteCacheRefreshManager.refreshIfStale(db, instId)
+            // Render cached Room data immediately — do not wait on any sync.
             db.studentDao().getStudentsByInstitute(instId).collect {
                 _studentList.value = it
             }
+        }
+        // Narrow background refresh: only the STUDENTS scope, deduped by the existing infrastructure.
+        viewModelScope.launch {
+            val instId = SessionManager.currentInstituteId.value ?: return@launch
+            InstituteCacheRefreshManager.refreshScopeIfStale(db, instId, InstituteRefreshScope.STUDENTS)
         }
     }
 
     private fun loadBatches() {
         viewModelScope.launch {
             val instId = SessionManager.currentInstituteId.value ?: return@launch
-            InstituteCacheRefreshManager.refreshIfStale(db, instId)
             db.batchDao().getBatchesByInstitute(instId).collect {
                 _batchList.value = it
             }
+        }
+        viewModelScope.launch {
+            val instId = SessionManager.currentInstituteId.value ?: return@launch
+            InstituteCacheRefreshManager.refreshScopeIfStale(db, instId, InstituteRefreshScope.BATCHES)
         }
     }
 

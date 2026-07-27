@@ -1,4 +1,4 @@
-﻿package com.batchfee.edu.data.database
+package com.batchfee.edu.data.database
 
 import android.content.Context
 import androidx.room.Database
@@ -84,7 +84,7 @@ abstract class AppDatabase : RoomDatabase() {
 
         private val MIGRATION_7_8 = object : androidx.room.migration.Migration(7, 8) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                // No schema changes â€” establishing safe migration path for future versions
+                // No schema changes — establishing safe migration path for future versions
             }
         }
 
@@ -178,7 +178,7 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
-        // Cached real Firebase Auth UIDs â€” resolved once per process lifetime
+        // Cached real Firebase Auth UIDs — resolved once per process lifetime
         @Volatile
         var realAdminUid: String? = null
         @Volatile
@@ -219,7 +219,7 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         private suspend fun ensureFirebaseAuthAccounts() {
-            // â”€â”€ SuperAdmin â”€â”€
+            // ── SuperAdmin ──
             try {
                 realAdminUid = FirebaseAuthApi.createUser("superadmin@batchfee.app", "11223344")
                 seedFirestoreAndAppUser(realAdminUid!!, "superadmin@batchfee.app", "SuperAdmin", "BatchFee System")
@@ -236,7 +236,7 @@ abstract class AppDatabase : RoomDatabase() {
                 }
             }
 
-            // â”€â”€ Demo Owner (fresh account: demo@batchfee.app) â”€â”€
+            // ── Demo Owner (fresh account: demo@batchfee.app) ──
             try {
                 realOwnerUid = FirebaseAuthApi.createUser("demo@batchfee.app", "123456")
                 seedFirestoreAndAppUser(
@@ -455,7 +455,7 @@ abstract class AppDatabase : RoomDatabase() {
             val dayMs = 24L * 60 * 60 * 1000
             val rng = java.util.Random(42)
 
-            // â”€â”€ Helper: start-of-day â”€â”€
+            // ── Helper: start-of-day ──
             fun startOfDay(deltaDays: Long): Long {
                 val cal = Calendar.getInstance().apply {
                     timeInMillis = now + (deltaDays * dayMs)
@@ -465,7 +465,7 @@ abstract class AppDatabase : RoomDatabase() {
                 return cal.timeInMillis
             }
 
-            // â”€â”€ Helper: month label â”€â”€
+            // ── Helper: month label ──
             fun monthLabel(deltaMonths: Int): String {
                 val cal = Calendar.getInstance()
                 cal.add(Calendar.MONTH, deltaMonths)
@@ -477,9 +477,9 @@ abstract class AppDatabase : RoomDatabase() {
             val lastMonth = monthLabel(-1)
             val nextMonth = monthLabel(1)
 
-            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+            // ════════════════════════════════════════════════════════
             // 1.  3 BATCHES
-            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+            // ════════════════════════════════════════════════════════
             val batch1 = com.batchfee.edu.data.models.BatchEntity(
                 id = "demo_batch_1", instituteId = demoInstituteId,
                 batchCode = "HSC27ICT-1", name = "HSC 2027 ICT",
@@ -501,7 +501,7 @@ abstract class AppDatabase : RoomDatabase() {
                 startDateMs = now - (180 * dayMs), endDateMs = now + (180 * dayMs),
                 scheduleDays = "Mon, Wed, Sat", startTime = "10:00", endTime = "12:00",
                 maxStudents = 25, status = "active",
-                description = "SSC 2026 Mathematics â€” creative & MCQ preparation",
+                description = "SSC 2026 Mathematics — creative & MCQ preparation",
                 createdAtMs = now, updatedAtMs = now, archivedAtMs = null
             )
             val batch3 = com.batchfee.edu.data.models.BatchEntity(
@@ -513,16 +513,16 @@ abstract class AppDatabase : RoomDatabase() {
                 startDateMs = now - (90 * dayMs), endDateMs = now + (270 * dayMs),
                 scheduleDays = "Fri, Sat", startTime = "08:00", endTime = "10:00",
                 maxStudents = 20, status = "active",
-                description = "Biology 1st & 2nd paper â€” practical included",
+                description = "Biology 1st & 2nd paper — practical included",
                 createdAtMs = now, updatedAtMs = now, archivedAtMs = null
             )
             db.batchDao().insertBatch(batch1)
             db.batchDao().insertBatch(batch2)
             db.batchDao().insertBatch(batch3)
 
-            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+            // ════════════════════════════════════════════════════════
             // 2.  20 STUDENTS + ENROLLMENTS
-            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+            // ════════════════════════════════════════════════════════
             data class SeedStudent(
                 val name: String, val phone: String, val gender: String,
                 val batchIdx: Int, val bloodGroup: String, val school: String,
@@ -590,9 +590,9 @@ abstract class AppDatabase : RoomDatabase() {
                 )
             }
 
-            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+            // ════════════════════════════════════════════════════════
             // 3.  STUDENT ATTENDANCE  (~120 records, last 6 school days)
-            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+            // ════════════════════════════════════════════════════════
             val scheduleDays = listOf(
                 listOf(0, 2, 4),  // Sun, Tue, Thu (batch1)
                 listOf(1, 3, 6),  // Mon, Wed, Sat (batch2)
@@ -642,16 +642,16 @@ abstract class AppDatabase : RoomDatabase() {
                 }
             }
 
-            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+            // ════════════════════════════════════════════════════════
             // 4.  FEES  (28 records with strategic distribution)
-            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+            // ════════════════════════════════════════════════════════
             data class FeePlan(
                 val studentIdx: Int, val period: String, val feeType: String,
                 val base: Double, val paid: Double, val lateFee: Double, val status: String
             )
             // student -> batch fee: ICT=1500, MATH=1200, BIO=1800
             val feePlans = listOf(
-                // â”€â”€ Fully paid current month (students 1-11) â”€â”€
+                // ── Fully paid current month (students 1-11) ──
                 FeePlan(0, currentMonth, "Monthly", 1500.0, 1500.0, 0.0, "paid"),
                 FeePlan(1, currentMonth, "Monthly", 1500.0, 1500.0, 0.0, "paid"),
                 FeePlan(2, currentMonth, "Monthly", 1500.0, 1500.0, 0.0, "paid"),
@@ -663,32 +663,32 @@ abstract class AppDatabase : RoomDatabase() {
                 FeePlan(8, currentMonth, "Monthly", 1500.0, 1500.0, 0.0, "paid"),
                 FeePlan(9, currentMonth, "Monthly", 1500.0, 1500.0, 0.0, "paid"),
                 FeePlan(10, currentMonth, "Monthly", 1200.0, 1200.0, 0.0, "paid"),
-                // â”€â”€ Partially paid current month (students 12-16) â”€â”€
+                // ── Partially paid current month (students 12-16) ──
                 FeePlan(11, currentMonth, "Monthly", 1500.0, 800.0, 0.0, "partially_paid"),
                 FeePlan(12, currentMonth, "Monthly", 1500.0, 800.0, 0.0, "partially_paid"),
                 FeePlan(13, currentMonth, "Monthly", 1200.0, 700.0, 0.0, "partially_paid"),
                 FeePlan(14, currentMonth, "Monthly", 1200.0, 700.0, 0.0, "partially_paid"),
                 FeePlan(15, currentMonth, "Monthly", 1200.0, 700.0, 0.0, "partially_paid"),
-                // â”€â”€ Last month overdue (students 12-16) â”€â”€
+                // ── Last month overdue (students 12-16) ──
                 FeePlan(11, lastMonth, "Overdue", 1500.0, 0.0, 200.0, "overdue"),
                 FeePlan(12, lastMonth, "Overdue", 1500.0, 0.0, 200.0, "overdue"),
                 FeePlan(13, lastMonth, "Overdue", 1200.0, 0.0, 150.0, "overdue"),
                 FeePlan(14, lastMonth, "Overdue", 1200.0, 0.0, 150.0, "overdue"),
                 FeePlan(15, lastMonth, "Overdue", 1200.0, 0.0, 150.0, "overdue"),
-                // â”€â”€ Advance paid next month (students 1, 10) â”€â”€
+                // ── Advance paid next month (students 1, 10) ──
                 FeePlan(0, nextMonth, "Advance", 1500.0, 1500.0, 0.0, "paid"),
                 FeePlan(9, nextMonth, "Advance", 1500.0, 1500.0, 0.0, "paid"),
-                // â”€â”€ Student 20 (index 19) current month paid â”€â”€
+                // ── Student 20 (index 19) current month paid ──
                 FeePlan(19, currentMonth, "Monthly", 1800.0, 1800.0, 0.0, "paid"),
-                // â”€â”€ Student 17-18 last month (paid with late fee) â”€â”€
+                // ── Student 17-18 last month (paid with late fee) ──
                 FeePlan(16, lastMonth, "Monthly", 1200.0, 1350.0, 150.0, "paid"),
                 FeePlan(17, lastMonth, "Monthly", 1200.0, 1350.0, 150.0, "paid"),
-                // â”€â”€ Student 17-18 current month paid â”€â”€
+                // ── Student 17-18 current month paid ──
                 FeePlan(16, currentMonth, "Monthly", 1200.0, 1200.0, 0.0, "paid"),
                 FeePlan(17, currentMonth, "Monthly", 1200.0, 1200.0, 0.0, "paid"),
-                // â”€â”€ Inactive student 19 (index 18) unpaid â€” close category â”€â”€
+                // ── Inactive student 19 (index 18) unpaid — close category ──
                 FeePlan(18, currentMonth, "Monthly", 1800.0, 0.0, 0.0, "unpaid"),
-                // â”€â”€ Cancelled fee â”€â”€
+                // ── Cancelled fee ──
                 FeePlan(2, currentMonth, "Admission", 500.0, 0.0, 0.0, "cancelled"),
             )
 
@@ -713,7 +713,7 @@ abstract class AppDatabase : RoomDatabase() {
                         discountAmount = 0.0, lateFeeAmount = fp.lateFee,
                         totalAmount = total, paidAmount = fp.paid,
                         dueAmount = due, status = status,
-                        note = if (status == "cancelled") "Cancelled â€” transferred to another batch" else null,
+                        note = if (status == "cancelled") "Cancelled — transferred to another batch" else null,
                         createdAtMs = now, updatedAtMs = now,
                         cancelledAtMs = if (status == "cancelled") now else null
                     )
@@ -745,25 +745,25 @@ abstract class AppDatabase : RoomDatabase() {
                             receiptDateMs = now, totalAmount = total,
                             paidAmount = fp.paid, dueAmount = due,
                             paymentMethod = method,
-                            receiptText = "Payment received â€” ${fp.period}",
+                            receiptText = "Payment received — ${fp.period}",
                             createdAtMs = now
                         )
                     )
                 }
             }
 
-            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+            // ════════════════════════════════════════════════════════
             // 5.  EXPENSES  (8 records across last 2 months)
-            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+            // ════════════════════════════════════════════════════════
             val expenses = listOf(
-                Triple("Utilities", "Electricity Bill â€” May", 2200.0),
-                Triple("Utilities", "Internet Bill â€” May", 1500.0),
-                Triple("Rent", "Office Rent â€” May", 12000.0),
-                Triple("Salary", "Staff Advance â€” May", 5000.0),
+                Triple("Utilities", "Electricity Bill — May", 2200.0),
+                Triple("Utilities", "Internet Bill — May", 1500.0),
+                Triple("Rent", "Office Rent — May", 12000.0),
+                Triple("Salary", "Staff Advance — May", 5000.0),
                 Triple("Supplies", "Stationery & Books", 1200.0),
                 Triple("Supplies", "Whiteboard Markers (pack of 12)", 600.0),
-                Triple("Maintenance", "AC Repair â€” Room 2", 3500.0),
-                Triple("Marketing", "Facebook Ads â€” Organic Reach", 2000.0)
+                Triple("Maintenance", "AC Repair — Room 2", 3500.0),
+                Triple("Marketing", "Facebook Ads — Organic Reach", 2000.0)
             )
             expenses.forEachIndexed { i, (cat, title, amt) ->
                 db.expenseDao().insertExpense(
@@ -779,12 +779,12 @@ abstract class AppDatabase : RoomDatabase() {
                 )
             }
 
-            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+            // ════════════════════════════════════════════════════════
             // 6.  EXAMS (3) + RESULTS (~20)
-            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+            // ════════════════════════════════════════════════════════
             val exam1 = com.batchfee.edu.data.models.ExamEntity(
                 id = "demo_exam_1", instituteId = demoInstituteId,
-                batchId = "demo_batch_1", examName = "Monthly Test 1 â€” ICT",
+                batchId = "demo_batch_1", examName = "Monthly Test 1 — ICT",
                 subject = "ICT", examDateMs = startOfDay(5),
                 totalMarks = 100.0, passingMarks = 40.0,
                 teacherName = "Md. Hasan", note = "Chapters 1-3",
@@ -793,7 +793,7 @@ abstract class AppDatabase : RoomDatabase() {
             )
             val exam2 = com.batchfee.edu.data.models.ExamEntity(
                 id = "demo_exam_2", instituteId = demoInstituteId,
-                batchId = "demo_batch_1", examName = "Chapter 1-3 Review â€” ICT",
+                batchId = "demo_batch_1", examName = "Chapter 1-3 Review — ICT",
                 subject = "ICT", examDateMs = startOfDay(-10),
                 totalMarks = 50.0, passingMarks = 20.0,
                 teacherName = "Md. Hasan", note = null,
@@ -802,7 +802,7 @@ abstract class AppDatabase : RoomDatabase() {
             )
             val exam3 = com.batchfee.edu.data.models.ExamEntity(
                 id = "demo_exam_3", instituteId = demoInstituteId,
-                batchId = "demo_batch_2", examName = "Mid-Term â€” Mathematics",
+                batchId = "demo_batch_2", examName = "Mid-Term — Mathematics",
                 subject = "Mathematics", examDateMs = startOfDay(-15),
                 totalMarks = 100.0, passingMarks = 40.0,
                 teacherName = "Md. Karim", note = "Full syllabus so far",
@@ -824,7 +824,7 @@ abstract class AppDatabase : RoomDatabase() {
                 Triple("demo_student_7", 40.0, null),
                 Triple("demo_student_8", 28.0, null),
                 Triple("demo_student_9", 33.0, null),
-                Triple("demo_student_10", 48.0, "Top scorer â€” well done!")
+                Triple("demo_student_10", 48.0, "Top scorer — well done!")
             )
             ictResults.forEachIndexed { i, (sid, marks, remark) ->
                 val grade = when { marks >= 40 -> "A+"; marks >= 35 -> "A"; marks >= 30 -> "B"; marks >= 25 -> "C"; else -> "D" }
@@ -862,9 +862,9 @@ abstract class AppDatabase : RoomDatabase() {
                 )
             }
 
-            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+            // ════════════════════════════════════════════════════════
             // 7.  STAFF (3) + STAFF ATTENDANCE + SALARIES + USER ENTITIES
-            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+            // ════════════════════════════════════════════════════════
             data class SeedStaff(
                 val id: String, val code: String, val name: String, val roleTitle: String,
                 val phone: String, val salary: Double, val batchId: String?,
@@ -950,9 +950,9 @@ abstract class AppDatabase : RoomDatabase() {
                 }
             }
 
-            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+            // ════════════════════════════════════════════════════════
             // 8.  ENQUIRIES (6)
-            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+            // ════════════════════════════════════════════════════════
             val enquiries = listOf(
                 listOf("Rafiq Hasan", "+8801712345001", "ICT", "active", "2 days ago"),
                 listOf("Sumaiya Akter", "+8801812345002", "Mathematics", "active", "4 days ago"),
@@ -975,29 +975,29 @@ abstract class AppDatabase : RoomDatabase() {
                 )
             }
 
-            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+            // ════════════════════════════════════════════════════════
             // 9.  REMINDER TEMPLATES (3)
-            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+            // ════════════════════════════════════════════════════════
             listOf(
                 com.batchfee.edu.data.models.ReminderTemplateEntity(
                     id = "demo_reminder_1", instituteId = demoInstituteId,
                     title = "Monthly Fee Reminder",
                     type = "Fee",
-                    messageTemplate = "Dear Guardian, kindly pay the monthly fee of {amount} BDT for {studentName} by {dueDate}. â€” BatchFee",
+                    messageTemplate = "Dear Guardian, kindly pay the monthly fee of {amount} BDT for {studentName} by {dueDate}. — BatchFee",
                     isDefault = true, createdAtMs = now, updatedAtMs = now
                 ),
                 com.batchfee.edu.data.models.ReminderTemplateEntity(
                     id = "demo_reminder_2", instituteId = demoInstituteId,
                     title = "Birthday Wish",
                     type = "Birthday",
-                    messageTemplate = "Happy Birthday, {studentName}! Wishing you a fantastic day from all of us at {instituteName}. ðŸŽ‚",
+                    messageTemplate = "Happy Birthday, {studentName}! Wishing you a fantastic day from all of us at {instituteName}. 🎂",
                     isDefault = true, createdAtMs = now, updatedAtMs = now
                 ),
                 com.batchfee.edu.data.models.ReminderTemplateEntity(
                     id = "demo_reminder_3", instituteId = demoInstituteId,
                     title = "Exam Schedule Alert",
                     type = "Exam",
-                    messageTemplate = "Dear Guardian, {studentName}'s exam ({examName}) is on {examDate}. Please ensure attendance. â€” {instituteName}",
+                    messageTemplate = "Dear Guardian, {studentName}'s exam ({examName}) is on {examDate}. Please ensure attendance. — {instituteName}",
                     isDefault = false, createdAtMs = now, updatedAtMs = now
                 )
             ).forEach { template ->

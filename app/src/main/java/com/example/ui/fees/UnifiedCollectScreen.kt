@@ -1,4 +1,4 @@
-﻿package com.batchfee.edu.ui.fees
+package com.batchfee.edu.ui.fees
 
 import android.content.Context
 import android.content.Intent
@@ -1208,7 +1208,7 @@ private fun NewFeeForm(
             }
             val monthCount = (endMonthIdx - startMonthIdx + 1).coerceAtLeast(1)
             Text(
-                "$monthCount Month${if (monthCount > 1) "s" else ""} Â· $feeType",
+                "$monthCount Month${if (monthCount > 1) "s" else ""} · $feeType",
                 color = Cyan.copy(alpha = 0.8f),
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Medium
@@ -1422,7 +1422,7 @@ private fun smartChipColors() = FilterChipDefaults.filterChipColors(
 private fun moneyInput(value: String): String =
     value.filter { it.isDigit() || it == '.' }
 
-// â”€â”€ Auto-detect fee type from selected months â”€â”€
+// ── Auto-detect fee type from selected months ──
 private fun autoDetectFeeType(startIdx: Int, endIdx: Int, currentMonthIdx: Int): String {
     val safeStart = minOf(startIdx, endIdx)
     val safeEnd = maxOf(startIdx, endIdx)
@@ -1435,9 +1435,9 @@ private fun autoDetectFeeType(startIdx: Int, endIdx: Int, currentMonthIdx: Int):
     }
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-//  MonthYearRangePicker â€” grid-based month picker with range support
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ═══════════════════════════════════════════════════════════════
+//  MonthYearRangePicker — grid-based month picker with range support
+// ═══════════════════════════════════════════════════════════════
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun MonthYearRangePicker(
@@ -1557,7 +1557,7 @@ private fun MonthYearRangePicker(
                     Column(Modifier.padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(label.ifBlank { "No selection" }, color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                         Text(
-                            "$monthCount Month${if (monthCount > 1) "s" else ""} Â· $detectedType",
+                            "$monthCount Month${if (monthCount > 1) "s" else ""} · $detectedType",
                             color = Cyan,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Medium
@@ -1570,7 +1570,7 @@ private fun MonthYearRangePicker(
             val safeStart = minOf(tapStart, tapEnd)
             val safeEnd = maxOf(tapStart, tapEnd)
             TextButton(onClick = { onConfirm(safeStart, safeEnd) }) {
-                Text("Confirm âœ“", color = Cyan, fontWeight = FontWeight.Bold)
+                Text("Confirm ✓", color = Cyan, fontWeight = FontWeight.Bold)
             }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel", color = TextMuted) } }
@@ -1729,9 +1729,9 @@ private fun buildCollectionReceiptText(
     remainingDue: Double,
     paymentMethod: String
 ): String = buildString {
-    appendLine("â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•")
+    appendLine("══════════════════════════════")
     appendLine("  $instituteName")
-    appendLine("â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•")
+    appendLine("══════════════════════════════")
     appendLine("PAYMENT RECEIPT")
     appendLine("")
     appendLine("Student: ${student.fullName}")
@@ -1746,16 +1746,16 @@ private fun buildCollectionReceiptText(
     appendLine("Method: ${paymentMethod.uppercase()}")
     appendLine("Date: ${formatDate(System.currentTimeMillis())}")
     appendLine("")
-    appendLine("â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€")
+    appendLine("──────────────────────────────")
     appendLine("Contact: $institutePhone")
-    appendLine("Thank you â€” $instituteName")
+    appendLine("Thank you — $instituteName")
 }
 
 private fun buildHistoryReceiptText(institute: InstituteInfo, student: StudentEntity, item: StudentPaymentHistory): String =
     buildString {
-        appendLine("â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•")
+        appendLine("══════════════════════════════")
         appendLine("  ${institute.name}")
-        appendLine("â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•")
+        appendLine("══════════════════════════════")
         appendLine("PAYMENT RECEIPT")
         appendLine("Receipt: ${item.payment.receiptNumber}")
         appendLine("")
@@ -1774,9 +1774,9 @@ private fun buildHistoryReceiptText(institute: InstituteInfo, student: StudentEn
         appendLine("Method: ${item.payment.paymentMethod.uppercase()}")
         item.payment.note?.takeIf { it.isNotBlank() }?.let { appendLine("Note: $it") }
         appendLine("")
-        appendLine("â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€")
+        appendLine("──────────────────────────────")
         appendLine("Contact: ${institute.phone}")
-        appendLine("Thank you â€” ${institute.name}")
+        appendLine("Thank you — ${institute.name}")
     }
 
 private data class InstituteInfo(val name: String, val phone: String, val logoText: String)
@@ -1984,7 +1984,7 @@ private fun generateReceiptPdf(context: Context, institute: InstituteInfo, stude
         text.color = AndroidColor.WHITE
         text.textSize = 9.5f
         text.textAlign = Paint.Align.CENTER
-        canvas.drawText("Thank you  Â·  ${institute.name}", 210f, pageHeight - 34f, text)
+        canvas.drawText("Thank you  ·  ${institute.name}", 210f, pageHeight - 34f, text)
         text.textAlign = Paint.Align.LEFT
 
         document.finishPage(page)

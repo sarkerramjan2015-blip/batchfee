@@ -1,4 +1,4 @@
-﻿package com.batchfee.edu.ui.staff
+package com.batchfee.edu.ui.staff
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -28,7 +28,7 @@ import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.domain.SessionManager
 import com.batchfee.edu.domain.StaffPermissions
 
-// â”€â”€ Colors â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Colors ──────────────────────────────────────────────────────
 private val BgColor      = Color(0xFF07111F)
 private val CardBg        = Color(0xFF0F172A)
 private val BorderSub     = Color(0xFF1E293B)

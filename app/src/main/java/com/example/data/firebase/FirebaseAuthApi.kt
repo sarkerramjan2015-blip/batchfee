@@ -1,4 +1,4 @@
-﻿package com.batchfee.edu.data.firebase
+package com.batchfee.edu.data.firebase
 
 import com.google.firebase.crashlytics.FirebaseCrashlytics
 import kotlinx.coroutines.Dispatchers
@@ -41,7 +41,7 @@ object FirebaseAuthApi {
 
     /**
      * Creates a Firebase Auth user via REST API.
-     * This does NOT sign in the new user â€” the admin's session is unaffected.
+     * This does NOT sign in the new user — the admin's session is unaffected.
      * Returns the new user's UID (localId).
      * Throws [SignUpException] on failure.
      */

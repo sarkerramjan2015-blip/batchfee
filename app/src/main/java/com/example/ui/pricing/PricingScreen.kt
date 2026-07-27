@@ -1,4 +1,4 @@
-﻿package com.batchfee.edu.ui.pricing
+package com.batchfee.edu.ui.pricing
 
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
@@ -48,7 +48,7 @@ import com.batchfee.edu.data.repository.SubscriptionRepository
 import kotlinx.coroutines.launch
 import java.net.URLEncoder
 
-// â”€â”€ BatchFee Plan Data â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── BatchFee Plan Data ──────────────────────────────────────────
 data class BatchFeePlan(
     val id: String,
     val name: String,
@@ -74,7 +74,7 @@ val batchFeePlans = listOf(
     BatchFeePlan("enterprise", "Enterprise", Int.MAX_VALUE, "500+ Students", 0.0, isEnterprise = true)
 )
 
-// â”€â”€ ViewModel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── ViewModel ───────────────────────────────────────────────────
 class PricingViewModel : ViewModel() {
     private val _plans = MutableStateFlow(batchFeePlans)
     val plans = _plans.asStateFlow()
@@ -120,7 +120,7 @@ class PricingViewModelFactory : ViewModelProvider.Factory {
     }
 }
 
-// â”€â”€ Colors â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Colors ──────────────────────────────────────────────────────
 private val BgColor      = Color(0xFF07111F)
 private val CardBg        = Color(0xFF0F172A)
 private val CardBgAlt     = Color(0xFF111827)
@@ -136,7 +136,7 @@ private val Teal          = Color(0xFF14B8A6)
 private val AccentRed     = Color(0xFFF87171)
 private val Green         = Color(0xFF22C55E)
 
-// â”€â”€ Feature list for all plans â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Feature list for all plans ──────────────────────────────────
 private val allPlanFeatures = listOf(
     "Student management" to Icons.Filled.Person,
     "Batch management" to Icons.Filled.Groups,
@@ -146,7 +146,7 @@ private val allPlanFeatures = listOf(
     "Reports & reminders" to Icons.Filled.Assessment
 )
 
-// â”€â”€ Screen â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Screen ──────────────────────────────────────────────────────
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PricingScreen(
@@ -211,7 +211,7 @@ fun PricingScreen(
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
         ) {
-            // â”€â”€ Header â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── Header ──────────────────────────────────────────
             Column(
                 modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
@@ -231,7 +231,7 @@ fun PricingScreen(
                 )
             }
 
-            // â”€â”€ Billing Duration Selector â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── Billing Duration Selector ───────────────────────
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -281,7 +281,7 @@ fun PricingScreen(
 
             Spacer(Modifier.height(14.dp))
 
-            // â”€â”€ Plan Cards (Horizontal Scroll) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── Plan Cards (Horizontal Scroll) ──────────────────
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -321,7 +321,7 @@ fun PricingScreen(
 
             Spacer(Modifier.height(18.dp))
 
-            // â”€â”€ Enterprise Card â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── Enterprise Card ─────────────────────────────────
             val enterprisePlan = plans.find { it.isEnterprise }
             if (enterprisePlan != null) {
                 Box(
@@ -400,7 +400,7 @@ fun PricingScreen(
                 Spacer(Modifier.height(24.dp))
             }
 
-            // â”€â”€ Payment Request Dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // ── Payment Request Dialog ──────────────────────────
             if (showPaymentDialog && selectedPlanId != null) {
                 val selPlan = plans.find { it.id == selectedPlanId } ?: return@Scaffold
                 val selPrice = remember(selectedDuration) { viewModel.priceFor(selPlan) }
@@ -416,7 +416,7 @@ fun PricingScreen(
                     },
                     text = {
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Text("${selPlan.name} Â· ${selBilling} Â· BDT ${"%.0f".format(selPrice)}", color = Cyan, fontSize = 13.sp)
+                            Text("${selPlan.name} · ${selBilling} · BDT ${"%.0f".format(selPrice)}", color = Cyan, fontSize = 13.sp)
                             HorizontalDivider(color = BorderSub)
 
                             // Payment method chips
@@ -554,7 +554,7 @@ fun PricingScreen(
     }
 }
 
-// â”€â”€ Plan Card â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Plan Card ───────────────────────────────────────────────────
 @Composable
 private fun PlanCard(
     plan: BatchFeePlan,

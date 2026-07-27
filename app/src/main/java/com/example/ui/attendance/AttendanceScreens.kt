@@ -1,4 +1,4 @@
-﻿package com.batchfee.edu.ui.attendance
+package com.batchfee.edu.ui.attendance
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -69,9 +69,9 @@ private fun gradientButton(text: String, onClick: () -> Unit, modifier: Modifier
     }
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ═══════════════════════════════════════════════════════════════
 //  BatchSelectScreen
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ═══════════════════════════════════════════════════════════════
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AttendanceBatchSelectScreen(db: AppDatabase, onBack: () -> Unit, onSelectBatch: (String) -> Unit) {
@@ -157,9 +157,9 @@ private fun miniChip(label: String, value: String, color: Color) {
     }
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ═══════════════════════════════════════════════════════════════
 //  DateStrip
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ═══════════════════════════════════════════════════════════════
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun DateStrip(
@@ -305,9 +305,9 @@ private fun DateStrip(
     }
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ═══════════════════════════════════════════════════════════════
 //  TakeAttendanceScreen
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ═══════════════════════════════════════════════════════════════
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
@@ -444,7 +444,7 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
             title = { Text("Send Absent Message", color = TextWhite, fontSize = 16.sp) },
             text = {
                 Column {
-                    Text("${student?.fullName ?: "Student"} â€” absent $dateLabel", color = TextMuted, fontSize = 13.sp)
+                    Text("${student?.fullName ?: "Student"} — absent $dateLabel", color = TextMuted, fontSize = 13.sp)
                     Spacer(Modifier.height(12.dp))
                     channelCard("WhatsApp", Icons.Filled.Message, WAGreen, {
                         showChannelDialog = false
@@ -591,9 +591,9 @@ private fun StudentAttendanceCard(
     }
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ═══════════════════════════════════════════════════════════════
 //  AttendanceReportScreen
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ═══════════════════════════════════════════════════════════════
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AttendanceReportScreen(db: AppDatabase, onBack: () -> Unit) {

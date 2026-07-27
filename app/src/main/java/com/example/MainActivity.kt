@@ -1,4 +1,4 @@
-﻿package com.batchfee.edu
+package com.batchfee.edu
 
 import android.os.Bundle
 import androidx.activity.compose.setContent
@@ -34,6 +34,7 @@ import com.batchfee.edu.ui.subscription.SubscriptionExpiredScreen
 import com.batchfee.edu.ui.theme.MyApplicationTheme
 import com.batchfee.edu.ui.update.ForceUpdateScreen
 import com.google.firebase.crashlytics.FirebaseCrashlytics
+import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -61,7 +62,7 @@ class MainActivity : FragmentActivity() {
                 ) {
                     var forceUpdate by remember { mutableStateOf<Int?>(null) }
 
-                    // â”€â”€ Force Update Check â”€â”€
+                    // ── Force Update Check ──
                     if (forceUpdate != null) {
                         ForceUpdateScreen(requiredVersion = forceUpdate!!)
                     } else {
@@ -110,6 +111,19 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    // Firebase can invalidate a credential independently of the inactivity timer.
+    // Treat that as one centralized expired-session event while a local session exists.
+    DisposableEffect(Unit) {
+        val auth = FirebaseAuth.getInstance()
+        val listener = FirebaseAuth.AuthStateListener { firebaseAuth ->
+            if (SessionManager.isLoggedIn() && firebaseAuth.currentUser == null) {
+                SessionManager.expireSession()
+            }
+        }
+        auth.addAuthStateListener(listener)
+        onDispose { auth.removeAuthStateListener(listener) }
     }
 
     LaunchedEffect(isLoggedIn) {

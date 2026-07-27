@@ -1,4 +1,4 @@
-﻿package com.batchfee.edu.ui.billing
+package com.batchfee.edu.ui.billing
 
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
@@ -253,8 +253,8 @@ fun BillingScreen(
                             }
                         }
                         Spacer(Modifier.height(6.dp))
-                        Text("Plan: ${req.requestedPlanId} Â· ${req.durationMonths} Month(s)", color = TextMuted, fontSize = 12.sp)
-                        Text("Amount: BDT ${"%.0f".format(req.amountPaid)} Â· ${req.paymentMethod}", color = TextMuted, fontSize = 12.sp)
+                        Text("Plan: ${req.requestedPlanId} · ${req.durationMonths} Month(s)", color = TextMuted, fontSize = 12.sp)
+                        Text("Amount: BDT ${"%.0f".format(req.amountPaid)} · ${req.paymentMethod}", color = TextMuted, fontSize = 12.sp)
                         if (req.reviewerNote != null) {
                             Spacer(Modifier.height(4.dp))
                             Text("Note: ${req.reviewerNote}", color = TextMuted, fontSize = 11.sp)
