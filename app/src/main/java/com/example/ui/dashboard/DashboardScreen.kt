@@ -46,6 +46,7 @@ import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
 import com.batchfee.edu.data.models.InstituteEntity
 
 import com.batchfee.edu.domain.SessionManager
+import com.batchfee.edu.domain.MonthlyDueCalculator
 import com.google.firebase.firestore.FirebaseFirestore
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.sp
@@ -55,6 +56,7 @@ import com.batchfee.edu.domain.AccessControl
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -349,14 +351,42 @@ class DashboardViewModel(private val db: AppDatabase) : ViewModel() {
             launch {
                 db.feeDao().getDueFees(instId).collect { fees ->
                     val students = db.studentDao().getStudentsByInstituteOnce(instId).associateBy { it.id }
-                    val activeFees = fees.filter { !isClosedStudentStatus(students[it.studentId]?.status) }
-                    val closeFees = fees.filter { isClosedStudentStatus(students[it.studentId]?.status) }
-                    _pendingFeesCount.value = fees.distinctBy { it.studentId }.size
+                    var nonMonthlyDue = 0.0
+                    val nonMonthlyStudentIds = mutableSetOf<String>()
+                    fees.filter { !MonthlyDueCalculator.isMonthlyFeeType(it.feeType) && it.dueAmount > 0.0 }.forEach { fee ->
+                        nonMonthlyDue += fee.dueAmount
+                        nonMonthlyStudentIds += fee.studentId
+                    }
+                    var monthlyDue = 0.0
+                    val monthlyStudentIds = mutableSetOf<String>()
+                    students.values.forEach { student ->
+                        if (student.admissionDateMs <= 0L) return@forEach
+                        val enrolledBatches = db.batchStudentDao().getBatchesForStudent(student.id, instId).firstOrNull() ?: return@forEach
+                        enrolledBatches.forEach { batch ->
+                            if (batch.monthlyFeeAmount <= 0.0) return@forEach
+                            val batchFees = fees.filter { it.studentId == student.id && it.batchId == batch.id }
+                            val items = MonthlyDueCalculator.computeMonthlyOutstandingItems(
+                                admissionDateMs = student.admissionDateMs,
+                                monthlyFeeAmount = batch.monthlyFeeAmount,
+                                batchId = batch.id,
+                                batchName = batch.name,
+                                existingMonthlyFees = batchFees
+                            )
+                            items.forEach { item ->
+                                monthlyDue += item.outstanding
+                                monthlyStudentIds += student.id
+                            }
+                        }
+                    }
+                    val allActiveIds = (nonMonthlyStudentIds + monthlyStudentIds).filter { sid ->
+                        !isClosedStudentStatus(students[sid]?.status)
+                    }
+                    _pendingFeesCount.value = (nonMonthlyStudentIds + monthlyStudentIds).size
                     _dueFeeSummary.value = DueFeeSummary(
-                        activeCount = activeFees.distinctBy { it.studentId }.size,
-                        activeAmount = activeFees.sumOf { it.dueAmount },
-                        closeCount = closeFees.distinctBy { it.studentId }.size,
-                        closeAmount = closeFees.sumOf { it.dueAmount }
+                        activeCount = allActiveIds.size,
+                        activeAmount = nonMonthlyDue + monthlyDue,
+                        closeCount = 0,
+                        closeAmount = 0.0
                     )
                 }
             }
@@ -675,7 +705,6 @@ fun DashboardScreen(
         } else {
             Modifier.fillMaxWidth()
         }
-        val shortcutColumns = if (tabletLayout) 3 else 2
         Scaffold(
             containerColor = DashboardBg,
             snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -974,55 +1003,6 @@ fun DashboardScreen(
                     onComingSoon = showComingSoon
                 )
 
-                Spacer(modifier = Modifier.height(16.dp))
-
-                SectionHeader(title = "Quick Actions")
-                Spacer(Modifier.height(10.dp))
-                val shortcuts = listOf(
-                    Triple("Add Student", Icons.Filled.PersonAdd, "AddStudentRoute"),
-                    Triple("Create Batch", Icons.Filled.Class, "AddBatchRoute"),
-                    Triple("Collect Fee", Icons.Filled.Payments, "UnifiedCollectRoute"),
-                    Triple("Attendance", Icons.Filled.HowToReg, "AttendanceRoute"),
-                    Triple("Add Expense", Icons.Filled.Receipt, "AddExpenseRoute"),
-                    Triple("Add Staff", Icons.Filled.PersonAddAlt1, "AddStaffRoute")
-                ).filter { AccessControl.canAccessRoute(it.third) }
-                // FIX: Replaced LazyVerticalGrid with manual Row/Column grid.
-                // LazyVerticalGrid nested inside a scrollable Column receives
-                // unbounded height constraints, causing a crash. A non-lazy
-                // Column with Row rows avoids infinite-height measurement.
-                if (shortcuts.isEmpty()) {
-                    Text("No quick actions available for this staff account.", color = TextSecondary, fontSize = 13.sp)
-                } else {
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        shortcuts.chunked(shortcutColumns).forEach { rowItems ->
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                rowItems.forEachIndexed { index, (label, icon, route) ->
-                                    ShortcutItem(
-                                        label = label,
-                                        icon = icon,
-                                        modifier = if (rowItems.size == 1) Modifier.fillMaxWidth() else Modifier.weight(1f),
-                                        onClick = { safeNavigate(route) }
-                                    )
-                                    if (index != rowItems.lastIndex && rowItems.size > 1) {
-                                        Spacer(Modifier.width(10.dp))
-                                    }
-                                }
-                                if (rowItems.size > 1 && rowItems.size < shortcutColumns) {
-                                    repeat(shortcutColumns - rowItems.size) {
-                                        Spacer(Modifier.weight(1f))
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                
                 Spacer(modifier = Modifier.height(16.dp))
             }
         }
@@ -3049,46 +3029,6 @@ private fun TableRow(label: String, val1: String, val2: String, val3: String, is
         Text(val1, color = TextPrimary, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f), textAlign = TextAlign.End)
         Text(val2, color = TextPrimary, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f), textAlign = TextAlign.End)
         Text(val3, color = if (isTotal) AccentCyan else TextPrimary, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = if (isTotal) FontWeight.Bold else FontWeight.Normal), modifier = Modifier.weight(1f), textAlign = TextAlign.End)
-    }
-}
-
-@Composable
-private fun ShortcutItem(label: String, icon: ImageVector, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    Card(
-        modifier = modifier
-            .height(86.dp)
-            .clickable { onClick() },
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = DashboardCardAlt),
-        border = borderStroke()
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 8.dp, vertical = 9.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(34.dp)
-                    .clip(RoundedCornerShape(11.dp))
-                    .background(AccentCyan.copy(alpha = 0.12f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(icon, contentDescription = label, tint = AccentCyan, modifier = Modifier.size(20.dp))
-            }
-            Spacer(modifier = Modifier.height(7.dp))
-            Text(
-                label,
-                color = TextPrimary,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.SemiBold,
-                textAlign = TextAlign.Center,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
     }
 }
 
