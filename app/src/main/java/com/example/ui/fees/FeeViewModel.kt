@@ -12,9 +12,12 @@ import com.batchfee.edu.data.models.FeeEntity
 import com.batchfee.edu.data.repository.FeeCollectionRepository
 import com.batchfee.edu.domain.appendInstituteSignature
 import com.batchfee.edu.domain.loadInstituteSignature
+import com.batchfee.edu.domain.MonthlyDueCalculator
+import com.batchfee.edu.domain.ComputedMonthDue
 import com.batchfee.edu.domain.SessionManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
 import java.net.URLEncoder
 import java.text.SimpleDateFormat
@@ -90,25 +93,57 @@ class FeeViewModel(private val db: AppDatabase) : ViewModel() {
         val allStudents = db.studentDao().getStudentsByInstituteOnce(instId).associateBy { it.id }
         val allBatches = db.batchDao().getBatchesByInstituteOnce(instId).associateBy { it.id }
         var total = 0.0
-        val details = fees.map { fee ->
-            val student = allStudents[fee.studentId]
+        val details = mutableListOf<DueFeeDetail>()
+
+        // Non-monthly due fees (admission, one-time, etc.) — kept as-is
+        fees.filter { !MonthlyDueCalculator.isMonthlyFeeType(it.feeType) && it.dueAmount > 0.0 }.forEach { fee ->
+            val student = allStudents[fee.studentId] ?: return@forEach
             val batchName = fee.batchId?.let { allBatches[it]?.name } ?: ""
             total += fee.dueAmount
-            DueFeeDetail(
-                feeId = fee.id,
-                studentId = fee.studentId,
-                studentName = student?.fullName ?: "Unknown",
-                studentPhone = student?.phone,
-                batchName = batchName,
-                feePeriod = fee.feePeriod,
-                dueAmount = fee.dueAmount,
-                totalAmount = fee.totalAmount,
-                paidAmount = fee.paidAmount,
-                dueDateMs = fee.dueDateMs,
-                status = fee.status,
-                studentStatus = student?.status ?: "active"
+            details += DueFeeDetail(
+                feeId = fee.id, studentId = fee.studentId,
+                studentName = student.fullName, studentPhone = student.phone,
+                batchName = batchName, feePeriod = fee.feePeriod,
+                dueAmount = fee.dueAmount, totalAmount = fee.totalAmount,
+                paidAmount = fee.paidAmount, dueDateMs = fee.dueDateMs,
+                status = fee.status, studentStatus = student.status
             )
         }
+
+        // Monthly due items — computed from admission date for every enrolled student+batch
+        allStudents.values.forEach { student ->
+            if (student.admissionDateMs <= 0L) return@forEach
+            val enrolledBatches = db.batchStudentDao().getBatchesForStudent(student.id, instId).firstOrNull() ?: return@forEach
+            enrolledBatches.forEach { batch ->
+                if (batch.monthlyFeeAmount <= 0.0) return@forEach
+                val batchFees = fees.filter { it.studentId == student.id && it.batchId == batch.id }
+                val items = MonthlyDueCalculator.computeMonthlyOutstandingItems(
+                    admissionDateMs = student.admissionDateMs,
+                    monthlyFeeAmount = batch.monthlyFeeAmount,
+                    batchId = batch.id,
+                    batchName = batch.name,
+                    existingMonthlyFees = batchFees
+                )
+                items.forEach { item ->
+                    total += item.outstanding
+                    details += DueFeeDetail(
+                        feeId = "",
+                        studentId = student.id,
+                        studentName = student.fullName,
+                        studentPhone = student.phone,
+                        batchName = item.batchName,
+                        feePeriod = item.period,
+                        dueAmount = item.outstanding,
+                        totalAmount = item.monthlyFeeAmount,
+                        paidAmount = item.paidAmount,
+                        dueDateMs = 0L,
+                        status = if (item.paidAmount > 0.0) "partially_paid" else "unpaid",
+                        studentStatus = student.status
+                    )
+                }
+            }
+        }
+
         _dueFeesWithDetails.value = details
         _totalDueAmount.value = total
         _monthWiseDues.value = buildMonthWiseDues(details)
