@@ -188,6 +188,24 @@ object FinanceSyncHelper {
         }
     }
 
+    suspend fun deletePayment(paymentId: String, instituteId: String) = withContext(Dispatchers.IO) {
+        try {
+            instituteCollection(instituteId, PAYMENTS).document(paymentId).delete().await()
+        } catch (e: Exception) {
+            recordException(e)
+            throw e
+        }
+    }
+
+    suspend fun deleteReceipt(receiptId: String, instituteId: String) = withContext(Dispatchers.IO) {
+        try {
+            instituteCollection(instituteId, RECEIPTS).document(receiptId).delete().await()
+        } catch (e: Exception) {
+            recordException(e)
+            throw e
+        }
+    }
+
     suspend fun syncAllFromFirestore(db: AppDatabase, instituteId: String) = withContext(Dispatchers.IO) {
         try {
             instituteCollection(instituteId, FEES).get().await().documents.mapNotNull { doc ->

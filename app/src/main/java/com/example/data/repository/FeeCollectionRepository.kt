@@ -317,6 +317,54 @@ class FeeCollectionRepository(private val db: AppDatabase) {
         return total.coerceAtLeast(0.0)
     }
 
+    suspend fun deletePayment(
+        paymentId: String,
+        instituteId: String,
+        feeId: String
+    ) = db.withTransaction {
+        val now = System.currentTimeMillis()
+        val fee = db.feeDao().getFeeById(feeId, instituteId)
+            ?: throw IllegalStateException("Fee record not found.")
+
+        val payment = db.paymentDao().getAllPaymentsOnce(instituteId)
+            .firstOrNull { it.id == paymentId }
+            ?: throw IllegalStateException("Payment not found.")
+
+        // Delete receipt
+        db.receiptDao().getReceiptByPaymentIdOnce(instituteId, paymentId)?.let { receipt ->
+            db.receiptDao().deleteReceiptByPaymentId(paymentId, instituteId)
+            FinanceSyncHelper.deleteReceipt(receipt.id, instituteId)
+        }
+
+        // Delete payment
+        db.paymentDao().deletePaymentById(paymentId, instituteId)
+        FinanceSyncHelper.deletePayment(paymentId, instituteId)
+
+        // Recalculate fee
+        val remainingPayments = db.paymentDao().getAllPaymentsOnce(instituteId)
+            .filter { it.feeId == fee.id && it.status == "completed" && it.id != paymentId }
+        val updatedPaid = remainingPayments.sumOf { it.amount }
+        val updatedDue = (fee.totalAmount - updatedPaid).coerceAtLeast(0.0)
+        val updatedFee = fee.copy(
+            paidAmount = updatedPaid,
+            dueAmount = updatedDue,
+            status = when {
+                updatedDue <= EPSILON -> "paid"
+                updatedPaid > 0.0 -> "partially_paid"
+                else -> "unpaid"
+            },
+            updatedAtMs = now
+        )
+        db.feeDao().updateFee(updatedFee)
+        FinanceSyncHelper.upsertFee(updatedFee)
+    }
+
+    private fun normalizeFeeType(feeType: String): String =
+        feeType.trim().lowercase().ifBlank { "monthly_fee" }
+
+    private fun statusAfterPayment(dueAmount: Double): String =
+        if (dueAmount <= EPSILON) "paid" else "partially_paid"
+
     private fun statusForNewFee(dueAmount: Double): String =
         if (dueAmount <= EPSILON) "paid" else "unpaid"
 
@@ -326,12 +374,6 @@ class FeeCollectionRepository(private val db: AppDatabase) {
             paidAmount > EPSILON -> "partially_paid"
             else -> "unpaid"
         }
-
-    private fun statusAfterPayment(dueAmount: Double): String =
-        if (dueAmount <= EPSILON) "paid" else "partially_paid"
-
-    private fun normalizeFeeType(feeType: String): String =
-        feeType.trim().lowercase().ifBlank { "monthly_fee" }
 
     private companion object {
         const val EPSILON = 0.001
