@@ -52,7 +52,7 @@ import java.util.Locale
         com.batchfee.edu.data.models.AbsentMessageEntity::class,
         com.batchfee.edu.data.models.EnquiryEntity::class
     ],
-    version = 15,
+    version = 16,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -159,6 +159,12 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_15_16 = object : androidx.room.migration.Migration(15, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE enquiries ADD COLUMN note TEXT")
+            }
+        }
+
         fun getDatabase(context: Context, scope: CoroutineScope): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val builder = Room.databaseBuilder(
@@ -166,7 +172,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "batchfee_database"
                 )
-                .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15)
+                .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16)
 
                 if (BuildConfig.DEBUG) {
                     builder.fallbackToDestructiveMigration()

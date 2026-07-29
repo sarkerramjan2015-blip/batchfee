@@ -1,7 +1,12 @@
 package com.batchfee.edu.ui.exams
 
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Typeface
 import android.net.Uri
+import androidx.core.content.FileProvider
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -12,6 +17,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -169,6 +175,8 @@ fun AddEditExamScreen(db: AppDatabase, examId: String? = null, onBack: () -> Uni
     var selectedBatchId by remember { mutableStateOf<String?>(null) }
     var examName by remember { mutableStateOf("") }
     var subject by remember { mutableStateOf("") }
+    var teacherName by remember { mutableStateOf("") }
+    var examNote by remember { mutableStateOf("") }
     var totalMarks by remember { mutableStateOf("100") }
     var passingMarks by remember { mutableStateOf("40") }
     var selectedDateMs by remember { mutableStateOf(System.currentTimeMillis()) }
@@ -188,6 +196,8 @@ fun AddEditExamScreen(db: AppDatabase, examId: String? = null, onBack: () -> Uni
             selectedBatchId = exam.batchId
             examName = exam.examName
             subject = exam.subject.orEmpty()
+            teacherName = exam.teacherName.orEmpty()
+            examNote = exam.note.orEmpty()
             totalMarks = formatNum(exam.totalMarks)
             passingMarks = formatNum(exam.passingMarks)
             selectedDateMs = exam.examDateMs
@@ -258,6 +268,20 @@ fun AddEditExamScreen(db: AppDatabase, examId: String? = null, onBack: () -> Uni
                 colors = fieldColors(), shape = RoundedCornerShape(12.dp)
             )
             Spacer(Modifier.height(10.dp))
+            OutlinedTextField(
+                value = teacherName, onValueChange = { teacherName = it },
+                label = { Text("Teacher Name (optional)") }, singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                colors = fieldColors(), shape = RoundedCornerShape(12.dp)
+            )
+            Spacer(Modifier.height(10.dp))
+            OutlinedTextField(
+                value = examNote, onValueChange = { examNote = it },
+                label = { Text("Note (optional)") }, maxLines = 3,
+                modifier = Modifier.fillMaxWidth(),
+                colors = fieldColors(), shape = RoundedCornerShape(12.dp)
+            )
+            Spacer(Modifier.height(10.dp))
 
             // Date picker
             OutlinedTextField(
@@ -311,7 +335,7 @@ fun AddEditExamScreen(db: AppDatabase, examId: String? = null, onBack: () -> Uni
                                 totalMarks = totalMarks.toDoubleOrNull() ?: 100.0,
                                 passingMarks = passingMarks.toDoubleOrNull() ?: 40.0,
                                 examDateMs = selectedDateMs,
-                                teacherName = null,
+                                teacherName = teacherName.ifBlank { null },
                                 onSuccess = onBack,
                                 onError = onError
                             )
@@ -320,7 +344,8 @@ fun AddEditExamScreen(db: AppDatabase, examId: String? = null, onBack: () -> Uni
                                 batchId = selectedBatchId!!, examName = examName, subject = subject,
                                 totalMarks = totalMarks.toDoubleOrNull() ?: 100.0,
                                 passingMarks = passingMarks.toDoubleOrNull() ?: 40.0,
-                                examDateMs = selectedDateMs, teacherName = null,
+                                examDateMs = selectedDateMs,
+                                teacherName = teacherName.ifBlank { null },
                                 onSuccess = onBack,
                                 onError = onError
                             )
@@ -592,37 +617,143 @@ fun ExamDetailScreen(db: AppDatabase, examId: String, onBack: () -> Unit, onEdit
         }
     }
 
-    // ── Single student message dialog ───────────────
+    // ── Single student result card ─────────────
     if (showStudentMessageDialog != null && selectedExam != null) {
         val item = showStudentMessageDialog!!
-        val msg = viewModel.buildStudentMessage(item, selectedExam!!)
+        val exam = selectedExam!!
+        val gradeColor = when (item.result?.grade) {
+            "A+", "A", "A-" -> AccentGreen; "B", "C" -> AccentAmber; "F" -> AccentRed; else -> TextMuted
+        }
+        val passFail = if ((item.result?.marksObtained ?: 0.0) >= exam.passingMarks) "PASSED" else "FAILED"
+        val passColor = if (passFail == "PASSED") AccentGreen else AccentRed
         Dialog(onDismissRequest = { showStudentMessageDialog = null }) {
-            Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = CardBg), border = BorderStroke(1.dp, BorderSub)) {
-                Column(modifier = Modifier.padding(20.dp)) {
-                    Text("Result — ${item.student.fullName}", color = TextWhite, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                    Spacer(Modifier.height(8.dp))
-                    Text(msg, color = TextMuted, fontSize = 13.sp, lineHeight = 20.sp)
-                    Spacer(Modifier.height(16.dp))
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        OutlinedButton(onClick = {
-                            showStudentMessageDialog = null
-                            sendWhatsApp(context, item.student.phone, msg)
-                        }, modifier = Modifier.weight(1f).height(44.dp), shape = RoundedCornerShape(10.dp), border = BorderStroke(1.dp, WAGreen)) {
-                            Icon(Icons.Filled.Chat, null, tint = WAGreen, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("WhatsApp", color = WAGreen, fontSize = 12.sp)
-                        }
-                        OutlinedButton(onClick = {
-                            showStudentMessageDialog = null
-                            sendSMS(context, item.student.phone, msg)
-                        }, modifier = Modifier.weight(1f).height(44.dp), shape = RoundedCornerShape(10.dp), border = BorderStroke(1.dp, Cyan)) {
-                            Icon(Icons.Filled.Sms, null, tint = Cyan, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("SMS", color = Cyan, fontSize = 12.sp)
+            Card(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = CardBg),
+                border = BorderStroke(1.dp, BorderSub)
+            ) {
+                Column {
+                    // Header
+                    Box(
+                        modifier = Modifier.fillMaxWidth()
+                            .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
+                            .background(Brush.linearGradient(listOf(ElectricBlue, AccentViolet)))
+                            .padding(20.dp)
+                    ) {
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Text("RESULT CARD", color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                            Spacer(Modifier.height(4.dp))
+                            Text(exam.examName, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            if (exam.subject != null) Text(exam.subject, color = Color.White.copy(alpha = 0.8f), fontSize = 13.sp)
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text(batchName, color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
+                                Text(SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(exam.examDateMs)), color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
+                            }
                         }
                     }
-                    Spacer(Modifier.height(8.dp))
-                    TextButton(onClick = { showStudentMessageDialog = null }, modifier = Modifier.fillMaxWidth()) { Text("Close", color = TextMuted) }
+
+                    // Student info
+                    Column(modifier = Modifier.padding(20.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier.size(48.dp).clip(CircleShape)
+                                    .background(Brush.linearGradient(listOf(Cyan.copy(0.3f), AccentViolet.copy(0.2f)))),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(item.student.fullName.firstOrNull()?.uppercase() ?: "?", color = Cyan, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                            }
+                            Spacer(Modifier.width(14.dp))
+                            Column {
+                                Text(item.student.fullName, color = TextWhite, fontSize = 17.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(item.student.studentCode.ifBlank { "No ID" }, color = TextMuted, fontSize = 13.sp)
+                            }
+                        }
+
+                        Spacer(Modifier.height(16.dp))
+                        HorizontalDivider(color = BorderSub)
+                        Spacer(Modifier.height(16.dp))
+
+                        // Marks + Grade row
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                            StatCard("Marks", "${item.result?.marksObtained?.let { formatNum(it) } ?: "-"} / ${formatNum(exam.totalMarks)}", Cyan)
+                            StatCard("Grade", item.result?.grade ?: "-", gradeColor)
+                            StatCard("Position", "#${item.position}", AccentViolet)
+                        }
+
+                        Spacer(Modifier.height(14.dp))
+
+                        // Pass/Fail badge
+                        Box(
+                            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                                .background(passColor.copy(alpha = 0.12f)).border(1.dp, passColor.copy(alpha = 0.3f), RoundedCornerShape(12.dp))
+                                .padding(vertical = 10.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(if (passFail == "PASSED") Icons.Filled.CheckCircle else Icons.Filled.Cancel, null, tint = passColor, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text(passFail, color = passColor, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+
+                        Spacer(Modifier.height(6.dp))
+
+                        // Progress bar
+                        val pct = if (exam.totalMarks > 0) ((item.result?.marksObtained ?: 0.0) / exam.totalMarks).coerceIn(0.0, 1.0) else 0.0
+                        LinearProgressIndicator(
+                            progress = { pct.toFloat() },
+                            modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
+                            color = gradeColor,
+                            trackColor = CardBgAlt,
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("0", color = TextMuted, fontSize = 10.sp)
+                            Text("${"%.0f".format(pct * 100)}%", color = gradeColor, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                            Text(formatNum(exam.totalMarks), color = TextMuted, fontSize = 10.sp)
+                        }
+
+                        Spacer(Modifier.height(16.dp))
+                        HorizontalDivider(color = BorderSub)
+                        Spacer(Modifier.height(12.dp))
+
+                        // Actions
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(
+                                onClick = {
+                                    showStudentMessageDialog = null
+                                    shareResultImage(context, item, exam, batchName, gradeColor, passColor, passFail)
+                                },
+                                modifier = Modifier.weight(1f).height(44.dp),
+                                shape = RoundedCornerShape(12.dp),
+                                border = BorderStroke(1.dp, Cyan.copy(alpha = 0.5f))
+                            ) {
+                                Icon(Icons.Filled.Share, null, tint = Cyan, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Share", color = Cyan, fontSize = 13.sp)
+                            }
+                            OutlinedButton(
+                                onClick = {
+                                    showStudentMessageDialog = null
+                                    val msg = viewModel.buildStudentMessage(item, exam)
+                                    sendWhatsApp(context, item.student.phone, msg)
+                                },
+                                modifier = Modifier.weight(1f).height(44.dp),
+                                shape = RoundedCornerShape(12.dp),
+                                border = BorderStroke(1.dp, WAGreen)
+                            ) {
+                                Icon(Icons.Filled.Chat, null, tint = WAGreen, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("WhatsApp", color = WAGreen, fontSize = 13.sp)
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        TextButton(
+                            onClick = { showStudentMessageDialog = null },
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("Close", color = TextMuted, fontSize = 13.sp) }
+                    }
                 }
             }
         }
@@ -728,6 +859,21 @@ private fun StatLabel(label: String, value: String, color: Color) {
 }
 
 @Composable
+private fun StatCard(label: String, value: String, color: Color) {
+    Card(
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = CardBgAlt),
+        border = BorderStroke(1.dp, BorderSub)
+    ) {
+        Column(modifier = Modifier.padding(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(value, color = color, fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Spacer(Modifier.height(2.dp))
+            Text(label, color = TextMuted, fontSize = 11.sp)
+        }
+    }
+}
+
+@Composable
 private fun ShareOption(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, color: Color, onClick: () -> Unit) {
     OutlinedButton(
         onClick = onClick, modifier = Modifier.fillMaxWidth().height(48.dp),
@@ -782,4 +928,123 @@ private fun sendSMS(context: android.content.Context, phone: String?, msg: Strin
         shareText(context, msg, "Share via SMS")
     }
 }
+
+private fun shareResultImage(
+    context: android.content.Context,
+    item: StudentResultItem,
+    exam: com.batchfee.edu.data.models.ExamEntity,
+    batchName: String,
+    gradeColor: androidx.compose.ui.graphics.Color,
+    passColor: androidx.compose.ui.graphics.Color,
+    passFail: String
+) {
+    val w = 800
+    val h = 1050
+    val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+    val c = Canvas(bmp)
+    val bg = android.graphics.Color.parseColor("#FFFFFF")
+    c.drawColor(bg)
+
+    val ink = android.graphics.Color.parseColor("#0F172A")
+    val mute = android.graphics.Color.parseColor("#64748B")
+    val blue = android.graphics.Color.parseColor("#2563EB")
+    val cyan = android.graphics.Color.parseColor("#0EA5E9")
+    val green = android.graphics.Color.parseColor("#10B981")
+    val amber = android.graphics.Color.parseColor("#F59E0B")
+    val red = android.graphics.Color.parseColor("#EF4444")
+    val softLine = android.graphics.Color.parseColor("#E2E8F0")
+    val softBg = android.graphics.Color.parseColor("#F8FAFC")
+    val gColor = gradeColor.toArgb()
+    val pColor = passColor.toArgb()
+
+    // ── Top accent bar ──
+    val topBar = android.graphics.Paint().apply { shader = android.graphics.LinearGradient(0f, 0f, w.toFloat(), 0f, blue, cyan, android.graphics.Shader.TileMode.CLAMP) }
+    c.drawRect(0f, 0f, w.toFloat(), 8f, topBar)
+
+    // ── Header section ──
+    val white = android.graphics.Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.WHITE; textSize = 34f; typeface = Typeface.DEFAULT_BOLD }
+    val whiteSm = android.graphics.Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.WHITE; textSize = 22f }
+    val mutePaint = android.graphics.Paint(Paint.ANTI_ALIAS_FLAG).apply { color = mute; textSize = 22f }
+    val inkPaint = android.graphics.Paint(Paint.ANTI_ALIAS_FLAG).apply { color = ink; textSize = 24f }
+    val inkBold = android.graphics.Paint(Paint.ANTI_ALIAS_FLAG).apply { color = ink; textSize = 28f; typeface = Typeface.DEFAULT_BOLD }
+    val inkTitle = android.graphics.Paint(Paint.ANTI_ALIAS_FLAG).apply { color = ink; textSize = 36f; typeface = Typeface.DEFAULT_BOLD }
+    val cyanBold = android.graphics.Paint(Paint.ANTI_ALIAS_FLAG).apply { color = cyan; textSize = 30f; typeface = Typeface.DEFAULT_BOLD }
+    val blueBold = android.graphics.Paint(Paint.ANTI_ALIAS_FLAG).apply { color = blue; textSize = 24f; typeface = Typeface.DEFAULT_BOLD }
+
+    val headerBg = android.graphics.Paint().apply { shader = android.graphics.LinearGradient(0f, 0f, 0f, 180f, blue, android.graphics.Color.parseColor("#1E40AF"), android.graphics.Shader.TileMode.CLAMP) }
+    c.drawRoundRect(20f, 16f, 780f, 176f, 24f, 24f, headerBg)
+
+    white.textSize = 28f
+    c.drawText("BATCHFEE", 52f, 56f, white)
+    white.textSize = 16f
+    c.drawText("RESULT CARD", 52f, 84f, whiteSm)
+    white.textSize = 22f
+    c.drawText(exam.examName, 52f, 128f, white)
+    whiteSm.textSize = 15f
+    c.drawText("$batchName  ·  ${SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(exam.examDateMs))}", 52f, 156f, whiteSm)
+
+    // ── Student section ──
+    val stuY = 212f
+    c.drawText(item.student.fullName, 44f, stuY + 24f, inkTitle)
+    mutePaint.textSize = 22f
+    c.drawText(item.student.studentCode.ifBlank { "" }, 44f, stuY + 50f, mutePaint)
+
+    // ── Marks & Grade row ──
+    val cardY = stuY + 86f
+    // Marks card
+    c.drawRoundRect(36f, cardY, 386f, cardY + 240f, 20f, 20f, android.graphics.Paint().apply { color = softBg })
+    c.drawRoundRect(36f, cardY, 386f, cardY + 240f, 20f, 20f, android.graphics.Paint().apply { color = softLine; style = Paint.Style.STROKE; strokeWidth = 1.5f })
+    mutePaint.textSize = 20f
+    c.drawText("MARKS OBTAINED", 64f, cardY + 40f, mutePaint)
+    val marksStr = "${item.result?.marksObtained?.let { formatNum(it) } ?: "-"}"
+    android.graphics.Paint(Paint.ANTI_ALIAS_FLAG).apply { color = blue; textSize = 56f; typeface = Typeface.DEFAULT_BOLD }.let { paint ->
+        c.drawText(marksStr, 64f, cardY + 100f, paint)
+    }
+    c.drawText("out of ${formatNum(exam.totalMarks)}", 64f, cardY + 130f, mutePaint)
+
+    // Progress bar in marks card
+    val pct = if (exam.totalMarks > 0) ((item.result?.marksObtained ?: 0.0) / exam.totalMarks).coerceIn(0.0, 1.0) else 0.0
+    c.drawRoundRect(64f, cardY + 162f, 358f, cardY + 176f, 7f, 7f, android.graphics.Paint().apply { color = android.graphics.Color.parseColor("#E2E8F0") })
+    c.drawRoundRect(64f, cardY + 162f, (64f + 294f * pct.toFloat()).coerceAtLeast(64f + 7f), cardY + 176f, 7f, 7f, android.graphics.Paint().apply { color = gColor })
+    mutePaint.textSize = 16f
+    c.drawText("${"%.0f".format(pct * 100)}%", 358f, cardY + 192f, android.graphics.Paint(Paint.ANTI_ALIAS_FLAG).apply { color = gColor; textSize = 18f; typeface = Typeface.DEFAULT_BOLD; textAlign = Paint.Align.RIGHT })
+
+    // Grade card
+    c.drawRoundRect(408f, cardY, 764f, cardY + 240f, 20f, 20f, android.graphics.Paint().apply { color = softBg })
+    c.drawRoundRect(408f, cardY, 764f, cardY + 240f, 20f, 20f, android.graphics.Paint().apply { color = softLine; style = Paint.Style.STROKE; strokeWidth = 1.5f })
+    mutePaint.textSize = 20f; mutePaint.textAlign = Paint.Align.LEFT
+    c.drawText("GRADE", 436f, cardY + 40f, mutePaint)
+    android.graphics.Paint(Paint.ANTI_ALIAS_FLAG).apply { color = gColor; textSize = 64f; typeface = Typeface.DEFAULT_BOLD; textAlign = Paint.Align.CENTER }.let { paint ->
+        c.drawText(item.result?.grade ?: "-", 586f, cardY + 110f, paint)
+    }
+    mutePaint.textAlign = Paint.Align.LEFT
+    mutePaint.textSize = 18f
+    c.drawText("Position: #${item.position}", 436f, cardY + 168f, mutePaint)
+    c.drawText(passFail, 436f, cardY + 196f, android.graphics.Paint(Paint.ANTI_ALIAS_FLAG).apply { color = pColor; textSize = 22f; typeface = Typeface.DEFAULT_BOLD })
+
+    // ── Subject / exam info ──
+    val infoY = cardY + 272f
+    mutePaint.textSize = 22f
+    c.drawText("EXAM DETAILS", 44f, infoY + 24f, android.graphics.Paint(Paint.ANTI_ALIAS_FLAG).apply { color = blue; textSize = 18f; typeface = Typeface.DEFAULT_BOLD })
+    c.drawText(exam.examName, 44f, infoY + 58f, inkBold)
+    exam.subject?.let { c.drawText("Subject: $it", 44f, infoY + 90f, mutePaint) }
+    inkPaint.textSize = 22f
+    c.drawText("Total Marks: ${formatNum(exam.totalMarks)}  ·  Pass Marks: ${formatNum(exam.passingMarks)}", 44f, infoY + 120f, inkPaint)
+
+    // ── Footer ──
+    val footerY = h - 80f
+    c.drawLine(60f, footerY - 8f, 740f, footerY - 8f, android.graphics.Paint().apply { color = softLine; strokeWidth = 1f })
+    mutePaint.textSize = 16f; mutePaint.textAlign = Paint.Align.CENTER
+    c.drawText("Generated by BatchFee  ·  ${SimpleDateFormat("dd/MM/yyyy hh:mm a", Locale.getDefault()).format(Date())}", 400f, footerY + 30f, mutePaint)
+
+    val file = java.io.File(context.cacheDir, "result_${item.student.id}.jpg")
+    java.io.FileOutputStream(file).use { bmp.compress(Bitmap.CompressFormat.JPEG, 95, it) }
+    val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+    context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+        type = "image/jpeg"; putExtra(Intent.EXTRA_STREAM, uri); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }, "Share Result Card"))
+}
+
+private fun Color.toArgb(): Int = android.graphics.Color.argb((alpha * 255).toInt(), (red * 255).toInt(), (green * 255).toInt(), (blue * 255).toInt())
+
 

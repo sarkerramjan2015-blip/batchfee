@@ -85,6 +85,37 @@ class EnquiryViewModel(private val db: AppDatabase) : ViewModel() {
         }
     }
 
+    fun updateNote(enquiry: EnquiryEntity, note: String, onError: (String) -> Unit = {}) {
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    val updated = enquiry.copy(
+                        note = note.trim().takeIf { it.isNotEmpty() },
+                        updatedAtMs = System.currentTimeMillis()
+                    )
+                    EnquirySyncHelper.upsertEnquiry(updated)
+                    db.enquiryDao().updateEnquiry(updated)
+                }
+            } catch (e: Exception) {
+                onError(e.message ?: "Failed to update note")
+            }
+        }
+    }
+
+    fun deleteEnquiry(enquiry: EnquiryEntity, onError: (String) -> Unit = {}) {
+        val instId = SessionManager.currentInstituteId.value ?: return
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    EnquirySyncHelper.deleteEnquiry(enquiry.id, instId)
+                    db.enquiryDao().deleteEnquiry(enquiry.id, instId)
+                }
+            } catch (e: Exception) {
+                onError(e.message ?: "Failed to delete enquiry")
+            }
+        }
+    }
+
     fun addEnquiry(
         name: String,
         phone: String,

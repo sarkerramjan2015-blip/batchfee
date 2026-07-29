@@ -17,4 +17,7 @@ interface EnquiryDao {
 
     @Update
     suspend fun updateEnquiry(enquiry: EnquiryEntity)
+
+    @Query("DELETE FROM enquiries WHERE id = :id AND instituteId = :instituteId")
+    suspend fun deleteEnquiry(id: String, instituteId: String)
 }

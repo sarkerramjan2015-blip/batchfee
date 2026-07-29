@@ -114,12 +114,12 @@ object AccessControl {
     )
 
     fun isKnownRoute(route: String): Boolean {
-        val baseRoute = route.substringBefore(":")
+        val baseRoute = route.substringBefore(":").substringBefore("?")
         return baseRoute in alwaysAllowedRoutes || baseRoute in adminOnlyRoutes || baseRoute in routePermissions
     }
 
     fun canAccessRoute(route: String): Boolean {
-        val baseRoute = route.substringBefore(":")
+        val baseRoute = route.substringBefore(":").substringBefore("?")
         if (baseRoute in alwaysAllowedRoutes) return true
         if (SessionManager.isAdmin()) return true
         if (!SessionManager.isStaff()) return false

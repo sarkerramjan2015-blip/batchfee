@@ -435,6 +435,7 @@ object EnquirySyncHelper {
                     "subjectName" to enquiry.subjectName,
                     "enquiryDateMs" to enquiry.enquiryDateMs,
                     "status" to enquiry.status,
+                    "note" to enquiry.note,
                     "createdAtMs" to enquiry.createdAtMs,
                     "updatedAtMs" to enquiry.updatedAtMs,
                     "archivedAtMs" to enquiry.archivedAtMs
@@ -443,6 +444,14 @@ object EnquirySyncHelper {
         } catch (e: Exception) {
             recordException(e)
             throw e
+        }
+    }
+
+    suspend fun deleteEnquiry(enquiryId: String, instituteId: String) = withContext(Dispatchers.IO) {
+        try {
+            instituteCollection(instituteId, COLLECTION).document(enquiryId).delete().await()
+        } catch (e: Exception) {
+            recordException(e)
         }
     }
 
@@ -461,6 +470,7 @@ object EnquirySyncHelper {
                     subjectName = subjectName,
                     enquiryDateMs = (doc.get("enquiryDateMs") as? Number).asLong() ?: 0L,
                     status = doc.getString("status") ?: "active",
+                    note = doc.getString("note"),
                     createdAtMs = (doc.get("createdAtMs") as? Number).asLong() ?: System.currentTimeMillis(),
                     updatedAtMs = (doc.get("updatedAtMs") as? Number).asLong() ?: System.currentTimeMillis(),
                     archivedAtMs = (doc.get("archivedAtMs") as? Number).asLong()

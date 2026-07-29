@@ -16,31 +16,62 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
 
-data class TodayPaymentItem(
+data class PaymentItem(
     val payment: PaymentEntity,
     val student: StudentEntity?
 )
 
-class ReportsViewModel(private val db: AppDatabase) : ViewModel() {
+data class DayGroup(
+    val label: String,        // "Mon, 28 Jul 2026"
+    val dateMs: Long,
+    val total: Double,
+    val count: Int,
+    val payments: List<PaymentItem> = emptyList()
+)
+
+data class MonthGroup(
+    val label: String,        // "Jul 2026"
+    val monthKey: String,     // "202607"
+    val total: Double,
+    val count: Int,
+    val days: List<DayGroup> = emptyList()
+)
+
+class ReportsViewModel(private val db: AppDatabase, private val period: String = "today") : ViewModel() {
     private val _studentCount = MutableStateFlow(0)
     val studentCount = _studentCount.asStateFlow()
 
-    private val _todayPayments = MutableStateFlow<List<TodayPaymentItem>>(emptyList())
-    val todayPayments = _todayPayments.asStateFlow()
+    private val _grandTotal = MutableStateFlow(0.0)
+    val grandTotal = _grandTotal.asStateFlow()
 
-    private val _todayTotal = MutableStateFlow(0.0)
-    val todayTotal = _todayTotal.asStateFlow()
+    // Today: flat list of payments
+    private val _payments = MutableStateFlow<List<PaymentItem>>(emptyList())
+    val payments = _payments.asStateFlow()
+
+    // Month: list of days
+    private val _dayGroups = MutableStateFlow<List<DayGroup>>(emptyList())
+    val dayGroups = _dayGroups.asStateFlow()
+
+    // Lifetime: list of months
+    private val _monthGroups = MutableStateFlow<List<MonthGroup>>(emptyList())
+    val monthGroups = _monthGroups.asStateFlow()
 
     private val _isLoading = MutableStateFlow(false)
     val isLoading = _isLoading.asStateFlow()
 
-    val todayLabel = SimpleDateFormat("EEE, dd MMM yyyy", Locale.getDefault()).format(
-        Calendar.getInstance().time
-    )
+    // Drill-down state
+    private val _selectedMonth = MutableStateFlow<MonthGroup?>(null)
+    val selectedMonth = _selectedMonth.asStateFlow()
+    private val _selectedDay = MutableStateFlow<DayGroup?>(null)
+    val selectedDay = _selectedDay.asStateFlow()
 
-    init {
-        loadData()
+    val periodLabel: String get() = when (period) {
+        "month" -> "This Month"
+        "lifetime" -> "Lifetime"
+        else -> "Today"
     }
+
+    init { loadData() }
 
     private fun loadData() {
         viewModelScope.launch {
@@ -48,45 +79,109 @@ class ReportsViewModel(private val db: AppDatabase) : ViewModel() {
             _isLoading.value = true
             InstituteCacheRefreshManager.refreshIfStale(db, instId)
 
-            launch {
-                db.studentDao().countStudents(instId).collect {
-                    _studentCount.value = it
-                }
+            launch { db.studentDao().countStudents(instId).collect { _studentCount.value = it } }
+
+            combine(
+                db.paymentDao().getRecentPayments(instId),
+                db.studentDao().getStudentsByInstitute(instId)
+            ) { payments, students ->
+                buildData(payments, students)
+            }.collect { _isLoading.value = false }
+        }
+    }
+
+    private fun buildData(allPayments: List<PaymentEntity>, allStudents: List<StudentEntity>) {
+        val studentMap = allStudents.associateBy { it.id }
+        val now = Calendar.getInstance()
+
+        val startOfToday = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+
+        val startOfMonth = Calendar.getInstance().apply {
+            set(Calendar.DAY_OF_MONTH, 1); set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+
+        val sdfDay = SimpleDateFormat("EEE, dd MMM", Locale.getDefault())
+        val sdfMonth = SimpleDateFormat("MMM yyyy", Locale.getDefault())
+        val sdfMonthKey = SimpleDateFormat("yyyyMM", Locale.getDefault())
+
+        // Filter by period
+        val filtered = when (period) {
+            "month" -> allPayments.filter { it.paymentDateMs >= startOfMonth }
+            "lifetime" -> allPayments
+            else -> allPayments.filter { it.paymentDateMs >= startOfToday }
+        }
+
+        val items = filtered.sortedByDescending { it.paymentDateMs }.map { p ->
+            PaymentItem(p, studentMap[p.studentId])
+        }
+
+        when (period) {
+            "today" -> {
+                _payments.value = items
+                _grandTotal.value = items.sumOf { it.payment.amount }
             }
-
-            launch {
-                val startOfToday = Calendar.getInstance().apply {
-                    set(Calendar.HOUR_OF_DAY, 0)
-                    set(Calendar.MINUTE, 0)
-                    set(Calendar.SECOND, 0)
-                    set(Calendar.MILLISECOND, 0)
-                }.timeInMillis
-
-                combine(
-                    db.paymentDao().getRecentPayments(instId),
-                    db.studentDao().getStudentsByInstitute(instId)
-                ) { payments, students ->
-                    val todayOnly = payments.filter { it.paymentDateMs >= startOfToday }
-                    todayOnly.map { p ->
-                        TodayPaymentItem(
-                            payment = p,
-                            student = students.find { s -> s.id == p.studentId }
-                        )
-                    }
-                }.collect { items ->
-                    _todayPayments.value = items.sortedByDescending { it.payment.paymentDateMs }
-                    _todayTotal.value = items.sumOf { it.payment.amount }
-                    _isLoading.value = false
+            "month" -> {
+                val dayMap = linkedMapOf<Long, MutableList<PaymentItem>>()
+                items.forEach { item ->
+                    val dayStart = Calendar.getInstance().apply {
+                        timeInMillis = item.payment.paymentDateMs
+                        set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
+                        set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+                    }.timeInMillis
+                    dayMap.getOrPut(dayStart) { mutableListOf() }.add(item)
                 }
+                val groups = dayMap.map { (dayMs, list) ->
+                    DayGroup(sdfDay.format(dayMs), dayMs, list.sumOf { it.payment.amount }, list.size, list)
+                }.sortedByDescending { it.dateMs }
+                _dayGroups.value = groups
+                _grandTotal.value = groups.sumOf { it.total }
+            }
+            "lifetime" -> {
+                val monthMap = linkedMapOf<String, MutableList<PaymentItem>>()
+                items.forEach { item ->
+                    val mk = sdfMonthKey.format(item.payment.paymentDateMs)
+                    monthMap.getOrPut(mk) { mutableListOf() }.add(item)
+                }
+                val groups = monthMap.map { (mk, list) ->
+                    val sample = list.first().payment.paymentDateMs
+                    // Build day groups for this month
+                    val dayMap = linkedMapOf<Long, MutableList<PaymentItem>>()
+                    list.forEach { item ->
+                        val dayStart = Calendar.getInstance().apply {
+                            timeInMillis = item.payment.paymentDateMs
+                            set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
+                            set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+                        }.timeInMillis
+                        dayMap.getOrPut(dayStart) { mutableListOf() }.add(item)
+                    }
+                    val days = dayMap.map { (dm, dl) ->
+                        DayGroup(sdfDay.format(dm), dm, dl.sumOf { it.payment.amount }, dl.size, dl)
+                    }.sortedByDescending { it.dateMs }
+                    MonthGroup(sdfMonth.format(sample), mk, list.sumOf { it.payment.amount }, list.size, days)
+                }.sortedByDescending { it.monthKey }
+                _monthGroups.value = groups
+                _grandTotal.value = groups.sumOf { it.total }
             }
         }
     }
+
+    fun drillIntoMonth(month: MonthGroup) { _selectedMonth.value = month }
+    fun drillIntoDay(day: DayGroup) { _selectedDay.value = day }
+    fun goBack() {
+        if (_selectedDay.value != null) _selectedDay.value = null
+        else _selectedMonth.value = null
+    }
+
+    val isDrilledIn: Boolean get() = _selectedMonth.value != null
+    val drillTitle: String get() = _selectedDay.value?.label ?: _selectedMonth.value?.label ?: periodLabel
 }
 
-class ReportsViewModelFactory(private val db: AppDatabase) : ViewModelProvider.Factory {
+class ReportsViewModelFactory(private val db: AppDatabase, private val period: String = "today") : ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        if (modelClass.isAssignableFrom(ReportsViewModel::class.java)) return ReportsViewModel(db) as T
+        if (modelClass.isAssignableFrom(ReportsViewModel::class.java)) return ReportsViewModel(db, period) as T
         throw IllegalArgumentException()
     }
 }
-

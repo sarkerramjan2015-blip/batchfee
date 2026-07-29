@@ -234,6 +234,9 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
                             "AttendanceRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.AttendanceRoute)
                             "AttendanceReportRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.AttendanceReportRoute)
                             "ReportsRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.ReportsRoute)
+                            "ReportsRoute?period=today" -> navController.navigate(com.batchfee.edu.ui.navigation.ReportsRoute(period = "today"))
+                            "ReportsRoute?period=month" -> navController.navigate(com.batchfee.edu.ui.navigation.ReportsRoute(period = "month"))
+                            "ReportsRoute?period=lifetime" -> navController.navigate(com.batchfee.edu.ui.navigation.ReportsRoute(period = "lifetime"))
                             "ReminderTemplatesRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.ReminderTemplatesRoute)
                             "StaffRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.StaffRoute)
                             "AddStaffRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.AddStaffRoute)
@@ -392,8 +395,9 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
             )
         }
         
-        composable<ReportsRoute> {
-            com.batchfee.edu.ui.reports.ReportsScreen(db = appDb, onBack = { navController.popBackStack() })
+        composable<ReportsRoute> { backStackEntry ->
+            val route = backStackEntry.toRoute<ReportsRoute>()
+            com.batchfee.edu.ui.reports.ReportsScreen(db = appDb, period = route.period, onBack = { navController.popBackStack() })
         }
         
         composable<ReminderTemplatesRoute> {

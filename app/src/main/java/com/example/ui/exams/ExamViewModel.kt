@@ -262,6 +262,39 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
         }
     }
 
+    fun updateSingleResult(
+        examId: String,
+        studentId: String,
+        marks: Double,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit = {}
+    ) {
+        val instId = SessionManager.currentInstituteId.value ?: return
+        val exam = _selectedExam.value ?: return
+        viewModelScope.launch {
+            val existing = withContext(Dispatchers.IO) {
+                db.resultDao().getResultForStudentOnce(instId, examId, studentId)
+            }
+            if (existing == null) {
+                onError("No existing result found.")
+                return@launch
+            }
+            val grade = calculateGrade(marks, exam.totalMarks, exam.passingMarks)
+            val now = System.currentTimeMillis()
+            try {
+                val updated = existing.copy(marksObtained = marks, grade = grade, updatedAtMs = now)
+                withContext(Dispatchers.IO) {
+                    ExamSyncHelper.upsertResult(updated)
+                    db.resultDao().insertOrUpdateResult(updated)
+                }
+                loadExamDetails(examId)
+                onSuccess()
+            } catch (e: Exception) {
+                onError(e.message ?: "Failed to update result")
+            }
+        }
+    }
+
     fun buildMeritMessage(exam: ExamEntity, includeAll: Boolean = true): String {
         val results = _studentResults.value.filter { it.result != null }
         val batchName = _batches.value.find { it.id == exam.batchId }?.name ?: "Batch"

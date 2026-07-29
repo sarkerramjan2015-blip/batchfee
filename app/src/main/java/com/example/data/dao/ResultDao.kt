@@ -15,6 +15,9 @@ interface ResultDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertOrUpdateResult(result: ResultEntity)
 
+    @Query("SELECT * FROM results WHERE instituteId = :instituteId AND examId = :examId AND studentId = :studentId LIMIT 1")
+    suspend fun getResultForStudentOnce(instituteId: String, examId: String, studentId: String): ResultEntity?
+
     @Query("DELETE FROM results WHERE instituteId = :instituteId AND batchId = :batchId")
     suspend fun deleteResultsForBatch(instituteId: String, batchId: String)
 }

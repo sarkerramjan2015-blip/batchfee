@@ -13,6 +13,7 @@ data class EnquiryEntity(
     val subjectName: String,
     val enquiryDateMs: Long,
     val status: String,
+    val note: String? = null,
     val createdAtMs: Long,
     val updatedAtMs: Long,
     val archivedAtMs: Long?

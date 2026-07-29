@@ -887,7 +887,7 @@ fun DashboardScreen(
                     // Today Collection
                     Card(
                         modifier = Modifier.weight(1f).clickable {
-                            safeNavigate("ReportsRoute")
+                            safeNavigate("ReportsRoute?period=today")
                         },
                         shape = RoundedCornerShape(12.dp),
                         colors = CardDefaults.cardColors(containerColor = DashboardCard),
@@ -902,7 +902,9 @@ fun DashboardScreen(
                     }
                     // Monthly Collection
                     Card(
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.weight(1f).clickable {
+                            safeNavigate("ReportsRoute?period=month")
+                        },
                         shape = RoundedCornerShape(12.dp),
                         colors = CardDefaults.cardColors(containerColor = DashboardCard),
                         border = borderStroke()
@@ -916,7 +918,9 @@ fun DashboardScreen(
                     }
                     // Lifetime Collection
                     Card(
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.weight(1f).clickable {
+                            safeNavigate("ReportsRoute?period=lifetime")
+                        },
                         shape = RoundedCornerShape(12.dp),
                         colors = CardDefaults.cardColors(containerColor = DashboardCard),
                         border = borderStroke()
