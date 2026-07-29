@@ -601,6 +601,45 @@ fun UnifiedCollectScreen(
                                     onSelect = { due -> applyDueFeeSelection(due) }
                                 )
                             }
+                            // Discount for admission / one-time due fees
+                            if (selectedDue?.fee?.feeType == "admission_fee" || selectedDue?.fee?.feeType == "advance_fee") {
+                                item {
+                                    val dueFee = selectedDue!!.fee
+                                    val discPercent = discountPercent
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        Text("Discount", color = TextMuted, fontSize = 13.sp, modifier = Modifier.width(70.dp))
+                                        Card(
+                                            modifier = Modifier.weight(1f),
+                                            shape = RoundedCornerShape(12.dp),
+                                            colors = CardDefaults.cardColors(containerColor = CardBg),
+                                            border = BorderStroke(1.dp, BorderSub)
+                                        ) {
+                                            OutlinedTextField(
+                                                value = if (discountPercent == 0.0) "" else "%.0f".format(discountPercent),
+                                                onValueChange = { s ->
+                                                    val dp = s.toDoubleOrNull()?.coerceIn(0.0, 100.0) ?: 0.0
+                                                    discountPercent = dp
+                                                    collectAmount = amountText((dueFee.totalAmount - (dueFee.totalAmount * dp / 100.0)).coerceAtLeast(0.0))
+                                                },
+                                                modifier = Modifier.fillMaxWidth(),
+                                                singleLine = true,
+                                                placeholder = { Text("%", color = TextMuted.copy(alpha = 0.5f)) },
+                                                colors = OutlinedTextFieldDefaults.colors(
+                                                    focusedTextColor = TextWhite,
+                                                    unfocusedTextColor = TextWhite,
+                                                    focusedBorderColor = Color.Transparent,
+                                                    unfocusedBorderColor = Color.Transparent
+                                                ),
+                                                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
                         } else {
                             item {
                                 NewFeeForm(
@@ -845,7 +884,8 @@ fun UnifiedCollectScreen(
                                             val receiptNumber = if (showDueSelector) {
                                                 val dueFee = selectedDue!!.fee
                                                 if (dueFee.id.isBlank()) {
-                                                    // Virtual fee — create it first
+                                                    // Virtual fee — create it first with discount support
+                                                    val discAmount = (dueFee.totalAmount * discountPercent / 100.0).coerceAtLeast(0.0)
                                                     val createResult = feeRepository.createFeeWithInitialPayment(
                                                         instituteId = instId,
                                                         collectedByUserId = userId,
@@ -855,7 +895,7 @@ fun UnifiedCollectScreen(
                                                         feeType = dueFee.feeType.ifBlank { "admission_fee" },
                                                         dueDateMs = now,
                                                         baseAmount = dueFee.totalAmount,
-                                                        discountAmount = 0.0,
+                                                        discountAmount = discAmount,
                                                         lateFeeAmount = 0.0,
                                                         collectedAmount = collecting,
                                                         paymentMethod = paymentMethod,
@@ -884,6 +924,9 @@ fun UnifiedCollectScreen(
                                                 var receiptNumber: String? = null
                                                 if (months > 1) {
                                                     var remainingPayment = collecting
+                                                    // Distribute discount proportionally per month
+                                                    val totalBase = months * (selectedBatch?.monthlyFeeAmount ?: 0.0)
+                                                    val discPerMonth = if (totalBase > 0.0) discountAmount / months else 0.0
                                                     for (i in realStart..realEnd) {
                                                         if (remainingPayment <= 0.0) break
                                                         val monthLabel = monthOptions[i].label
@@ -895,7 +938,8 @@ fun UnifiedCollectScreen(
                                                         }
                                                         val monthlyAmount = selectedBatch?.monthlyFeeAmount ?: 0.0
                                                         val paidSoFar = existingFee?.paidAmount ?: 0.0
-                                                        val remainingThisMonth = (monthlyAmount - paidSoFar).coerceAtLeast(0.0)
+                                                        val monthTotal = (monthlyAmount - discPerMonth).coerceAtLeast(0.0)
+                                                        val remainingThisMonth = (monthTotal - paidSoFar).coerceAtLeast(0.0)
                                                         val monthPayment = minOf(remainingPayment, remainingThisMonth)
                                                         if (monthPayment <= 0.0) continue
                                                         if (existingFee != null) {
@@ -920,7 +964,7 @@ fun UnifiedCollectScreen(
                                                                 feeType = "monthly_fee",
                                                                 dueDateMs = now,
                                                                 baseAmount = monthlyAmount,
-                                                                discountAmount = 0.0,
+                                                                discountAmount = discPerMonth,
                                                                 lateFeeAmount = 0.0,
                                                                 collectedAmount = monthPayment,
                                                                 paymentMethod = paymentMethod,
@@ -2346,7 +2390,11 @@ private fun buildCollectionReceiptText(
     appendLine("Period  : $period")
     appendLine("________________________________")
     appendLine("Payable     : BDT ${formatSmartAmount(payableAmount)}")
-    if (discountAmount > 0.0) appendLine("Discount    : BDT ${formatSmartAmount(discountAmount)}")
+    if (discountAmount > 0.0) {
+        val pct = if (payableAmount + discountAmount > 0.0) (discountAmount / (payableAmount + discountAmount) * 100.0) else 0.0
+        val pctStr = if (pct % 1.0 == 0.0) "%.0f".format(pct) else "%.1f".format(pct)
+        appendLine("Discount    : ${pctStr}% - BDT ${formatSmartAmount(discountAmount)}")
+    }
     appendLine("Collected   : BDT ${formatSmartAmount(collectedAmount)}")
     appendLine("Due         : BDT ${formatSmartAmount(remainingDue)}")
     appendLine("Method      : ${paymentMethod.uppercase()}")

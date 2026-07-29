@@ -349,11 +349,12 @@ class DashboardViewModel(private val db: AppDatabase) : ViewModel() {
                 }
             }
             launch {
-                db.feeDao().getDueFees(instId).collect { fees ->
+                db.feeDao().getAllFees(instId).collect { allFees ->
+                    val fees = allFees.filter { it.dueAmount > 0.0 }
                     val students = db.studentDao().getStudentsByInstituteOnce(instId).associateBy { it.id }
                     var nonMonthlyDue = 0.0
                     val nonMonthlyStudentIds = mutableSetOf<String>()
-                    fees.filter { !MonthlyDueCalculator.isMonthlyFeeType(it.feeType) && it.dueAmount > 0.0 }.forEach { fee ->
+                    fees.filter { !MonthlyDueCalculator.isMonthlyFeeType(it.feeType) }.forEach { fee ->
                         nonMonthlyDue += fee.dueAmount
                         nonMonthlyStudentIds += fee.studentId
                     }
@@ -364,7 +365,7 @@ class DashboardViewModel(private val db: AppDatabase) : ViewModel() {
                         val enrolledBatches = db.batchStudentDao().getBatchesForStudent(student.id, instId).firstOrNull() ?: return@forEach
                         enrolledBatches.forEach { batch ->
                             if (batch.monthlyFeeAmount <= 0.0) return@forEach
-                            val batchFees = fees.filter { it.studentId == student.id && it.batchId == batch.id }
+                            val batchFees = allFees.filter { it.studentId == student.id && it.batchId == batch.id }
                             val items = MonthlyDueCalculator.computeMonthlyOutstandingItems(
                                 admissionDateMs = student.admissionDateMs,
                                 monthlyFeeAmount = batch.monthlyFeeAmount,

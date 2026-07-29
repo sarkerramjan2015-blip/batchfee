@@ -75,12 +75,11 @@ class FeeViewModel(private val db: AppDatabase) : ViewModel() {
             val instId = SessionManager.currentInstituteId.value ?: return@launch
             InstituteCacheRefreshManager.refreshIfStale(db, instId)
             launch {
-                db.feeDao().getAllFees(instId).collect { _feeList.value = it }
-            }
-            launch {
-                db.feeDao().getDueFees(instId).collect { fees ->
-                    _dueFeeList.value = fees
-                    enrichDueFees(instId, fees)
+                db.feeDao().getAllFees(instId).collect { allFees ->
+                    _feeList.value = allFees
+                    val dueFees = allFees.filter { it.dueAmount > 0.0 }
+                    _dueFeeList.value = dueFees
+                    enrichDueFees(instId, allFees)
                 }
             }
             launch {
