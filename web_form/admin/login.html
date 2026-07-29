@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Login — BatchFee</title>
+    <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+    <div class="login-page">
+        <div class="login-card">
+            <div class="login-logo">
+                <h1>BatchFee</h1>
+                <p>Institute Admin Panel</p>
+            </div>
+
+            <div class="login-error" id="loginError"></div>
+
+            <form id="loginForm">
+                <div class="form-group">
+                    <label for="email">Email Address</label>
+                    <input type="email" id="email" class="form-input" placeholder="admin@institute.com" required autocomplete="email" autofocus>
+                </div>
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <input type="password" id="password" class="form-input" placeholder="Enter your password" required autocomplete="current-password">
+                </div>
+                <button type="submit" class="btn btn-primary" id="loginBtn">
+                    <span id="loginBtnText">Sign In</span>
+                    <span class="loading-spinner" id="loginSpinner" style="display:none"></span>
+                </button>
+            </form>
+
+            <p style="text-align:center; margin-top: 24px; font-size: 13px; color: var(--gray-400);">
+                <a href="../index.html" style="color: var(--gray-500); text-decoration: none;">&larr; Back to Home</a>
+            </p>
+        </div>
+    </div>
+
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore-compat.js"></script>
+    <script src="../js/firebase-init.js"></script>
+
+    <script>
+        document.getElementById('loginForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+
+            const email = document.getElementById('email').value.trim();
+            const password = document.getElementById('password').value;
+            const errorEl = document.getElementById('loginError');
+            const btn = document.getElementById('loginBtn');
+            const btnText = document.getElementById('loginBtnText');
+            const spinner = document.getElementById('loginSpinner');
+
+            errorEl.classList.remove('show');
+            btn.disabled = true;
+            btnText.textContent = 'Signing in...';
+            spinner.style.display = 'inline-block';
+
+            try {
+                let userCredential;
+                try {
+                    userCredential = await auth.signInWithEmailAndPassword(email, password);
+                } catch (signInErr) {
+                    console.error('Sign-in error:', signInErr.code, signInErr.message);
+                    // If user doesn't exist, create one automatically
+                    if (signInErr.code === 'auth/user-not-found' || signInErr.code === 'auth/invalid-login-credentials') {
+                        try {
+                            userCredential = await auth.createUserWithEmailAndPassword(email, password);
+                        } catch (createErr) {
+                            console.error('Create error:', createErr.code, createErr.message);
+                            throw createErr;
+                        }
+                    } else {
+                        throw signInErr;
+                    }
+                }
+
+                const user = userCredential.user;
+
+                // Fetch user profile
+                const userDoc = await db.collection('app_users').doc(user.uid).get();
+
+                if (!userDoc.exists) {
+                    // Auto-provision: create app_users doc + demo institute
+                    const instRef = await db.collection('institutes').add({
+                        name: 'My Institute',
+                        instituteName: 'My Institute',
+                        phone: '',
+                        email: user.email,
+                        address: '',
+                        ownerName: user.email.split('@')[0],
+                        instituteCode: 'INST' + Date.now().toString(36).toUpperCase(),
+                        subscriptionStatus: 'trial',
+                        status: 'active',
+                        createdAtMs: Date.now(),
+                        updatedAtMs: Date.now()
+                    });
+
+                    await db.collection('app_users').doc(user.uid).set({
+                        name: user.email.split('@')[0],
+                        email: user.email,
+                        role: 'InstituteOwner',
+                        instituteId: instRef.id,
+                        status: 'active',
+                        createdAtMs: Date.now()
+                    });
+
+                    // Redirect to seed page for demo data
+                    window.location.href = '../seed-data.html';
+                    return;
+                }
+
+                const userData = userDoc.data();
+
+                if (userData.status !== 'active') {
+                    await auth.signOut();
+                    errorEl.textContent = 'Your account has been deactivated. Please contact your administrator.';
+                    errorEl.classList.add('show');
+                    return;
+                }
+
+                const allowedRoles = ['SuperAdmin', 'InstituteOwner', 'InstituteAdmin'];
+                if (!allowedRoles.includes(userData.role)) {
+                    await auth.signOut();
+                    errorEl.textContent = 'You do not have permission to access this panel.';
+                    errorEl.classList.add('show');
+                    return;
+                }
+
+                // Redirect to dashboard
+                window.location.href = 'dashboard.html';
+            } catch (err) {
+                console.error('Login error:', err.code, err.message);
+
+                let message = 'Login failed. Please try again.';
+                if (err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password') {
+                    message = 'Invalid email or password.';
+                } else if (err.code === 'auth/invalid-email') {
+                    message = 'Please enter a valid email address.';
+                } else if (err.code === 'auth/too-many-requests') {
+                    message = 'Too many failed attempts. Please try again later.';
+                } else if (err.code === 'auth/invalid-login-credentials') {
+                    message = 'Invalid email or password.';
+                } else if (err.code === 'auth/email-already-in-use') {
+                    message = 'Account already exists but could not sign in.';
+                } else if (err.code === 'auth/operation-not-allowed') {
+                    message = 'Email/password sign-in is not enabled. Please enable it in Firebase Console > Authentication > Sign-in method.';
+                } else if (err.code === 'auth/network-request-failed') {
+                    message = 'Network error. Check your internet connection.';
+                } else {
+                    message = 'Error: ' + err.code + ' — ' + err.message;
+                }
+
+                errorEl.textContent = message;
+                errorEl.classList.add('show');
+            } finally {
+                btn.disabled = false;
+                btnText.textContent = 'Sign In';
+                spinner.style.display = 'none';
+            }
+        });
+    </script>
+</body>
+</html>

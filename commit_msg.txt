@@ -1,9 +1,13 @@
-fix: Play Store UI/UX compliance - dead buttons, consent checkbox, touch targets
+fix: superadmin orphan cleanup, revenue stats, remove button, password reset
 
-- Removed dead Export/Import buttons from BackupRestoreScreen
-- Added mandatory consent checkbox to registration form (Privacy Policy & Terms)
-- Removed plaintext password from logcat output in AuthScreen
-- Increased Plan CTA button height to 48dp (Google touch target guideline)
-- Replaced hardcoded v1.0 with BuildConfig.VERSION_NAME in SettingsScreen
+SuperAdmin:
+- Fix permanentlyDelete: clean all 10 subcollections (batches, students,
+  fees, payments, receipts, attendance, exams+results, staffs, enquiries,
+  registrations)
+- Fix recalculateStats: check expired/trashed/blocked status for accurate
+  revenue and active count
+- Fix removeInstitute: use Firebase Auth reauthentication instead of
+  Room DB password hash verification (backfill had empty hashes)
+- Fix sendPasswordReset: migrate to coroutine with Tasks.await()
 
 Co-authored-by: CommandCodeBot <noreply@commandcode.ai>

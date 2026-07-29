@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Batches — BatchFee Admin</title>
+    <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+    <div class="app-wrapper">
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">Batch<span style="font-weight:400;opacity:0.6;">Fee</span></div>
+                <div class="institute-name" id="sidebarInstituteName">Loading...</div>
+            </div>
+            <nav class="sidebar-nav" id="sidebarNav"></nav>
+            <div class="sidebar-footer">
+                <div class="user-info">
+                    <div class="user-avatar" id="sidebarUserAvatar">A</div>
+                    <div class="user-details">
+                        <div class="user-name" id="sidebarUserName">Admin</div>
+                        <div class="user-role" id="sidebarUserRole">Loading...</div>
+                    </div>
+                    <button class="logout-btn" onclick="logoutUser()">Logout</button>
+                </div>
+            </div>
+        </aside>
+
+        <main class="main-content">
+            <button class="mobile-menu-btn" onclick="document.getElementById('sidebar').classList.toggle('open')">☰</button>
+            <div class="page-header">
+                <h1>Batch Management</h1>
+                <p>Create and manage student batches.</p>
+            </div>
+
+            <div class="page-actions">
+                <div class="search-bar">
+                    <input type="text" class="search-input" id="searchInput" placeholder="Search by name or class..." oninput="filterBatches()">
+                </div>
+                <button class="btn btn-primary" onclick="openAddBatch()">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    Add Batch
+                </button>
+            </div>
+
+            <div class="card">
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Batch Name</th>
+                                <th>Class</th>
+                                <th>Monthly Fee</th>
+                                <th>Max Students</th>
+                                <th>Enrolled</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="batchesTable">
+                            <tr><td colspan="7" style="text-align:center;color:var(--gray-400);padding:24px;">Loading batches...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Add Batch Modal -->
+    <div class="modal-overlay" id="addModal">
+        <div class="modal" style="max-width:500px;">
+            <h3>➕ Add Batch</h3>
+            <form id="addBatchForm">
+                <div class="form-group">
+                    <label>Batch Name <span style="color:var(--danger);">*</span></label>
+                    <input type="text" class="form-input" id="addName" placeholder="e.g. Batch 2024-A" required>
+                </div>
+                <div class="form-group">
+                    <label>Class</label>
+                    <input type="text" class="form-input" id="addClass" placeholder="e.g. HSC 1st Year">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Monthly Fee (৳)</label>
+                        <input type="number" class="form-input" id="addFee" placeholder="1500" min="0">
+                    </div>
+                    <div class="form-group">
+                        <label>Max Students</label>
+                        <input type="number" class="form-input" id="addMax" placeholder="30" min="1">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Description</label>
+                    <textarea class="form-input" id="addDescription" rows="2" placeholder="Optional description..."></textarea>
+                </div>
+                <div class="modal-actions" style="margin-top:16px;">
+                    <button type="button" class="btn btn-outline" onclick="closeModal('addModal')">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Create Batch</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Edit Batch Modal -->
+    <div class="modal-overlay" id="editModal">
+        <div class="modal" style="max-width:500px;">
+            <h3>✏️ Edit Batch</h3>
+            <form id="editBatchForm">
+                <div class="form-group">
+                    <label>Batch Name <span style="color:var(--danger);">*</span></label>
+                    <input type="text" class="form-input" id="editName" required>
+                </div>
+                <div class="form-group">
+                    <label>Class</label>
+                    <input type="text" class="form-input" id="editClass">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Monthly Fee (৳)</label>
+                        <input type="number" class="form-input" id="editFee" min="0">
+                    </div>
+                    <div class="form-group">
+                        <label>Max Students</label>
+                        <input type="number" class="form-input" id="editMax" min="1">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Description</label>
+                    <textarea class="form-input" id="editDescription" rows="2"></textarea>
+                </div>
+                <div class="modal-actions" style="margin-top:16px;">
+                    <button type="button" class="btn btn-outline" onclick="closeModal('editModal')">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save Changes</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Delete Confirmation Modal -->
+    <div class="modal-overlay" id="deleteModal">
+        <div class="modal">
+            <h3>🗑️ Delete Batch</h3>
+            <p>Are you sure you want to delete <strong id="deleteBatchName">this batch</strong>? This will set it to inactive.</p>
+            <div class="modal-actions">
+                <button class="btn btn-outline" onclick="closeModal('deleteModal')">Cancel</button>
+                <button class="btn btn-danger" onclick="confirmDeleteBatch()">Delete</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore-compat.js"></script>
+    <script src="../js/firebase-init.js"></script>
+    <script src="../js/auth-check.js"></script>
+    <script src="../js/sidebar-nav.js"></script>
+
+    <script>
+        let session = null;
+        let allBatches = [];
+        let selectedBatchId = null;
+
+        document.addEventListener('DOMContentLoaded', async function() {
+            try {
+                session = await requireAuth();
+                updateSidebarUser(session);
+                if (session.instituteId) {
+                    loadBatches();
+                } else {
+                    document.querySelector('.card').innerHTML = '<div class="card" style="text-align:center;padding:40px;"><p style="color:var(--gray-500);">Institute not linked.</p></div>';
+                }
+            } catch (err) {}
+        });
+
+        async function loadBatches() {
+            const tbody = document.getElementById('batchesTable');
+            try {
+                const snap = await db.collection('institutes')
+                    .doc(session.instituteId)
+                    .collection('batches')
+                    .orderBy('createdAtMs', 'desc')
+                    .get();
+
+                allBatches = [];
+                snap.forEach(doc => allBatches.push({ id: doc.id, ...doc.data() }));
+                renderBatches();
+            } catch (err) {
+                console.error(err);
+                tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--danger);padding:24px;">Failed to load batches.</td></tr>';
+            }
+        }
+
+        function renderBatches() {
+            const tbody = document.getElementById('batchesTable');
+            const search = document.getElementById('searchInput').value.toLowerCase().trim();
+
+            let filtered = allBatches;
+            if (search) {
+                filtered = allBatches.filter(b => {
+                    const name = (b.name || '').toLowerCase();
+                    const cls = (b.className || '').toLowerCase();
+                    return name.includes(search) || cls.includes(search);
+                });
+            }
+
+            if (filtered.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:32px;">' +
+                    '<div class="empty-state"><div class="empty-icon">📦</div><h3>No batches found</h3>' +
+                    '<p>' + (search ? 'Try a different search term.' : 'Click "Add Batch" to create one.') + '</p></div></td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = filtered.map(b => {
+                const isActive = b.status !== 'inactive';
+                return `<tr>
+                    <td><strong>${esc(b.name || '—')}</strong></td>
+                    <td>${esc(b.className || '—')}</td>
+                    <td>${b.feeAmount ? '৳' + b.feeAmount : '—'}</td>
+                    <td>${b.maxStudents || '—'}</td>
+                    <td>${b.studentCount || 0}</td>
+                    <td><span class="status-badge ${isActive ? 'active' : 'inactive'}">${isActive ? '✅ Active' : '⛔ Inactive'}</span></td>
+                    <td>
+                        <button class="btn btn-sm btn-outline" onclick="openEditBatch('${b.id.replace(/'/g, "\\'")}')">Edit</button>
+                        <button class="btn btn-sm ${isActive ? 'btn-outline' : 'btn-success'}" onclick="toggleBatchStatus('${b.id.replace(/'/g, "\\'")}')">${isActive ? 'Deactivate' : 'Activate'}</button>
+                        <button class="btn btn-sm btn-danger" onclick="openDeleteBatch('${b.id.replace(/'/g, "\\'")}')">Delete</button>
+                    </td>
+                </tr>`;
+            }).join('');
+        }
+
+        function filterBatches() {
+            renderBatches();
+        }
+
+        function openAddBatch() {
+            document.getElementById('addBatchForm').reset();
+            document.getElementById('addModal').classList.add('show');
+        }
+
+        document.getElementById('addBatchForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            if (!session) return;
+
+            const btn = this.querySelector('button[type="submit"]');
+            btn.disabled = true;
+            btn.textContent = 'Creating...';
+
+            try {
+                const batchData = {
+                    name: document.getElementById('addName').value.trim(),
+                    className: document.getElementById('addClass').value.trim(),
+                    feeAmount: parseFloat(document.getElementById('addFee').value) || 0,
+                    maxStudents: parseInt(document.getElementById('addMax').value) || 0,
+                    description: document.getElementById('addDescription').value.trim(),
+                    studentCount: 0,
+                    status: 'active',
+                    createdAtMs: Date.now(),
+                    updatedAtMs: Date.now()
+                };
+
+                const docRef = await db.collection('institutes')
+                    .doc(session.instituteId)
+                    .collection('batches')
+                    .add(batchData);
+
+                allBatches.unshift({ id: docRef.id, ...batchData });
+                closeModal('addModal');
+                renderBatches();
+                showToast('✅ Batch created successfully!', 'success');
+            } catch (err) {
+                console.error('Add error:', err);
+                showToast('Failed to create batch.', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Create Batch';
+            }
+        });
+
+        function openEditBatch(id) {
+            selectedBatchId = id;
+            const b = allBatches.find(x => x.id === id);
+            if (!b) return;
+
+            document.getElementById('editName').value = b.name || '';
+            document.getElementById('editClass').value = b.className || '';
+            document.getElementById('editFee').value = b.feeAmount || '';
+            document.getElementById('editMax').value = b.maxStudents || '';
+            document.getElementById('editDescription').value = b.description || '';
+            document.getElementById('editModal').classList.add('show');
+        }
+
+        document.getElementById('editBatchForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            if (!selectedBatchId || !session) return;
+
+            const btn = this.querySelector('button[type="submit"]');
+            btn.disabled = true;
+            btn.textContent = 'Saving...';
+
+            try {
+                const updateData = {
+                    name: document.getElementById('editName').value.trim(),
+                    className: document.getElementById('editClass').value.trim(),
+                    feeAmount: parseFloat(document.getElementById('editFee').value) || 0,
+                    maxStudents: parseInt(document.getElementById('editMax').value) || 0,
+                    description: document.getElementById('editDescription').value.trim(),
+                    updatedAtMs: Date.now()
+                };
+
+                await db.collection('institutes')
+                    .doc(session.instituteId)
+                    .collection('batches')
+                    .doc(selectedBatchId)
+                    .update(updateData);
+
+                const idx = allBatches.findIndex(x => x.id === selectedBatchId);
+                if (idx !== -1) Object.assign(allBatches[idx], updateData);
+
+                closeModal('editModal');
+                renderBatches();
+                showToast('✅ Batch updated!', 'success');
+            } catch (err) {
+                console.error('Edit error:', err);
+                showToast('Failed to update batch.', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Save Changes';
+            }
+        });
+
+        async function toggleBatchStatus(id) {
+            if (!session) return;
+            const b = allBatches.find(x => x.id === id);
+            if (!b) return;
+
+            const newStatus = b.status === 'inactive' ? 'active' : 'inactive';
+            try {
+                await db.collection('institutes')
+                    .doc(session.instituteId)
+                    .collection('batches')
+                    .doc(id)
+                    .update({ status: newStatus, updatedAtMs: Date.now() });
+
+                b.status = newStatus;
+                renderBatches();
+                showToast(newStatus === 'active' ? '✅ Batch activated!' : '⛔ Batch deactivated.', 'warning');
+            } catch (err) {
+                console.error(err);
+                showToast('Failed to toggle status.', 'error');
+            }
+        }
+
+        function openDeleteBatch(id) {
+            selectedBatchId = id;
+            const b = allBatches.find(x => x.id === id);
+            document.getElementById('deleteBatchName').textContent = b ? esc(b.name || 'this batch') : 'this batch';
+            document.getElementById('deleteModal').classList.add('show');
+        }
+
+        async function confirmDeleteBatch() {
+            if (!selectedBatchId || !session) return;
+
+            const btn = document.querySelector('#deleteModal .btn-danger');
+            btn.disabled = true;
+            btn.textContent = 'Deleting...';
+
+            try {
+                await db.collection('institutes')
+                    .doc(session.instituteId)
+                    .collection('batches')
+                    .doc(selectedBatchId)
+                    .update({ status: 'inactive', updatedAtMs: Date.now() });
+
+                const b = allBatches.find(x => x.id === selectedBatchId);
+                if (b) b.status = 'inactive';
+
+                closeModal('deleteModal');
+                renderBatches();
+                showToast('Batch deleted.', 'warning');
+            } catch (err) {
+                console.error(err);
+                showToast('Failed to delete batch.', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Delete';
+            }
+        }
+
+        function closeModal(id) {
+            document.getElementById(id).classList.remove('show');
+        }
+
+        function showToast(message, type) {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            toast.className = 'toast ' + type;
+            toast.textContent = message;
+            container.appendChild(toast);
+            setTimeout(() => toast.remove(), 4000);
+        }
+
+        function esc(str) {
+            if (!str) return '—';
+            const d = document.createElement('div');
+            d.textContent = str;
+            return d.innerHTML;
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Registrations — BatchFee Admin</title>
+    <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+    <div class="app-wrapper">
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">Batch<span style="font-weight:400;opacity:0.6;">Fee</span></div>
+                <div class="institute-name" id="sidebarInstituteName">Loading...</div>
+            </div>
+            <nav class="sidebar-nav" id="sidebarNav"></nav>
+            <div class="sidebar-footer">
+                <div class="user-info">
+                    <div class="user-avatar" id="sidebarUserAvatar">A</div>
+                    <div class="user-details">
+                        <div class="user-name" id="sidebarUserName">Admin</div>
+                        <div class="user-role" id="sidebarUserRole">Loading...</div>
+                    </div>
+                    <button class="logout-btn" onclick="logoutUser()">Logout</button>
+                </div>
+            </div>
+        </aside>
+
+        <main class="main-content">
+            <button class="mobile-menu-btn" onclick="document.getElementById('sidebar').classList.toggle('open')">☰</button>
+            <div class="page-header">
+                <h1>Registrations</h1>
+                <p>Review and manage student registration requests.</p>
+            </div>
+
+            <div class="search-bar">
+                <input type="text" class="search-input" id="searchInput" placeholder="Search by name or phone..." oninput="filterRegistrations()">
+                <select class="filter-select" id="statusFilter" onchange="filterRegistrations()">
+                    <option value="all">All Status</option>
+                    <option value="pending">Pending</option>
+                    <option value="approved">Approved</option>
+                    <option value="rejected">Rejected</option>
+                </select>
+            </div>
+
+            <div class="card">
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Student Name</th>
+                                <th>Phone</th>
+                                <th>Guardian</th>
+                                <th>Class</th>
+                                <th>School</th>
+                                <th>Date</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="registrationsTable">
+                            <tr><td colspan="8" style="text-align:center;color:var(--gray-400);padding:24px;">Loading registrations...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Approve Modal -->
+    <div class="modal-overlay" id="approveModal">
+        <div class="modal">
+            <h3>✅ Approve Registration</h3>
+            <p>This will approve <strong id="approveName">—</strong>'s registration and create a student record. Proceed?</p>
+            <div class="modal-actions">
+                <button class="btn btn-outline" onclick="closeModal('approveModal')">Cancel</button>
+                <button class="btn btn-success" onclick="confirmApprove()">Approve</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Reject Modal -->
+    <div class="modal-overlay" id="rejectModal">
+        <div class="modal">
+            <h3>❌ Reject Registration</h3>
+            <p>Are you sure you want to reject <strong id="rejectName">—</strong>'s registration?</p>
+            <div class="modal-actions">
+                <button class="btn btn-outline" onclick="closeModal('rejectModal')">Cancel</button>
+                <button class="btn btn-danger" onclick="confirmReject()">Reject</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Detail Modal -->
+    <div class="modal-overlay" id="detailModal">
+        <div class="modal" style="max-width:560px;">
+            <h3>📄 Registration Details</h3>
+            <div class="detail-grid" id="detailContent"></div>
+            <div class="modal-actions" style="margin-top:20px;">
+                <button class="btn btn-outline" onclick="closeModal('detailModal')">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore-compat.js"></script>
+    <script src="../js/firebase-init.js"></script>
+    <script src="../js/auth-check.js"></script>
+    <script src="../js/sidebar-nav.js"></script>
+
+    <script>
+        let session = null;
+        let allRegistrations = [];
+        let selectedRegId = null;
+
+        document.addEventListener('DOMContentLoaded', async function() {
+            try {
+                session = await requireAuth();
+                updateSidebarUser(session);
+                if (session.instituteId) {
+                    loadRegistrations();
+                } else {
+                    document.querySelector('.card').innerHTML = '<div class="card" style="text-align:center;padding:40px;"><p style="color:var(--gray-500);">Institute not linked to this account.</p></div>';
+                }
+            } catch (err) {}
+        });
+
+        async function loadRegistrations() {
+            const tbody = document.getElementById('registrationsTable');
+            try {
+                const regSnap = await db.collection('registrations')
+                    .doc(session.instituteId)
+                    .collection('pending')
+                    .get();
+
+                allRegistrations = [];
+                regSnap.forEach(doc => {
+                    const data = doc.data();
+                    allRegistrations.push({ id: doc.id, ...data, _status: data.status || 'pending' });
+                });
+                renderRegistrations();
+            } catch (err) {
+                console.error('Load error:', err);
+                tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--danger);padding:24px;">Failed to load registrations.</td></tr>';
+            }
+        }
+
+        function renderRegistrations() {
+            const tbody = document.getElementById('registrationsTable');
+            const search = document.getElementById('searchInput').value.toLowerCase().trim();
+            const statusFilter = document.getElementById('statusFilter').value;
+
+            let filtered = allRegistrations.filter(r => {
+                if (statusFilter !== 'all' && r._status !== statusFilter) return false;
+                if (search) {
+                    const name = (r.fullName || '').toLowerCase();
+                    const phone = (r.phone || '').toLowerCase();
+                    if (!name.includes(search) && !phone.includes(search)) return false;
+                }
+                return true;
+            });
+
+            filtered.sort((a, b) => (b.submittedAt || 0) - (a.submittedAt || 0));
+
+            if (filtered.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:32px;">' +
+                    '<div class="empty-state"><div class="empty-icon">📭</div><h3>No registrations found</h3>' +
+                    '<p>' + (search ? 'Try a different search term.' : 'No pending registrations.') + '</p></div></td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = filtered.map(r => `
+                <tr class="clickable" onclick="showDetail('${r.id.replace(/'/g, "\\'")}')">
+                    <td><strong>${esc(r.fullName || '—')}</strong></td>
+                    <td>${esc(r.phone || '—')}</td>
+                    <td>${esc(r.guardianName || '—')}</td>
+                    <td>${esc(r.className || '—')}</td>
+                    <td>${esc(r.schoolName || '—')}</td>
+                    <td>${r.submittedAt ? fmt(r.submittedAt) : '—'}</td>
+                    <td><span class="status-badge ${r._status}">${r._status === 'pending' ? '⏳ Pending' : r._status === 'approved' ? '✅ Approved' : '❌ Rejected'}</span></td>
+                    <td>
+                        <button class="btn btn-sm btn-success" onclick="event.stopPropagation(); openApprove('${r.id.replace(/'/g, "\\'")}')">Approve</button>
+                        <button class="btn btn-sm btn-danger" onclick="event.stopPropagation(); openReject('${r.id.replace(/'/g, "\\'")}')">Reject</button>
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        function filterRegistrations() {
+            renderRegistrations();
+        }
+
+        function openApprove(id) {
+            selectedRegId = id;
+            const reg = allRegistrations.find(r => r.id === selectedRegId);
+            document.getElementById('approveName').textContent = reg ? esc(reg.fullName || 'this student') : 'this student';
+            document.getElementById('approveModal').classList.add('show');
+        }
+
+        function openReject(id) {
+            selectedRegId = id;
+            const reg = allRegistrations.find(r => r.id === id);
+            document.getElementById('rejectName').textContent = reg ? esc(reg.fullName || 'this student') : 'this student';
+            document.getElementById('rejectModal').classList.add('show');
+        }
+
+        function closeModal(id) {
+            document.getElementById(id).classList.remove('show');
+            selectedRegId = null;
+        }
+
+        function showDetail(id) {
+            const reg = allRegistrations.find(r => r.id === id);
+            if (!reg) return;
+
+            const fields = [
+                { label: 'Full Name', value: reg.fullName },
+                { label: 'Phone', value: reg.phone },
+                { label: 'Guardian Name', value: reg.guardianName },
+                { label: 'WhatsApp', value: reg.whatsappNumber },
+                { label: 'Gender', value: reg.gender },
+                { label: 'Date of Birth', value: reg.dateOfBirthMs ? new Date(reg.dateOfBirthMs).toLocaleDateString() : '—' },
+                { label: 'School', value: reg.schoolName },
+                { label: 'Class', value: reg.className },
+                { label: 'Address', value: reg.address },
+                { label: 'Submitted', value: reg.submittedAt ? fmt(reg.submittedAt) : '—' },
+                { label: 'Status', value: reg._status }
+            ];
+
+            document.getElementById('detailContent').innerHTML = fields.map(f => `
+                <div class="detail-item">
+                    <div class="label">${f.label}</div>
+                    <div class="value">${esc(f.value || '—')}</div>
+                </div>
+            `).join('');
+
+            document.getElementById('detailModal').classList.add('show');
+        }
+
+        async function confirmApprove() {
+            if (!selectedRegId || !session) return;
+
+            const reg = allRegistrations.find(r => r.id === selectedRegId);
+            if (!reg) return;
+
+            const btn = document.querySelector('#approveModal .btn-success');
+            btn.disabled = true;
+            btn.textContent = 'Approving...';
+
+            try {
+                const regDocRef = db.collection('registrations')
+                    .doc(session.instituteId)
+                    .collection('pending')
+                    .doc(selectedRegId);
+
+                // Create student record
+                const studentId = 'std_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);
+                const studentData = {
+                    instituteId: session.instituteId,
+                    fullName: reg.fullName || '',
+                    phone: reg.phone || '',
+                    guardianName: reg.guardianName || '',
+                    guardianPhone: reg.whatsappNumber || '',
+                    gender: reg.gender || '',
+                    dateOfBirthMs: reg.dateOfBirthMs || null,
+                    schoolName: reg.schoolName || '',
+                    className: reg.className || '',
+                    address: reg.address || '',
+                    status: 'active',
+                    admissionDateMs: Date.now(),
+                    createdAtMs: Date.now(),
+                    updatedAtMs: Date.now()
+                };
+
+                await db.collection('institutes')
+                    .doc(session.instituteId)
+                    .collection('students')
+                    .doc(studentId)
+                    .set(studentData);
+
+                // Update status instead of deleting
+                await regDocRef.update({ status: 'approved', approvedAt: Date.now() });
+
+                // Update local list
+                const idx = allRegistrations.findIndex(r => r.id === selectedRegId);
+                if (idx !== -1) allRegistrations[idx]._status = 'approved';
+                renderRegistrations();
+
+                closeModal('approveModal');
+                showToast('✅ ' + esc(reg.fullName || 'Student') + ' has been approved successfully!', 'success');
+            } catch (err) {
+                console.error('Approve error:', err);
+                showToast('Failed to approve registration. Please try again.', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Approve';
+            }
+        }
+
+        async function confirmReject() {
+            if (!selectedRegId || !session) return;
+
+            const reg = allRegistrations.find(r => r.id === id);
+
+            const btn = document.querySelector('#rejectModal .btn-danger');
+            btn.disabled = true;
+            btn.textContent = 'Rejecting...';
+
+            try {
+                await db.collection('registrations')
+                    .doc(session.instituteId)
+                    .collection('pending')
+                    .doc(selectedRegId)
+                    .update({ status: 'rejected', rejectedAt: Date.now() });
+
+                // Update local list
+                const idx = allRegistrations.findIndex(r => r.id === selectedRegId);
+                if (idx !== -1) allRegistrations[idx]._status = 'rejected';
+                renderRegistrations();
+
+                closeModal('rejectModal');
+                showToast('Registration rejected.', 'warning');
+            } catch (err) {
+                console.error('Reject error:', err);
+                showToast('Failed to reject registration. Please try again.', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Reject';
+            }
+        }
+
+        function showToast(message, type) {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            toast.className = 'toast ' + type;
+            toast.textContent = message;
+            container.appendChild(toast);
+            setTimeout(() => toast.remove(), 4000);
+        }
+
+        function fmt(ms) {
+            return new Date(ms).toLocaleDateString('en-BD', { day: 'numeric', month: 'short', year: 'numeric' });
+        }
+
+        function esc(str) {
+            if (!str) return '—';
+            const d = document.createElement('div');
+            d.textContent = str;
+            return d.innerHTML;
+        }
+
+        // Continue with current code
+    </script>
+</body>
+</html>

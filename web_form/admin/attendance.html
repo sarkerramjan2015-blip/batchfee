@@ -1,0 +1,57 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Attendance — BatchFee Admin</title><link rel="stylesheet" href="../css/style.css"></head>
+<body><div class="app-wrapper"><aside class="sidebar" id="sidebar"><div class="sidebar-header"><div class="logo">Batch<span style="font-weight:400;opacity:0.6;">Fee</span></div><div class="institute-name" id="sidebarInstituteName">Loading...</div></div><nav class="sidebar-nav" id="sidebarNav"></nav><div class="sidebar-footer"><div class="user-info"><div class="user-avatar" id="sidebarUserAvatar">A</div><div class="user-details"><div class="user-name" id="sidebarUserName">Admin</div><div class="user-role" id="sidebarUserRole">Loading...</div></div><button class="logout-btn" onclick="logoutUser()">Logout</button></div></div></aside>
+<main class="main-content"><button class="mobile-menu-btn" onclick="document.getElementById('sidebar').classList.toggle('open')">☰</button>
+<div class="page-header"><h1>Attendance</h1><p>Take and view student attendance.</p></div>
+<div class="page-actions"><div class="search-bar"><select class="filter-select" id="batchFilter" onchange="loadAttendance()"><option value="">All Batches</option></select><input type="date" class="search-input" id="dateFilter" style="max-width:200px;" onchange="loadAttendance()"></div><button class="btn btn-primary" onclick="openTakeAttendance()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg> Take Attendance</button></div>
+<div class="stats-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:16px;"><div class="stat-card"><div class="stat-icon green">✅</div><div class="stat-info"><h3 id="statPresent">—</h3><p>Present Today</p></div></div><div class="stat-card"><div class="stat-icon amber">⏳</div><div class="stat-info"><h3 id="statTotal">—</h3><p>Total Today</p></div></div><div class="stat-card"><div class="stat-icon purple">📊</div><div class="stat-info"><h3 id="statRate">—</h3><p>Rate</p></div></div></div>
+<div class="card"><div class="table-container"><table><thead><tr><th>Batch</th><th>Date</th><th>Present</th><th>Absent</th><th>Total</th><th>Rate</th><th>Actions</th></tr></thead><tbody id="attendanceTable"><tr><td colspan="7" style="text-align:center;padding:24px;color:var(--gray-400);">Loading attendance...</td></tr></tbody></table></div></div>
+</main></div>
+
+<!-- Take Attendance Modal -->
+<div class="modal-overlay" id="takeModal"><div class="modal" style="max-width:560px;"><h3>📋 Take Attendance</h3>
+<div class="form-group"><label>Batch <span style="color:var(--danger);">*</span></label><select class="form-input" id="takeBatch" onchange="loadStudentsForAttendance()"><option value="">Select batch...</option></select></div>
+<div class="form-group"><label>Date</label><input type="date" class="form-input" id="takeDate"></div>
+<div id="attendanceList" style="margin-top:12px;max-height:300px;overflow-y:auto;"></div>
+<div class="modal-actions" style="margin-top:16px;"><button type="button" class="btn btn-outline" onclick="closeModal('takeModal')">Cancel</button><button class="btn btn-primary" onclick="submitAttendance()">Save Attendance</button></div></div></div>
+<div class="toast-container" id="toastContainer"></div>
+
+<script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore-compat.js"></script>
+<script src="../js/firebase-init.js"></script>
+<script src="../js/auth-check.js"></script>
+<script src="../js/sidebar-nav.js"></script>
+
+<script>
+let session, attendances=[], batches=[], students=[], attendanceRecords={};
+document.addEventListener('DOMContentLoaded',async function(){try{session=await requireAuth();updateSidebarUser(session);if(session.instituteId){await loadBatches();loadAttendance();}else document.querySelector('.card').innerHTML='<p style="text-align:center;padding:40px;color:var(--gray-500);">Institute not linked.</p>';}catch(e){}});
+
+async function loadBatches(){try{const snap=await db.collection('institutes').doc(session.instituteId).collection('batches').where('status','==','active').get();batches=[];snap.forEach(d=>batches.push({id:d.id,...d.data()}));renderBatchDropdowns()}catch(e){}}
+function renderBatchDropdowns(){const html='<option value="">All Batches</option>'+batches.map(b=>`<option value="${b.id}">${esc(b.name||'Unnamed')}</option>`).join('');document.getElementById('batchFilter').innerHTML=html;document.getElementById('takeBatch').innerHTML='<option value="">Select batch...</option>'+batches.map(b=>`<option value="${b.id}">${esc(b.name||'Unnamed')}</option>`).join('');}
+
+async function loadAttendance(){const tbody=document.getElementById('attendanceTable');const batchId=document.getElementById('batchFilter').value;try{let q=db.collection('institutes').doc(session.instituteId).collection('attendance').orderBy('date','desc');if(batchId)q=q.where('batchId','==',batchId);const snap=await q.get();attendances=[];snap.forEach(d=>attendances.push({id:d.id,...d.data()}));renderAttendance()}catch(e){tbody.innerHTML='<tr><td colspan="7" style="text-align:center;color:var(--danger);padding:24px;">Failed to load.</td></tr>';}}
+
+function renderAttendance(){const tbody=document.getElementById('attendanceTable');if(!attendances.length){tbody.innerHTML='<tr><td colspan="7" style="text-align:center;padding:32px;"><div class="empty-state"><div class="empty-icon">📋</div><h3>No attendance records</h3><p>Click "Take Attendance" to start.</p></div></td></tr>';return;}
+const today=new Date().toISOString().split('T')[0];let totalPresent=0,totalCount=0;
+tbody.innerHTML=attendances.map(a=>{const recs=a.records||[];const present=recs.filter(r=>r.status==='present').length;const total=recs.length;const rate=total?Math.round(present/total*100):0;if(a.date===today){totalPresent+=present;totalCount+=total;}
+return `<tr><td><strong>${esc(a.batchName||'—')}</strong></td><td>${a.date||'—'}</td><td style="color:var(--success);font-weight:600;">${present}</td><td style="color:var(--danger);font-weight:600;">${total-present}</td><td>${total}</td><td><span class="status-badge ${rate>=80?'active':rate>=50?'pending':'rejected'}">${rate}%</span></td><td><button class="btn btn-sm btn-outline" onclick="viewAttendance('${a.id.replace(/'/g,"\\'")}')">View</button><button class="btn btn-sm btn-danger" onclick="deleteAttendance('${a.id.replace(/'/g,"\\'")}')">Delete</button></td></tr>`;}).join('');
+document.getElementById('statPresent').textContent=totalPresent;document.getElementById('statTotal').textContent=totalCount;document.getElementById('statRate').textContent=totalCount?Math.round(totalPresent/totalCount*100)+'%':'—';}
+
+function openTakeAttendance(){document.getElementById('takeBatch').value='';document.getElementById('attendanceList').innerHTML='<p style="text-align:center;color:var(--gray-400);padding:20px;">Select a batch first.</p>';const t=new Date().toISOString().split('T')[0];document.getElementById('takeDate').value=t;document.getElementById('takeModal').classList.add('show');}
+
+async function loadStudentsForAttendance(){const batchId=document.getElementById('takeBatch').value;if(!batchId){document.getElementById('attendanceList').innerHTML='<p style="text-align:center;color:var(--gray-400);padding:20px;">Select a batch first.</p>';return;}
+try{const snap=await db.collection('institutes').doc(session.instituteId).collection('students').where('status','==','active').get();students=[];snap.forEach(d=>students.push({id:d.id,...d.data()}));}catch(e){}
+attendanceRecords={};const list=document.getElementById('attendanceList');list.innerHTML=students.length?students.map((s,i)=>`<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:${i%2===0?'var(--gray-50)':'transparent'};border-radius:6px;margin-bottom:4px;"><span style="font-weight:500;font-size:14px;">${esc(s.fullName||'—')}</span><div style="display:flex;gap:6px;"><label style="cursor:pointer;padding:4px 10px;border-radius:6px;background:var(--success-bg);color:#065F46;font-size:12px;font-weight:600;"><input type="radio" name="att_${s.id}" value="present" checked style="display:none;">✅ Present</label><label style="cursor:pointer;padding:4px 10px;border-radius:6px;background:var(--danger-bg);color:#991B1B;font-size:12px;font-weight:600;"><input type="radio" name="att_${s.id}" value="absent" style="display:none;">❌ Absent</label></div></div>`).join(''):'<p style="text-align:center;color:var(--gray-400);padding:20px;">No active students enrolled.</p>';}
+
+async function submitAttendance(){const batchId=document.getElementById('takeBatch').value;const date=document.getElementById('takeDate').value;if(!batchId||!date){showToast('Select batch and date.','error');return;}
+if(!students.length){showToast('No students to mark.','error');return;}
+const batch=batches.find(b=>b.id===batchId);const records=students.map(s=>({studentId:s.id,studentName:s.fullName||'Unknown',status:document.querySelector(`input[name="att_${s.id}"]:checked`)?.value||'absent'}));try{await db.collection('institutes').doc(session.instituteId).collection('attendance').add({batchId,batchName:batch?.name||'Unknown',date,records,createdBy:session.uid,createdAtMs:Date.now()});closeModal('takeModal');loadAttendance();showToast('✅ Attendance saved!','success');}catch(e){showToast('Failed to save.','error');}}
+
+function viewAttendance(id){const a=attendances.find(x=>x.id===id);if(!a)return;const recs=a.records||[];const present=recs.filter(r=>r.status==='present').length;const msg=`📋 ${a.batchName} — ${a.date}\n✅ Present: ${present}/${recs.length} (${Math.round(present/recs.length*100)}%)\n\n${recs.map(r=>`${r.status==='present'?'✅':'❌'} ${r.studentName}`).join('\n')}`;alert(msg);}
+
+async function deleteAttendance(id){if(!confirm('Delete this attendance record?'))return;try{await db.collection('institutes').doc(session.instituteId).collection('attendance').doc(id).delete();attendances=attendances.filter(x=>x.id!==id);renderAttendance();showToast('Attendance deleted.','warning');}catch(e){showToast('Failed to delete.','error');}}
+
+function closeModal(id){document.getElementById(id).classList.remove('show');}
+function showToast(m,t){const c=document.getElementById('toastContainer');const o=document.createElement('div');o.className='toast '+t;o.textContent=m;c.appendChild(o);setTimeout(()=>o.remove(),4000);}
+function esc(str){if(!str)return '—';const d=document.createElement('div');d.textContent=str;return d.innerHTML;}
+</script></body></html>

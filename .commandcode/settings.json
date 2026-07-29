@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Shell(.gradlew.bat:*)",
+      "Shell(adb:*)",
+      "Shell(amp:*)",
+      "Shell(sleep:*)",
+      "Shell(findstr:*)",
+      "Shell(git:*)",
+      "Shell(lt:*)",
+      "Shell(EOF:*)",
+      "Shell(noreply@commandcode.ai:*)",
+      "Shell(gt:*)",
+      "Shell(del:*)",
+      "Shell(powershell -Command \"(Get-Content 'D:\\batchfee\\app\\src\\main\\java\\com\\example\\ui\\fees\\UnifiedCollectScreen.kt').Count\")",
+      "Shell(.\\gradlew.bat:*)",
+      "Shell(emulator:*)",
+      "Shell(git commit -F - <<'EOF' feat: locked months in picker, partial payment toggle, polished receipt PDF - Months that are fully paid (including discounts) now locked in month picker - MonthlyDueCalculator uses fee's totalAmount instead of batch monthlyFeeAmount - Added Full/Partial payment toggle in collect payment screen - Removed \"Remaining after payment\" from payment UI card - Polished receipt PDF: circle logo, center watermark, \"For any query contact\" footer - Due amount shows in red (#EF4444) on receipt Co-authored-by: CommandCodeBot <noreply@commandcode.ai> EOF)",
+      "Shell(firebase:*)",
+      "Shell(npx firebase --project batchfee-d4f59 firestore:indexes 2>&1)",
+      "Shell(cmd:*)",
+      "Shell(cd D:\\batchfee && dir /s /b *.google-services.json 2>nul)",
+      "Shell(cd D:\\batchfee && git add app/src/main/java/com/example/ui/auth/AuthScreen.kt app/src/main/java/com/example/ui/batches/AddEditBatchScreen.kt app/src/main/java/com/example/ui/batches/BatchViewModel.kt app/src/main/java/com/example/ui/fees/UnifiedCollectScreen.kt app/src/main/java/com/example/ui/students/StudentProfileScreen.kt && git commit -F - <<'EOF' fix: role normalization, admission fee field, polished receipts - Fix role normalization in AuthScreen.kt for app_users login path (\"owner\" -> \"InstituteOwner\", \"admin\" -> \"InstituteAdmin\") - Add Admission Fee input field to AddBatch/EditBatch screens - Polish text receipts: replace box-drawing chars with ASCII - Polish PDF receipts: wider layout, relative positioning, better text fit - Fix computedTotalDue in StudentProfileScreen for accurate amounts Co-authored-by: CommandCodeBot <noreply@commandcode.ai> EOF)",
+      "Shell(Select-String:*)"
+    ],
+    "deny": [],
+    "defaultMode": "default"
+  }
+}

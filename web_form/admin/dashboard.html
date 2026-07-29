@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard — BatchFee Admin</title>
+    <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+    <div class="app-wrapper">
+        <!-- Sidebar -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">Batch<span style="font-weight:400;opacity:0.6;">Fee</span></div>
+                <div class="institute-name" id="sidebarInstituteName">Loading...</div>
+            </div>
+            <nav class="sidebar-nav" id="sidebarNav"></nav>
+            <div class="sidebar-footer">
+                <div class="user-info">
+                    <div class="user-avatar" id="sidebarUserAvatar">A</div>
+                    <div class="user-details">
+                        <div class="user-name" id="sidebarUserName">Admin</div>
+                        <div class="user-role" id="sidebarUserRole">Loading...</div>
+                    </div>
+                    <button class="logout-btn" onclick="logoutUser()">Logout</button>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <button class="mobile-menu-btn" onclick="document.getElementById('sidebar').classList.toggle('open')">☰</button>
+            <div class="page-header">
+                <h1>Dashboard</h1>
+                <p id="welcomeMsg">Welcome back! Here's your institute overview.</p>
+            </div>
+
+            <!-- Stats -->
+            <div class="stats-grid" id="statsGrid">
+                <div class="stat-card">
+                    <div class="stat-icon blue">📚</div>
+                    <div class="stat-info">
+                        <h3 id="statStudents">—</h3>
+                        <p>Total Students</p>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon amber">📝</div>
+                    <div class="stat-info">
+                        <h3 id="statRegistrations">—</h3>
+                        <p>Pending Registrations</p>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon green">📦</div>
+                    <div class="stat-info">
+                        <h3 id="statBatches">—</h3>
+                        <p>Active Batches</p>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon purple">👤</div>
+                    <div class="stat-info">
+                        <h3 id="statStaff">—</h3>
+                        <p>Staff Members</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Quick Actions -->
+            <div class="card">
+                <div class="card-header">
+                    <h2>Quick Actions</h2>
+                </div>
+                <div style="display:flex; flex-wrap:wrap; gap:12px;">
+                    <a href="registrations.html" class="btn btn-primary">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
+                        Review Registrations
+                    </a>
+                    <a href="students.html" class="btn btn-outline">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                        View Students
+                    </a>
+                    <a href="share.html" class="btn btn-outline">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+                        Share Registration Link
+                    </a>
+                </div>
+            </div>
+
+            <!-- Recent Registrations -->
+            <div class="card" style="margin-top:20px;">
+                <div class="card-header">
+                    <h2>Recent Registrations</h2>
+                    <a href="registrations.html" style="font-size:13px;color:var(--accent);text-decoration:none;font-weight:500;">View All →</a>
+                </div>
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Phone</th>
+                                <th>Class</th>
+                                <th>Date</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody id="recentRegistrations">
+                            <tr><td colspan="5" style="text-align:center;color:var(--gray-400);padding:24px;">Loading...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore-compat.js"></script>
+    <script src="../js/firebase-init.js"></script>
+    <script src="../js/auth-check.js"></script>
+    <script src="../js/sidebar-nav.js"></script>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', async function() {
+            try {
+                const session = await requireAuth();
+                updateSidebarUser(session);
+                document.getElementById('welcomeMsg').textContent =
+                    'Welcome back, ' + session.name + '! Here\'s your institute overview.';
+
+                if (!session.instituteId) {
+                    document.getElementById('statsGrid').innerHTML =
+                        '<div class="card" style="grid-column:1/-1;text-align:center;padding:40px;">' +
+                        '<p style="color:var(--gray-500);">This account is not linked to an institute. Please contact your administrator.</p></div>';
+                    return;
+                }
+
+                loadDashboardData(session);
+            } catch (err) {
+                console.error('Dashboard load error:', err);
+            }
+        });
+
+        async function loadDashboardData(session) {
+            const instituteId = session.instituteId;
+
+            // Fetch data in parallel
+            const [studentsSnap, batchesSnap, staffSnap, regSnap] = await Promise.all([
+                db.collection('institutes').doc(instituteId).collection('students')
+                    .where('status', '==', 'active').get().catch(() => ({ size: 0, empty: true })),
+                db.collection('institutes').doc(instituteId).collection('batches')
+                    .where('status', '==', 'active').get().catch(() => ({ size: 0, empty: true })),
+                db.collection('institutes').doc(instituteId).collection('staffs')
+                    .where('status', '==', 'active').get().catch(() => ({ size: 0, empty: true })),
+                db.collection('registrations').doc(instituteId).collection('pending').where('status', '==', 'pending').get()
+            ]);
+
+            document.getElementById('statStudents').textContent = studentsSnap.size || 0;
+            document.getElementById('statBatches').textContent = batchesSnap.size || 0;
+            document.getElementById('statStaff').textContent = staffSnap.size || 0;
+            document.getElementById('statRegistrations').textContent = regSnap.size || 0;
+
+            // Recent 5 registrations (all, sorted by date)
+            const allRegSnap = await db.collection('registrations').doc(instituteId).collection('pending')
+                .orderBy('submittedAt', 'desc').limit(5).get();
+
+            const tbody = document.getElementById('recentRegistrations');
+            if (allRegSnap.empty) {
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--gray-400);padding:24px;">No registrations yet</td></tr>';
+                return;
+            }
+
+            const registrations = [];
+            allRegSnap.forEach(doc => registrations.push({ id: doc.id, ...doc.data() }));
+
+            tbody.innerHTML = registrations.map(r => {
+                const status = r.status || 'pending';
+                const statusLabel = status === 'pending' ? '⏳ Pending' : status === 'approved' ? '✅ Approved' : '❌ Rejected';
+                const statusClass = status === 'pending' ? 'pending' : status === 'approved' ? 'approved' : 'rejected';
+                return `<tr>
+                    <td><strong>${escapeHtml(r.fullName || 'Unknown')}</strong></td>
+                    <td>${escapeHtml(r.phone || '—')}</td>
+                    <td>${escapeHtml(r.className || '—')}</td>
+                    <td>${r.submittedAt ? formatDate(r.submittedAt) : '—'}</td>
+                    <td><span class="status-badge ${statusClass}">${statusLabel}</span></td>
+                </tr>`;
+            }).join('');
+        }
+
+        function formatDate(ms) {
+            const d = new Date(ms);
+            return d.toLocaleDateString('en-BD', { day: 'numeric', month: 'short', year: 'numeric' });
+        }
+
+        function escapeHtml(str) {
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>

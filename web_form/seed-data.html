@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Seed Demo Data</title>
+    <style>
+        body { font-family: monospace; background: #0F172A; color: #F8FAFC; padding: 40px; max-width: 640px; margin: 0 auto; }
+        h1 { font-size: 20px; color: #22D3EE; }
+        .log { font-size: 13px; line-height: 1.8; }
+        .ok { color: #10B981; }
+        .err { color: #EF4444; }
+        .info { color: #94A3B8; }
+        .btn { background: #3B82F6; color: white; border: none; padding: 12px 24px; border-radius: 8px; font-size: 14px; cursor: pointer; }
+        .btn:disabled { opacity: 0.5; }
+        #output { margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <h1>🌱 Seed Demo Data</h1>
+    <p class="info">Creates demo account + all sample data in Firestore.</p>
+    <button class="btn" id="seedBtn" onclick="seedData()">🌱 Seed Everything</button>
+    <div id="output" class="log">Waiting...</div>
+
+    <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore-compat.js"></script>
+    <script>
+        const firebaseConfig = {
+            apiKey: "AIzaSyD5Ksi9vr0jJjD5cKZ4okpEKmBgK2OVzTI",
+            authDomain: "batchfee-477b8.firebaseapp.com",
+            projectId: "batchfee-477b8",
+            storageBucket: "batchfee-477b8.firebasestorage.app",
+            messagingSenderId: "632446580863",
+            appId: "1:632446580863:web:61dc55d96ede0dca3c674a"
+        };
+        firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+        const db = firebase.firestore();
+
+        const logEl = document.getElementById('output');
+        const btn = document.getElementById('seedBtn');
+
+        function addLog(msg, type = 'info') {
+            const p = document.createElement('div');
+            p.className = type; p.textContent = msg;
+            logEl.appendChild(p);
+        }
+
+        function daysAgo(n) { const d = new Date(); d.setDate(d.getDate() - n); return d.getTime(); }
+        function rnd(p) { return p + '_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8); }
+
+        // Auto-run: if logged in & no data yet, seed automatically
+        auth.onAuthStateChanged(user => {
+            if (user) {
+                btn.textContent = '⏳ Checking...';
+                db.collection('app_users').doc(user.uid).get().then(async userDoc => {
+                    if (!userDoc.exists) {
+                        addLog('⏳ No profile found. Login first via admin panel.', 'info');
+                        btn.disabled = false;
+                        btn.textContent = '🌱 Seed Data';
+                        return;
+                    }
+                    const instituteId = userDoc.data().instituteId;
+                    const snap = await db.collection('institutes').doc(instituteId).collection('batches').limit(1).get();
+                    if (snap.empty) {
+                        addLog('⏳ Auto-seeding demo data...', 'info');
+                        await seedData(instituteId);
+                    } else {
+                        addLog('✅ Demo data already exists!', 'ok');
+                        addLog('👉 Redirecting to dashboard...', 'info');
+                        setTimeout(() => { window.location.href = 'admin/dashboard.html'; }, 1500);
+                    }
+                });
+            } else {
+                btn.disabled = false;
+                btn.textContent = '🌱 Seed Data';
+            }
+        });
+
+        btn.onclick = async () => {
+            // Manual click: sign in first, then seed
+            try {
+                await auth.signInWithEmailAndPassword('admin@demo.com', 'Demo@1234');
+            } catch (e) {
+                addLog('❌ Login failed: ' + e.message, 'err');
+            }
+        };
+
+        async function seedData(instituteId) {
+            btn.disabled = true;
+            btn.textContent = '⏳ Working...';
+            logEl.innerHTML = '';
+
+            try {
+                const base = db.collection('institutes').doc(instituteId);
+
+                // === BATCHES ===
+                addLog('1️⃣ Creating batches...', 'info');
+                const batches = [
+                    { name: 'Batch A - Science', className: 'HSC 1st Year', feeAmount: 1500, maxStudents: 30, description: 'Science group', status: 'active', studentCount: 0, createdAtMs: daysAgo(30), updatedAtMs: daysAgo(30) },
+                    { name: 'Batch B - Arts', className: 'HSC 1st Year', feeAmount: 1200, maxStudents: 25, description: 'Arts group', status: 'active', studentCount: 0, createdAtMs: daysAgo(28), updatedAtMs: daysAgo(28) },
+                    { name: 'Batch C - Commerce', className: 'HSC 2nd Year', feeAmount: 1800, maxStudents: 35, description: 'Commerce group', status: 'active', studentCount: 0, createdAtMs: daysAgo(25), updatedAtMs: daysAgo(25) },
+                    { name: 'Batch D - English', className: 'Class 9', feeAmount: 1000, maxStudents: 20, description: 'English medium', status: 'active', studentCount: 0, createdAtMs: daysAgo(22), updatedAtMs: daysAgo(22) },
+                    { name: 'Batch E - Math Prep', className: 'Admission', feeAmount: 2000, maxStudents: 40, description: 'University admission prep', status: 'active', studentCount: 0, createdAtMs: daysAgo(20), updatedAtMs: daysAgo(20) }
+                ];
+                const batchIds = [];
+                for (const b of batches) {
+                    const ref = await base.collection('batches').add(b);
+                    batchIds.push(ref.id);
+                    addLog('   ✅ ' + b.name, 'ok');
+                }
+
+                // === STUDENTS ===
+                addLog('\n2️⃣ Creating students...', 'info');
+                const students = [
+                    { fullName: 'Rahim Uddin', phone: '+8801712345678', guardianName: 'Karim Uddin', guardianPhone: '+8801712345600', gender: 'Male', className: 'HSC 1st Year', schoolName: 'Dhaka College', address: 'Dhanmondi, Dhaka', status: 'active', admissionDateMs: daysAgo(25), createdAtMs: daysAgo(25), updatedAtMs: daysAgo(25) },
+                    { fullName: 'Fatima Begum', phone: '+8801812345678', guardianName: 'Hasan Ali', guardianPhone: '+8801812345601', gender: 'Female', className: 'HSC 1st Year', schoolName: 'Holy Cross College', address: 'Motijheel, Dhaka', status: 'active', admissionDateMs: daysAgo(24), createdAtMs: daysAgo(24), updatedAtMs: daysAgo(24) },
+                    { fullName: 'Arif Hossain', phone: '+8801912345678', guardianName: 'Jamil Hossain', guardianPhone: '+8801912345602', gender: 'Male', className: 'HSC 2nd Year', schoolName: 'Notre Dame College', address: 'Shahbagh, Dhaka', status: 'active', admissionDateMs: daysAgo(22), createdAtMs: daysAgo(22), updatedAtMs: daysAgo(22) },
+                    { fullName: 'Nusrat Jahan', phone: '+8801612345678', guardianName: 'Firoz Khan', guardianPhone: '+8801612345603', gender: 'Female', className: 'Class 9', schoolName: 'Viqarunnisa School', address: 'Baily Road, Dhaka', status: 'active', admissionDateMs: daysAgo(20), createdAtMs: daysAgo(20), updatedAtMs: daysAgo(20) },
+                    { fullName: 'Shahidul Islam', phone: '+8801512345678', guardianName: 'Abdur Rahim', guardianPhone: '+8801512345604', gender: 'Male', className: 'Admission', schoolName: 'Maple Leaf International', address: 'Gulshan, Dhaka', status: 'active', admissionDateMs: daysAgo(18), createdAtMs: daysAgo(18), updatedAtMs: daysAgo(18) },
+                    { fullName: 'Sadia Alam', phone: '+8801312345678', guardianName: 'Nur Alam', guardianPhone: '+8801312345605', gender: 'Female', className: 'HSC 1st Year', schoolName: 'Dhaka College', address: 'Mirpur, Dhaka', status: 'active', admissionDateMs: daysAgo(16), createdAtMs: daysAgo(16), updatedAtMs: daysAgo(16) },
+                    { fullName: 'Tanvir Ahmed', phone: '+8801712345679', guardianName: 'Shafiq Ahmed', guardianPhone: '+8801712345606', gender: 'Male', className: 'HSC 2nd Year', schoolName: 'St. Joseph College', address: 'Uttara, Dhaka', status: 'active', admissionDateMs: daysAgo(14), createdAtMs: daysAgo(14), updatedAtMs: daysAgo(14) },
+                    { fullName: 'Mim Akhter', phone: '+8801812345670', guardianName: 'Kabir Hossain', guardianPhone: '+8801812345607', gender: 'Female', className: 'Class 9', schoolName: 'Ideal School', address: 'Banani, Dhaka', status: 'active', admissionDateMs: daysAgo(12), createdAtMs: daysAgo(12), updatedAtMs: daysAgo(12) },
+                    { fullName: 'Rakib Hasan', phone: '+8801912345671', guardianName: 'Mizan Hasan', guardianPhone: '+8801912345608', gender: 'Male', className: 'Admission', schoolName: 'South Point School', address: 'Bashundhara, Dhaka', status: 'active', admissionDateMs: daysAgo(10), createdAtMs: daysAgo(10), updatedAtMs: daysAgo(10) },
+                    { fullName: 'Taslima Akhter', phone: '+8801612345672', guardianName: 'Shahjahan Ali', guardianPhone: '+8801612345609', gender: 'Female', className: 'HSC 1st Year', schoolName: 'Holy Cross College', address: 'Wari, Dhaka', status: 'active', admissionDateMs: daysAgo(8), createdAtMs: daysAgo(8), updatedAtMs: daysAgo(8) }
+                ];
+                const studentIds = [];
+                for (const s of students) {
+                    const ref = await base.collection('students').add(s);
+                    studentIds.push(ref.id);
+                    addLog('   ✅ ' + s.fullName, 'ok');
+                }
+
+                // === STAFF ===
+                addLog('\n3️⃣ Creating staff...', 'info');
+                const staff = [
+                    { name: 'Prof. Dr. Kamal Hossain', phone: '+8801711111111', email: 'kamal@demo.com', role: 'Teacher', subjects: ['Physics', 'Math'], salary: 35000, status: 'active', createdAtMs: daysAgo(60), updatedAtMs: daysAgo(60) },
+                    { name: 'Mrs. Salma Khatun', phone: '+8801711111112', email: 'salma@demo.com', role: 'Teacher', subjects: ['English', 'Bangla'], salary: 30000, status: 'active', createdAtMs: daysAgo(55), updatedAtMs: daysAgo(55) },
+                    { name: 'Mr. Rafiqul Islam', phone: '+8801711111113', email: 'rafiq@demo.com', role: 'Accountant', subjects: [], salary: 25000, status: 'active', createdAtMs: daysAgo(50), updatedAtMs: daysAgo(50) },
+                    { name: 'Ms. Farida Yeasmin', phone: '+8801711111114', email: 'farida@demo.com', role: 'Teacher', subjects: ['Chemistry', 'Biology'], salary: 32000, status: 'active', createdAtMs: daysAgo(45), updatedAtMs: daysAgo(45) },
+                    { name: 'Mr. Jahirul Haque', phone: '+8801711111115', email: 'jahir@demo.com', role: 'Admin Staff', subjects: [], salary: 20000, status: 'active', createdAtMs: daysAgo(40), updatedAtMs: daysAgo(40) }
+                ];
+                for (const s of staff) {
+                    await base.collection('staffs').add(s);
+                    addLog('   ✅ ' + s.name, 'ok');
+                }
+
+                // === PENDING REGISTRATIONS ===
+                addLog('\n4️⃣ Creating pending registrations...', 'info');
+                const pendingRegs = [
+                    { requestId: rnd('reg'), instituteId, fullName: 'Rafiq Hasan', phone: '+8801712345690', guardianName: 'Mr. X', gender: 'Male', className: 'HSC 1st Year', schoolName: 'Dhaka College', status: 'pending', submittedAt: daysAgo(2) },
+                    { requestId: rnd('reg'), instituteId, fullName: 'Sajeda Khatun', phone: '+8801712345691', guardianName: 'Mr. Y', gender: 'Female', className: 'Class 9', schoolName: 'Ideal School', status: 'pending', submittedAt: daysAgo(1) },
+                    { requestId: rnd('reg'), instituteId, fullName: 'Kabir Ahmed', phone: '+8801712345692', guardianName: 'Mr. Z', gender: 'Male', className: 'HSC 2nd Year', schoolName: 'Notre Dame', status: 'pending', submittedAt: daysAgo(0) }
+                ];
+                for (const reg of pendingRegs) {
+                    await db.collection('registrations').doc(instituteId).collection('pending').doc(reg.requestId).set(reg);
+                    addLog('   ✅ ' + reg.fullName, 'ok');
+                }
+
+                // === PAYMENTS ===
+                addLog('\n5️⃣ Creating payment records...', 'info');
+                const now = new Date();
+                const month = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+                const payments = [
+                    { studentId: studentIds[0], studentName: 'Rahim Uddin', batchId: batchIds[0], batchName: 'Batch A - Science', amount: 1500, month, paidDate: daysAgo(5), paymentMethod: 'Cash', receiptNo: 'RCP-001', status: 'paid', notes: 'Monthly fee', createdAtMs: daysAgo(5) },
+                    { studentId: studentIds[1], studentName: 'Fatima Begum', batchId: batchIds[0], batchName: 'Batch A - Science', amount: 1500, month, paidDate: daysAgo(4), paymentMethod: 'Mobile', receiptNo: 'RCP-002', status: 'paid', notes: 'bKash', createdAtMs: daysAgo(4) },
+                    { studentId: studentIds[2], studentName: 'Arif Hossain', batchId: batchIds[2], batchName: 'Batch C - Commerce', amount: 1800, month, paidDate: daysAgo(3), paymentMethod: 'Bank', receiptNo: 'RCP-003', status: 'paid', notes: 'Bank transfer', createdAtMs: daysAgo(3) },
+                    { studentId: studentIds[3], studentName: 'Nusrat Jahan', batchId: batchIds[3], batchName: 'Batch D - English', amount: 1000, month, paidDate: daysAgo(2), paymentMethod: 'Cash', receiptNo: 'RCP-004', status: 'paid', notes: '', createdAtMs: daysAgo(2) },
+                    { studentId: studentIds[4], studentName: 'Shahidul Islam', batchId: batchIds[4], batchName: 'Batch E - Math Prep', amount: 2000, month, paidDate: daysAgo(1), paymentMethod: 'Mobile', receiptNo: 'RCP-005', status: 'paid', notes: 'Nagad', createdAtMs: daysAgo(1) }
+                ];
+                for (const p of payments) {
+                    await base.collection('payments').add(p);
+                    addLog('   ✅ ' + p.studentName + ' - ৳' + p.amount, 'ok');
+                }
+
+                addLog('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', 'ok');
+                addLog('✅✅✅ ALL DEMO DATA SEEDED!', 'ok');
+                addLog('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', 'ok');
+                addLog('📊 5 Batches | 10 Students | 5 Staff | 3 Registrations | 5 Payments', 'info');
+                addLog('\n👉 Redirecting to dashboard...', 'info');
+                setTimeout(() => { window.location.href = 'admin/dashboard.html'; }, 2000);
+            } catch (err) {
+                addLog('❌ Error: ' + err.message, 'err');
+                console.error(err);
+                btn.disabled = false;
+                btn.textContent = '🔄 Retry';
+            }
+        }
+    </script>
+
+                const base = db.collection('institutes').doc(instituteId);
+
+                // === BATCHES ===
+                addLog('\n4️⃣ Creating batches...', 'info');
+                const batches = [
+                    { name: 'Batch A - Science', className: 'HSC 1st Year', feeAmount: 1500, maxStudents: 30, description: 'Science group', status: 'active', studentCount: 0, createdAtMs: daysAgo(30), updatedAtMs: daysAgo(30) },
+                    { name: 'Batch B - Arts', className: 'HSC 1st Year', feeAmount: 1200, maxStudents: 25, description: 'Arts group', status: 'active', studentCount: 0, createdAtMs: daysAgo(28), updatedAtMs: daysAgo(28) },
+                    { name: 'Batch C - Commerce', className: 'HSC 2nd Year', feeAmount: 1800, maxStudents: 35, description: 'Commerce group', status: 'active', studentCount: 0, createdAtMs: daysAgo(25), updatedAtMs: daysAgo(25) },
+                    { name: 'Batch D - English', className: 'Class 9', feeAmount: 1000, maxStudents: 20, description: 'English medium', status: 'active', studentCount: 0, createdAtMs: daysAgo(22), updatedAtMs: daysAgo(22) },
+                    { name: 'Batch E - Math Prep', className: 'Admission', feeAmount: 2000, maxStudents: 40, description: 'University admission prep', status: 'active', studentCount: 0, createdAtMs: daysAgo(20), updatedAtMs: daysAgo(20) }
+                ];
+                const batchIds = [];
+                for (const b of batches) {
+                    const ref = await base.collection('batches').add(b);
+                    batchIds.push(ref.id);
+                    addLog('   ✅ ' + b.name, 'ok');
+                }
+
+                // === STUDENTS ===
+                addLog('\n5️⃣ Creating students...', 'info');
+                const students = [
+                    { fullName: 'Rahim Uddin', phone: '+8801712345678', guardianName: 'Karim Uddin', guardianPhone: '+8801712345600', gender: 'Male', className: 'HSC 1st Year', schoolName: 'Dhaka College', address: 'Dhanmondi, Dhaka', status: 'active', admissionDateMs: daysAgo(25), createdAtMs: daysAgo(25), updatedAtMs: daysAgo(25) },
+                    { fullName: 'Fatima Begum', phone: '+8801812345678', guardianName: 'Hasan Ali', guardianPhone: '+8801812345601', gender: 'Female', className: 'HSC 1st Year', schoolName: 'Holy Cross College', address: 'Motijheel, Dhaka', status: 'active', admissionDateMs: daysAgo(24), createdAtMs: daysAgo(24), updatedAtMs: daysAgo(24) },
+                    { fullName: 'Arif Hossain', phone: '+8801912345678', guardianName: 'Jamil Hossain', guardianPhone: '+8801912345602', gender: 'Male', className: 'HSC 2nd Year', schoolName: 'Notre Dame College', address: 'Shahbagh, Dhaka', status: 'active', admissionDateMs: daysAgo(22), createdAtMs: daysAgo(22), updatedAtMs: daysAgo(22) },
+                    { fullName: 'Nusrat Jahan', phone: '+8801612345678', guardianName: 'Firoz Khan', guardianPhone: '+8801612345603', gender: 'Female', className: 'Class 9', schoolName: 'Viqarunnisa School', address: 'Baily Road, Dhaka', status: 'active', admissionDateMs: daysAgo(20), createdAtMs: daysAgo(20), updatedAtMs: daysAgo(20) },
+                    { fullName: 'Shahidul Islam', phone: '+8801512345678', guardianName: 'Abdur Rahim', guardianPhone: '+8801512345604', gender: 'Male', className: 'Admission', schoolName: 'Maple Leaf International', address: 'Gulshan, Dhaka', status: 'active', admissionDateMs: daysAgo(18), createdAtMs: daysAgo(18), updatedAtMs: daysAgo(18) },
+                    { fullName: 'Sadia Alam', phone: '+8801312345678', guardianName: 'Nur Alam', guardianPhone: '+8801312345605', gender: 'Female', className: 'HSC 1st Year', schoolName: 'Dhaka College', address: 'Mirpur, Dhaka', status: 'active', admissionDateMs: daysAgo(16), createdAtMs: daysAgo(16), updatedAtMs: daysAgo(16) },
+                    { fullName: 'Tanvir Ahmed', phone: '+8801712345679', guardianName: 'Shafiq Ahmed', guardianPhone: '+8801712345606', gender: 'Male', className: 'HSC 2nd Year', schoolName: 'St. Joseph College', address: 'Uttara, Dhaka', status: 'active', admissionDateMs: daysAgo(14), createdAtMs: daysAgo(14), updatedAtMs: daysAgo(14) },
+                    { fullName: 'Mim Akhter', phone: '+8801812345670', guardianName: 'Kabir Hossain', guardianPhone: '+8801812345607', gender: 'Female', className: 'Class 9', schoolName: 'Ideal School', address: 'Banani, Dhaka', status: 'active', admissionDateMs: daysAgo(12), createdAtMs: daysAgo(12), updatedAtMs: daysAgo(12) },
+                    { fullName: 'Rakib Hasan', phone: '+8801912345671', guardianName: 'Mizan Hasan', guardianPhone: '+8801912345608', gender: 'Male', className: 'Admission', schoolName: 'South Point School', address: 'Bashundhara, Dhaka', status: 'active', admissionDateMs: daysAgo(10), createdAtMs: daysAgo(10), updatedAtMs: daysAgo(10) },
+                    { fullName: 'Taslima Akhter', phone: '+8801612345672', guardianName: 'Shahjahan Ali', guardianPhone: '+8801612345609', gender: 'Female', className: 'HSC 1st Year', schoolName: 'Holy Cross College', address: 'Wari, Dhaka', status: 'active', admissionDateMs: daysAgo(8), createdAtMs: daysAgo(8), updatedAtMs: daysAgo(8) }
+                ];
+                const studentIds = [];
+                for (const s of students) {
+                    const ref = await base.collection('students').add(s);
+                    studentIds.push(ref.id);
+                    addLog('   ✅ ' + s.fullName, 'ok');
+                }
+
+                // === STAFF ===
+                addLog('\n6️⃣ Creating staff...', 'info');
+                const staff = [
+                    { name: 'Prof. Dr. Kamal Hossain', phone: '+8801711111111', email: 'kamal@demo.com', role: 'Teacher', subjects: ['Physics', 'Math'], salary: 35000, status: 'active', createdAtMs: daysAgo(60), updatedAtMs: daysAgo(60) },
+                    { name: 'Mrs. Salma Khatun', phone: '+8801711111112', email: 'salma@demo.com', role: 'Teacher', subjects: ['English', 'Bangla'], salary: 30000, status: 'active', createdAtMs: daysAgo(55), updatedAtMs: daysAgo(55) },
+                    { name: 'Mr. Rafiqul Islam', phone: '+8801711111113', email: 'rafiq@demo.com', role: 'Accountant', subjects: [], salary: 25000, status: 'active', createdAtMs: daysAgo(50), updatedAtMs: daysAgo(50) },
+                    { name: 'Ms. Farida Yeasmin', phone: '+8801711111114', email: 'farida@demo.com', role: 'Teacher', subjects: ['Chemistry', 'Biology'], salary: 32000, status: 'active', createdAtMs: daysAgo(45), updatedAtMs: daysAgo(45) },
+                    { name: 'Mr. Jahirul Haque', phone: '+8801711111115', email: 'jahir@demo.com', role: 'Admin Staff', subjects: [], salary: 20000, status: 'active', createdAtMs: daysAgo(40), updatedAtMs: daysAgo(40) }
+                ];
+                for (const s of staff) {
+                    await base.collection('staffs').add(s);
+                    addLog('   ✅ ' + s.name, 'ok');
+                }
+
+                // === PENDING REGISTRATIONS ===
+                addLog('\n7️⃣ Creating pending registrations...', 'info');
+                const pendingRegs = [
+                    { requestId: rnd('reg'), instituteId, fullName: 'Rafiq Hasan', phone: '+8801712345690', guardianName: 'Mr. X', gender: 'Male', className: 'HSC 1st Year', schoolName: 'Dhaka College', status: 'pending', submittedAt: daysAgo(2) },
+                    { requestId: rnd('reg'), instituteId, fullName: 'Sajeda Khatun', phone: '+8801712345691', guardianName: 'Mr. Y', gender: 'Female', className: 'Class 9', schoolName: 'Ideal School', status: 'pending', submittedAt: daysAgo(1) },
+                    { requestId: rnd('reg'), instituteId, fullName: 'Kabir Ahmed', phone: '+8801712345692', guardianName: 'Mr. Z', gender: 'Male', className: 'HSC 2nd Year', schoolName: 'Notre Dame', status: 'pending', submittedAt: daysAgo(0) }
+                ];
+                for (const reg of pendingRegs) {
+                    await db.collection('registrations').doc(instituteId).collection('pending').doc(reg.requestId).set(reg);
+                    addLog('   ✅ ' + reg.fullName, 'ok');
+                }
+
+                // === PAYMENTS ===
+                addLog('\n8️⃣ Creating payment records...', 'info');
+                const now = new Date();
+                const month = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+                const payments = [
+                    { studentId: studentIds[0], studentName: 'Rahim Uddin', batchId: batchIds[0], batchName: 'Batch A - Science', amount: 1500, month, paidDate: daysAgo(5), paymentMethod: 'Cash', receiptNo: 'RCP-001', status: 'paid', notes: 'Monthly fee', createdAtMs: daysAgo(5) },
+                    { studentId: studentIds[1], studentName: 'Fatima Begum', batchId: batchIds[0], batchName: 'Batch A - Science', amount: 1500, month, paidDate: daysAgo(4), paymentMethod: 'Mobile', receiptNo: 'RCP-002', status: 'paid', notes: 'bKash', createdAtMs: daysAgo(4) },
+                    { studentId: studentIds[2], studentName: 'Arif Hossain', batchId: batchIds[2], batchName: 'Batch C - Commerce', amount: 1800, month, paidDate: daysAgo(3), paymentMethod: 'Bank', receiptNo: 'RCP-003', status: 'paid', notes: 'Bank transfer', createdAtMs: daysAgo(3) },
+                    { studentId: studentIds[3], studentName: 'Nusrat Jahan', batchId: batchIds[3], batchName: 'Batch D - English', amount: 1000, month, paidDate: daysAgo(2), paymentMethod: 'Cash', receiptNo: 'RCP-004', status: 'paid', notes: '', createdAtMs: daysAgo(2) },
+                    { studentId: studentIds[4], studentName: 'Shahidul Islam', batchId: batchIds[4], batchName: 'Batch E - Math Prep', amount: 2000, month, paidDate: daysAgo(1), paymentMethod: 'Mobile', receiptNo: 'RCP-005', status: 'paid', notes: 'Nagad', createdAtMs: daysAgo(1) }
+                ];
+                for (const p of payments) {
+                    await base.collection('payments').add(p);
+                    addLog('   ✅ ' + p.studentName + ' - ৳' + p.amount, 'ok');
+                }
+
+                addLog('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', 'ok');
+                addLog('✅✅✅ ALL DONE! EVERYTHING SEEDED!', 'ok');
+                addLog('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', 'ok');
+                addLog('📊 5 Batches | 10 Students | 5 Staff | 3 Registrations | 5 Payments', 'info');
+                addLog('\n🔗 Login: http://localhost:5173/admin/login.html', 'info');
+                addLog('📧 admin@demo.com / Demo@1234', 'ok');
+
+                btn.textContent = '✅ Seeded! Close this tab and login.';
+            } catch (err) {
+                addLog('❌ Error: ' + err.message, 'err');
+                console.error(err);
+                btn.disabled = false;
+                btn.textContent = '🔄 Retry';
+            }
+        }
+    </script>
+</body>
+</html>

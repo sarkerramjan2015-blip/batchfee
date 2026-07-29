@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Students — BatchFee Admin</title>
+    <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+    <div class="app-wrapper">
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">Batch<span style="font-weight:400;opacity:0.6;">Fee</span></div>
+                <div class="institute-name" id="sidebarInstituteName">Loading...</div>
+            </div>
+            <nav class="sidebar-nav">
+                <a href="dashboard.html">
+                    <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg></span>
+                    Dashboard
+                </a>
+                <a href="registrations.html">
+                    <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span>
+                    Registrations
+                </a>
+                <a href="students.html" class="active">
+                    <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>
+                    Students
+                </a>
+                <a href="batches.html">
+                    <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/></svg></span>
+                    Batches
+                </a>
+                <a href="staff.html">
+                    <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg></span>
+                    Staff
+                </a>
+                <a href="fees.html">
+                    <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg></span>
+                    Fees
+                </a>
+                <a href="attendance.html">
+                    <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></span>
+                    Attendance
+                </a>
+                <a href="exams.html">
+                    <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="10" y1="17" x2="14" y2="17"/></svg></span>
+                    Exams
+                </a>
+                <a href="salaries.html">
+                    <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="8" width="20" height="12" rx="2"/><circle cx="12" cy="14" r="2"/><path d="M2 12h4"/><path d="M18 12h4"/></svg></span>
+                    Salaries
+                </a>
+                <a href="expenses.html">
+                    <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 18 13.5 8.5 8.5 13.5 1 6"/><polyline points="17 18 23 18 23 12"/></svg></span>
+                    Expenses
+                </a>
+                <a href="enquiries.html">
+                    <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12" y2="17"/></svg></span>
+                    Enquiries
+                </a>
+                <a href="share.html">
+                    <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg></span>
+                    Share Link
+                </a>
+                <a href="settings.html">
+                    <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span>
+                    Settings
+                </a>
+            </nav>
+            <div class="sidebar-footer">
+                <div class="user-info">
+                    <div class="user-avatar" id="sidebarUserAvatar">A</div>
+                    <div class="user-details">
+                        <div class="user-name" id="sidebarUserName">Admin</div>
+                        <div class="user-role" id="sidebarUserRole">Loading...</div>
+                    </div>
+                    <button class="logout-btn" onclick="logoutUser()">Logout</button>
+                </div>
+            </div>
+        </aside>
+
+        <main class="main-content">
+            <button class="mobile-menu-btn" onclick="document.getElementById('sidebar').classList.toggle('open')">☰</button>
+            <div class="page-header">
+                <h1>Students</h1>
+                <p>View all enrolled students.</p>
+            </div>
+
+            <div class="search-bar">
+                <input type="text" class="search-input" id="searchInput" placeholder="Search by name or phone..." oninput="filterStudents()">
+            </div>
+
+            <div class="card">
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Phone</th>
+                                <th>Guardian</th>
+                                <th>Class</th>
+                                <th>School</th>
+                                <th>Admission Date</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody id="studentsTable">
+                            <tr><td colspan="7" style="text-align:center;color:var(--gray-400);padding:24px;">Loading students...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Detail Modal -->
+    <div class="modal-overlay" id="detailModal">
+        <div class="modal" style="max-width:560px;">
+            <h3>📄 Student Details</h3>
+            <div class="detail-grid" id="detailContent"></div>
+            <div class="modal-actions" style="margin-top:20px;justify-content:space-between;">
+                <div>
+                    <button class="btn btn-sm btn-outline" onclick="openEditStudent()">✏️ Edit</button>
+                    <button class="btn btn-sm btn-danger" onclick="openDeleteStudent()">🗑️ Delete</button>
+                </div>
+                <button class="btn btn-outline" onclick="closeModal('detailModal')">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Student Modal -->
+    <div class="modal-overlay" id="editModal">
+        <div class="modal" style="max-width:560px;">
+            <h3>✏️ Edit Student</h3>
+            <form id="editStudentForm">
+                <div class="form-group">
+                    <label>Full Name</label>
+                    <input type="text" class="form-input" id="editFullName" required>
+                </div>
+                <div class="form-group">
+                    <label>Phone</label>
+                    <input type="text" class="form-input" id="editPhone">
+                </div>
+                <div class="form-group">
+                    <label>Guardian Name</label>
+                    <input type="text" class="form-input" id="editGuardianName">
+                </div>
+                <div class="form-group">
+                    <label>Guardian Phone</label>
+                    <input type="text" class="form-input" id="editGuardianPhone">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Gender</label>
+                        <select class="form-input" id="editGender">
+                            <option value="">Select</option>
+                            <option value="Male">Male</option>
+                            <option value="Female">Female</option>
+                            <option value="Other">Other</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Class</label>
+                        <input type="text" class="form-input" id="editClassName">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>School Name</label>
+                    <input type="text" class="form-input" id="editSchoolName">
+                </div>
+                <div class="form-group">
+                    <label>Address</label>
+                    <textarea class="form-input" id="editAddress" rows="2"></textarea>
+                </div>
+                <div class="modal-actions" style="margin-top:16px;">
+                    <button type="button" class="btn btn-outline" onclick="closeModal('editModal')">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Delete Confirmation Modal -->
+    <div class="modal-overlay" id="deleteModal">
+        <div class="modal">
+            <h3>🗑️ Delete Student</h3>
+            <p>Are you sure you want to delete <strong id="deleteStudentName">this student</strong>? This will set their status to inactive.</p>
+            <div class="modal-actions">
+                <button class="btn btn-outline" onclick="closeModal('deleteModal')">Cancel</button>
+                <button class="btn btn-danger" onclick="confirmDeleteStudent()">Delete</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore-compat.js"></script>
+    <script src="../js/firebase-init.js"></script>
+    <script src="../js/auth-check.js"></script>
+
+    <script>
+        let session = null;
+        let allStudents = [];
+        let selectedStudentId = null;
+
+        document.addEventListener('DOMContentLoaded', async function() {
+            try {
+                session = await requireAuth();
+                updateSidebarUser(session);
+                if (session.instituteId) {
+                    loadStudents();
+                } else {
+                    document.querySelector('.card').innerHTML = '<div class="card" style="text-align:center;padding:40px;"><p style="color:var(--gray-500);">This account is not linked to an institute.</p></div>';
+                }
+            } catch (err) {}
+        });
+
+        async function loadStudents() {
+            const tbody = document.getElementById('studentsTable');
+            try {
+                const snap = await db.collection('institutes')
+                    .doc(session.instituteId)
+                    .collection('students')
+                    .where('status', '==', 'active')
+                    .get();
+
+                allStudents = [];
+                snap.forEach(doc => allStudents.push({ id: doc.id, ...doc.data() }));
+                renderStudents();
+            } catch (err) {
+                console.error(err);
+                tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--danger);padding:24px;">Failed to load students.</td></tr>';
+            }
+        }
+
+        function renderStudents() {
+            const tbody = document.getElementById('studentsTable');
+            const search = document.getElementById('searchInput').value.toLowerCase().trim();
+
+            let filtered = allStudents;
+            if (search) {
+                filtered = allStudents.filter(s => {
+                    const name = (s.fullName || '').toLowerCase();
+                    const phone = (s.phone || '').toLowerCase();
+                    return name.includes(search) || phone.includes(search);
+                });
+            }
+
+            filtered.sort((a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0));
+
+            if (filtered.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:32px;">' +
+                    '<div class="empty-state"><div class="empty-icon">👥</div><h3>No students found</h3>' +
+                    '<p>' + (search ? 'Try a different search term.' : 'No students enrolled yet.') + '</p></div></td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = filtered.map(s => `
+                <tr class="clickable" onclick="showDetail('${s.id.replace(/'/g, "\\'")}')">
+                    <td><strong>${esc(s.fullName || '—')}</strong></td>
+                    <td>${esc(s.phone || '—')}</td>
+                    <td>${esc(s.guardianName || '—')}</td>
+                    <td>${esc(s.className || '—')}</td>
+                    <td>${esc(s.schoolName || '—')}</td>
+                    <td>${s.admissionDateMs || s.createdAtMs ? fmt(s.admissionDateMs || s.createdAtMs) : '—'}</td>
+                    <td><span class="status-badge active">✅ Active</span></td>
+                </tr>
+            `).join('');
+        }
+
+        function filterStudents() {
+            renderStudents();
+        }
+
+        function showDetail(id) {
+            selectedStudentId = id;
+            const s = allStudents.find(st => st.id === id);
+            if (!s) return;
+
+            const fields = [
+                { label: 'Full Name', value: s.fullName },
+                { label: 'Phone', value: s.phone },
+                { label: 'Guardian Name', value: s.guardianName },
+                { label: 'Guardian Phone', value: s.guardianPhone },
+                { label: 'Gender', value: s.gender },
+                { label: 'Date of Birth', value: s.dateOfBirthMs ? new Date(s.dateOfBirthMs).toLocaleDateString() : '—' },
+                { label: 'School', value: s.schoolName },
+                { label: 'Class', value: s.className },
+                { label: 'Address', value: s.address },
+                { label: 'Admission Date', value: s.admissionDateMs ? fmt(s.admissionDateMs) : '—' },
+                { label: 'Status', value: 'Active' }
+            ];
+
+            document.getElementById('detailContent').innerHTML = fields.map(f => `
+                <div class="detail-item">
+                    <div class="label">${f.label}</div>
+                    <div class="value">${esc(f.value || '—')}</div>
+                </div>
+            `).join('');
+
+            document.getElementById('detailModal').classList.add('show');
+        }
+
+        function openEditStudent() {
+            const s = allStudents.find(st => st.id === selectedStudentId);
+            if (!s) return;
+
+            document.getElementById('editFullName').value = s.fullName || '';
+            document.getElementById('editPhone').value = s.phone || '';
+            document.getElementById('editGuardianName').value = s.guardianName || '';
+            document.getElementById('editGuardianPhone').value = s.guardianPhone || '';
+            document.getElementById('editGender').value = s.gender || '';
+            document.getElementById('editClassName').value = s.className || '';
+            document.getElementById('editSchoolName').value = s.schoolName || '';
+            document.getElementById('editAddress').value = s.address || '';
+
+            document.getElementById('detailModal').classList.remove('show');
+            document.getElementById('editModal').classList.add('show');
+        }
+
+        document.getElementById('editStudentForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            if (!selectedStudentId || !session) return;
+
+            const btn = this.querySelector('button[type="submit"]');
+            btn.disabled = true;
+            btn.textContent = 'Saving...';
+
+            try {
+                const updateData = {
+                    fullName: document.getElementById('editFullName').value.trim(),
+                    phone: document.getElementById('editPhone').value.trim(),
+                    guardianName: document.getElementById('editGuardianName').value.trim(),
+                    guardianPhone: document.getElementById('editGuardianPhone').value.trim(),
+                    gender: document.getElementById('editGender').value,
+                    className: document.getElementById('editClassName').value.trim(),
+                    schoolName: document.getElementById('editSchoolName').value.trim(),
+                    address: document.getElementById('editAddress').value.trim(),
+                    updatedAtMs: Date.now()
+                };
+
+                await db.collection('institutes')
+                    .doc(session.instituteId)
+                    .collection('students')
+                    .doc(selectedStudentId)
+                    .update(updateData);
+
+                // Update local list
+                const idx = allStudents.findIndex(st => st.id === selectedStudentId);
+                if (idx !== -1) {
+                    Object.assign(allStudents[idx], updateData);
+                }
+
+                closeModal('editModal');
+                renderStudents();
+                showToast('✅ Student updated successfully!', 'success');
+            } catch (err) {
+                console.error('Edit error:', err);
+                showToast('Failed to update student. Please try again.', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Save';
+            }
+        });
+
+        function openDeleteStudent() {
+            const s = allStudents.find(st => st.id === selectedStudentId);
+            document.getElementById('deleteStudentName').textContent = s ? esc(s.fullName || 'this student') : 'this student';
+            document.getElementById('detailModal').classList.remove('show');
+            document.getElementById('deleteModal').classList.add('show');
+        }
+
+        async function confirmDeleteStudent() {
+            if (!selectedStudentId || !session) return;
+
+            const btn = document.querySelector('#deleteModal .btn-danger');
+            btn.disabled = true;
+            btn.textContent = 'Deleting...';
+
+            try {
+                await db.collection('institutes')
+                    .doc(session.instituteId)
+                    .collection('students')
+                    .doc(selectedStudentId)
+                    .update({ status: 'inactive', updatedAtMs: Date.now() });
+
+                allStudents = allStudents.filter(st => st.id !== selectedStudentId);
+                closeModal('deleteModal');
+                renderStudents();
+                showToast('🗑️ Student deleted.', 'warning');
+            } catch (err) {
+                console.error('Delete error:', err);
+                showToast('Failed to delete student.', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Delete';
+            }
+        }
+
+        function closeModal(id) {
+            document.getElementById(id).classList.remove('show');
+        }
+
+        function showToast(message, type) {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            toast.className = 'toast ' + type;
+            toast.textContent = message;
+            container.appendChild(toast);
+            setTimeout(() => toast.remove(), 4000);
+        }
+
+        function fmt(ms) {
+            return new Date(ms).toLocaleDateString('en-BD', { day: 'numeric', month: 'short', year: 'numeric' });
+        }
+
+        function esc(str) {
+            if (!str) return '—';
+            const d = document.createElement('div');
+            d.textContent = str;
+            return d.innerHTML;
+        }
+    </script>
+</body>
+</html>

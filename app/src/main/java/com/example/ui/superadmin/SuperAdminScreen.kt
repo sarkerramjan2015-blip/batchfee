@@ -227,11 +227,17 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
         val now = System.currentTimeMillis()
         val planPriceMap = plans.associate { it.id to it.priceBdt }
         val activeCount = institutes.count { card ->
-            card.entity.subscriptionStatus != "blocked" && card.entity.trialEndDateMs > now
+            val entity = card.entity
+            val isExpired = entity.subscriptionStatus == "expired" || entity.subscriptionStatus == "blocked"
+            !isExpired && entity.trialEndDateMs > now
         }
         val totalRevenue = institutes.sumOf { card ->
             val entity = card.entity
-            if (entity.subscriptionStatus == "blocked" || entity.trialEndDateMs <= now) {
+            if (entity.subscriptionStatus == "blocked" ||
+                entity.subscriptionStatus == "expired" ||
+                entity.subscriptionStatus == "trashed" ||
+                entity.trialEndDateMs <= now
+            ) {
                 0.0
             } else {
                 planPriceMap[entity.currentPlanId] ?: 0.0
@@ -658,9 +664,15 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
     fun removeInstitute(instituteId: String, superAdminPassword: String) {
         viewModelScope.launch {
             try {
-                val uid = SessionManager.currentUserId.value ?: return@launch
-                val user = withContext(Dispatchers.IO) { db.userDao().getUserById(uid) }
-                if (user == null || !PasswordHasher.verify(superAdminPassword, user.passwordHash)) {
+                val email = FirebaseAuth.getInstance().currentUser?.email
+                if (email == null || superAdminPassword.isBlank()) {
+                    _operationMsg.value = "Please enter your password."
+                    return@launch
+                }
+                try {
+                    val credential = com.google.firebase.auth.EmailAuthProvider.getCredential(email, superAdminPassword)
+                    FirebaseAuth.getInstance().currentUser!!.reauthenticate(credential).await()
+                } catch (e: Exception) {
                     _operationMsg.value = "Wrong super admin password."
                     return@launch
                 }
@@ -673,7 +685,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                     val instData = (instDoc.data ?: emptyMap()).toMutableMap()
                     instData["_trashedAt"] = trashedAt
                     instData["_trashExpiresAt"] = expiresAt
-                    instData["_trashedBy"] = uid
+                    instData["_trashedBy"] = FirebaseAuth.getInstance().currentUser?.uid
                     instData["isActive"] = false
                     instData["subscriptionStatus"] = "trashed"
                     firestore.collection("institutes_trash").document(instituteId).set(instData).await()
@@ -751,11 +763,29 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                 withContext(Dispatchers.IO) {
                     firestore.collection("institutes_trash").document(instituteId).delete().await()
                     try { firestore.collection("app_users_trash").document(instituteId).delete().await() } catch (_: Exception) { }
-                    // Clean subcollections
-                    try {
-                        firestore.collection("institutes").document(instituteId).collection("staffs").get().await()
-                            .documents.forEach { it.reference.delete().await() }
-                    } catch (_: Exception) { }
+                    // Clean all orphan subcollections (parent doc was already moved to trash)
+                    val subCollections = listOf(
+                        "batches", "students", "fees", "payments", "receipts",
+                        "attendance", "exams", "staffs", "enquiries", "registrations"
+                    )
+                    for (col in subCollections) {
+                        try {
+                            val docs = firestore.collection("institutes").document(instituteId)
+                                .collection(col).get().await().documents
+                            for (doc in docs) {
+                                // Also clean nested subcollections for exams (results)
+                                if (col == "exams") {
+                                    try {
+                                        firestore.collection("institutes").document(instituteId)
+                                            .collection("exams").document(doc.id)
+                                            .collection("results").get().await()
+                                            .documents.forEach { it.reference.delete().await() }
+                                    } catch (_: Exception) { }
+                                }
+                                doc.reference.delete().await()
+                            }
+                        } catch (_: Exception) { }
+                    }
                 }
                 _trashedInstitutes.value = _trashedInstitutes.value.filter { it.entity.id != instituteId }
                 _operationMsg.value = "Institute permanently deleted."
@@ -939,13 +969,17 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
             _operationMsg.value = "No email on file for this institute."
             return
         }
-        FirebaseAuth.getInstance().sendPasswordResetEmail(email)
-            .addOnSuccessListener {
+        viewModelScope.launch {
+            try {
+                com.google.android.gms.tasks.Tasks.await(
+                    FirebaseAuth.getInstance().sendPasswordResetEmail(email)
+                )
                 _operationMsg.value = "Password reset email sent to $email"
-            }
-            .addOnFailureListener { e ->
+            } catch (e: Exception) {
                 _operationMsg.value = "Failed: ${e.message}"
+                FirebaseCrashlytics.getInstance().recordException(e)
             }
+        }
     }
 
     fun setSecurityPin(instituteId: String, pin: String) {
