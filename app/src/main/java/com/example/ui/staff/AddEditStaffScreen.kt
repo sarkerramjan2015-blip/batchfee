@@ -1,11 +1,17 @@
 package com.batchfee.edu.ui.staff
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -13,12 +19,15 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Badge
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Sms
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.filled.Whatsapp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -26,6 +35,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -49,6 +59,7 @@ private val TextWhite = Color(0xFFF8FAFC)
 private val TextMuted = Color(0xFF94A3B8)
 private val AccentRed = Color(0xFFEF4444)
 private val AccentGreen = Color(0xFF22C55E)
+private val AccentAmber = Color(0xFFF59E0B)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -75,6 +86,8 @@ fun AddEditStaffScreen(
     var loadedStaff by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf("active") }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var showCredentialShare by remember { mutableStateOf(false) }
+    var savedCredentials by remember { mutableStateOf(CredentialInfo("", "")) }
 
     val staff by viewModel.selectedStaff.collectAsState()
     val batches by viewModel.batches.collectAsState()
@@ -317,7 +330,10 @@ fun AddEditStaffScreen(
                                 assignedBatchIds = selectedBatchIds,
                                 password = password,
                                 status = status,
-                                onSuccess = onBack,
+                                onSuccess = { staffId, loginIdResult, staffPassword, _ ->
+                                    savedCredentials = CredentialInfo(loginIdResult, staffPassword)
+                                    showCredentialShare = true
+                                },
                                 onError = { errorMessage = it }
                             )
                         }
@@ -332,7 +348,21 @@ fun AddEditStaffScreen(
             Spacer(Modifier.height(24.dp))
         }
     }
+
+    // Credential sharing dialog
+    if (showCredentialShare) {
+        CredentialShareDialog(
+            loginId = savedCredentials.loginId,
+            password = savedCredentials.password,
+            onDismiss = {
+                showCredentialShare = false
+                onBack()
+            }
+        )
+    }
 }
+
+private data class CredentialInfo(val loginId: String, val password: String)
 
 @Composable
 private fun CredentialNotice(isEdit: Boolean) {
@@ -477,4 +507,136 @@ private fun darkFieldColors() = OutlinedTextFieldDefaults.colors(
     focusedLabelColor = Cyan,
     unfocusedLabelColor = TextMuted
 )
+
+@Composable
+private fun CredentialShareDialog(loginId: String, password: String, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val appLink = "https://batchfee-477b8.web.app"
+    val message = "Your BatchFee Staff Account:\n\nID: $loginId\nPassword: $password\n\nLogin at: $appLink"
+
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = CardBg),
+            border = BorderStroke(1.dp, Cyan.copy(alpha = 0.3f))
+        ) {
+            Column(modifier = Modifier.padding(24.dp)) {
+                Box(
+                    modifier = Modifier.size(48.dp).clip(CircleShape)
+                        .background(Cyan.copy(alpha = 0.12f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Filled.CheckCircle, null, tint = Cyan, modifier = Modifier.size(28.dp))
+                }
+                Spacer(Modifier.height(12.dp))
+                Text("Staff Account Created", color = TextWhite, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(4.dp))
+                Text("Share credentials with staff so they can login.", color = TextMuted, fontSize = 13.sp)
+
+                Spacer(Modifier.height(16.dp))
+                HorizontalDivider(color = BorderSub)
+                Spacer(Modifier.height(12.dp))
+
+                // Credential card
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = CardBgAlt),
+                    border = BorderStroke(1.dp, BorderSub)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Filled.Badge, null, tint = Cyan, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Login ID", color = TextMuted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(loginId, color = TextWhite, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                            IconButton(
+                                onClick = {
+                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    clipboard.setPrimaryClip(ClipData.newPlainText("Staff ID", loginId))
+                                },
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(Icons.Filled.ContentCopy, "Copy ID", tint = Cyan, modifier = Modifier.size(18.dp))
+                            }
+                        }
+                        Spacer(Modifier.height(10.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Filled.Lock, null, tint = AccentAmber, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Password", color = TextMuted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(password, color = TextWhite, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                            IconButton(
+                                onClick = {
+                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    clipboard.setPrimaryClip(ClipData.newPlainText("Staff Password", password))
+                                },
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(Icons.Filled.ContentCopy, "Copy Password", tint = AccentAmber, modifier = Modifier.size(18.dp))
+                            }
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(12.dp))
+                // Copy all button
+                OutlinedButton(
+                    onClick = {
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        clipboard.setPrimaryClip(ClipData.newPlainText("Staff Credentials", message))
+                    },
+                    modifier = Modifier.fillMaxWidth().height(42.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, Cyan.copy(alpha = 0.4f))
+                ) {
+                    Icon(Icons.Filled.ContentCopy, null, tint = Cyan, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Copy All", color = Cyan, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                }
+
+                Spacer(Modifier.height(8.dp))
+                // WhatsApp button
+                Button(
+                    onClick = {
+                        val enc = java.net.URLEncoder.encode(message, "UTF-8")
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/?text=$enc")))
+                    },
+                    modifier = Modifier.fillMaxWidth().height(44.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF25D366))
+                ) {
+                    Icon(Icons.Filled.Whatsapp, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Send via WhatsApp", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                }
+
+                Spacer(Modifier.height(8.dp))
+                // SMS button
+                OutlinedButton(
+                    onClick = {
+                        context.startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:")).apply { putExtra("sms_body", message) })
+                    },
+                    modifier = Modifier.fillMaxWidth().height(42.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, ElectricBlue.copy(alpha = 0.4f))
+                ) {
+                    Icon(Icons.Filled.Sms, null, tint = ElectricBlue, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Send via SMS", color = ElectricBlue, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                }
+
+                Spacer(Modifier.height(12.dp))
+                TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
+                    Text("Done", color = TextMuted, fontSize = 14.sp)
+                }
+            }
+        }
+    }
+}
 

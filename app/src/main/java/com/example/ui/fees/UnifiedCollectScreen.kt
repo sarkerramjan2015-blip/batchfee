@@ -1289,6 +1289,7 @@ private fun PaymentHistoryCard(
     onShare: (StudentPaymentHistory) -> Unit,
     onEdit: (StudentPaymentHistory) -> Unit
 ) {
+    val isAdmin = SessionManager.isAdmin()
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
@@ -1346,7 +1347,7 @@ private fun PaymentHistoryCard(
                                 HistoryActionButton("Share", Icons.Filled.Share, ElectricBlue) { onShare(item) }
                             }
                             item {
-                                HistoryActionButton("Edit", Icons.Filled.Payments, AccentAmber) { onEdit(item) }
+                                HistoryActionButton("Edit", Icons.Filled.Payments, AccentAmber) { if (isAdmin) onEdit(item) }
                             }
                         }
                     }

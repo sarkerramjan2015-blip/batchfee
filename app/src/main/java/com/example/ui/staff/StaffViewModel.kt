@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.firestore.AuditLogSyncHelper
+import com.batchfee.edu.data.models.AuditLogEntity
 import com.batchfee.edu.data.models.BatchEntity
 import com.batchfee.edu.data.models.StaffEntity
 import com.batchfee.edu.data.models.UserEntity
@@ -27,6 +29,9 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
     private val _staffList = MutableStateFlow<List<StaffEntity>>(emptyList())
     val staffList = _staffList.asStateFlow()
 
+    private val _archivedStaffList = MutableStateFlow<List<StaffEntity>>(emptyList())
+    val archivedStaffList = _archivedStaffList.asStateFlow()
+
     private val _selectedStaff = MutableStateFlow<StaffEntity?>(null)
     val selectedStaff = _selectedStaff.asStateFlow()
 
@@ -39,11 +44,43 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
     private val _isLoading = MutableStateFlow(false)
     val isLoading = _isLoading.asStateFlow()
 
+    private val _activityLogs = MutableStateFlow<List<AuditLogEntity>>(emptyList())
+    val activityLogs = _activityLogs.asStateFlow()
+
     private var searchJob: Job? = null
 
     init {
         loadStaff()
+        loadArchivedStaff()
         loadBatches()
+    }
+
+    private fun logActivity(userId: String, action: String, module: String, description: String) {
+        viewModelScope.launch {
+            val instId = SessionManager.currentInstituteId.value ?: return@launch
+            val log = AuditLogEntity(
+                id = UUID.randomUUID().toString(),
+                instituteId = instId,
+                userId = userId,
+                action = action,
+                module = module,
+                description = description,
+                oldValue = null,
+                newValue = null,
+                createdAtMs = System.currentTimeMillis()
+            )
+            db.auditLogDao().insertAuditLog(log)
+            launch { AuditLogSyncHelper.upsertAuditLog(log) }
+        }
+    }
+
+    fun loadActivityLogs(staffId: String) {
+        viewModelScope.launch {
+            val instId = SessionManager.currentInstituteId.value ?: return@launch
+            db.auditLogDao().getAuditLogsByUser(instId, staffId).collect { logs ->
+                _activityLogs.value = logs
+            }
+        }
     }
 
     private fun loadStaff() {
@@ -54,6 +91,15 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
             db.staffDao().getStaffByInstitute(instId).collect { list ->
                 _staffList.value = list
                 _isLoading.value = false
+            }
+        }
+    }
+
+    private fun loadArchivedStaff() {
+        viewModelScope.launch {
+            val instId = SessionManager.currentInstituteId.value ?: return@launch
+            db.staffDao().getArchivedStaffByInstitute(instId).collect { list ->
+                _archivedStaffList.value = list
             }
         }
     }
@@ -103,7 +149,7 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
         assignedBatchIds: Set<String>,
         password: String,
         status: String = "active",
-        onSuccess: () -> Unit,
+        onSuccess: (staffId: String, loginId: String, staffPassword: String, staffEmail: String) -> Unit,
         onError: (String) -> Unit
     ) {
         if (!SessionManager.isAdmin()) {
@@ -192,7 +238,7 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
                         InstituteSyncHelper.updateStaffCount(instId, count)
                     } catch (_: Exception) { }
                 }
-                onSuccess()
+                onSuccess(firebaseUid, loginId, cleanPassword, staffEmail)
             }
         }
     }
@@ -308,12 +354,15 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
             val archivedAt = System.currentTimeMillis()
             db.staffDao().archiveStaff(instId, staffId, archivedAt)
             launch { StaffSyncHelper.archiveStaff(instId, staffId) }
-            try {
-                val count = withContext(Dispatchers.IO) {
-                    db.staffDao().getStaffByInstituteAsList(instId).size
-                }
-                InstituteSyncHelper.updateStaffCount(instId, count)
-            } catch (_: Exception) { }
+            onSuccess()
+        }
+    }
+
+    fun restoreStaff(staffId: String, onSuccess: () -> Unit) {
+        if (!SessionManager.isAdmin()) return
+        viewModelScope.launch {
+            val instId = SessionManager.currentInstituteId.value ?: return@launch
+            db.staffDao().restoreStaff(instId, staffId)
             onSuccess()
         }
     }

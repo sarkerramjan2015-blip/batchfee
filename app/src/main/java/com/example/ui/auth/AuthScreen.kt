@@ -42,7 +42,9 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.data.firestore.AppUserSyncHelper
+import com.batchfee.edu.data.firestore.AuditLogSyncHelper
 import com.batchfee.edu.data.firestore.InstituteSyncHelper
+import com.batchfee.edu.data.models.AuditLogEntity
 import com.batchfee.edu.data.models.InstituteEntity
 import com.batchfee.edu.data.models.UserEntity
 import com.batchfee.edu.domain.BiometricAuthManager
@@ -499,6 +501,26 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
 
                 resolveInstituteBeforeNavigation(instituteId, role)
                 SessionManager.login(uid, instituteId ?: "", role, staffPermissions)
+                
+                // Log staff login
+                if (role == "Staff") {
+                    withContext(Dispatchers.IO) {
+                        val log = AuditLogEntity(
+                            id = java.util.UUID.randomUUID().toString(),
+                            instituteId = instituteId ?: uid,
+                            userId = uid,
+                            action = "staff_login",
+                            module = "auth",
+                            description = "Staff member logged in",
+                            oldValue = null,
+                            newValue = null,
+                            createdAtMs = System.currentTimeMillis()
+                        )
+                        db.auditLogDao().insertAuditLog(log)
+                        try { AuditLogSyncHelper.upsertAuditLog(log) } catch (_: Exception) {}
+                    }
+                }
+                
                 onSuccess(role)
 
             } catch (e: FirebaseAuthException) {

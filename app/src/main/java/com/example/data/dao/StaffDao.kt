@@ -13,6 +13,9 @@ interface StaffDao {
     @Query("SELECT * FROM staff WHERE instituteId = :instituteId AND archivedAtMs IS NULL ORDER BY fullName ASC")
     fun getStaffByInstitute(instituteId: String): Flow<List<StaffEntity>>
 
+    @Query("SELECT * FROM staff WHERE instituteId = :instituteId AND archivedAtMs IS NOT NULL ORDER BY fullName ASC")
+    fun getArchivedStaffByInstitute(instituteId: String): Flow<List<StaffEntity>>
+
     @Query("SELECT * FROM staff WHERE instituteId = :instituteId AND archivedAtMs IS NULL ORDER BY fullName ASC")
     suspend fun getStaffByInstituteAsList(instituteId: String): List<StaffEntity>
 
@@ -53,4 +56,7 @@ interface StaffDao {
 
     @Query("UPDATE staff SET archivedAtMs = :archivedAtMs WHERE id = :staffId AND instituteId = :instituteId")
     suspend fun archiveStaff(instituteId: String, staffId: String, archivedAtMs: Long)
+
+    @Query("UPDATE staff SET archivedAtMs = NULL, status = 'active' WHERE id = :staffId AND instituteId = :instituteId")
+    suspend fun restoreStaff(instituteId: String, staffId: String)
 }
