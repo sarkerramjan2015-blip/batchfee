@@ -8,10 +8,10 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/institutes/$(request.auth.uid)).data.role == 'SuperAdmin';
     }
 
-    // Web form registrations — public create, authenticated read/manage
+    // Web form registrations — public create (institute must exist), authenticated manage
     match /registrations/{instituteId}/pending/{requestId} {
       allow read: if request.auth != null;
-      allow create: if true;
+      allow create: if exists(/databases/$(database)/documents/institutes/$(instituteId));
       allow delete: if request.auth != null && (request.auth.uid == instituteId || isSuperAdmin());
     }
     match /registrations/{instituteId} {

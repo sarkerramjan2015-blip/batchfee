@@ -81,5 +81,33 @@ object InstituteSyncHelper {
             }
         }
     }
+
+    suspend fun syncInstituteToFirestore(institute: InstituteEntity) {
+        withContext(Dispatchers.IO) {
+            try {
+                firestore.collection("institutes").document(institute.id).set(
+                    mapOf(
+                        "instituteName" to institute.name,
+                        "phone" to institute.phone,
+                        "address" to institute.address,
+                        "whatsappNumber" to institute.whatsappNumber,
+                        "profilePhotoUri" to institute.profilePhotoUri,
+                        "ownerName" to institute.ownerName,
+                        "email" to institute.email,
+                        "instituteCode" to institute.instituteCode,
+                        "currentPlanId" to institute.currentPlanId,
+                        "subscriptionStatus" to institute.subscriptionStatus,
+                        "trialStartDateMs" to institute.trialStartDateMs,
+                        "trialEndDateMs" to institute.trialEndDateMs,
+                        "currentPeriodEndMs" to institute.currentPeriodEndMs,
+                        "createdAt" to institute.createdAtMs
+                    ),
+                    com.google.firebase.firestore.SetOptions.merge()
+                ).await()
+            } catch (e: Exception) {
+                FirebaseCrashlytics.getInstance().recordException(e)
+            }
+        }
+    }
 }
 

@@ -1,5 +1,6 @@
 ﻿package com.batchfee.edu.domain
 
+import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -42,6 +43,7 @@ object SessionManager {
         _currentUserRole.value = null
         _currentStaffPermissions.value = emptySet()
         _lastActivityAtMs.value = System.currentTimeMillis()
+        try { FirebaseAuth.getInstance().signOut() } catch (_: Exception) {}
     }
 
     fun expireSession() = logout(expired = true)

@@ -130,10 +130,11 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
         val uid = isLoggedIn ?: return@LaunchedEffect
         val role = SessionManager.currentUserRole.value ?: return@LaunchedEffect
         if (role == "SuperAdmin") return@LaunchedEffect
+        val instId = SessionManager.currentInstituteId.value ?: return@LaunchedEffect
         withContext(Dispatchers.IO) {
             try {
                 FirebaseFirestore.getInstance()
-                    .collection("institutes").document(uid)
+                    .collection("institutes").document(instId)
                     .update("lastActiveAt", System.currentTimeMillis())
                     .await()
             } catch (e: Exception) {
@@ -146,11 +147,19 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
             withContext(Dispatchers.IO) {
                 try {
                     FirebaseFirestore.getInstance()
-                        .collection("institutes").document(uid)
+                        .collection("institutes").document(instId)
                         .update("lastActiveAt", System.currentTimeMillis())
                         .await()
                 } catch (e: Exception) {
                     FirebaseCrashlytics.getInstance().recordException(e)
+                }
+            }
+            // Periodically check if subscription has expired
+            if (SessionManager.currentUserId.value == uid) {
+                val expired = checkSubscriptionExpired(instId, appDb)
+                if (expired) {
+                    SessionManager.expireSession()
+                    break
                 }
             }
         }
@@ -177,7 +186,7 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
                         val instituteId = SessionManager.currentInstituteId.value
                         val role = SessionManager.currentUserRole.value
                         if (role != "SuperAdmin" && instituteId != null) {
-                            val isExpired = checkSubscriptionExpired(instituteId)
+                            val isExpired = checkSubscriptionExpired(instituteId, appDb)
                             if (isExpired) {
                                 navController.navigate(SubscriptionExpiredRoute) {
                                     popUpTo(navController.graph.id) { inclusive = true }
@@ -638,7 +647,7 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
     }
 }
 
-private suspend fun checkSubscriptionExpired(instituteId: String): Boolean {
+private suspend fun checkSubscriptionExpired(instituteId: String, db: com.batchfee.edu.data.database.AppDatabase): Boolean {
     return try {
         val doc = FirebaseFirestore.getInstance()
             .collection("institutes").document(instituteId)
@@ -649,7 +658,17 @@ private suspend fun checkSubscriptionExpired(instituteId: String): Boolean {
         System.currentTimeMillis() > trialEnd
     } catch (e: Exception) {
         FirebaseCrashlytics.getInstance().recordException(e)
-        false
+        // Offline fallback: check Room DB instead of allowing access
+        val local = withContext(Dispatchers.IO) { db.instituteDao().getInstitute(instituteId) }
+        if (local != null) {
+            val now = System.currentTimeMillis()
+            // Check status from local cache
+            if (local.subscriptionStatus == "blocked") return true
+            val endMs = local.currentPeriodEndMs.takeIf { it > 0L } ?: local.trialEndDateMs
+            return now > endMs
+        }
+        // No data available at all: safest is to deny access
+        true
     }
 }
 

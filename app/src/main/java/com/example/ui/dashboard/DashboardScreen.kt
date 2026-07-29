@@ -1682,15 +1682,20 @@ fun DashboardScreen(
                                     else -> persistInstituteProfilePhoto(context, editProfilePhotoUri!!)
                                 }
 
-                                db.instituteDao().updateInstitute(
-                                    inst.copy(
-                                        name = editInstituteName.trim(),
-                                        phone = editPhone.trim().ifBlank { null },
-                                        address = editAddress.trim().ifBlank { null },
-                                        profilePhotoUri = profilePhotoUri
-                                    )
+                                val updated = inst.copy(
+                                    name = editInstituteName.trim(),
+                                    phone = editPhone.trim().ifBlank { null },
+                                    address = editAddress.trim().ifBlank { null },
+                                    profilePhotoUri = profilePhotoUri
                                 )
+                                db.instituteDao().updateInstitute(updated)
                                 db.userDao().updateUser(owner.copy(name = editOwnerName.trim()))
+                                
+                                // Sync to Firestore
+                                withContext(Dispatchers.IO) {
+                                    com.batchfee.edu.data.firestore.InstituteSyncHelper.syncInstituteToFirestore(updated)
+                                }
+                                
                                 showEditDialog = false
                                 snackbarHostState.showSnackbar("Institute information updated.")
                             } catch (e: Exception) {

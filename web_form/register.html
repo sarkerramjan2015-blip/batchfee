@@ -28,6 +28,33 @@
             text-align: center;
             margin-bottom: 20px;
         }
+        .institute-logo-box {
+            width: 72px;
+            height: 72px;
+            border-radius: 50%;
+            overflow: hidden;
+            margin: 0 auto 12px;
+            border: 2px solid rgba(34, 211, 238, 0.3);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .institute-logo-box img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        .logo-fallback {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 36px;
+            background: linear-gradient(135deg, #3B82F6, #22D3EE);
+            color: white;
+            border-radius: 50%;
+        }
         .header-card .institute-badge {
             display: inline-block;
             font-size: 10px;
@@ -267,6 +294,10 @@
 
         <!-- Header -->
         <div class="header-card">
+            <div class="institute-logo-box">
+                <img id="instituteLogo" src="" alt="Institute Logo" style="display:none" onerror="this.style.display='none'">
+                <div id="instituteLogoFallback" class="logo-fallback">🏫</div>
+            </div>
             <div class="institute-badge">STUDENT REGISTRATION</div>
             <h2 id="instituteName">Loading...</h2>
             <div class="phone" id="institutePhone"></div>
@@ -399,9 +430,21 @@
                 const doc = await db.collection('institutes').doc(instituteId).get();
                 if (doc.exists) {
                     const data = doc.data();
-                    document.getElementById('instituteName').textContent = data.name || 'Institute';
+                    document.getElementById('instituteName').textContent = (data.instituteName || data.name || 'Institute');
                     if (data.phone) {
                         document.getElementById('institutePhone').textContent = '📞 ' + data.phone;
+                    }
+                    // Show institute logo if available
+                    const logo = document.getElementById('instituteLogo');
+                    const fallback = document.getElementById('instituteLogoFallback');
+                    if (data.profilePhotoUri) {
+                        logo.src = data.profilePhotoUri;
+                        logo.style.display = 'block';
+                        fallback.style.display = 'none';
+                        logo.onerror = function() {
+                            logo.style.display = 'none';
+                            fallback.style.display = 'flex';
+                        };
                     }
                 } else {
                     document.getElementById('instituteName').textContent = 'Institute';
@@ -447,6 +490,15 @@
             const instituteId = getInstituteId();
             if (!instituteId) {
                 document.getElementById('errorMessage').textContent = 'Invalid registration link. Missing institute identifier.';
+                document.getElementById('errorOverlay').classList.add('show');
+                setLoading(false);
+                return;
+            }
+
+            // Check link expiry
+            const expiry = new URLSearchParams(window.location.search).get('t');
+            if (expiry && Date.now() > parseInt(expiry)) {
+                document.getElementById('errorMessage').textContent = 'This registration link has expired. Please contact your institute for a new link.';
                 document.getElementById('errorOverlay').classList.add('show');
                 setLoading(false);
                 return;

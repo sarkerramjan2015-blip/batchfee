@@ -47,14 +47,38 @@ class RegistrationRepository {
             .await()
     }
 
-    suspend fun syncInstituteInfo(instituteId: String, name: String, phone: String?) {
-        val data = mutableMapOf<String, Any>("name" to name)
+    suspend fun syncInstituteInfo(instituteId: String, name: String, phone: String?, logoUri: String?) {
+        val data = mutableMapOf<String, Any>("instituteName" to name)
         phone?.takeIf { it.isNotBlank() }?.let { data["phone"] = it }
-        firestore.collection("institutes").document(instituteId).set(data).await()
+        logoUri?.takeIf { it.isNotBlank() }?.let { data["profilePhotoUri"] = it }
+        firestore.collection("institutes").document(instituteId).set(data, com.google.firebase.firestore.SetOptions.merge()).await()
     }
 
     fun getRegistrationFormUrl(instituteId: String): String {
-        return "https://batchfee-477b8.web.app/register.html?instituteId=$instituteId"
+        val expiryMs = System.currentTimeMillis() + 7L * 24 * 60 * 60 * 1000
+        return "https://batchfee-477b8.web.app/register.html?instituteId=$instituteId&t=$expiryMs"
+    }
+
+    suspend fun logRejectedRegistration(instituteId: String, registration: PendingRegistration) {
+        firestore.collection("registrations")
+            .document(instituteId)
+            .collection("rejected")
+            .document(registration.requestId)
+            .set(
+                mapOf(
+                    "instituteId" to instituteId,
+                    "fullName" to registration.fullName,
+                    "phone" to registration.phone,
+                    "guardianName" to registration.guardianName,
+                    "gender" to registration.gender,
+                    "dateOfBirthMs" to registration.dateOfBirthMs,
+                    "schoolName" to registration.schoolName,
+                    "className" to registration.className,
+                    "address" to registration.address,
+                    "submittedAt" to registration.submittedAt,
+                    "rejectedAt" to System.currentTimeMillis()
+                )
+            ).await()
     }
 
     companion object {

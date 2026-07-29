@@ -46,17 +46,17 @@ class RegistrationListViewModel(private val db: AppDatabase) : ViewModel() {
         }
     }
 
-    fun generateRegistrationLink(): String {
-        val instId = SessionManager.currentInstituteId.value ?: return ""
+    fun generateRegistrationLink(onUrl: (String) -> Unit) {
+        val instId = SessionManager.currentInstituteId.value ?: return
         viewModelScope.launch {
             try {
                 val institute = db.instituteDao().getInstitute(instId)
                 if (institute != null) {
-                    repository.syncInstituteInfo(institute.id, institute.name, institute.phone)
+                    repository.syncInstituteInfo(institute.id, institute.name, institute.phone, institute.profilePhotoUri)
                 }
             } catch (_: Exception) {}
+            onUrl(repository.getRegistrationFormUrl(instId))
         }
-        return repository.getRegistrationFormUrl(instId)
     }
 
     fun approveRegistration(registration: PendingRegistration) {
@@ -119,6 +119,8 @@ class RegistrationListViewModel(private val db: AppDatabase) : ViewModel() {
             _isLoading.value = true
             try {
                 val instId = SessionManager.currentInstituteId.value ?: return@launch
+                // Move to rejected collection before deleting
+                repository.logRejectedRegistration(instId, registration)
                 repository.deletePendingRegistration(instId, registration.requestId)
                 _snackbarMessage.value = "${registration.fullName}'s registration rejected."
             } catch (e: Exception) {
