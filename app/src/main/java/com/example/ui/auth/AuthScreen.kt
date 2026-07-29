@@ -279,7 +279,12 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                 var staffPermissions: String? = null
 
                 if (managedUser != null && managedUser.role != "Staff") {
-                    role = managedUser.role
+                    role = when (managedUser.role) {
+                        "owner" -> "InstituteOwner"
+                        "admin", "InstituteAdmin", "instituteAdmin", "institute_admin" -> "InstituteAdmin"
+                        "superAdmin", "super_admin" -> "SuperAdmin"
+                        else -> managedUser.role
+                    }
                     instituteId = managedUser.instituteId ?: uid
 
                     if (localUser == null) {

@@ -53,6 +53,7 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
     // Form state
     var name by remember { mutableStateOf("") }
     var feeString by remember { mutableStateOf("") }
+    var admissionFeeString by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
     var editingBatch by remember(batchId) { mutableStateOf<BatchEntity?>(null) }
     var loadedBatchId by remember(batchId) { mutableStateOf<String?>(null) }
@@ -60,6 +61,7 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
     // Validation
     var nameError by remember { mutableStateOf(false) }
     var feeError by remember { mutableStateOf(false) }
+    var admissionFeeError by remember { mutableStateOf(false) }
 
     LaunchedEffect(batchId, instId) {
         val editId = batchId
@@ -75,6 +77,13 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
                     } else {
                         batch.monthlyFeeAmount.toString()
                     }
+                    admissionFeeString = if (batch.admissionFeeAmount > 0.0) {
+                        if (batch.admissionFeeAmount % 1.0 == 0.0) {
+                            batch.admissionFeeAmount.toLong().toString()
+                        } else {
+                            batch.admissionFeeAmount.toString()
+                        }
+                    } else ""
                     description = batch.description.orEmpty()
                     loadedBatchId = batch.id
                 }
@@ -172,6 +181,34 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
 
             Spacer(Modifier.height(16.dp))
 
+            // ── Admission Fee (one-time) ───────────────────
+            SectionLabel("Admission Fee / One-Time Fee (BDT) *")
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                DarkTextField(
+                    value = admissionFeeString,
+                    onValueChange = { admissionFeeString = it; admissionFeeError = false },
+                    isError = admissionFeeError,
+                    supportingText = if (admissionFeeError) "Amount cannot be negative" else null,
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    placeholder = "e.g. 500"
+                )
+                Spacer(Modifier.width(10.dp))
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(CardBgAlt)
+                        .border(1.dp, BorderSub, RoundedCornerShape(12.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("BDT", color = TextMuted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                }
+            }
+
+            Spacer(Modifier.height(16.dp))
+
             // ── Description ─────────────────────────────────
             SectionLabel("Description (optional)")
             DarkTextField(
@@ -220,8 +257,10 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
                         nameError = name.isBlank()
                         val fee = feeString.toDoubleOrNull()
                         feeError = (fee == null || fee <= 0)
+                        val admissionFee = admissionFeeString.toDoubleOrNull() ?: 0.0
+                        admissionFeeError = admissionFee < 0
 
-                        if (!nameError && !feeError && fee != null) {
+                        if (!nameError && !feeError && !admissionFeeError && fee != null) {
                             val cleanDescription = description.trim().takeIf { it.isNotEmpty() }
                             val existing = editingBatch
                             if (isEditMode) {
@@ -232,6 +271,7 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
                                         existing.copy(
                                             name = name.trim(),
                                             monthlyFeeAmount = fee,
+                                            admissionFeeAmount = admissionFee,
                                             description = cleanDescription
                                         ),
                                         onError = { message ->
@@ -249,6 +289,7 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
                                 viewModel.addBatch(
                                     name = name.trim(),
                                     feeAmount = fee,
+                                    admissionFeeAmount = admissionFee,
                                     description = cleanDescription,
                                     onError = { message ->
                                         scope.launch { snackbarHostState.showSnackbar(message) }

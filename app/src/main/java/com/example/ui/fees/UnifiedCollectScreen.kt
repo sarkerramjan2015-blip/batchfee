@@ -2335,54 +2335,52 @@ private fun buildCollectionReceiptText(
     remainingDue: Double,
     paymentMethod: String
 ): String = buildString {
-    appendLine("══════════════════════════════")
-    appendLine("  $instituteName")
-    appendLine("══════════════════════════════")
+    appendLine(instituteName)
     appendLine("PAYMENT RECEIPT")
-    appendLine("")
-    appendLine("Student: ${student.fullName}")
-    appendLine("ID: ${student.studentCode}")
-    appendLine("Batch: ${batchName ?: "Direct"}")
-    appendLine("Type: $mode")
-    appendLine("Period: $period")
-    appendLine("Payable: BDT ${formatSmartAmount(payableAmount)}")
-    if (discountAmount > 0.0) appendLine("Discount: BDT ${formatSmartAmount(discountAmount)}")
-    appendLine("Collected: BDT ${formatSmartAmount(collectedAmount)}")
-    appendLine("Remaining Due: BDT ${formatSmartAmount(remainingDue)}")
-    appendLine("Method: ${paymentMethod.uppercase()}")
-    appendLine("Date: ${formatDate(System.currentTimeMillis())}")
-    appendLine("")
-    appendLine("──────────────────────────────")
-    appendLine("Contact: $institutePhone")
-    appendLine("Thank you — $instituteName")
+    appendLine("________________________________")
+    appendLine()
+    appendLine("Student : ${student.fullName}")
+    appendLine("ID      : ${student.studentCode}")
+    appendLine("Batch   : ${batchName ?: "Direct"}")
+    appendLine("Type    : $mode")
+    appendLine("Period  : $period")
+    appendLine("________________________________")
+    appendLine("Payable     : BDT ${formatSmartAmount(payableAmount)}")
+    if (discountAmount > 0.0) appendLine("Discount    : BDT ${formatSmartAmount(discountAmount)}")
+    appendLine("Collected   : BDT ${formatSmartAmount(collectedAmount)}")
+    appendLine("Due         : BDT ${formatSmartAmount(remainingDue)}")
+    appendLine("Method      : ${paymentMethod.uppercase()}")
+    appendLine("Date        : ${formatDate(System.currentTimeMillis())}")
+    appendLine("________________________________")
+    appendLine("Contact : $institutePhone")
+    appendLine("Thank you, $instituteName")
 }
 
 private fun buildHistoryReceiptText(institute: InstituteInfo, student: StudentEntity, item: StudentPaymentHistory): String =
     buildString {
-        appendLine("══════════════════════════════")
-        appendLine("  ${institute.name}")
-        appendLine("══════════════════════════════")
+        appendLine(institute.name)
         appendLine("PAYMENT RECEIPT")
-        appendLine("Receipt: ${item.payment.receiptNumber}")
-        appendLine("")
-        appendLine("Student: ${student.fullName}")
-        appendLine("ID: ${student.studentCode}")
-        appendLine("Batch: ${item.batchName ?: "Direct"}")
-        appendLine("Period: ${item.feePeriod}")
-        appendLine("Date: ${formatDate(item.payment.paymentDateMs)}")
-        appendLine("Fee Amount: BDT ${formatSmartAmount(item.baseAmount)}")
+        appendLine("Receipt : ${item.payment.receiptNumber}")
+        appendLine("________________________________")
+        appendLine()
+        appendLine("Student : ${student.fullName}")
+        appendLine("ID      : ${student.studentCode}")
+        appendLine("Batch   : ${item.batchName ?: "Direct"}")
+        appendLine("Period  : ${item.feePeriod}")
+        appendLine("Date    : ${formatDate(item.payment.paymentDateMs)}")
+        appendLine("________________________________")
+        appendLine("Fee Amount  : BDT ${formatSmartAmount(item.baseAmount)}")
         if (item.discountAmount > 0.0) {
-            appendLine("Discount: ${formatDiscountPercent(item)}% - BDT ${formatSmartAmount(item.discountAmount)}")
+            appendLine("Discount    : ${formatDiscountPercent(item)}% - BDT ${formatSmartAmount(item.discountAmount)}")
         }
-        appendLine("Payable: BDT ${formatSmartAmount(item.totalAmount)}")
-        appendLine("Collected: BDT ${formatSmartAmount(item.payment.amount)}")
-        appendLine("Remaining Due: BDT ${formatSmartAmount(item.remainingDue)}")
-        appendLine("Method: ${item.payment.paymentMethod.uppercase()}")
-        item.payment.note?.takeIf { it.isNotBlank() }?.let { appendLine("Note: $it") }
-        appendLine("")
-        appendLine("──────────────────────────────")
-        appendLine("Contact: ${institute.phone}")
-        appendLine("Thank you — ${institute.name}")
+        appendLine("Payable     : BDT ${formatSmartAmount(item.totalAmount)}")
+        appendLine("Collected   : BDT ${formatSmartAmount(item.payment.amount)}")
+        appendLine("Due         : BDT ${formatSmartAmount(item.remainingDue)}")
+        appendLine("Method      : ${item.payment.paymentMethod.uppercase()}")
+        item.payment.note?.takeIf { it.isNotBlank() }?.let { appendLine("Note        : $it") }
+        appendLine("________________________________")
+        appendLine("Contact : ${institute.phone}")
+        appendLine("Thank you, ${institute.name}")
     }
 
 private data class InstituteInfo(val name: String, val phone: String, val logoText: String, val logoUri: String? = null)
@@ -2459,20 +2457,22 @@ private fun generateReceiptPdf(context: Context, institute: InstituteInfo, stude
     val hasDiscount = item.discountAmount > 0.0
     val hasRemark = !item.payment.note.isNullOrBlank()
 
+    val pageWidth = 440f
     val headerH = 125f
-    val studentH = 66f
-    val feeH = if (hasDiscount) 110f else 86f
-    val paymentH = 88f
-    val remarkH = if (hasRemark) 50f else 0f
-    val sigH = 42f
+    val studentH = 72f
+    val feeH = if (hasDiscount) 116f else 92f
+    val paymentH = 92f
+    val remarkH = if (hasRemark) 54f else 0f
+    val sigH = 46f
     val footerH = 56f
-    val gap = 12f
+    val gap = 14f
 
     val totalHeight = (headerH + gap + studentH + gap + feeH + gap + paymentH +
             (if (hasRemark) gap + remarkH else 0f) + gap + sigH + gap + footerH).toInt()
 
-    val page = document.startPage(PdfDocument.PageInfo.Builder(420, totalHeight, 1).create())
+    val page = document.startPage(PdfDocument.PageInfo.Builder(pageWidth.toInt(), totalHeight, 1).create())
     val canvas = page.canvas
+    val right = pageWidth - 28f
 
     val ink = AndroidColor.rgb(20, 27, 38)
     val muted = AndroidColor.rgb(101, 116, 139)
@@ -2504,23 +2504,23 @@ private fun generateReceiptPdf(context: Context, institute: InstituteInfo, stude
         val wmSize = (totalHeight * 0.40f).toInt()
         val wmScaled = Bitmap.createScaledBitmap(logoBitmap, wmSize, wmSize, true)
         val wmPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { alpha = 12; isFilterBitmap = true }
-        canvas.drawBitmap(wmScaled, 210f - wmSize / 2f, (totalHeight - wmSize) / 2f, wmPaint)
+        canvas.drawBitmap(wmScaled, pageWidth / 2f - wmSize / 2f, (totalHeight - wmSize) / 2f, wmPaint)
     }
 
     // ── Page border ──
     fill.color = pale
-    canvas.drawRoundRect(RectF(16f, 12f, 404f, totalHeight - 12f), 18f, 18f, fill)
-    canvas.drawRoundRect(RectF(16f, 12f, 404f, totalHeight - 12f), 18f, 18f, stroke)
+    canvas.drawRoundRect(RectF(16f, 12f, right, totalHeight - 12f), 18f, 18f, fill)
+    canvas.drawRoundRect(RectF(16f, 12f, right, totalHeight - 12f), 18f, 18f, stroke)
 
     // ── Header ──
     fill.color = blue
-    canvas.drawRoundRect(RectF(16f, 12f, 404f, 12f + headerH), 18f, 18f, fill)
+    canvas.drawRoundRect(RectF(16f, 12f, right, 12f + headerH), 18f, 18f, fill)
     // Corner accents
     fill.color = AndroidColor.argb(30, 255, 255, 255)
-    canvas.drawCircle(385f, 28f, 48f, fill)
-    canvas.drawCircle(355f, 70f, 28f, fill)
+    canvas.drawCircle(right - 27f, 28f, 48f, fill)
+    canvas.drawCircle(right - 57f, 70f, 28f, fill)
     fill.color = cyan
-    canvas.drawCircle(395f, 120f, 14f, fill)
+    canvas.drawCircle(right - 17f, 120f, 14f, fill)
 
     // Logo / initials
     val logoX = 32f; val logoY = 28f; val logoSize = 44f
@@ -2545,88 +2545,88 @@ private fun generateReceiptPdf(context: Context, institute: InstituteInfo, stude
 
     white.textSize = 16f
     val nameX = logoX + logoSize + 14f
-    canvas.drawText(pdfSafe(institute.name, 26), nameX, logoY + 22f, white)
+    canvas.drawText(pdfSafe(institute.name, 28), nameX, logoY + 22f, white)
     white.textSize = 10f
     canvas.drawText("PAYMENT RECEIPT", nameX, logoY + 40f, white)
     text.textSize = 9.5f; text.color = AndroidColor.argb(200, 255, 255, 255)
     text.textAlign = Paint.Align.RIGHT
-    canvas.drawText(item.payment.receiptNumber, 388f, logoY + 12f, text)
-    canvas.drawText(formatEditDate(item.payment.paymentDateMs), 388f, logoY + 28f, text)
-    canvas.drawText("Contact: ${institute.phone}", 388f, logoY + 44f, text)
+    canvas.drawText(item.payment.receiptNumber, right - 12f, logoY + 12f, text)
+    canvas.drawText(formatEditDate(item.payment.paymentDateMs), right - 12f, logoY + 28f, text)
+    canvas.drawText("Contact: ${institute.phone}", right - 12f, logoY + 44f, text)
     text.textAlign = Paint.Align.LEFT
 
     // ── Sections ──
     var y = 12f + headerH + gap  // y = 149
 
     // Student info
-    card(canvas, fill, stroke, 28f, y, 392f, studentH)
+    card(canvas, fill, stroke, 28f, y, right, studentH)
     bold.color = ink; bold.textSize = 16f; bold.textAlign = Paint.Align.LEFT
-    canvas.drawText(pdfSafe(student.fullName, 26), 46f, y + 22f, bold)
+    canvas.drawText(pdfSafe(student.fullName, 28), 46f, y + 22f, bold)
     text.color = muted; text.textSize = 10f; text.textAlign = Paint.Align.LEFT
     val row1 = y + 44f
     canvas.drawText("${student.studentCode}  ·  ${student.phone ?: student.guardianPhone ?: ""}", 46f, row1, text)
     val guardian = student.guardianName?.takeIf { it.isNotBlank() }
     if (guardian != null) {
-        canvas.drawText("Guardian: ${pdfSafe(guardian, 20)}", 46f, row1 + 14f, text)
-        canvas.drawText("Batch: ${pdfSafe(item.batchName ?: "Direct", 20)}", 260f, row1 + 14f, text)
+        canvas.drawText("Guardian: ${pdfSafe(guardian, 22)}", 46f, row1 + 14f, text)
+        canvas.drawText("Batch: ${pdfSafe(item.batchName ?: "Direct", 22)}", 260f, row1 + 14f, text)
     } else {
-        canvas.drawText("Batch: ${pdfSafe(item.batchName ?: "Direct", 24)}", 46f, row1 + 14f, text)
+        canvas.drawText("Batch: ${pdfSafe(item.batchName ?: "Direct", 26)}", 46f, row1 + 14f, text)
     }
     y += studentH + gap
 
     // Fee details
-    card(canvas, fill, stroke, 28f, y, 392f, feeH)
+    card(canvas, fill, stroke, 28f, y, right, feeH)
     sectionLabel(canvas, text, "FEE DETAILS", 46f, y + 16f)
-    row(canvas, text, bold, "Period", item.feePeriod, 46f, y + 36f)
-    row(canvas, text, bold, "Fee amount", "BDT ${formatSmartAmount(item.baseAmount)}", 46f, y + 56f)
+    row(canvas, text, bold, "Period", item.feePeriod, 46f, y + 36f, right - 28f)
+    row(canvas, text, bold, "Fee amount", "BDT ${formatSmartAmount(item.baseAmount)}", 46f, y + 56f, right - 28f)
     if (hasDiscount) {
-        row(canvas, text, bold, "Discount", "−BDT ${formatSmartAmount(item.discountAmount)}", 46f, y + 76f, green)
-        row(canvas, text, bold, "Payable", "BDT ${formatSmartAmount(item.totalAmount)}", 46f, y + 96f)
+        row(canvas, text, bold, "Discount", "−BDT ${formatSmartAmount(item.discountAmount)}", 46f, y + 76f, right - 28f, green)
+        row(canvas, text, bold, "Payable", "BDT ${formatSmartAmount(item.totalAmount)}", 46f, y + 96f, right - 28f)
     } else {
-        row(canvas, text, bold, "Payable", "BDT ${formatSmartAmount(item.totalAmount)}", 46f, y + 76f)
+        row(canvas, text, bold, "Payable", "BDT ${formatSmartAmount(item.totalAmount)}", 46f, y + 76f, right - 28f)
     }
     y += feeH + gap
 
     // Payment
-    card(canvas, fill, stroke, 28f, y, 392f, paymentH)
+    card(canvas, fill, stroke, 28f, y, right, paymentH)
     sectionLabel(canvas, text, "COLLECTED", 46f, y + 16f)
     large.textAlign = Paint.Align.RIGHT; large.color = blue
-    canvas.drawText("BDT ${formatSmartAmount(item.payment.amount)}", 374f, y + 18f, large)
+    canvas.drawText("BDT ${formatSmartAmount(item.payment.amount)}", right - 28f, y + 18f, large)
     large.textAlign = Paint.Align.LEFT
     stroke.color = AndroidColor.argb(50, 37, 99, 235); stroke.strokeWidth = 0.7f
-    canvas.drawLine(46f, y + 38f, 374f, y + 38f, stroke)
+    canvas.drawLine(46f, y + 38f, right - 28f, y + 38f, stroke)
     stroke.color = softLine; stroke.strokeWidth = 1f
     val dueColor = if (item.remainingDue > 0.0) red else green
-    row(canvas, text, bold, "Remaining due", "BDT ${formatSmartAmount(item.remainingDue)}", 46f, y + 56f, dueColor)
-    row(canvas, text, bold, "Method", item.payment.paymentMethod.replaceFirstChar { it.uppercase() }, 46f, y + 74f)
+    row(canvas, text, bold, "Remaining due", "BDT ${formatSmartAmount(item.remainingDue)}", 46f, y + 56f, right - 28f, dueColor)
+    row(canvas, text, bold, "Method", item.payment.paymentMethod.replaceFirstChar { it.uppercase() }, 46f, y + 74f, right - 28f)
     y += paymentH + gap
 
     // Remark
     if (hasRemark) {
         fill.color = softBlue
-        canvas.drawRoundRect(RectF(28f, y, 392f, y + remarkH), 12f, 12f, fill)
+        canvas.drawRoundRect(RectF(28f, y, right, y + remarkH), 12f, 12f, fill)
         text.color = muted; text.textSize = 10f; text.textAlign = Paint.Align.LEFT
-        canvas.drawText("Remark: ${pdfSafe(item.payment.note ?: "", 44)}", 46f, y + 28f, text)
+        canvas.drawText("Remark: ${pdfSafe(item.payment.note ?: "", 46)}", 46f, y + 28f, text)
         y += remarkH + gap
     }
 
     // Signature
     stroke.strokeWidth = 1f; stroke.color = softLine
-    canvas.drawLine(36f, y + 6f, 188f, y + 6f, stroke)
-    canvas.drawLine(232f, y + 6f, 384f, y + 6f, stroke)
+    canvas.drawLine(36f, y + 6f, pageWidth / 2f - 32f, y + 6f, stroke)
+    canvas.drawLine(pageWidth / 2f + 12f, y + 6f, right, y + 6f, stroke)
     text.color = muted; text.textSize = 9f; text.textAlign = Paint.Align.CENTER
-    canvas.drawText("Received By", 112f, y + 22f, text)
-    canvas.drawText("Authorized Sign", 308f, y + 22f, text)
+    canvas.drawText("Received By", pageWidth / 4f + 14f, y + 22f, text)
+    canvas.drawText("Authorized Sign", pageWidth * 3f / 4f - 14f, y + 22f, text)
     text.textAlign = Paint.Align.LEFT
 
     // Footer
     val footerY = totalHeight - footerH
     fill.color = blue
-    canvas.drawRoundRect(RectF(16f, footerY, 404f, totalHeight - 12f), 14f, 14f, fill)
+    canvas.drawRoundRect(RectF(16f, footerY, right, totalHeight - 12f), 14f, 14f, fill)
     text.color = AndroidColor.argb(220, 255, 255, 255); text.textSize = 10f; text.textAlign = Paint.Align.CENTER
-    canvas.drawText("Thank you  ·  ${institute.name}", 210f, footerY + 22f, text)
+    canvas.drawText("Thank you  ·  ${institute.name}", pageWidth / 2f, footerY + 22f, text)
     text.textSize = 8.5f
-    canvas.drawText("For any query contact: ${institute.phone}", 210f, footerY + 38f, text)
+    canvas.drawText("For any query contact: ${institute.phone}", pageWidth / 2f, footerY + 38f, text)
     text.textAlign = Paint.Align.LEFT
 
     document.finishPage(page)
@@ -2654,12 +2654,13 @@ private fun sectionLabel(canvas: android.graphics.Canvas, paint: Paint, label: S
 
 private fun row(canvas: android.graphics.Canvas, labelP: Paint, valueP: Paint,
                  label: String, value: String, x: Float, y: Float,
+                 rightEdge: Float = 374f,
                  valueColor: Int = AndroidColor.rgb(20, 27, 38)) {
     labelP.color = AndroidColor.rgb(100, 116, 139); labelP.textSize = 10.5f; labelP.textAlign = Paint.Align.LEFT
     canvas.drawText(label, x, y, labelP)
     valueP.color = valueColor; valueP.textSize = 11.5f; valueP.isFakeBoldText = true
     valueP.textAlign = Paint.Align.RIGHT
-    canvas.drawText(value, 374f, y, valueP)
+    canvas.drawText(value, rightEdge, y, valueP)
     valueP.textAlign = Paint.Align.LEFT; valueP.isFakeBoldText = false
 }
 

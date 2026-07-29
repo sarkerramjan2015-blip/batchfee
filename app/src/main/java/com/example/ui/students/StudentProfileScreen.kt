@@ -48,6 +48,7 @@ import com.batchfee.edu.data.models.StudentEntity
 import com.batchfee.edu.data.repository.FeeCollectionRepository
 import com.batchfee.edu.domain.appendInstituteSignature
 import com.batchfee.edu.domain.loadInstituteSignature
+import com.batchfee.edu.domain.MonthlyDueCalculator
 import com.batchfee.edu.domain.SessionManager
 import com.batchfee.edu.ui.components.buildWhatsAppUrl
 import kotlinx.coroutines.Dispatchers
@@ -216,6 +217,25 @@ fun StudentProfileScreen(
             }
         } else {
             val s = student!!
+            val computedTotalDue = remember(s.admissionDateMs, feeHistory, batches) {
+                var computed = feeHistory.filter { !MonthlyDueCalculator.isMonthlyFeeType(it.feeType) }.sumOf { it.dueAmount }
+                if (s.admissionDateMs > 0L) {
+                    batches.forEach { batch ->
+                        if (batch.monthlyFeeAmount > 0.0) {
+                            val batchFees = feeHistory.filter { it.batchId == batch.id }
+                            val items = MonthlyDueCalculator.computeMonthlyOutstandingItems(
+                                admissionDateMs = s.admissionDateMs,
+                                monthlyFeeAmount = batch.monthlyFeeAmount,
+                                batchId = batch.id,
+                                batchName = batch.name,
+                                existingMonthlyFees = batchFees
+                            )
+                            computed += items.sumOf { it.outstanding }
+                        }
+                    }
+                }
+                computed
+            }
             Column(
                 modifier = Modifier
                     .padding(padding)
@@ -226,7 +246,7 @@ fun StudentProfileScreen(
                     student = s,
                     batches = batches,
                     totalPaid = totalPaid,
-                    totalDue = totalDue,
+                    totalDue = computedTotalDue,
                     paymentHistory = paymentHistory,
                     monthAttendance = monthAttendance,
                     context = context,
@@ -1147,7 +1167,7 @@ fun StudentProfileScreen(
                     },
                     onGenerateReport = {
                         showStudentMenu = false
-                        shareStudentText(context, "Student Report", buildStudentReportText(s, batches, totalPaid, totalDue, instituteSignature))
+                        shareStudentText(context, "Student Report", buildStudentReportText(s, batches, totalPaid, computedTotalDue, instituteSignature))
                     },
                     onRegistrationForm = {
                         showStudentMenu = false
@@ -1155,7 +1175,7 @@ fun StudentProfileScreen(
                     },
                     onFeeSummary = {
                         showStudentMenu = false
-                        shareStudentText(context, "Student Fee Summary", buildStudentFeeSummaryText(s, totalPaid, totalDue, instituteSignature))
+                        shareStudentText(context, "Student Fee Summary", buildStudentFeeSummaryText(s, totalPaid, computedTotalDue, instituteSignature))
                     },
                     onGenerateIdCard = {
                         showStudentMenu = false

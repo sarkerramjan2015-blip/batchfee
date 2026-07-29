@@ -36,13 +36,17 @@ class BatchViewModel(private val db: AppDatabase) : ViewModel() {
         }
     }
 
-    fun addBatch(name: String, feeAmount: Double, description: String? = null, onError: (String) -> Unit = {}, onSuccess: () -> Unit) {
+    fun addBatch(name: String, feeAmount: Double, admissionFeeAmount: Double = 0.0, description: String? = null, onError: (String) -> Unit = {}, onSuccess: () -> Unit) {
         if (name.isBlank()) {
             onError("Batch name is required.")
             return
         }
         if (feeAmount < 0) {
             onError("Fee amount cannot be negative.")
+            return
+        }
+        if (admissionFeeAmount < 0) {
+            onError("Admission fee cannot be negative.")
             return
         }
         val instId = SessionManager.currentInstituteId.value ?: return
@@ -55,7 +59,7 @@ class BatchViewModel(private val db: AppDatabase) : ViewModel() {
             className = null,
             teacherName = null,
             monthlyFeeAmount = feeAmount,
-            admissionFeeAmount = 0.0,
+            admissionFeeAmount = admissionFeeAmount,
             startDateMs = System.currentTimeMillis(),
             endDateMs = null,
             scheduleDays = null,
