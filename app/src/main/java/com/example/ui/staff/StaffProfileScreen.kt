@@ -2,6 +2,9 @@ package com.batchfee.edu.ui.staff
 
 import android.content.Intent
 import android.net.Uri
+import android.content.ClipboardManager
+import android.content.ClipData
+import android.content.Context
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -13,6 +16,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
@@ -25,6 +29,9 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -216,24 +223,73 @@ fun StaffProfileScreen(db: AppDatabase, staffId: String, onBack: () -> Unit, onE
     // Share credentials
     if (showShareCredentials && s != null) {
         val staffData = s!!
-        val loginMsg = "Staff Login Details:\n\nID: ${staffData.staffCode}\nName: ${staffData.fullName}\nRole: ${staffData.roleTitle}\n\nPlease login at: https://batchfee-477b8.web.app"
+        var sharePassword by remember { mutableStateOf("") }
+        var passwordVisible by remember { mutableStateOf(false) }
+        val appLink = "https://play.google.com/store/apps/details?id=com.batchfee.edu&hl=en"
+        val loginMsg = if (sharePassword.isNotBlank()) {
+            "Staff Login Details:\n\nID: ${staffData.staffCode}\nPassword: $sharePassword\nName: ${staffData.fullName}\nRole: ${staffData.roleTitle}\n\nDownload the app: $appLink"
+        } else {
+            "Staff Login Details:\n\nID: ${staffData.staffCode}\nName: ${staffData.fullName}\nRole: ${staffData.roleTitle}\n\nDownload the app: $appLink"
+        }
+
         AlertDialog(
-            onDismissRequest = { showShareCredentials = false },
+            onDismissRequest = { showShareCredentials = false; sharePassword = "" },
             containerColor = CardBg,
             title = { Text("Share Credentials", color = TextWhite, fontWeight = FontWeight.Bold) },
-            text = { Text(loginMsg, color = TextMuted, fontSize = 13.sp) },
+            text = {
+                Column {
+                    Text("Include the staff password so they can login.", color = TextMuted, fontSize = 13.sp)
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = sharePassword,
+                        onValueChange = { sharePassword = it },
+                        label = { Text("Staff Password", color = TextMuted) },
+                        singleLine = true,
+                        visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                        trailingIcon = {
+                            IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                                Icon(
+                                    if (passwordVisible) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                                    contentDescription = null,
+                                    tint = TextMuted
+                                )
+                            }
+                        },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Cyan,
+                            focusedTextColor = TextWhite,
+                            unfocusedTextColor = TextWhite,
+                            cursorColor = Cyan
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(loginMsg, color = TextMuted, fontSize = 12.sp)
+                }
+            },
             confirmButton = {
                 TextButton(onClick = {
+                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    clipboard.setPrimaryClip(ClipData.newPlainText("Staff Credentials", loginMsg))
                     showShareCredentials = false
-                    context.startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${staffData.phone ?: ""}")).apply { putExtra("sms_body", loginMsg) })
-                }) { Text("Send SMS", color = ElectricBlue, fontWeight = FontWeight.SemiBold) }
+                    sharePassword = ""
+                }) { Text("Copy", color = Cyan, fontWeight = FontWeight.SemiBold) }
             },
             dismissButton = {
-                TextButton(onClick = {
-                    showShareCredentials = false
-                    val enc = java.net.URLEncoder.encode(loginMsg, "UTF-8")
-                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/?text=$enc")))
-                }) { Text("WhatsApp", color = WAGreen, fontWeight = FontWeight.SemiBold) }
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(onClick = {
+                        val enc = java.net.URLEncoder.encode(loginMsg, "UTF-8")
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/?text=$enc")))
+                        showShareCredentials = false
+                        sharePassword = ""
+                    }) { Text("WhatsApp", color = WAGreen, fontWeight = FontWeight.SemiBold) }
+                    TextButton(onClick = {
+                        showShareCredentials = false
+                        sharePassword = ""
+                        context.startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${staffData.phone ?: ""}")).apply { putExtra("sms_body", loginMsg) })
+                    }) { Text("SMS", color = ElectricBlue, fontWeight = FontWeight.SemiBold) }
+                }
             }
         )
     }

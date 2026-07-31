@@ -282,6 +282,8 @@ class FeeViewModel(private val db: AppDatabase) : ViewModel() {
                 onSuccess(result.paymentId)
             } catch (e: IllegalArgumentException) {
                 onError(e.message ?: "Payment rejected.")
+            } catch (e: Exception) {
+                onError("Payment failed. Please try again.")
             }
         }
     }
@@ -325,6 +327,8 @@ class FeeViewModel(private val db: AppDatabase) : ViewModel() {
                 onSuccess(result.paymentId)
             } catch (e: IllegalArgumentException) {
                 onError(e.message ?: "Payment rejected.")
+            } catch (e: Exception) {
+                onError("Payment failed. Please try again.")
             }
         }
     }

@@ -83,6 +83,7 @@ private val ElectricBlue = Color(0xFF3B82F6)
 
 private const val STANDARD_MONTHLY_FEE = 500.0
 private const val DEFAULT_TRIAL_PLAN_ID = "plan_free_trial"
+private const val MILLIS_PER_DAY = 24L * 60 * 60 * 1000
 
 private fun humanizePlanId(planId: String): String = planId
     .removePrefix("plan_")
@@ -116,7 +117,10 @@ private fun formatMoneyValue(price: Double): String = if (price == price.toLong(
 data class SuperAdminStats(
     val totalInstitutes: Int = 0,
     val activeSubscriptions: Int = 0,
-    val totalRevenue: Double = 0.0,
+    val lifetimeRevenue: Double = 0.0,
+    val thisMonthRevenue: Double = 0.0,
+    val lastMonthRevenue: Double = 0.0,
+    val projectedRevenue: Double = 0.0,
     val totalStudents: Int = 0,
     val totalStaff: Int = 0
 )
@@ -196,17 +200,23 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
     private val _managedUsers = MutableStateFlow<List<ManagedUserSummary>>(emptyList())
     val managedUsers = _managedUsers.asStateFlow()
 
+    private val _allReceipts = MutableStateFlow<List<SubscriptionReceiptData>>(emptyList())
+    val allReceipts = _allReceipts.asStateFlow()
+
     private val firestore = FirebaseFirestore.getInstance()
     private var didBackfillManagedUsers = false
+    private var approvedRequestDocuments: List<Pair<String, Map<String, Any>>> = emptyList()
 
     val projectedRevenue: Double
-        get() = _stats.value.totalRevenue
+        get() = _stats.value.projectedRevenue
 
     init {
         loadSubscriptionPlans()
         loadInstitutesRealtime()
         loadPendingRequestsRealtime()
         loadManagedUsersRealtime()
+        loadTrashedInstitutes()
+        loadApprovedReceiptsRealtime()
     }
 
     fun clearOperationMsg() { _operationMsg.value = null }
@@ -215,7 +225,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
         viewModelScope.launch {
             db.subscriptionPlanDao().getAllPlans().collectLatest { plans ->
                 _subscriptionPlans.value = plans
-                recalculateStats(_institutes.value, plans)
+                rebuildReceiptHistory()
             }
         }
     }
@@ -240,16 +250,93 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
             ) {
                 0.0
             } else {
-                planPriceMap[entity.currentPlanId] ?: 0.0
+                planPriceMap[entity.currentPlanId]
+                    ?: planDisplayPrice(entity.currentPlanId, plans)
             }
         }
+        val calendar = Calendar.getInstance()
+        calendar.set(Calendar.DAY_OF_MONTH, 1)
+        calendar.set(Calendar.HOUR_OF_DAY, 0)
+        calendar.set(Calendar.MINUTE, 0)
+        calendar.set(Calendar.SECOND, 0)
+        calendar.set(Calendar.MILLISECOND, 0)
+        val thisMonthStart = calendar.timeInMillis
+        calendar.add(Calendar.MONTH, -1)
+        val lastMonthStart = calendar.timeInMillis
+        val receipts = _allReceipts.value
         _stats.value = SuperAdminStats(
             totalInstitutes = institutes.size,
             activeSubscriptions = activeCount,
-            totalRevenue = totalRevenue,
+            lifetimeRevenue = receipts.sumOf { it.amountPaid },
+            thisMonthRevenue = receipts
+                .filter { it.startDateMs >= thisMonthStart }
+                .sumOf { it.amountPaid },
+            lastMonthRevenue = receipts
+                .filter { it.startDateMs in lastMonthStart until thisMonthStart }
+                .sumOf { it.amountPaid },
+            projectedRevenue = totalRevenue,
             totalStudents = institutes.sumOf { it.studentCount },
             totalStaff = institutes.sumOf { it.staffCount }
         )
+    }
+
+    private fun loadApprovedReceiptsRealtime() {
+        firestore.collection("subscriptionRequests")
+            .whereEqualTo("status", "approved")
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    FirebaseCrashlytics.getInstance().recordException(error)
+                    _operationMsg.value = "Receipt history unavailable: ${error.message}"
+                    return@addSnapshotListener
+                }
+                approvedRequestDocuments = snapshot?.documents.orEmpty().mapNotNull { doc ->
+                    doc.data?.let { doc.id to it }
+                }
+                rebuildReceiptHistory()
+            }
+    }
+
+    private fun rebuildReceiptHistory() {
+        val institutesById = _institutes.value.associateBy { it.entity.id }
+        val plans = _subscriptionPlans.value
+        _allReceipts.value = approvedRequestDocuments.map { (documentId, data) ->
+            val instituteId = data["instituteId"] as? String ?: ""
+            val institute = institutesById[instituteId]?.entity
+            val reviewedAt = (data["reviewedAt"] as? Number)?.toLong() ?: 0L
+            val startDateMs = (data["startDateMs"] as? Number)?.toLong()
+                ?: reviewedAt.takeIf { it > 0L }
+                ?: (data["requestSentAt"] as? Number)?.toLong()
+                ?: 0L
+            val durationMonths = (data["durationMonths"] as? Number)?.toInt() ?: 1
+            val endDateMs = (data["endDateMs"] as? Number)?.toLong()
+                ?: (startDateMs + durationMonths * 30L * MILLIS_PER_DAY)
+            val requestedPlanId = data["requestedPlanId"] as? String ?: ""
+            SubscriptionReceiptData(
+                receiptNumber = data["receiptNumber"] as? String
+                    ?: "SUB-${reviewedAt.takeIf { it > 0L } ?: documentId}",
+                instituteName = data["instituteName"] as? String
+                    ?: institute?.name.orEmpty(),
+                ownerName = data["ownerName"] as? String
+                    ?: institute?.ownerName.orEmpty(),
+                ownerPhone = data["institutePhone"] as? String
+                    ?: institute?.phone.orEmpty(),
+                ownerEmail = data["ownerEmail"] as? String
+                    ?: institute?.email.orEmpty(),
+                instituteCode = data["instituteCode"] as? String
+                    ?: institute?.instituteCode.orEmpty(),
+                instituteAddress = data["instituteAddress"] as? String
+                    ?: institute?.address.orEmpty(),
+                planName = data["planName"] as? String
+                    ?: planDisplayName(requestedPlanId, plans),
+                durationMonths = durationMonths,
+                amountPaid = (data["amountPaid"] as? Number)?.toDouble() ?: 0.0,
+                paymentMethod = data["paymentMethod"] as? String ?: "",
+                transactionLast4 = data["transactionLast4"] as? String ?: "",
+                startDateMs = startDateMs,
+                endDateMs = endDateMs
+            )
+        }.sortedByDescending { it.startDateMs }
+        recalculateStats(_institutes.value, plans)
     }
 
     private fun loadPendingRequestsRealtime() {
@@ -268,37 +355,91 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
     fun approveRequest(request: SubscriptionRequest) {
         viewModelScope.launch {
             try {
-                android.util.Log.d("SUPERADMIN", "approveRequest: instituteId=${request.instituteId}, requestId=${request.requestId}, planId=${request.requestedPlanId}, durationMonths=${request.durationMonths}")
                 val approvedAt = System.currentTimeMillis()
-                val newEnd = withContext(Dispatchers.IO) {
-                    val repo = com.batchfee.edu.data.repository.SubscriptionRepository(firestore)
-                    val reviewerUserId = SessionManager.currentUserId.value ?: "sys_super_admin_1"
-                    android.util.Log.d("SUPERADMIN", "approveRequest DBG: approving subscriptionRequests/${request.requestId}")
-                    repo.approveRequest(request.requestId, reviewerUserId)
-                    val end = approvedAt + (request.durationMonths * 30L * 24 * 60 * 60 * 1000)
-                    android.util.Log.d("SUPERADMIN", "approveRequest DBG: updating institutes/${request.instituteId} → plan=${request.requestedPlanId}, end=$end")
-                    firestore.collection("institutes").document(request.instituteId)
-                        .update(
+                val startDateMs = approvedAt
+                val newEnd = approvedAt + request.durationMonths * 30L * MILLIS_PER_DAY
+                val receiptNumber = "SUB-$approvedAt"
+                val planName = planDisplayName(request.requestedPlanId, _subscriptionPlans.value)
+                val reviewerUserId = SessionManager.currentUserId.value
+                    ?: throw IllegalStateException("Super admin session expired.")
+                val instData = withContext(Dispatchers.IO) {
+                    val requestRef = firestore.collection("subscriptionRequests")
+                        .document(request.requestId)
+                    val instituteRef = firestore.collection("institutes")
+                        .document(request.instituteId)
+                    val instDoc = instituteRef.get().await()
+                    if (!instDoc.exists()) {
+                        throw IllegalStateException("Institute record no longer exists.")
+                    }
+                    val instituteData = instDoc.data ?: emptyMap()
+                    val receiptEntry = mapOf<String, Any>(
+                        "receiptNumber" to receiptNumber,
+                        "requestId" to request.requestId,
+                        "instituteId" to request.instituteId,
+                        "instituteName" to request.instituteName,
+                        "ownerName" to request.ownerName,
+                        "ownerPhone" to (request.institutePhone ?: ""),
+                        "ownerEmail" to (instituteData["email"] as? String ?: ""),
+                        "instituteCode" to (instituteData["instituteCode"] as? String ?: ""),
+                        "instituteAddress" to (instituteData["address"] as? String ?: ""),
+                        "planId" to request.requestedPlanId,
+                        "planName" to planName,
+                        "durationMonths" to request.durationMonths,
+                        "amountPaid" to request.amountPaid,
+                        "paymentMethod" to request.paymentMethod,
+                        "transactionLast4" to request.transactionLast4,
+                        "startDateMs" to startDateMs,
+                        "endDateMs" to newEnd,
+                        "approvedAt" to approvedAt
+                    )
+                    firestore.runBatch { batch ->
+                        batch.update(
+                            requestRef,
+                            mapOf(
+                                "status" to "approved",
+                                "reviewedBy" to reviewerUserId,
+                                "reviewedAt" to approvedAt,
+                                "receiptNumber" to receiptNumber,
+                                "planName" to planName,
+                                "ownerEmail" to (instituteData["email"] as? String ?: ""),
+                                "instituteCode" to (instituteData["instituteCode"] as? String ?: ""),
+                                "instituteAddress" to (instituteData["address"] as? String ?: ""),
+                                "startDateMs" to startDateMs,
+                                "endDateMs" to newEnd
+                            )
+                        )
+                        batch.update(
+                            instituteRef,
                             mapOf(
                                 "currentPlanId" to request.requestedPlanId,
-                                "trialEndDate" to end,
-                                "currentPeriodEndMs" to end,
+                                "trialEndDate" to newEnd,
+                                "currentPeriodEndMs" to newEnd,
                                 "subscriptionStatus" to "active",
                                 "isActive" to true
                             )
                         )
-                        .await()
-                    db.instituteDao().getInstitute(request.instituteId)?.let { current ->
-                        db.instituteDao().insertInstitute(
-                            current.copy(
-                                currentPlanId = request.requestedPlanId,
-                                subscriptionStatus = "active",
-                                trialEndDateMs = end,
-                                currentPeriodEndMs = end
-                            )
+                        batch.set(
+                            instituteRef.collection("receipts").document(receiptNumber),
+                            receiptEntry
                         )
+                    }.await()
+                    instituteData
+                }
+                try {
+                    withContext(Dispatchers.IO) {
+                        db.instituteDao().getInstitute(request.instituteId)?.let { current ->
+                            db.instituteDao().insertInstitute(
+                                current.copy(
+                                    currentPlanId = request.requestedPlanId,
+                                    subscriptionStatus = "active",
+                                    trialEndDateMs = newEnd,
+                                    currentPeriodEndMs = newEnd
+                                )
+                            )
+                        }
                     }
-                    end
+                } catch (e: Exception) {
+                    FirebaseCrashlytics.getInstance().recordException(e)
                 }
                 _pendingRequests.value = _pendingRequests.value.filterNot { it.requestId == request.requestId }
                 _institutes.value = _institutes.value.map { card ->
@@ -312,15 +453,10 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                         )
                     )
                 }
-                _operationMsg.value = "Approved ${request.instituteName} — ${request.requestedPlanId}"
-                // Store receipt data for manual share
-                val planName = planDisplayName(request.requestedPlanId, _subscriptionPlans.value)
-                val instDoc = withContext(Dispatchers.IO) {
-                    firestore.collection("institutes").document(request.instituteId).get().await()
-                }
-                val instData = instDoc.data ?: emptyMap()
+                rebuildReceiptHistory()
+                _operationMsg.value = "Approved ${request.instituteName}"
                 _receiptData.value = SubscriptionReceiptData(
-                    receiptNumber = "SUB-${System.currentTimeMillis()}",
+                    receiptNumber = receiptNumber,
                     instituteName = request.instituteName,
                     ownerName = request.ownerName,
                     ownerPhone = request.institutePhone ?: "",
@@ -332,7 +468,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                     amountPaid = request.amountPaid,
                     paymentMethod = request.paymentMethod,
                     transactionLast4 = request.transactionLast4,
-                    startDateMs = System.currentTimeMillis(),
+                    startDateMs = startDateMs,
                     endDateMs = newEnd
                 )
             } catch (e: Exception) {
@@ -432,7 +568,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
 
                 _institutes.value = list
                 _lastActiveMap.value = activeMap
-                recalculateStats(list)
+                rebuildReceiptHistory()
                 _isLoading.value = false
                 if (!didBackfillManagedUsers) {
                     didBackfillManagedUsers = true
@@ -660,6 +796,38 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
     // ── Trash / Remove Institute ─────────────────────────────
     private val _trashedInstitutes = MutableStateFlow<List<InstituteCardData>>(emptyList())
     val trashedInstitutes = _trashedInstitutes.asStateFlow()
+
+    private fun loadTrashedInstitutes() {
+        viewModelScope.launch {
+            try {
+                val docs = withContext(Dispatchers.IO) {
+                    firestore.collection("institutes_trash").get().await()
+                }
+                _trashedInstitutes.value = docs.documents.mapNotNull { doc ->
+                    val data = doc.data ?: return@mapNotNull null
+                    InstituteCardData(
+                        entity = InstituteEntity(
+                            id = doc.id,
+                            name = data["instituteName"] as? String ?: "Institute",
+                            currentPlanId = data["currentPlanId"] as? String ?: DEFAULT_TRIAL_PLAN_ID,
+                            subscriptionStatus = "trashed",
+                            trialStartDateMs = data["createdAt"] as? Long ?: 0L,
+                            trialEndDateMs = data["_trashedAt"] as? Long ?: 0L,
+                            currentPeriodEndMs = data["_trashExpiresAt"] as? Long ?: 0L,
+                            createdAtMs = data["createdAt"] as? Long ?: 0L,
+                            phone = data["phone"] as? String,
+                            ownerName = data["ownerName"] as? String,
+                            email = data["email"] as? String
+                        ),
+                        studentCount = 0,
+                        staffCount = 0
+                    )
+                }
+            } catch (e: Exception) {
+                _operationMsg.value = "Failed to load trash: ${e.message}"
+            }
+        }
+    }
 
     fun removeInstitute(instituteId: String, superAdminPassword: String) {
         viewModelScope.launch {
@@ -982,6 +1150,38 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
         }
     }
 
+    fun loadAllReceipts() {
+        viewModelScope.launch {
+            try {
+                val docs = withContext(Dispatchers.IO) {
+                    firestore.collection("subscriptionRequests")
+                        .whereEqualTo("status", "approved")
+                        .orderBy("reviewedAt", com.google.firebase.firestore.Query.Direction.DESCENDING)
+                        .limit(50).get().await()
+                }
+                _allReceipts.value = docs.documents.mapNotNull { doc ->
+                    val d = doc.data ?: return@mapNotNull null
+                    SubscriptionReceiptData(
+                        receiptNumber = doc.id,
+                        instituteName = d["instituteName"] as? String ?: "",
+                        ownerName = d["ownerName"] as? String ?: "",
+                        ownerPhone = d["institutePhone"] as? String ?: "",
+                        ownerEmail = d["email"] as? String ?: "",
+                        instituteCode = d["instituteCode"] as? String ?: "",
+                        instituteAddress = d["address"] as? String ?: "",
+                        planName = planDisplayName(d["requestedPlanId"] as? String ?: "", _subscriptionPlans.value),
+                        durationMonths = (d["durationMonths"] as? Long)?.toInt() ?: 1,
+                        amountPaid = (d["amountPaid"] as? Number)?.toDouble() ?: 0.0,
+                        paymentMethod = d["paymentMethod"] as? String ?: "",
+                        transactionLast4 = d["transactionLast4"] as? String ?: "",
+                        startDateMs = d["reviewedAt"] as? Long ?: System.currentTimeMillis(),
+                        endDateMs = d["reviewedAt"] as? Long ?: System.currentTimeMillis()
+                    )
+                }
+            } catch (_: Exception) { }
+        }
+    }
+
     fun setSecurityPin(instituteId: String, pin: String) {
         if (pin.isBlank() || !pin.matches(Regex("^\\d{4,6}$"))) {
             _operationMsg.value = "PIN must be 4-6 digits."
@@ -1039,6 +1239,8 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
     var editingPlan by remember { mutableStateOf<SubscriptionPlanEntity?>(null) }
     var showPlanDialog by remember { mutableStateOf(false) }
     var showReceiptDialog by remember { mutableStateOf(false) }
+    val allReceipts by viewModel.allReceipts.collectAsState()
+    LaunchedEffect(Unit) { viewModel.loadAllReceipts() }
 
     val planNameById = remember(subscriptionPlans) { subscriptionPlans.associate { it.id to it.name } }
 
@@ -1115,12 +1317,12 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
                 }
             }
 
-            // ── Total Revenue ──
+            // ── Revenue Section ──
             item {
-                RevenueCard("Total Revenue",
-                    if (isLoading) "..." else "BDT ${NumberFormat.getNumberInstance(Locale.getDefault()).apply { maximumFractionDigits = 0 }.format(stats.totalRevenue)}",
-                    AccentAmber, Icons.Filled.TrendingUp
-                )
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Box(Modifier.weight(1f)) { RevenueCard("Lifetime\nRevenue", if (isLoading) "..." else "BDT ${NumberFormat.getNumberInstance(Locale.getDefault()).apply { maximumFractionDigits = 0 }.format(stats.lifetimeRevenue)}", AccentAmber, Icons.Filled.TrendingUp) }
+                    Box(Modifier.weight(1f)) { RevenueCard("This Month", if (isLoading) "..." else "BDT ${NumberFormat.getNumberInstance(Locale.getDefault()).apply { maximumFractionDigits = 0 }.format(stats.thisMonthRevenue)}", AccentGreen, Icons.Filled.MonetizationOn) }
+                }
             }
 
             // ── Projected Revenue (Prediction) ──
@@ -1258,6 +1460,59 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
                                 }
                             }
                         }
+                    }
+                }
+            }
+
+            // ── Money Receipts ──
+            if (allReceipts.isNotEmpty()) {
+                item {
+                    Spacer(Modifier.height(4.dp))
+                    Text("Subscription Receipts · ${allReceipts.size}", color = TextMuted, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(8.dp))
+                }
+                items(allReceipts.take(20), key = { it.receiptNumber }) { r ->
+                    var showSendDialog by remember { mutableStateOf(false) }
+                    Card(
+                        Modifier.fillMaxWidth().clickable { showSendDialog = true },
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = CardBg),
+                        border = BorderStroke(1.dp, BorderSub)
+                    ) {
+                        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(r.instituteName, color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                                Text("${r.planName} · ${r.durationMonths} mo · BDT ${"%,.0f".format(r.amountPaid)}", color = AccentGreen, fontSize = 12.sp)
+                            }
+                            Text(r.paymentMethod.uppercase(), color = TextMuted, fontSize = 10.sp)
+                        }
+                    }
+                    if (showSendDialog) {
+                        val ctx = LocalContext.current
+                        AlertDialog(
+                            onDismissRequest = { showSendDialog = false },
+                            title = { Text("Send Receipt", color = TextWhite, fontWeight = FontWeight.Bold) },
+                            text = { Text("${r.instituteName}\n${r.planName} · BDT ${"%,.0f".format(r.amountPaid)}", color = TextWhite) },
+                            confirmButton = {
+                                Button(onClick = {
+                                    try {
+                                        val file = generateSubscriptionReceiptPdf(ctx, r)
+                                        val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", file)
+                                        val phone = r.ownerPhone.replace("+", "").replace(" ", "").replace("-", "")
+                                        val intent = Intent(Intent.ACTION_SEND).apply {
+                                            type = "application/pdf"; putExtra(Intent.EXTRA_STREAM, uri); setPackage("com.whatsapp")
+                                            if (phone.isNotBlank()) putExtra("jid", "${phone}@s.whatsapp.net")
+                                        }
+                                        ctx.startActivity(intent)
+                                    } catch (_: Exception) { }
+                                    showSendDialog = false
+                                }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF25D366))) {
+                                    Text("WhatsApp", color = Color.White)
+                                }
+                            },
+                            dismissButton = { TextButton(onClick = { showSendDialog = false }) { Text("Close", color = TextMuted) } },
+                            containerColor = CardBg, shape = RoundedCornerShape(16.dp)
+                        )
                     }
                 }
             }

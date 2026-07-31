@@ -35,10 +35,17 @@ service cloud.firestore {
       allow read: if request.auth != null && request.auth.uid == staffId;
     }
 
-    // All other institute subcollections — owner+SuperAdmin read/write
+    // All other institute subcollections — owner+SuperAdmin+staff read/write
     match /institutes/{instituteId}/{collection}/{document=**} {
       allow read, write: if request.auth != null
-        && (request.auth.uid == instituteId || isSuperAdmin());
+        && (request.auth.uid == instituteId
+            || isSuperAdmin()
+            || isActiveStaff(instituteId));
+    }
+
+    // Helper: checks if the authenticated user is an active staff member of the institute
+    function isActiveStaff(instituteId) {
+      return exists(/databases/$(database)/documents/institutes/$(instituteId)/staffs/$(request.auth.uid));
     }
 
     // Global notifications — any authenticated user can read, only SuperAdmin writes
@@ -67,6 +74,14 @@ service cloud.firestore {
     // Demo visitor tracking — open
     match /Demo_Visitors/{document=**} {
       allow read, write: if true;
+    }
+
+    // 🔒 Trash collections — only SuperAdmin can read/write
+    match /institutes_trash/{document=**} {
+      allow read, write: if isSuperAdmin();
+    }
+    match /app_users_trash/{document=**} {
+      allow read, write: if isSuperAdmin();
     }
 
     // Block everything else

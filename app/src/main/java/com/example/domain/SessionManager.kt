@@ -1,5 +1,6 @@
 ﻿package com.batchfee.edu.domain
 
+import android.content.Context
 import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -8,6 +9,19 @@ import kotlinx.coroutines.flow.asStateFlow
 object SessionManager {
     const val SESSION_TIMEOUT_MS = 300_000L
     const val SESSION_EXPIRED_MESSAGE = "Your session has expired. Please log in again."
+
+    private const val PREFS_LOGIN = "batchfee_login_prefs"
+    private const val KEY_LAST_LOGIN_ID = "last_login_id"
+
+    fun saveLastLoginId(context: Context, loginId: String) {
+        context.applicationContext.getSharedPreferences(PREFS_LOGIN, Context.MODE_PRIVATE)
+            .edit().putString(KEY_LAST_LOGIN_ID, loginId).apply()
+    }
+
+    fun getLastLoginId(context: Context): String? {
+        return context.applicationContext.getSharedPreferences(PREFS_LOGIN, Context.MODE_PRIVATE)
+            .getString(KEY_LAST_LOGIN_ID, null)
+    }
 
     private val _currentUserId = MutableStateFlow<String?>(null)
     val currentUserId: StateFlow<String?> = _currentUserId.asStateFlow()

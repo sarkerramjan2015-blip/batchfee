@@ -511,8 +511,8 @@ private fun darkFieldColors() = OutlinedTextFieldDefaults.colors(
 @Composable
 private fun CredentialShareDialog(loginId: String, password: String, onDismiss: () -> Unit) {
     val context = LocalContext.current
-    val appLink = "https://batchfee-477b8.web.app"
-    val message = "Your BatchFee Staff Account:\n\nID: $loginId\nPassword: $password\n\nLogin at: $appLink"
+    val appLink = "https://play.google.com/store/apps/details?id=com.batchfee.edu&hl=en"
+    val message = "Your BatchFee Staff Account:\n\nID: $loginId\nPassword: $password\n\nDownload the app: $appLink"
 
     androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
         Card(

@@ -154,8 +154,8 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
                     FirebaseCrashlytics.getInstance().recordException(e)
                 }
             }
-            // Periodically check if subscription has expired
-            if (SessionManager.currentUserId.value == uid) {
+            // Periodically check if subscription has expired (institute owner only — staff are not subscription-gated)
+            if (role != "Staff" && SessionManager.currentUserId.value == uid) {
                 val expired = checkSubscriptionExpired(instId, appDb)
                 if (expired) {
                     SessionManager.expireSession()
@@ -185,7 +185,7 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
                     scope.launch {
                         val instituteId = SessionManager.currentInstituteId.value
                         val role = SessionManager.currentUserRole.value
-                        if (role != "SuperAdmin" && instituteId != null) {
+                        if (role != "SuperAdmin" && role != "Staff" && instituteId != null) {
                             val isExpired = checkSubscriptionExpired(instituteId, appDb)
                             if (isExpired) {
                                 navController.navigate(SubscriptionExpiredRoute) {

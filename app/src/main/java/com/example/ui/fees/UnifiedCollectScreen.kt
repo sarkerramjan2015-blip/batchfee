@@ -1005,6 +1005,8 @@ fun UnifiedCollectScreen(
                                             loadStudentLedger(student)
                                         } catch (e: IllegalArgumentException) {
                                             collectError = e.message ?: "Payment rejected."
+                                        } catch (e: Exception) {
+                                            collectError = "Payment failed. Please try again."
                                         } finally {
                                             isSaving = false
                                         }

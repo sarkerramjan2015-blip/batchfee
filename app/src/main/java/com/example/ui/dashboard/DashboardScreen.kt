@@ -352,17 +352,26 @@ class DashboardViewModel(private val db: AppDatabase) : ViewModel() {
                 db.feeDao().getAllFees(instId).collect { allFees ->
                     val fees = allFees.filter { it.dueAmount > 0.0 }
                     val students = db.studentDao().getStudentsByInstituteOnce(instId).associateBy { it.id }
-                    var nonMonthlyDue = 0.0
-                    val nonMonthlyStudentIds = mutableSetOf<String>()
+                    val activeStudentIds = mutableSetOf<String>()
+                    val closedStudentIds = mutableSetOf<String>()
+                    var activeNonMonthlyDue = 0.0
+                    var closedNonMonthlyDue = 0.0
                     fees.filter { !MonthlyDueCalculator.isMonthlyFeeType(it.feeType) }.forEach { fee ->
-                        nonMonthlyDue += fee.dueAmount
-                        nonMonthlyStudentIds += fee.studentId
+                        val sid = fee.studentId
+                        if (isClosedStudentStatus(students[sid]?.status)) {
+                            closedNonMonthlyDue += fee.dueAmount
+                            closedStudentIds += sid
+                        } else {
+                            activeNonMonthlyDue += fee.dueAmount
+                            activeStudentIds += sid
+                        }
                     }
-                    var monthlyDue = 0.0
-                    val monthlyStudentIds = mutableSetOf<String>()
+                    var activeMonthlyDue = 0.0
+                    var closedMonthlyDue = 0.0
                     students.values.forEach { student ->
                         if (student.admissionDateMs <= 0L) return@forEach
                         val enrolledBatches = db.batchStudentDao().getBatchesForStudent(student.id, instId).firstOrNull() ?: return@forEach
+                        val isClosed = isClosedStudentStatus(student.status)
                         enrolledBatches.forEach { batch ->
                             if (batch.monthlyFeeAmount <= 0.0) return@forEach
                             val batchFees = allFees.filter { it.studentId == student.id && it.batchId == batch.id }
@@ -374,20 +383,22 @@ class DashboardViewModel(private val db: AppDatabase) : ViewModel() {
                                 existingMonthlyFees = batchFees
                             )
                             items.forEach { item ->
-                                monthlyDue += item.outstanding
-                                monthlyStudentIds += student.id
+                                if (isClosed) {
+                                    closedMonthlyDue += item.outstanding
+                                    closedStudentIds += student.id
+                                } else {
+                                    activeMonthlyDue += item.outstanding
+                                    activeStudentIds += student.id
+                                }
                             }
                         }
                     }
-                    val allActiveIds = (nonMonthlyStudentIds + monthlyStudentIds).filter { sid ->
-                        !isClosedStudentStatus(students[sid]?.status)
-                    }
-                    _pendingFeesCount.value = (nonMonthlyStudentIds + monthlyStudentIds).size
+                    _pendingFeesCount.value = (activeStudentIds + closedStudentIds).size
                     _dueFeeSummary.value = DueFeeSummary(
-                        activeCount = allActiveIds.size,
-                        activeAmount = nonMonthlyDue + monthlyDue,
-                        closeCount = 0,
-                        closeAmount = 0.0
+                        activeCount = activeStudentIds.size,
+                        activeAmount = activeNonMonthlyDue + activeMonthlyDue,
+                        closeCount = closedStudentIds.size,
+                        closeAmount = closedNonMonthlyDue + closedMonthlyDue
                     )
                 }
             }

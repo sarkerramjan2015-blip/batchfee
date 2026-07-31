@@ -786,7 +786,7 @@ fun AuthScreen(
     val context = LocalContext.current
     var isLoginMode by remember { mutableStateOf(true) }
 
-    var email by remember { mutableStateOf("") }
+    var email by remember { mutableStateOf(SessionManager.getLastLoginId(context) ?: "") }
     var password by remember { mutableStateOf("") }
     var instituteName by remember { mutableStateOf("") }
     var ownerName by remember { mutableStateOf("") }
@@ -1120,6 +1120,7 @@ fun AuthScreen(
                             if (isLoginMode) {
                                 viewModel.login(email, password, onSuccess = { role ->
                                     isLoading = false
+                                    SessionManager.saveLastLoginId(context, email.trim())
                                     BiometricAuthManager.refreshCurrentSession(context, email)
                                     if (role == "SuperAdmin") onNavigateSuperAdmin()
                                     else onNavigateDashboard()
@@ -1210,6 +1211,10 @@ fun AuthScreen(
                                                 context = context,
                                                 onSuccess = { role ->
                                                     isLoading = false
+                                                    val saved = BiometricAuthManager.savedSession(context)
+                                                    if (saved != null) {
+                                                        SessionManager.saveLastLoginId(context, saved.email ?: saved.userId)
+                                                    }
                                                     if (role == "SuperAdmin") onNavigateSuperAdmin()
                                                     else onNavigateDashboard()
                                                 },
