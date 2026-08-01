@@ -654,8 +654,14 @@ private suspend fun checkSubscriptionExpired(instituteId: String, db: com.batchf
             .get().await()
         val isActive = doc.getBoolean("isActive") ?: true
         if (!isActive) return true
+        val now = System.currentTimeMillis()
+        // Prefer currentPeriodEndMs (paid plan) over trialEndDate (trial plan).
+        // A paid subscriber may have a stale trialEndDate in the past — ignore it
+        // when a valid currentPeriodEndMs exists.
+        val periodEnd = doc.getLong("currentPeriodEndMs")
+        if (periodEnd != null && periodEnd > 0L) return now > periodEnd
         val trialEnd = doc.getLong("trialEndDate") ?: return false
-        System.currentTimeMillis() > trialEnd
+        now > trialEnd
     } catch (e: Exception) {
         FirebaseCrashlytics.getInstance().recordException(e)
         // Offline fallback: check Room DB instead of allowing access

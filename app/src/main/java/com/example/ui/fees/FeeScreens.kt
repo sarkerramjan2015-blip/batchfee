@@ -299,9 +299,17 @@ private fun shareReceiptImageAny(context: Context, bitmap: Bitmap) {
 }
 
 private fun loadBitmapFromUri(context: Context, uriString: String?): Bitmap? {
-    val uri = uriString?.takeIf { it.isNotBlank() }?.let(Uri::parse) ?: return null
+    if (uriString.isNullOrBlank()) return null
     return try {
-        context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) }
+        val uri = Uri.parse(uriString)
+        if (uri.scheme == "http" || uri.scheme == "https") {
+            val connection = java.net.URL(uriString).openConnection() as java.net.HttpURLConnection
+            connection.doInput = true
+            connection.connect()
+            BitmapFactory.decodeStream(connection.inputStream)
+        } else {
+            context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) }
+        }
     } catch (_: Exception) {
         null
     }

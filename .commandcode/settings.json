@@ -21,7 +21,9 @@
       "Shell(cmd:*)",
       "Shell(cd D:\\batchfee && dir /s /b *.google-services.json 2>nul)",
       "Shell(cd D:\\batchfee && git add app/src/main/java/com/example/ui/auth/AuthScreen.kt app/src/main/java/com/example/ui/batches/AddEditBatchScreen.kt app/src/main/java/com/example/ui/batches/BatchViewModel.kt app/src/main/java/com/example/ui/fees/UnifiedCollectScreen.kt app/src/main/java/com/example/ui/students/StudentProfileScreen.kt && git commit -F - <<'EOF' fix: role normalization, admission fee field, polished receipts - Fix role normalization in AuthScreen.kt for app_users login path (\"owner\" -> \"InstituteOwner\", \"admin\" -> \"InstituteAdmin\") - Add Admission Fee input field to AddBatch/EditBatch screens - Polish text receipts: replace box-drawing chars with ASCII - Polish PDF receipts: wider layout, relative positioning, better text fit - Fix computedTotalDue in StudentProfileScreen for accurate amounts Co-authored-by: CommandCodeBot <noreply@commandcode.ai> EOF)",
-      "Shell(Select-String:*)"
+      "Shell(Select-String:*)",
+      "Shell(copy:*)",
+      "powershell"
     ],
     "deny": [],
     "defaultMode": "default"

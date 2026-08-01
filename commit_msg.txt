@@ -1,13 +1,23 @@
-fix: superadmin orphan cleanup, revenue stats, remove button, password reset
+feat: subscription receipts, broadcast system, block/unblock, and UI polish
 
 SuperAdmin:
-- Fix permanentlyDelete: clean all 10 subcollections (batches, students,
-  fees, payments, receipts, attendance, exams+results, staffs, enquiries,
-  registrations)
-- Fix recalculateStats: check expired/trashed/blocked status for accurate
-  revenue and active count
-- Fix removeInstitute: use Firebase Auth reauthentication instead of
-  Room DB password hash verification (backfill had empty hashes)
-- Fix sendPasswordReset: migrate to coroutine with Tasks.await()
+- Payment receipts with timeline serial view, WhatsApp/PDF sharing per institute
+- Receipt generation for free trial (auto) and paid subscriptions (on approval)
+- Block/unblock with subscriptionStatus sync to Firestore + Room DB
+- Extend dialog: professional UI with presets, date preview, status card
+- Manage dialog: plan switch with preview, auto-fill limits, expiry date card
+- Broadcast system: expiry control, edit/archive/delete, history list, confirmation
+- Institute detail: plan card with metrics, WhatsApp button, polish
+
+Institute Owner:
+- Payment History in BillingScreen with real-time listener + PDF download
+- GlobalNotificationCard: sender branding, multi-notification carousel, dismiss
+
+Fixes:
+- Removed orderBy from receipts query (Firestore index requirement)
+- planDisplayPrice fallback from 500 to -1 (no misleading default)
+- extendSubscription now updates currentPeriodEndMs + Room DB + UI
+- manageInstitute now updates Room DB + UI immediately
+- toggleBlock now sets subscriptionStatus properly
 
 Co-authored-by: CommandCodeBot <noreply@commandcode.ai>

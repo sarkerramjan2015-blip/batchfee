@@ -1,8 +1,7 @@
 # UI/UX
-- Use a light (not dark) theme for the student app — the UI should feel lighter and brighter. Confidence: 0.75
-- Use clean sans-serif typography (Inter/Plus Jakarta Sans/SF Pro style), bold large styling for important numbers, and clear color contrast between headings and secondary labels. Confidence: 0.75
-- Use soft rounded rectangles for feature cards with 12dp–16dp border-radius and subtle ambient blur shadows (no heavy drop shadows). Confidence: 0.70
-- Use minimalist thin line icons (Feather Icons / Lucide style), flat vector — no gradients or 3D shapes. Confidence: 0.70
-- Use a cohesive corporate color system: deep indigo/navy primary, muted pastel card backgrounds with saturated matching text/icons for status cards. Confidence: 0.70
-- For month/date selection on mobile, prefer compact dialog/bottom-sheet pickers with a grid layout (e.g., 3×4 month grid + year navigation) over tall scrolling dropdown lists that cover most of the screen. Confidence: 0.75
-- When one selection field constrains another's valid range (e.g., Start Month → End Month, admission date → Start Month), visually dim the invalid options rather than removing them, and auto-correct downstream selections when the upstream constraint changes so an invalid range cannot remain selected. Confidence: 0.70
+- When generating PDF receipts/documents that include an institute logo, use the actual logo image (if available) as a large faded center watermark — prefer the real image over text-based or initials-based fallbacks for decorative/watermark elements. Confidence: 0.85
+- PDF receipts must include a footer with the institute's contact phone number and a "For any query contact: [phone]" line so recipients know how to reach the institute. Confidence: 0.85
+- When displaying remaining/outstanding due amounts in financial contexts (receipts, invoices, fee summaries), use red (e.g., #EF4444) for non-zero dues to signal urgency, and green for fully settled (zero) states — do not use amber/orange for due amounts. Confidence: 0.85
+- Display institute logos in a circular crop (using clipPath/circle mask) rather than rounded-rectangle containers — the round shape looks cleaner and more polished. Confidence: 0.75
+- PDF receipts must carry the platform's full brand identity in the header (app logo, app name, and tagline) — not just a generic transaction title. The receipt should feel like an official platform document, not a plain data dump. Confidence: 0.70
+- For financial/subscription data in PDFs, prefer a proper bordered table layout (dark header row with column labels, data rows separated by horizontal lines, and a green-highlighted total/amount row) over simple key-value `label: value` pair listings — the table format is more professional and scannable. Confidence: 0.70

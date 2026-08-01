@@ -88,7 +88,9 @@ private val AccentViolet = Color(0xFF6366F1)
 private val AccentGray  = Color(0xFF64748B)
 private val AccentGreen = Color(0xFF22C55E)
 private val AccentRed = Color(0xFFEF4444)
-private val AccentAmber = AccentCyan
+private val AccentAmber = Color(0xFFF59E0B)
+private val WarningAmber   = Color(0xFFD97706)
+private val AccentOrange   = Color(0xFFF97316)
 private val TextPrimary = Color(0xFFF8FAFC)
 private val TextSecondary = Color(0xFF94A3B8)
 private val TextMuted = Color(0xFF64748B)
@@ -503,6 +505,73 @@ fun DashboardTabsScreen(
     }
 }
 
+
+@Composable
+private fun SubscriptionWarningBanner(
+    subscriptionStatus: String?,
+    trialDaysLeft: Int,
+    subscriptionRemainingDays: Int,
+    modifier: Modifier = Modifier
+) {
+    if (subscriptionStatus == null) return
+    val remainingDays = if (subscriptionStatus == "trial") trialDaysLeft else subscriptionRemainingDays
+    if (remainingDays > 7 || remainingDays <= 0) return
+    var dismissed by remember { mutableStateOf(false) }
+    if (dismissed) return
+
+    val isCritical = remainingDays <= 3
+    val bgColor = if (isCritical) AccentRed.copy(alpha = 0.12f) else AccentAmber.copy(alpha = 0.14f)
+    val borderColor = if (isCritical) AccentRed.copy(alpha = 0.45f) else WarningAmber.copy(alpha = 0.50f)
+    val iconColor = if (isCritical) AccentRed else AccentOrange
+    val textColor = if (isCritical) Color(0xFFFCA5A5) else Color(0xFFFDE68A)
+
+    val message = when (subscriptionStatus) {
+        "trial" -> "আপনার ট্রায়ালের মেয়াদ আর মাত্র $remainingDays দিন পর শেষ হবে। সাবস্ক্রাইব করে সব ফিচার চালু রাখুন।"
+        else -> "আপনার সাবস্ক্রিপশনের মেয়াদ আর মাত্র $remainingDays দিন পর শেষ হবে। নবায়ন করুন।"
+    }
+
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = bgColor),
+        border = BorderStroke(1.dp, borderColor)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = if (isCritical) Icons.Filled.Warning else Icons.Filled.Notifications,
+                contentDescription = "Subscription warning",
+                tint = iconColor,
+                modifier = Modifier.size(22.dp)
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(
+                text = message,
+                color = textColor,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+                lineHeight = 18.sp,
+                modifier = Modifier.weight(1f)
+            )
+            IconButton(
+                onClick = { dismissed = true },
+                modifier = Modifier.size(28.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Close,
+                    contentDescription = "Dismiss",
+                    tint = iconColor.copy(alpha = 0.6f),
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun DashboardBootstrapLoading(errorMessage: String?) {
     val loaderTransition = rememberInfiniteTransition(label = "dashboardBootstrapLoader")
@@ -752,6 +821,12 @@ fun DashboardScreen(
                     compactLayout = compactLayout,
                     onProfileClick = { showProfilePopup = true },
                     onSettingsClick = { safeNavigate("SettingsRoute") }
+                )
+
+                SubscriptionWarningBanner(
+                    subscriptionStatus = institute?.subscriptionStatus,
+                    trialDaysLeft = trialDays,
+                    subscriptionRemainingDays = subscriptionRemainingDays
                 )
 
                 Column(modifier = Modifier.padding(horizontal = if (compactLayout) 12.dp else 16.dp, vertical = 14.dp)) {
@@ -1688,9 +1763,14 @@ fun DashboardScreen(
                         snappbarcoroutineScope.launch {
                             try {
                                 val profilePhotoUri = when {
-                                    editProfilePhotoUri == null -> null
+                                    editProfilePhotoUri == null -> {
+                                        inst.profilePhotoUri?.let { withContext(Dispatchers.IO) { com.batchfee.edu.data.firestore.FirebaseStorageHelper.deleteInstituteLogo(inst.id) } }
+                                        null
+                                    }
                                     editProfilePhotoUri.toString() == inst.profilePhotoUri -> inst.profilePhotoUri
-                                    else -> persistInstituteProfilePhoto(context, editProfilePhotoUri!!)
+                                    else -> com.batchfee.edu.data.firestore.FirebaseStorageHelper.uploadInstituteLogo(
+                                        context, inst.id, editProfilePhotoUri!!
+                                    )
                                 }
 
                                 val updated = inst.copy(
@@ -1733,20 +1813,7 @@ fun DashboardScreen(
     }
 }
 }
-
 }
-
-private suspend fun persistInstituteProfilePhoto(context: android.content.Context, sourceUri: Uri): String =
-    withContext(Dispatchers.IO) {
-        val directory = File(context.filesDir, "institute_profile").apply { mkdirs() }
-        val targetFile = File(directory, "institute_profile_${System.currentTimeMillis()}.jpg")
-        context.contentResolver.openInputStream(sourceUri)?.use { input ->
-            targetFile.outputStream().use { output ->
-                input.copyTo(output)
-            }
-        } ?: throw IllegalStateException("Unable to read the selected image.")
-        Uri.fromFile(targetFile).toString()
-    }
 
 @Composable
 private fun borderStroke() = androidx.compose.foundation.BorderStroke(1.dp, DashboardStroke)

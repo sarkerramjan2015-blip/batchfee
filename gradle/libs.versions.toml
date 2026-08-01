@@ -97,6 +97,7 @@ firebase-appcheck-playintegrity = { group = "com.google.firebase", name = "fireb
 firebase-auth = { group = "com.google.firebase", name = "firebase-auth" }
 firebase-firestore = { group = "com.google.firebase", name = "firebase-firestore" }
 firebase-crashlytics = { group = "com.google.firebase", name = "firebase-crashlytics" }
+firebase-storage = { group = "com.google.firebase", name = "firebase-storage" }
 firebase-ai = { group = "com.google.firebase", name = "firebase-ai" }
 
 [plugins]
