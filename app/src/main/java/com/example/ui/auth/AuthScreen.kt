@@ -157,6 +157,34 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                     }
                 }
 
+                // Generate free trial receipt under the institute
+                val trialReceiptNumber = "TRIAL-$now"
+                withContext(Dispatchers.IO) {
+                    FirebaseFirestore.getInstance()
+                        .collection("institutes").document(uid)
+                        .collection("receipts").document(trialReceiptNumber)
+                        .set(mapOf(
+                            "receiptNumber" to trialReceiptNumber,
+                            "instituteId" to uid,
+                            "instituteName" to instituteName,
+                            "ownerName" to ownerName,
+                            "ownerEmail" to email,
+                            "ownerPhone" to "",
+                            "instituteCode" to "",
+                            "instituteAddress" to "",
+                            "planId" to "plan_free_trial",
+                            "planName" to "Free Trial",
+                            "durationMonths" to 1,
+                            "amountPaid" to 0.0,
+                            "paymentMethod" to "free_trial",
+                            "transactionLast4" to "",
+                            "startDateMs" to now,
+                            "endDateMs" to (now + fifteenDaysMs),
+                            "approvedAt" to now,
+                            "status" to "approved"
+                        )).await()
+                }
+
                 val institute = InstituteEntity(
                     id = uid,
                     name = instituteName,

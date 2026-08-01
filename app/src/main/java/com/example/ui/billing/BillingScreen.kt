@@ -1,12 +1,17 @@
 package com.batchfee.edu.ui.billing
 
+import android.content.Context
+import android.content.Intent
+import android.widget.Toast
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
@@ -17,6 +22,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -30,8 +36,14 @@ import com.batchfee.edu.data.models.SubscriptionPlanEntity
 import com.batchfee.edu.data.models.SubscriptionRequest
 import com.batchfee.edu.data.repository.SubscriptionRepository
 import com.batchfee.edu.domain.SessionManager
+import com.batchfee.edu.ui.superadmin.SubscriptionReceiptData
+import com.batchfee.edu.ui.superadmin.generateSubscriptionReceiptPdf
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
+import com.google.firebase.crashlytics.FirebaseCrashlytics
+import androidx.core.content.FileProvider
+import java.io.File
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -59,6 +71,9 @@ class BillingViewModel(private val db: AppDatabase) : ViewModel() {
 
     private val _latestRequest = MutableStateFlow<SubscriptionRequest?>(null)
     val latestRequest = _latestRequest.asStateFlow()
+
+    private val _receipts = MutableStateFlow<List<SubscriptionReceiptData>>(emptyList())
+    val receipts = _receipts.asStateFlow()
 
     private val firestore = FirebaseFirestore.getInstance()
 
@@ -123,6 +138,36 @@ class BillingViewModel(private val db: AppDatabase) : ViewModel() {
                     }
                 }
         }
+        viewModelScope.launch {
+            val instId = SessionManager.currentInstituteId.value ?: return@launch
+            firestore.collection("institutes").document(instId)
+                .collection("receipts")
+                .addSnapshotListener { snapshot, error ->
+                    if (error != null) {
+                        FirebaseCrashlytics.getInstance().recordException(error)
+                        return@addSnapshotListener
+                    }
+                    _receipts.value = snapshot?.documents?.mapNotNull { doc ->
+                        val d = doc.data ?: return@mapNotNull null
+                        SubscriptionReceiptData(
+                            receiptNumber = d["receiptNumber"] as? String ?: doc.id,
+                            instituteName = d["instituteName"] as? String ?: "",
+                            ownerName = d["ownerName"] as? String ?: "",
+                            ownerPhone = d["ownerPhone"] as? String ?: "",
+                            ownerEmail = d["ownerEmail"] as? String ?: "",
+                            instituteCode = d["instituteCode"] as? String ?: "",
+                            instituteAddress = d["instituteAddress"] as? String ?: "",
+                            planName = d["planName"] as? String ?: "",
+                            durationMonths = (d["durationMonths"] as? Number)?.toInt() ?: 1,
+                            amountPaid = (d["amountPaid"] as? Number)?.toDouble() ?: 0.0,
+                            paymentMethod = d["paymentMethod"] as? String ?: "",
+                            transactionLast4 = d["transactionLast4"] as? String ?: "",
+                            startDateMs = (d["startDateMs"] as? Number)?.toLong() ?: (d["approvedAt"] as? Number)?.toLong() ?: 0L,
+                            endDateMs = (d["endDateMs"] as? Number)?.toLong() ?: 0L
+                        )
+                    }?.sortedByDescending { it.startDateMs } ?: emptyList()
+                }
+        }
     }
 }
 
@@ -144,6 +189,7 @@ fun BillingScreen(
     val institute by viewModel.institute.collectAsState()
     val plan by viewModel.currentPlan.collectAsState()
     val latestRequest by viewModel.latestRequest.collectAsState()
+    val receipts by viewModel.receipts.collectAsState()
     val dateFormat = SimpleDateFormat("MMM dd, yyyy", Locale.getDefault())
     val fallbackPlanName = remember(institute?.currentPlanId) {
         when (institute?.currentPlanId) {
@@ -179,6 +225,7 @@ fun BillingScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .padding(16.dp)
+                .verticalScroll(rememberScrollState())
         ) {
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -264,7 +311,97 @@ fun BillingScreen(
                 Spacer(Modifier.height(16.dp))
             }
 
-            Spacer(Modifier.weight(1f))
+            // ── Payment History ──
+            Spacer(Modifier.height(24.dp))
+            Text("Payment History", color = TextMuted, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(8.dp))
+
+            if (receipts.isEmpty()) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = CardBg),
+                    border = BorderStroke(1.dp, BorderSub)
+                ) {
+                    Box(Modifier.fillMaxWidth().padding(20.dp), contentAlignment = Alignment.Center) {
+                        Text("No payment receipts yet.", color = TextMuted, fontSize = 13.sp)
+                    }
+                }
+            } else {
+                val ctx = LocalContext.current
+                receipts.take(20).forEach { r ->
+                    var showReceiptDialog by remember { mutableStateOf(false) }
+                    Card(
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp).clickable { showReceiptDialog = true },
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = CardBg),
+                        border = BorderStroke(1.dp, BorderSub)
+                    ) {
+                        Row(
+                            Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                Modifier.size(36.dp).clip(RoundedCornerShape(10.dp))
+                                    .background(Green.copy(alpha = 0.12f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Filled.ReceiptLong, null, tint = Green, modifier = Modifier.size(18.dp))
+                            }
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(r.planName, color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                                Text(
+                                    "${r.durationMonths} mo · ${r.paymentMethod.uppercase()} · ${SimpleDateFormat("dd MMM yy", Locale.getDefault()).format(Date(r.startDateMs))}",
+                                    color = TextMuted, fontSize = 11.sp
+                                )
+                            }
+                            Column(horizontalAlignment = Alignment.End) {
+                                Text(
+                                    "BDT ${"%,.0f".format(r.amountPaid)}",
+                                    color = Green,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    "${SimpleDateFormat("dd MMM yy", Locale.getDefault()).format(Date(r.startDateMs))} — ${SimpleDateFormat("dd MMM yy", Locale.getDefault()).format(Date(r.endDateMs))}",
+                                    color = TextMuted,
+                                    fontSize = 10.sp
+                                )
+                            }
+                        }
+                    }
+                    if (showReceiptDialog) {
+                        AlertDialog(
+                            onDismissRequest = { showReceiptDialog = false },
+                            title = { Text("Payment Receipt", color = TextWhite, fontWeight = FontWeight.Bold) },
+                            text = { Text("${r.planName}\nBDT ${"%,.0f".format(r.amountPaid)}\n${SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(r.startDateMs))}", color = TextMuted, fontSize = 13.sp) },
+                            confirmButton = {
+                                Button(onClick = {
+                                    try {
+                                        val file = generateSubscriptionReceiptPdf(ctx, r)
+                                        val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", file)
+                                        ctx.startActivity(Intent(Intent.ACTION_VIEW).apply {
+                                            setDataAndType(uri, "application/pdf")
+                                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                        })
+                                    } catch (e: Exception) {
+                                        Toast.makeText(ctx, "Unable to open PDF: ${e.message}", Toast.LENGTH_SHORT).show()
+                                    }
+                                    showReceiptDialog = false
+                                }, colors = ButtonDefaults.buttonColors(containerColor = ElectricBlue)) {
+                                    Text("View / Download PDF", color = Color.White)
+                                }
+                            },
+                            dismissButton = { TextButton(onClick = { showReceiptDialog = false }) { Text("Close", color = TextMuted) } },
+                            containerColor = CardBg,
+                            shape = RoundedCornerShape(16.dp)
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(24.dp))
 
             Box(
                 modifier = Modifier

@@ -2,10 +2,11 @@ package com.batchfee.edu.ui.superadmin
 
 import android.content.Context
 import android.content.Intent
-import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Paint
-import android.graphics.Typeface
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
 import android.graphics.pdf.PdfDocument
 import android.net.Uri
 import android.widget.Toast
@@ -31,6 +32,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -62,7 +64,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.io.FileOutputStream
 import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.util.*
@@ -96,7 +97,10 @@ private fun planDisplayName(planId: String, plans: List<SubscriptionPlanEntity>)
     plans.firstOrNull { it.id == planId }?.name ?: humanizePlanId(planId)
 
 private fun planDisplayPrice(planId: String, plans: List<SubscriptionPlanEntity>): Double =
-    plans.firstOrNull { it.id == planId }?.priceBdt ?: STANDARD_MONTHLY_FEE
+    plans.firstOrNull { it.id == planId }?.priceBdt ?: -1.0
+
+private fun planDisplayDetails(planId: String, plans: List<SubscriptionPlanEntity>): SubscriptionPlanEntity? =
+    plans.firstOrNull { it.id == planId }
 
 private fun slugifyPlanName(name: String): String = buildString {
     name.lowercase(Locale.getDefault()).forEach { ch ->
@@ -142,6 +146,17 @@ data class InstituteStaffSummary(
     val email: String
 )
 
+data class AnnouncementData(
+    val id: String,
+    val message: String,
+    val sentAt: Long,
+    val updatedAt: Long,
+    val expiresAt: Long?,
+    val status: String,
+    val sender: String,
+    val platform: String
+)
+
 data class ManagedUserSummary(
     val id: String,
     val name: String,
@@ -185,9 +200,6 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
     private val _operationMsg = MutableStateFlow<String?>(null)
     val operationMsg = _operationMsg.asStateFlow()
 
-    private val _shareReceiptEvent = MutableStateFlow<Pair<Bitmap, String>?>(null)
-    val shareReceiptEvent = _shareReceiptEvent.asStateFlow()
-
     private val _receiptData = MutableStateFlow<SubscriptionReceiptData?>(null)
     val receiptData = _receiptData.asStateFlow()
 
@@ -203,6 +215,9 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
     private val _allReceipts = MutableStateFlow<List<SubscriptionReceiptData>>(emptyList())
     val allReceipts = _allReceipts.asStateFlow()
 
+    private val _announcements = MutableStateFlow<List<AnnouncementData>>(emptyList())
+    val announcements = _announcements.asStateFlow()
+
     private val firestore = FirebaseFirestore.getInstance()
     private var didBackfillManagedUsers = false
     private var approvedRequestDocuments: List<Pair<String, Map<String, Any>>> = emptyList()
@@ -217,6 +232,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
         loadManagedUsersRealtime()
         loadTrashedInstitutes()
         loadApprovedReceiptsRealtime()
+        loadAllAnnouncements()
     }
 
     fun clearOperationMsg() { _operationMsg.value = null }
@@ -250,8 +266,9 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
             ) {
                 0.0
             } else {
-                planPriceMap[entity.currentPlanId]
+                val price = planPriceMap[entity.currentPlanId]
                     ?: planDisplayPrice(entity.currentPlanId, plans)
+                if (price < 0.0) STANDARD_MONTHLY_FEE else price
             }
         }
         val calendar = Calendar.getInstance()
@@ -425,6 +442,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                     }.await()
                     instituteData
                 }
+                var roomFailed = false
                 try {
                     withContext(Dispatchers.IO) {
                         db.instituteDao().getInstitute(request.instituteId)?.let { current ->
@@ -439,6 +457,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                         }
                     }
                 } catch (e: Exception) {
+                    roomFailed = true
                     FirebaseCrashlytics.getInstance().recordException(e)
                 }
                 _pendingRequests.value = _pendingRequests.value.filterNot { it.requestId == request.requestId }
@@ -454,7 +473,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                     )
                 }
                 rebuildReceiptHistory()
-                _operationMsg.value = "Approved ${request.instituteName}"
+                _operationMsg.value = if (roomFailed) "Approved ${request.instituteName} (local cache update failed)" else "Approved ${request.instituteName}"
                 _receiptData.value = SubscriptionReceiptData(
                     receiptNumber = receiptNumber,
                     instituteName = request.instituteName,
@@ -480,14 +499,13 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
 
     fun clearReceipt() { _receiptData.value = null }
 
-    fun consumeShareEvent() { _shareReceiptEvent.value = null }
-
     fun rejectRequest(request: SubscriptionRequest, note: String? = null) {
         viewModelScope.launch {
             try {
                 withContext(Dispatchers.IO) {
                     val repo = com.batchfee.edu.data.repository.SubscriptionRepository(firestore)
-                    val reviewerUserId = SessionManager.currentUserId.value ?: "sys_super_admin_1"
+                    val reviewerUserId = SessionManager.currentUserId.value
+                        ?: throw IllegalStateException("Super admin session expired.")
                     repo.rejectRequest(request.requestId, reviewerUserId, note)
                 }
                 _pendingRequests.value = _pendingRequests.value.filterNot { it.requestId == request.requestId }
@@ -765,12 +783,27 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
     fun extendSubscription(instituteId: String, daysToAdd: Int) {
         viewModelScope.launch {
             try {
-                withContext(Dispatchers.IO) {
+                val updatedCard = withContext(Dispatchers.IO) {
                     val docRef = firestore.collection("institutes").document(instituteId)
                     val snapshot = docRef.get().await()
-                    val currentEnd = snapshot.getLong("trialEndDate") ?: System.currentTimeMillis()
-                    val newEnd = currentEnd + (daysToAdd * 24L * 60 * 60 * 1000)
-                    docRef.update("trialEndDate", newEnd).await()
+                    val trialEnd = snapshot.getLong("trialEndDate") ?: System.currentTimeMillis()
+                    val periodEnd = snapshot.getLong("currentPeriodEndMs") ?: trialEnd
+                    val newTrialEnd = trialEnd + (daysToAdd * 24L * 60 * 60 * 1000)
+                    val newPeriodEnd = periodEnd + (daysToAdd * 24L * 60 * 60 * 1000)
+                    docRef.update(mapOf("trialEndDate" to newTrialEnd, "currentPeriodEndMs" to newPeriodEnd)).await()
+                    db.instituteDao().getInstitute(instituteId)?.let { current ->
+                        db.instituteDao().insertInstitute(
+                            current.copy(trialEndDateMs = newTrialEnd, currentPeriodEndMs = newPeriodEnd)
+                        )
+                    }
+                    Pair(newTrialEnd, newPeriodEnd)
+                }
+                _institutes.value = _institutes.value.map { card ->
+                    if (card.entity.id != instituteId) return@map card
+                    card.copy(entity = card.entity.copy(
+                        trialEndDateMs = updatedCard.first,
+                        currentPeriodEndMs = updatedCard.second
+                    ))
                 }
                 _operationMsg.value = "Subscription extended by $daysToAdd days"
             } catch (e: Exception) {
@@ -782,11 +815,22 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
     fun toggleBlock(instituteId: String, currentBlocked: Boolean) {
         viewModelScope.launch {
             try {
+                val newBlocked = !currentBlocked
+                val newStatus = if (newBlocked) "blocked" else "active"
                 withContext(Dispatchers.IO) {
                     firestore.collection("institutes").document(instituteId)
-                        .update("isActive", !currentBlocked).await()
+                        .update(mapOf("isActive" to !newBlocked, "subscriptionStatus" to newStatus)).await()
+                    db.instituteDao().getInstitute(instituteId)?.let { current ->
+                        db.instituteDao().insertInstitute(
+                            current.copy(subscriptionStatus = newStatus)
+                        )
+                    }
                 }
-                _operationMsg.value = if (currentBlocked) "Institute unblocked" else "Institute blocked"
+                _institutes.value = _institutes.value.map { card ->
+                    if (card.entity.id != instituteId) return@map card
+                    card.copy(entity = card.entity.copy(subscriptionStatus = newStatus))
+                }
+                _operationMsg.value = if (newBlocked) "Institute blocked" else "Institute unblocked"
             } catch (e: Exception) {
                 _operationMsg.value = "Failed: ${e.message}"
             }
@@ -981,16 +1025,37 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
     ) {
         viewModelScope.launch {
             try {
+                val status = if (isActive) "active" else "blocked"
                 withContext(Dispatchers.IO) {
                     firestore.collection("institutes").document(instituteId).update(
                         mapOf(
                             "trialEndDate" to newExpiryMs,
+                            "currentPeriodEndMs" to newExpiryMs,
                             "studentLimit" to studentLimit,
                             "staffLimit" to staffLimit,
                             "currentPlanId" to planId,
                             "isActive" to isActive
                         )
                     ).await()
+                    db.instituteDao().getInstitute(instituteId)?.let { current ->
+                        db.instituteDao().insertInstitute(
+                            current.copy(
+                                currentPlanId = planId,
+                                subscriptionStatus = status,
+                                trialEndDateMs = newExpiryMs,
+                                currentPeriodEndMs = newExpiryMs
+                            )
+                        )
+                    }
+                }
+                _institutes.value = _institutes.value.map { card ->
+                    if (card.entity.id != instituteId) return@map card
+                    card.copy(entity = card.entity.copy(
+                        currentPlanId = planId,
+                        subscriptionStatus = status,
+                        trialEndDateMs = newExpiryMs,
+                        currentPeriodEndMs = newExpiryMs
+                    ))
                 }
                 _operationMsg.value = "Institute updated successfully"
                 onDone()
@@ -1065,20 +1130,31 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
         }
     }
 
-    fun broadcastAnnouncement(message: String) {
+    fun broadcastAnnouncement(message: String, expiryDays: Int) {
         if (message.isBlank()) {
             _operationMsg.value = "Message cannot be empty."
+            return
+        }
+        if (message.length > 500) {
+            _operationMsg.value = "Message must be under 500 characters."
             return
         }
         viewModelScope.launch {
             try {
                 val id = UUID.randomUUID().toString()
+                val now = System.currentTimeMillis()
+                val expiresAt = if (expiryDays > 0) now + (expiryDays * MILLIS_PER_DAY) else null
                 val data = mapOf(
                     "id" to id,
                     "message" to message.trim(),
-                    "sentAt" to System.currentTimeMillis(),
+                    "sentAt" to now,
+                    "updatedAt" to now,
+                    "expiresAt" to expiresAt,
                     "sender" to "SuperAdmin",
-                    "platform" to "android"
+                    "senderName" to "BatchFee Support",
+                    "platform" to "android",
+                    "status" to "active",
+                    "version" to 1
                 )
                 withContext(Dispatchers.IO) {
                     firestore.collection("Global_Notifications")
@@ -1087,6 +1163,80 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                 _operationMsg.value = "Announcement broadcast to all institutes!"
             } catch (e: Exception) {
                 _operationMsg.value = "Failed to send: ${e.message}"
+            }
+        }
+    }
+
+    fun editAnnouncement(id: String, message: String, expiryDays: Int) {
+        if (message.isBlank()) { _operationMsg.value = "Message cannot be empty."; return }
+        viewModelScope.launch {
+            try {
+                val now = System.currentTimeMillis()
+                val expiresAt = if (expiryDays > 0) now + (expiryDays * MILLIS_PER_DAY) else null
+                withContext(Dispatchers.IO) {
+                    firestore.collection("Global_Notifications").document(id)
+                        .update(mapOf("message" to message.trim(), "updatedAt" to now, "expiresAt" to expiresAt)).await()
+                }
+                _operationMsg.value = "Announcement updated."
+            } catch (e: Exception) { _operationMsg.value = "Failed: ${e.message}" }
+        }
+    }
+
+    fun archiveAnnouncement(id: String) {
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    firestore.collection("Global_Notifications").document(id)
+                        .update("status", "archived").await()
+                }
+                _operationMsg.value = "Announcement archived."
+            } catch (e: Exception) { _operationMsg.value = "Failed: ${e.message}" }
+        }
+    }
+
+    fun deleteAnnouncement(id: String) {
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    firestore.collection("Global_Notifications").document(id)
+                        .update("status", "deleted").await()
+                }
+                _operationMsg.value = "Announcement deleted."
+            } catch (e: Exception) { _operationMsg.value = "Failed: ${e.message}" }
+        }
+    }
+
+    private fun loadAllAnnouncements() {
+        firestore.collection("Global_Notifications")
+            .addSnapshotListener { snapshot, error ->
+                if (error != null || snapshot == null) return@addSnapshotListener
+                _announcements.value = snapshot.documents.mapNotNull { doc ->
+                    val d = doc.data ?: return@mapNotNull null
+                    AnnouncementData(
+                        id = doc.id,
+                        message = d["message"] as? String ?: "",
+                        sentAt = (d["sentAt"] as? Number)?.toLong() ?: 0L,
+                        updatedAt = (d["updatedAt"] as? Number)?.toLong() ?: (d["sentAt"] as? Number)?.toLong() ?: 0L,
+                        expiresAt = (d["expiresAt"] as? Number)?.toLong(),
+                        status = d["status"] as? String ?: "active",
+                        sender = d["senderName"] as? String ?: (d["sender"] as? String ?: "SuperAdmin"),
+                        platform = d["platform"] as? String ?: "android"
+                    )
+                }.sortedByDescending { it.sentAt }
+            }
+    }
+
+    fun clearExpiredAnnouncements() {
+        viewModelScope.launch {
+            val now = System.currentTimeMillis()
+            val expired = _announcements.value.filter {
+                it.status == "active" && it.expiresAt != null && it.expiresAt < now
+            }
+            expired.forEach { a ->
+                withContext(Dispatchers.IO) {
+                    firestore.collection("Global_Notifications").document(a.id)
+                        .update("status", "expired").await()
+                }
             }
         }
     }
@@ -1113,6 +1263,42 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                     )
                 }.sortedBy { it.fullName }
                 onResult(staffList)
+            } catch (e: Exception) {
+                FirebaseCrashlytics.getInstance().recordException(e)
+                onResult(emptyList())
+            }
+        }
+    }
+
+    fun loadInstituteReceipts(instituteId: String, onResult: (List<SubscriptionReceiptData>) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val data = withContext(Dispatchers.IO) {
+                    firestore.collection("institutes").document(instituteId)
+                        .collection("receipts")
+                        .get().await()
+                }
+                val plans = _subscriptionPlans.value
+                val receipts = data.documents.mapNotNull { doc ->
+                    val d = doc.data ?: return@mapNotNull null
+                    SubscriptionReceiptData(
+                        receiptNumber = d["receiptNumber"] as? String ?: doc.id,
+                        instituteName = d["instituteName"] as? String ?: "",
+                        ownerName = d["ownerName"] as? String ?: "",
+                        ownerPhone = d["ownerPhone"] as? String ?: "",
+                        ownerEmail = d["ownerEmail"] as? String ?: "",
+                        instituteCode = d["instituteCode"] as? String ?: "",
+                        instituteAddress = d["instituteAddress"] as? String ?: "",
+                        planName = d["planName"] as? String ?: planDisplayName(d["planId"] as? String ?: "", plans),
+                        durationMonths = (d["durationMonths"] as? Number)?.toInt() ?: 1,
+                        amountPaid = (d["amountPaid"] as? Number)?.toDouble() ?: 0.0,
+                        paymentMethod = d["paymentMethod"] as? String ?: "",
+                        transactionLast4 = d["transactionLast4"] as? String ?: "",
+                        startDateMs = (d["startDateMs"] as? Number)?.toLong() ?: (d["approvedAt"] as? Number)?.toLong() ?: 0L,
+                        endDateMs = (d["endDateMs"] as? Number)?.toLong() ?: 0L
+                    )
+                }.sortedByDescending { it.startDateMs }
+                onResult(receipts)
             } catch (e: Exception) {
                 FirebaseCrashlytics.getInstance().recordException(e)
                 onResult(emptyList())
@@ -1150,37 +1336,6 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
         }
     }
 
-    fun loadAllReceipts() {
-        viewModelScope.launch {
-            try {
-                val docs = withContext(Dispatchers.IO) {
-                    firestore.collection("subscriptionRequests")
-                        .whereEqualTo("status", "approved")
-                        .orderBy("reviewedAt", com.google.firebase.firestore.Query.Direction.DESCENDING)
-                        .limit(50).get().await()
-                }
-                _allReceipts.value = docs.documents.mapNotNull { doc ->
-                    val d = doc.data ?: return@mapNotNull null
-                    SubscriptionReceiptData(
-                        receiptNumber = doc.id,
-                        instituteName = d["instituteName"] as? String ?: "",
-                        ownerName = d["ownerName"] as? String ?: "",
-                        ownerPhone = d["institutePhone"] as? String ?: "",
-                        ownerEmail = d["email"] as? String ?: "",
-                        instituteCode = d["instituteCode"] as? String ?: "",
-                        instituteAddress = d["address"] as? String ?: "",
-                        planName = planDisplayName(d["requestedPlanId"] as? String ?: "", _subscriptionPlans.value),
-                        durationMonths = (d["durationMonths"] as? Long)?.toInt() ?: 1,
-                        amountPaid = (d["amountPaid"] as? Number)?.toDouble() ?: 0.0,
-                        paymentMethod = d["paymentMethod"] as? String ?: "",
-                        transactionLast4 = d["transactionLast4"] as? String ?: "",
-                        startDateMs = d["reviewedAt"] as? Long ?: System.currentTimeMillis(),
-                        endDateMs = d["reviewedAt"] as? Long ?: System.currentTimeMillis()
-                    )
-                }
-            } catch (_: Exception) { }
-        }
-    }
 
     fun setSecurityPin(instituteId: String, pin: String) {
         if (pin.isBlank() || !pin.matches(Regex("^\\d{4,6}$"))) {
@@ -1239,8 +1394,6 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
     var editingPlan by remember { mutableStateOf<SubscriptionPlanEntity?>(null) }
     var showPlanDialog by remember { mutableStateOf(false) }
     var showReceiptDialog by remember { mutableStateOf(false) }
-    val allReceipts by viewModel.allReceipts.collectAsState()
-    LaunchedEffect(Unit) { viewModel.loadAllReceipts() }
 
     val planNameById = remember(subscriptionPlans) { subscriptionPlans.associate { it.id to it.name } }
 
@@ -1325,7 +1478,7 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
                 }
             }
 
-            // ── Projected Revenue (Prediction) ──
+            // ── Monthly Revenue Estimate ──
             item {
                 ProjectedRevenueCard(projected, stats.activeSubscriptions)
             }
@@ -1349,47 +1502,18 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
 
             // ── Global Broadcast ──
             item {
-                Text("System Broadcast", color = TextMuted, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                Spacer(Modifier.height(8.dp))
-                Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = CardBg)) {
-                    Column(Modifier.padding(16.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(AccentPink.copy(alpha = 0.15f)), contentAlignment = Alignment.Center) {
-                                Icon(Icons.Filled.Campaign, null, tint = AccentPink, modifier = Modifier.size(20.dp))
-                            }
-                            Spacer(Modifier.width(10.dp))
-                            Text("Global Notification", color = TextWhite, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-                        }
-                        Spacer(Modifier.height(12.dp))
-                        OutlinedTextField(
-                            value = announceText, onValueChange = { announceText = it },
-                            placeholder = { Text("Announcement for all institutes...", color = TextMuted) },
-                            modifier = Modifier.fillMaxWidth().heightIn(min = 80.dp),
-                            shape = RoundedCornerShape(12.dp),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedContainerColor = CardBg, unfocusedContainerColor = CardBg,
-                                focusedBorderColor = AccentPink, unfocusedBorderColor = BorderSub,
-                                focusedTextColor = TextWhite, unfocusedTextColor = TextWhite,
-                                cursorColor = AccentPink
-                            )
-                        )
-                        Spacer(Modifier.height(10.dp))
-                        Button(
-                            onClick = {
-                                viewModel.broadcastAnnouncement(announceText)
-                                announceText = ""
-                            },
-                            modifier = Modifier.fillMaxWidth().height(48.dp),
-                            enabled = announceText.isNotBlank(),
-                            shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = AccentPink, disabledContainerColor = BorderSub)
-                        ) {
-                            Icon(Icons.Filled.Send, null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Text("Send Announcement", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = if (announceText.isNotBlank()) Color.White else TextMuted)
-                        }
-                    }
-                }
+                BroadcastSection(
+                    announceText = announceText,
+                    onAnnounceTextChange = { announceText = it },
+                    onSend = { msg, days ->
+                        viewModel.broadcastAnnouncement(msg, days)
+                        announceText = ""
+                    },
+                    announcements = viewModel.announcements.collectAsState().value,
+                    onEdit = { a, msg, days -> viewModel.editAnnouncement(a.id, msg, days) },
+                    onArchive = { viewModel.archiveAnnouncement(it.id) },
+                    onDelete = { viewModel.deleteAnnouncement(it.id) }
+                )
             }
 
             // ── Pending Requests ──
@@ -1460,59 +1584,6 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
                                 }
                             }
                         }
-                    }
-                }
-            }
-
-            // ── Money Receipts ──
-            if (allReceipts.isNotEmpty()) {
-                item {
-                    Spacer(Modifier.height(4.dp))
-                    Text("Subscription Receipts · ${allReceipts.size}", color = TextMuted, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                    Spacer(Modifier.height(8.dp))
-                }
-                items(allReceipts.take(20), key = { it.receiptNumber }) { r ->
-                    var showSendDialog by remember { mutableStateOf(false) }
-                    Card(
-                        Modifier.fillMaxWidth().clickable { showSendDialog = true },
-                        shape = RoundedCornerShape(12.dp),
-                        colors = CardDefaults.cardColors(containerColor = CardBg),
-                        border = BorderStroke(1.dp, BorderSub)
-                    ) {
-                        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text(r.instituteName, color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                                Text("${r.planName} · ${r.durationMonths} mo · BDT ${"%,.0f".format(r.amountPaid)}", color = AccentGreen, fontSize = 12.sp)
-                            }
-                            Text(r.paymentMethod.uppercase(), color = TextMuted, fontSize = 10.sp)
-                        }
-                    }
-                    if (showSendDialog) {
-                        val ctx = LocalContext.current
-                        AlertDialog(
-                            onDismissRequest = { showSendDialog = false },
-                            title = { Text("Send Receipt", color = TextWhite, fontWeight = FontWeight.Bold) },
-                            text = { Text("${r.instituteName}\n${r.planName} · BDT ${"%,.0f".format(r.amountPaid)}", color = TextWhite) },
-                            confirmButton = {
-                                Button(onClick = {
-                                    try {
-                                        val file = generateSubscriptionReceiptPdf(ctx, r)
-                                        val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", file)
-                                        val phone = r.ownerPhone.replace("+", "").replace(" ", "").replace("-", "")
-                                        val intent = Intent(Intent.ACTION_SEND).apply {
-                                            type = "application/pdf"; putExtra(Intent.EXTRA_STREAM, uri); setPackage("com.whatsapp")
-                                            if (phone.isNotBlank()) putExtra("jid", "${phone}@s.whatsapp.net")
-                                        }
-                                        ctx.startActivity(intent)
-                                    } catch (_: Exception) { }
-                                    showSendDialog = false
-                                }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF25D366))) {
-                                    Text("WhatsApp", color = Color.White)
-                                }
-                            },
-                            dismissButton = { TextButton(onClick = { showSendDialog = false }) { Text("Close", color = TextMuted) } },
-                            containerColor = CardBg, shape = RoundedCornerShape(16.dp)
-                        )
                     }
                 }
             }
@@ -2094,7 +2165,7 @@ private fun RevenueCard(title: String, amount: String, color: Color, icon: Image
     }
 }
 
-// ── Projected Revenue (Prediction Card) ───────────────────────
+// ── Monthly Revenue Estimate ────────────────────────────────
 @Composable
 private fun ProjectedRevenueCard(amount: Double, activeCount: Int) {
     val pulseAnim = rememberInfiniteTransition()
@@ -2113,7 +2184,7 @@ private fun ProjectedRevenueCard(amount: Double, activeCount: Int) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.size(8.dp).clip(RoundedCornerShape(4.dp)).background(AccentViolet.copy(alpha = glowAlpha)))
                         Spacer(Modifier.width(6.dp))
-                        Text("PREDICTION · AI", color = AccentViolet.copy(alpha = 0.8f), fontSize = 10.sp, letterSpacing = 1.sp, fontWeight = FontWeight.Bold)
+                        Text("MONTHLY ESTIMATE", color = AccentViolet.copy(alpha = 0.8f), fontSize = 10.sp, letterSpacing = 1.sp, fontWeight = FontWeight.Bold)
                     }
                     Spacer(Modifier.height(10.dp))
                     Text("BDT ${NumberFormat.getNumberInstance(Locale.getDefault()).apply { maximumFractionDigits = 0 }.format(amount)}",
@@ -2229,25 +2300,25 @@ private fun InstituteCard(
                         }
                     }
                     if (!inst.whatsappNumber.isNullOrBlank()) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Filled.Chat, null, tint = AccentGreen.copy(alpha = 0.7f), modifier = Modifier.size(14.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text(inst.whatsappNumber, color = AccentGreen.copy(alpha = 0.8f), fontSize = 12.sp)
+                        OutlinedButton(
+                            onClick = {
+                                val phone = inst.whatsappNumber.replace("+", "").replace(" ", "").replace("-", "")
+                                val msg = "Greetings from BatchFee Admin Panel\n\nThis is regarding your institute \"${inst.name}\".\n\nWe are reaching out from the BatchFee platform administration. If you have any questions about your subscription or services, please feel free to reply.\n\n— BatchFee Support Team"
+                                val intent = Intent(Intent.ACTION_VIEW).apply {
+                                    data = Uri.parse("https://wa.me/$phone?text=${Uri.encode(msg)}")
+                                }
+                                ctx.startActivity(intent)
+                            },
+                            modifier = Modifier.fillMaxWidth().height(36.dp),
+                            shape = RoundedCornerShape(8.dp),
+                            border = BorderStroke(1.dp, Color(0xFF25D366).copy(alpha = 0.4f)),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF25D366))
+                        ) {
+                            Icon(Icons.Filled.Chat, null, tint = Color(0xFF25D366), modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(6.dp))
-                            IconButton(
-                                onClick = {
-                                    val phone = inst.whatsappNumber.replace("+", "").replace(" ", "").replace("-", "")
-                                    val msg = "Hi, this is BatchFee developer. I'm reaching out regarding your institute \"${inst.name}\"."
-                                    val intent = Intent(Intent.ACTION_VIEW).apply {
-                                        data = Uri.parse("https://wa.me/$phone?text=${Uri.encode(msg)}")
-                                    }
-                                    ctx.startActivity(intent)
-                                },
-                                modifier = Modifier.size(22.dp)
-                            ) {
-                                Icon(Icons.Filled.Chat, null, tint = Color(0xFF25D366), modifier = Modifier.size(18.dp))
-                            }
+                            Text("WhatsApp ${inst.whatsappNumber}", color = Color(0xFF25D366), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                         }
+                        Spacer(Modifier.height(4.dp))
                     }
                 }
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -2480,10 +2551,6 @@ private fun InstituteCard(
 
     // ── Detail Sheet ──
     if (showDetailSheet) {
-        val planPrice = remember(subscriptionPlans, inst.currentPlanId) {
-            planDisplayPrice(inst.currentPlanId, subscriptionPlans)
-        }
-
         AlertDialog(
             onDismissRequest = { showDetailSheet = false },
             title = {
@@ -2528,9 +2595,72 @@ private fun InstituteCard(
                     // Details
                     DetailRow("Owner", inst.ownerName ?: "N/A")
                     DetailRow("Phone", inst.phone ?: "N/A")
-                    DetailRow("WhatsApp", inst.whatsappNumber ?: "N/A")
+                    if (!inst.whatsappNumber.isNullOrBlank()) {
+                        Spacer(Modifier.height(4.dp))
+                        OutlinedButton(
+                            onClick = {
+                                val phone = inst.whatsappNumber.replace("+", "").replace(" ", "").replace("-", "")
+                                val msg = "Greetings from BatchFee Admin Panel\n\nThis is regarding your institute \"${inst.name}\".\n\nWe are reaching out from the BatchFee platform administration. If you have any questions about your subscription or services, please feel free to reply.\n\n— BatchFee Support Team"
+                                val intent = Intent(Intent.ACTION_VIEW).apply {
+                                    data = Uri.parse("https://wa.me/$phone?text=${Uri.encode(msg)}")
+                                }
+                                ctx.startActivity(intent)
+                            },
+                            modifier = Modifier.fillMaxWidth().height(36.dp),
+                            shape = RoundedCornerShape(8.dp),
+                            border = BorderStroke(1.dp, Color(0xFF25D366).copy(alpha = 0.4f)),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF25D366))
+                        ) {
+                            Icon(Icons.Filled.Chat, null, tint = Color(0xFF25D366), modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("WhatsApp ${inst.whatsappNumber}", color = Color(0xFF25D366), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
                     DetailRow("Email", inst.email ?: "N/A")
-                    DetailRow("Plan", "$currentPlanName (BDT ${NumberFormat.getNumberInstance(Locale.getDefault()).format(planPrice.toInt())})")
+
+                    // ── Current Plan Card ──
+                    Spacer(Modifier.height(4.dp))
+                    val planDetail = remember(subscriptionPlans, inst.currentPlanId) {
+                        planDisplayDetails(inst.currentPlanId, subscriptionPlans)
+                    }
+                    Card(
+                        Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = BorderSub.copy(alpha = 0.3f)),
+                        border = BorderStroke(1.dp, AccentViolet.copy(alpha = 0.25f))
+                    ) {
+                        Column(Modifier.padding(12.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Filled.WorkspacePremium, null, tint = AccentViolet, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text(currentPlanName, color = TextWhite, fontSize = 15.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                                if (planDetail != null && planDetail.tag.isNotBlank()) {
+                                    Box(
+                                        Modifier.clip(RoundedCornerShape(6.dp)).background(AccentViolet.copy(alpha = 0.15f))
+                                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                                    ) {
+                                        Text(planDetail.tag, color = AccentViolet, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
+                            Spacer(Modifier.height(6.dp))
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                if (planDetail != null) {
+                                    PlanMetricChip("BDT ${formatMoneyValue(planDetail.priceBdt)}")
+                                    PlanMetricChip("${planDetail.maxStudents} students")
+                                    planDetail.let { PlanMetricChip("${it.maxBatches} batches") }
+                                    planDetail.let { PlanMetricChip("${it.maxUsers} users") }
+                                } else {
+                                    Text("Plan details unavailable", color = TextMuted, fontSize = 11.sp)
+                                }
+                            }
+                            if (planDetail != null && planDetail.description.isNotBlank()) {
+                                Spacer(Modifier.height(6.dp))
+                                Text(planDetail.description, color = TextMuted, fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                    }
+
                     DetailRow("Status", inst.subscriptionStatus.replaceFirstChar { it.uppercase() }, when (inst.subscriptionStatus) {
                         "active" -> AccentGreen; "trial" -> AccentCyan; "expired" -> AccentRed; "blocked" -> AccentAmber; else -> TextMuted
                     })
@@ -2610,6 +2740,160 @@ private fun InstituteCard(
                             }
                         }
                     }
+
+                    // ── Payment History (fetched from institute's receipts subcollection) ──
+                    var receiptList by remember { mutableStateOf<List<SubscriptionReceiptData>?>(null) }
+                    LaunchedEffect(inst.id) { viewModel.loadInstituteReceipts(inst.id) { receiptList = it } }
+
+                    HorizontalDivider(color = BorderSub)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.ReceiptLong, null, tint = AccentGreen.copy(alpha = 0.7f), modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Payment History (${receiptList?.size ?: 0})", color = AccentGreen, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    }
+                    when {
+                        receiptList == null -> {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp).align(Alignment.CenterHorizontally),
+                                strokeWidth = 2.dp, color = AccentGreen
+                            )
+                        }
+                        receiptList!!.isEmpty() -> Text("No payment receipts found", color = TextMuted, fontSize = 12.sp)
+                        else -> {
+                            val ctx = LocalContext.current
+                            receiptList!!.forEachIndexed { index, r ->
+                                var showShareOptions by remember { mutableStateOf(false) }
+                                val isTrial = r.paymentMethod == "free_trial"
+                                val dateFmt = SimpleDateFormat("dd MMM yyyy", Locale.getDefault())
+                                val isLatest = index == 0
+                                val planColor = when {
+                                    isTrial -> AccentAmber
+                                    isLatest -> AccentGreen
+                                    else -> AccentGreen.copy(alpha = 0.6f)
+                                }
+                                Column {
+                                    // Timeline connector
+                                    if (index > 0) {
+                                        Box(modifier = Modifier.width(26.dp).height(8.dp).padding(start = 12.5.dp).width(1.dp).fillMaxHeight().background(BorderSub))
+                                    }
+                                    Row(
+                                        Modifier.fillMaxWidth().clickable { showShareOptions = true },
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        // Sequence number / badge
+                                        Box(
+                                            Modifier.size(26.dp).clip(RoundedCornerShape(8.dp))
+                                                .background(planColor.copy(alpha = 0.15f)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            if (isTrial) {
+                                                Icon(Icons.Filled.Star, null, tint = AccentAmber, modifier = Modifier.size(14.dp))
+                                            } else {
+                                                Text("${receiptList!!.size - index}", color = planColor, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                            }
+                                        }
+                                        Spacer(Modifier.width(10.dp))
+                                        // Main info
+                                        Column(Modifier.weight(1f)) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Text(r.planName, color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                                Spacer(Modifier.width(6.dp))
+                                                if (isTrial) {
+                                                    Box(
+                                                        Modifier.clip(RoundedCornerShape(4.dp)).background(AccentAmber.copy(alpha = 0.15f))
+                                                            .padding(horizontal = 5.dp, vertical = 1.dp)
+                                                    ) {
+                                                        Text("Trial", color = AccentAmber, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                                                    }
+                                                }
+                                                if (isLatest && !isTrial) {
+                                                    Box(
+                                                        Modifier.clip(RoundedCornerShape(4.dp)).background(AccentGreen.copy(alpha = 0.15f))
+                                                            .padding(horizontal = 5.dp, vertical = 1.dp)
+                                                    ) {
+                                                        Text("Current", color = AccentGreen, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                                                    }
+                                                }
+                                            }
+                                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 2.dp)) {
+                                                Text(
+                                                    "${dateFmt.format(Date(r.startDateMs))} — ${dateFmt.format(Date(r.endDateMs))}",
+                                                    color = TextMuted, fontSize = 10.sp
+                                                )
+                                                Spacer(Modifier.width(6.dp))
+                                                Text("· ${r.durationMonths} mo", color = TextMuted.copy(alpha = 0.7f), fontSize = 10.sp)
+                                                if (!isTrial && r.paymentMethod.isNotBlank()) {
+                                                    Spacer(Modifier.width(6.dp))
+                                                    Text("· ${r.paymentMethod.uppercase()}", color = TextMuted.copy(alpha = 0.5f), fontSize = 10.sp)
+                                                }
+                                            }
+                                        }
+                                        // Amount
+                                        Column(horizontalAlignment = Alignment.End) {
+                                            Text(
+                                                if (isTrial) "FREE" else "BDT ${"%,.0f".format(r.amountPaid)}",
+                                                color = if (isTrial) AccentAmber else AccentGreen,
+                                                fontSize = 13.sp, fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+                                    Spacer(Modifier.height(2.dp))
+                                }
+                                if (showShareOptions) {
+                                    AlertDialog(
+                                        onDismissRequest = { showShareOptions = false },
+                                        title = { Text("Receipt Actions", color = TextWhite, fontWeight = FontWeight.Bold) },
+                                        text = { Column {
+                                            Text(r.planName, color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                                            Spacer(Modifier.height(4.dp))
+                                            Text("Period: ${dateFmt.format(Date(r.startDateMs))} — ${dateFmt.format(Date(r.endDateMs))}", color = TextMuted, fontSize = 12.sp)
+                                            Text("Duration: ${r.durationMonths} month(s)", color = TextMuted, fontSize = 12.sp)
+                                            Text("Amount: ${if (isTrial) "Free Trial" else "BDT ${"%,.0f".format(r.amountPaid)}"}", color = if (isTrial) AccentAmber else AccentGreen, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                            if (!isTrial && r.paymentMethod.isNotBlank()) Text("Payment: ${r.paymentMethod.uppercase()}", color = TextMuted, fontSize = 12.sp)
+                                        } },
+                                        confirmButton = {
+                                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                Button(onClick = {
+                                                    try {
+                                                        val file = generateSubscriptionReceiptPdf(ctx, r)
+                                                        val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", file)
+                                                        val phone = r.ownerPhone.replace("+", "").replace(" ", "").replace("-", "")
+                                                        val intent = Intent(Intent.ACTION_SEND).apply {
+                                                            type = "application/pdf"; putExtra(Intent.EXTRA_STREAM, uri); setPackage("com.whatsapp")
+                                                            if (phone.isNotBlank()) putExtra("jid", "${phone}@s.whatsapp.net")
+                                                        }
+                                                        if (intent.resolveActivity(ctx.packageManager) != null) {
+                                                            ctx.startActivity(intent)
+                                                        } else {
+                                                            Toast.makeText(ctx, "WhatsApp not installed.", Toast.LENGTH_SHORT).show()
+                                                        }
+                                                    } catch (_: Exception) { }
+                                                    showShareOptions = false
+                                                }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF25D366)), modifier = Modifier.weight(1f)) {
+                                                    Text("WhatsApp", fontSize = 11.sp, color = Color.White)
+                                                }
+                                                Button(onClick = {
+                                                    try {
+                                                        val file = generateSubscriptionReceiptPdf(ctx, r)
+                                                        val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", file)
+                                                        ctx.startActivity(Intent(Intent.ACTION_VIEW).apply {
+                                                            setDataAndType(uri, "application/pdf")
+                                                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                                        })
+                                                    } catch (_: Exception) { }
+                                                    showShareOptions = false
+                                                }, colors = ButtonDefaults.buttonColors(containerColor = ElectricBlue), modifier = Modifier.weight(1f)) {
+                                                    Text("View PDF", fontSize = 11.sp, color = Color.White)
+                                                }
+                                            }
+                                        },
+                                        dismissButton = { TextButton(onClick = { showShareOptions = false }) { Text("Close", color = TextMuted) } },
+                                        containerColor = CardBg, shape = RoundedCornerShape(16.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             },
             confirmButton = {
@@ -2636,28 +2920,168 @@ private fun InstituteCard(
 
     // Extend Dialog
     if (showExtendDialog) {
+        val currentExpiryDate = remember(inst.trialEndDateMs) {
+            SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(inst.trialEndDateMs))
+        }
+        val days = extendDays.toIntOrNull()?.coerceAtLeast(0) ?: 0
+        val newExpiryMs = inst.trialEndDateMs + (days * 24L * 60 * 60 * 1000)
+        val newExpiryDate = remember(days) {
+            SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(newExpiryMs))
+        }
+        val daysRemaining = remember(inst.trialEndDateMs) {
+            ((inst.trialEndDateMs - System.currentTimeMillis()) / MILLIS_PER_DAY).coerceAtLeast(0).toInt()
+        }
+
         AlertDialog(
             onDismissRequest = { showExtendDialog = false },
-            title = { Text("Extend Subscription", fontWeight = FontWeight.Bold) },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(AccentCyan.copy(alpha = 0.15f)), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Filled.Update, null, tint = AccentCyan, modifier = Modifier.size(20.dp))
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Column {
+                        Text("Extend Subscription", color = TextWhite, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        Text(inst.name, color = TextMuted, fontSize = 12.sp)
+                    }
+                }
+            },
             text = {
-                Column {
-                    Text("Add days to ${inst.name}'s subscription:", color = TextMuted, fontSize = 14.sp)
-                    Spacer(Modifier.height(12.dp))
-                    OutlinedTextField(
-                        value = extendDays, onValueChange = { if (it.isEmpty() || it.matches(Regex("^\\d+$"))) extendDays = it },
-                        label = { Text("Days") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        singleLine = true, modifier = Modifier.fillMaxWidth()
-                    )
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    // Current status card
+                    Card(
+                        Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = CardDefaults.cardColors(containerColor = BorderSub.copy(alpha = 0.3f))
+                    ) {
+                        Column(Modifier.padding(12.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Filled.CalendarToday, null, tint = TextMuted, modifier = Modifier.size(14.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Current Status", color = TextMuted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                            Spacer(Modifier.height(6.dp))
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Column {
+                                    Text("Plan", color = TextMuted.copy(alpha = 0.6f), fontSize = 10.sp)
+                                    Text(currentPlanName, color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                                }
+                                Column(horizontalAlignment = Alignment.End) {
+                                    Text("Expires", color = TextMuted.copy(alpha = 0.6f), fontSize = 10.sp)
+                                    Text(currentExpiryDate, color = if (daysRemaining <= 3) AccentRed else TextWhite, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                                }
+                            }
+                            Spacer(Modifier.height(4.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(Modifier.size(6.dp).clip(RoundedCornerShape(3.dp)).background(
+                                    if (daysRemaining <= 3) AccentRed else if (daysRemaining <= 7) AccentAmber else AccentGreen
+                                ))
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    if (daysRemaining <= 0) "Expired" else "$daysRemaining days remaining",
+                                    color = if (daysRemaining <= 0) AccentRed else TextMuted,
+                                    fontSize = 11.sp
+                                )
+                            }
+                        }
+                    }
+
+                    // Quick presets
+                    Text("Quick Presets", color = TextMuted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf(
+                            "+7 Days" to 7,
+                            "+15 Days" to 15,
+                            "+30 Days" to 30,
+                            "+90 Days" to 90
+                        ).forEach { (label, preset) ->
+                            FilterChip(
+                                selected = days == preset,
+                                onClick = { extendDays = preset.toString() },
+                                label = { Text(label, fontSize = 10.sp, fontWeight = if (days == preset) FontWeight.Bold else FontWeight.Normal) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    containerColor = CardBg,
+                                    selectedContainerColor = AccentCyan.copy(alpha = 0.15f),
+                                    labelColor = TextMuted,
+                                    selectedLabelColor = AccentCyan
+                                ),
+                                border = FilterChipDefaults.filterChipBorder(
+                                    borderColor = BorderSub,
+                                    selectedBorderColor = AccentCyan.copy(alpha = 0.4f),
+                                    enabled = true, selected = days == preset
+                                ),
+                                shape = RoundedCornerShape(8.dp)
+                            )
+                        }
+                    }
+
+                    // Custom days input
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Custom:", color = TextMuted, fontSize = 12.sp)
+                        Spacer(Modifier.width(8.dp))
+                        OutlinedTextField(
+                            value = extendDays, onValueChange = { if (it.isEmpty() || it.matches(Regex("^\\d{1,4}$"))) extendDays = it },
+                            modifier = Modifier.weight(1f),
+                            label = { Text("Days") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true,
+                            shape = RoundedCornerShape(10.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedContainerColor = CardBg, unfocusedContainerColor = CardBg,
+                                focusedBorderColor = AccentCyan, unfocusedBorderColor = BorderSub,
+                                focusedTextColor = TextWhite, unfocusedTextColor = TextWhite,
+                                cursorColor = AccentCyan, focusedLabelColor = AccentCyan, unfocusedLabelColor = TextMuted
+                            )
+                        )
+                    }
+
+                    // Preview
+                    if (days > 0) {
+                        Card(
+                            Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(10.dp),
+                            colors = CardDefaults.cardColors(containerColor = AccentGreen.copy(alpha = 0.08f)),
+                            border = BorderStroke(1.dp, AccentGreen.copy(alpha = 0.25f))
+                        ) {
+                            Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Filled.TrendingUp, null, tint = AccentGreen, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text("New Expiry Date", color = TextMuted, fontSize = 10.sp)
+                                    Text(newExpiryDate, color = AccentGreen, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                }
+                                Text(
+                                    "+$days day${if (days > 1) "s" else ""}",
+                                    color = AccentGreen,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+                    }
                 }
             },
             confirmButton = {
-                TextButton(onClick = {
-                    val days = extendDays.toIntOrNull() ?: 0
-                    if (days > 0) { viewModel.extendSubscription(inst.id, days); showExtendDialog = false }
-                }) { Text("Extend", color = AccentCyan, fontWeight = FontWeight.Bold) }
+                Button(
+                    onClick = {
+                        val d = extendDays.toIntOrNull() ?: 0
+                        if (d > 0) { viewModel.extendSubscription(inst.id, d); showExtendDialog = false; extendDays = "30" }
+                    },
+                    enabled = days > 0,
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = AccentCyan,
+                        disabledContainerColor = BorderSub
+                    )
+                ) {
+                    Text("Extend ${if (days > 0) "$days Days" else ""}", fontWeight = FontWeight.Bold, color = if (days > 0) CardBg else TextMuted)
+                }
             },
-            dismissButton = { TextButton(onClick = { showExtendDialog = false }) { Text("Cancel", color = TextMuted) } }
+            dismissButton = {
+                TextButton(onClick = { showExtendDialog = false; extendDays = "30" }) { Text("Cancel", color = TextMuted) }
+            },
+            containerColor = CardBg,
+            shape = RoundedCornerShape(16.dp)
         )
     }
 
@@ -2682,6 +3106,18 @@ private fun InstituteCard(
             selectedPlanName = planOptions[selectedPlanId] ?: humanizePlanId(selectedPlanId)
         }
 
+        val selectedPlanDetail = remember(subscriptionPlans, selectedPlanId) {
+            subscriptionPlans.firstOrNull { it.id == selectedPlanId }
+        }
+        LaunchedEffect(selectedPlanDetail) {
+            if (selectedPlanDetail != null && showManageDialog) {
+                editStudentLimit = selectedPlanDetail!!.maxStudents.toString()
+                editStaffLimit = selectedPlanDetail!!.maxUsers.toString()
+            }
+        }
+
+        val mgrDateFmt = remember { SimpleDateFormat("dd MMM yyyy", Locale.getDefault()) }
+
         fun computedExpiryMs(): Long {
             val c = Calendar.getInstance()
             c.set(editYear, editMonth, editDay, 23, 59, 59)
@@ -2692,225 +3128,321 @@ private fun InstituteCard(
 
         AlertDialog(
             onDismissRequest = { showManageDialog = false },
-            title = { Text("Manage ${inst.name}", fontWeight = FontWeight.Bold, color = TextWhite) },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(AccentViolet.copy(alpha = 0.15f)), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Filled.Tune, null, tint = AccentViolet, modifier = Modifier.size(20.dp))
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Column {
+                        Text("Manage Institute", color = TextWhite, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        Text(inst.name, color = TextMuted, fontSize = 12.sp)
+                    }
+                }
+            },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("Plan", color = TextMuted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                    var editPlanDropdown by remember { mutableStateOf(false) }
-                    Box {
-                        OutlinedTextField(
-                            value = selectedPlanName,
-                            onValueChange = { },
-                            readOnly = true,
-                            trailingIcon = { Icon(if (editPlanDropdown) Icons.Filled.ArrowDropUp else Icons.Filled.ArrowDropDown, null, modifier = Modifier.clickable { editPlanDropdown = !editPlanDropdown }) },
-                            modifier = Modifier.fillMaxWidth().clickable { editPlanDropdown = !editPlanDropdown },
-                            shape = RoundedCornerShape(12.dp)
-                        )
-                        DropdownMenu(expanded = editPlanDropdown, onDismissRequest = { editPlanDropdown = false }) {
-                            planOptions.forEach { (id, name) ->
-                                DropdownMenuItem(
-                                    text = { Text(name) },
-                                    onClick = { selectedPlanId = id; selectedPlanName = name; editPlanDropdown = false }
-                                )
+                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    // ── Current Plan Card ──
+                    Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), colors = CardDefaults.cardColors(containerColor = BorderSub.copy(alpha = 0.3f)), border = BorderStroke(1.dp, AccentViolet.copy(alpha = 0.2f))) {
+                        Column(Modifier.padding(12.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Filled.WorkspacePremium, null, tint = AccentViolet, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text(currentPlanName, color = TextWhite, fontSize = 15.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                                if (!inst.instituteCode.isNullOrBlank()) {
+                                    Box(Modifier.clip(RoundedCornerShape(6.dp)).background(AccentViolet.copy(alpha = 0.12f)).padding(horizontal = 8.dp, vertical = 3.dp)) {
+                                        Text(inst.instituteCode, color = AccentViolet, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                                    }
+                                }
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Column {
+                                    Text("Expires", color = TextMuted.copy(alpha = 0.6f), fontSize = 10.sp)
+                                    Text(mgrDateFmt.format(Date(inst.trialEndDateMs)), color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                                }
+                                Column {
+                                    Text("Status", color = TextMuted.copy(alpha = 0.6f), fontSize = 10.sp)
+                                    Text(inst.subscriptionStatus.replaceFirstChar { it.uppercase() }, color = statusColor, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                                }
                             }
                         }
                     }
 
-                    Text("Expiry Date", color = TextMuted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        OutlinedTextField(
-                            value = editDay.toString().padStart(2, '0'),
-                            onValueChange = { val v = it.toIntOrNull(); if (v != null && v in 1..31) editDay = v },
-                            label = { Text("Day", fontSize = 11.sp) },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            singleLine = true,
-                            modifier = Modifier.weight(1f)
-                        )
-                        OutlinedTextField(
-                            value = (editMonth + 1).toString().padStart(2, '0'),
-                            onValueChange = { val v = it.toIntOrNull(); if (v != null && v in 1..12) editMonth = v - 1 },
-                            label = { Text("Month", fontSize = 11.sp) },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            singleLine = true,
-                            modifier = Modifier.weight(1f)
-                        )
-                        OutlinedTextField(
-                            value = editYear.toString(),
-                            onValueChange = { val v = it.toIntOrNull(); if (v != null && v in 2024..2099) editYear = v },
-                            label = { Text("Year", fontSize = 11.sp) },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            singleLine = true,
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        OutlinedTextField(
-                            value = editAddMonths,
-                            onValueChange = { if (it.isEmpty() || it.matches(Regex("^\\d+$"))) editAddMonths = it },
-                            label = { Text("+ Months", fontSize = 11.sp) },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            singleLine = true,
-                            modifier = Modifier.weight(1f)
-                        )
-                        Text("→ ${SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(computedExpiryMs()))}", color = AccentCyan, fontSize = 11.sp, modifier = Modifier.weight(1f))
+                    // ── Switch Plan ──
+                    Text("Switch Plan", color = TextMuted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    var editPlanDropdown by remember { mutableStateOf(false) }
+                    Box {
+                        OutlinedTextField(value = selectedPlanName, onValueChange = { }, readOnly = true, leadingIcon = { Icon(Icons.Filled.WorkspacePremium, null, tint = AccentViolet, modifier = Modifier.size(18.dp)) }, trailingIcon = { Icon(if (editPlanDropdown) Icons.Filled.ArrowDropUp else Icons.Filled.ArrowDropDown, null, tint = AccentViolet, modifier = Modifier.clickable { editPlanDropdown = !editPlanDropdown }) }, modifier = Modifier.fillMaxWidth().clickable { editPlanDropdown = !editPlanDropdown }, shape = RoundedCornerShape(12.dp), colors = OutlinedTextFieldDefaults.colors(focusedContainerColor = CardBg, unfocusedContainerColor = CardBg, focusedBorderColor = AccentViolet, unfocusedBorderColor = BorderSub, focusedTextColor = TextWhite, unfocusedTextColor = TextWhite, cursorColor = AccentViolet))
+                        DropdownMenu(expanded = editPlanDropdown, onDismissRequest = { editPlanDropdown = false }, modifier = Modifier.background(CardBg)) {
+                            planOptions.forEach { (id, name) ->
+                                val isCurrent = id == selectedPlanId
+                                DropdownMenuItem(text = { Row(verticalAlignment = Alignment.CenterVertically) { Text(name, color = if (isCurrent) AccentViolet else TextWhite, fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal); if (isCurrent) { Spacer(Modifier.width(8.dp)); Icon(Icons.Filled.Check, null, tint = AccentViolet, modifier = Modifier.size(16.dp)) } } }, onClick = { selectedPlanId = id; selectedPlanName = name; editPlanDropdown = false })
+                            }
+                        }
                     }
 
-                    HorizontalDivider(color = BorderSub, modifier = Modifier.padding(vertical = 4.dp))
+                    // ── Plan Preview (when switching) ──
+                    if (selectedPlanDetail != null && selectedPlanId != inst.currentPlanId) {
+                        Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(10.dp), colors = CardDefaults.cardColors(containerColor = AccentViolet.copy(alpha = 0.08f)), border = BorderStroke(1.dp, AccentViolet.copy(alpha = 0.2f))) {
+                            Column(Modifier.padding(12.dp)) {
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    PlanMetricChip("BDT ${formatMoneyValue(selectedPlanDetail!!.priceBdt)}")
+                                    PlanMetricChip("${selectedPlanDetail!!.maxStudents} students")
+                                    PlanMetricChip("${selectedPlanDetail!!.maxUsers} users")
+                                }
+                                if (selectedPlanDetail!!.description.isNotBlank()) {
+                                    Spacer(Modifier.height(6.dp))
+                                    Text(selectedPlanDetail!!.description, color = TextMuted, fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                }
+                            }
+                        }
+                    }
 
-                    Text("Student Limit", color = TextMuted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                    OutlinedTextField(
-                        value = editStudentLimit,
-                        onValueChange = { if (it.isEmpty() || it.matches(Regex("^\\d+$"))) editStudentLimit = it },
-                        label = { Text("Max Students", fontSize = 11.sp) },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    // ── Expiry Date ──
+                    Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), colors = CardDefaults.cardColors(containerColor = BorderSub.copy(alpha = 0.3f))) {
+                        Column(Modifier.padding(12.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Filled.CalendarMonth, null, tint = AccentCyan, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(8.dp)); Text("Expiry Date", color = TextMuted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                            Spacer(Modifier.height(10.dp))
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                mgrDateField(editDay.toString().padStart(2, '0'), "Day", { val v = it.toIntOrNull(); if (v != null && v in 1..31) editDay = v }, Modifier.weight(1f))
+                                mgrDateField((editMonth + 1).toString().padStart(2, '0'), "Month", { val v = it.toIntOrNull(); if (v != null && v in 1..12) editMonth = v - 1 }, Modifier.weight(1f))
+                                mgrDateField(editYear.toString(), "Year", { val v = it.toIntOrNull(); if (v != null && v in 2024..2099) editYear = v }, Modifier.weight(1f))
+                            }
+                            Spacer(Modifier.height(10.dp))
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                OutlinedTextField(value = editAddMonths, onValueChange = { if (it.isEmpty() || it.matches(Regex("^\\d+$"))) editAddMonths = it }, label = { Text("+Months", fontSize = 10.sp) }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true, modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp), colors = OutlinedTextFieldDefaults.colors(focusedContainerColor = CardBg, unfocusedContainerColor = CardBg, focusedBorderColor = AccentCyan, unfocusedBorderColor = BorderSub, focusedTextColor = TextWhite, unfocusedTextColor = TextWhite, cursorColor = AccentCyan, focusedLabelColor = AccentCyan, unfocusedLabelColor = TextMuted))
+                                Card(Modifier.weight(1f), shape = RoundedCornerShape(10.dp), colors = CardDefaults.cardColors(containerColor = AccentCyan.copy(alpha = 0.1f))) {
+                                    Box(Modifier.padding(horizontal = 10.dp, vertical = 10.dp), contentAlignment = Alignment.Center) { Text("→ ${mgrDateFmt.format(Date(computedExpiryMs()))}", color = AccentCyan, fontSize = 12.sp, fontWeight = FontWeight.Bold) }
+                                }
+                            }
+                        }
+                    }
 
-                    HorizontalDivider(color = BorderSub, modifier = Modifier.padding(vertical = 4.dp))
+                    // ── Limits ──
+                    Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), colors = CardDefaults.cardColors(containerColor = BorderSub.copy(alpha = 0.3f))) {
+                        Column(Modifier.padding(12.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Filled.Groups, null, tint = AccentPink, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(8.dp)); Text("Institute Limits", color = TextMuted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold) }
+                            Spacer(Modifier.height(10.dp))
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedTextField(value = editStudentLimit, onValueChange = { if (it.isEmpty() || it.matches(Regex("^\\d+$"))) editStudentLimit = it }, label = { Text("Students", fontSize = 10.sp) }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true, modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp), colors = OutlinedTextFieldDefaults.colors(focusedContainerColor = CardBg, unfocusedContainerColor = CardBg, focusedBorderColor = AccentPink, unfocusedBorderColor = BorderSub, focusedTextColor = TextWhite, unfocusedTextColor = TextWhite, cursorColor = AccentPink, focusedLabelColor = AccentPink, unfocusedLabelColor = TextMuted))
+                                OutlinedTextField(value = editStaffLimit, onValueChange = { if (it.isEmpty() || it.matches(Regex("^\\d+$"))) editStaffLimit = it }, label = { Text("Staff", fontSize = 10.sp) }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true, modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp), colors = OutlinedTextFieldDefaults.colors(focusedContainerColor = CardBg, unfocusedContainerColor = CardBg, focusedBorderColor = AccentPink, unfocusedBorderColor = BorderSub, focusedTextColor = TextWhite, unfocusedTextColor = TextWhite, cursorColor = AccentPink, focusedLabelColor = AccentPink, unfocusedLabelColor = TextMuted))
+                            }
+                        }
+                    }
 
-                    Text("Staff Limit", color = TextMuted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                    OutlinedTextField(
-                        value = editStaffLimit,
-                        onValueChange = { if (it.isEmpty() || it.matches(Regex("^\\d+$"))) editStaffLimit = it },
-                        label = { Text("Max Staff", fontSize = 11.sp) },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    HorizontalDivider(color = BorderSub, modifier = Modifier.padding(vertical = 4.dp))
-
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Text("Account Active", color = TextMuted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                        Switch(
-                            checked = editIsActive,
-                            onCheckedChange = { editIsActive = it },
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = AccentGreen,
-                                checkedTrackColor = AccentGreen.copy(alpha = 0.25f),
-                                uncheckedThumbColor = AccentRed,
-                                uncheckedTrackColor = AccentRed.copy(alpha = 0.25f)
-                            )
-                        )
+                    // ── Account Active ──
+                    Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), colors = CardDefaults.cardColors(containerColor = BorderSub.copy(alpha = 0.3f))) {
+                        Row(Modifier.padding(horizontal = 14.dp, vertical = 8.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) { Text("Account Access", color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.Medium); Text(if (editIsActive) "Institute can login and use the app" else "Institute is blocked from accessing the app", color = TextMuted, fontSize = 10.sp) }
+                            Switch(checked = editIsActive, onCheckedChange = { editIsActive = it }, colors = SwitchDefaults.colors(checkedThumbColor = AccentGreen, checkedTrackColor = AccentGreen.copy(alpha = 0.25f), uncheckedThumbColor = AccentRed, uncheckedTrackColor = AccentRed.copy(alpha = 0.25f)))
+                        }
                     }
                 }
             },
             confirmButton = {
-                TextButton(onClick = {
-                    val studentLimit = editStudentLimit.toIntOrNull()?.coerceAtLeast(1) ?: 50
-                    val staffLimit = editStaffLimit.toIntOrNull()?.coerceAtLeast(1) ?: 10
-                    viewModel.manageInstitute(inst.id, computedExpiryMs(), studentLimit, staffLimit, selectedPlanId, editIsActive) {
-                        showManageDialog = false
-                    }
-                }) { Text("Save", color = AccentCyan, fontWeight = FontWeight.Bold) }
+                Button(onClick = { val studentLimit = editStudentLimit.toIntOrNull()?.coerceAtLeast(1) ?: 50; val staffLimit = editStaffLimit.toIntOrNull()?.coerceAtLeast(1) ?: 10; viewModel.manageInstitute(inst.id, computedExpiryMs(), studentLimit, staffLimit, selectedPlanId, editIsActive) { showManageDialog = false } }, modifier = Modifier.fillMaxWidth().height(44.dp), shape = RoundedCornerShape(12.dp), colors = ButtonDefaults.buttonColors(containerColor = AccentViolet)) {
+                    Icon(Icons.Filled.Save, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Save Changes", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = TextWhite)
+                }
             },
-            dismissButton = { TextButton(onClick = { showManageDialog = false }) { Text("Cancel", color = TextMuted) } }
+            dismissButton = { TextButton(onClick = { showManageDialog = false }) { Text("Cancel", color = TextMuted) } },
+            containerColor = CardBg, shape = RoundedCornerShape(16.dp)
         )
-    }
-
-    // ── Share receipt event ──────────────────────────────
-    val context = LocalContext.current
-    val shareEvent by viewModel.shareReceiptEvent.collectAsState()
-    LaunchedEffect(shareEvent) {
-        shareEvent?.let { (bitmap, phone) ->
-            shareSubscriptionReceipt(context, bitmap, phone)
-            viewModel.consumeShareEvent()
-        }
     }
 }
 
+@Composable
+private fun mgrDateField(value: String, label: String, onChange: (String) -> Unit, modifier: Modifier) {
+    OutlinedTextField(value = value, onValueChange = onChange, label = { Text(label, fontSize = 10.sp) }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true, modifier = modifier, shape = RoundedCornerShape(10.dp), colors = OutlinedTextFieldDefaults.colors(focusedContainerColor = CardBg, unfocusedContainerColor = CardBg, focusedBorderColor = AccentCyan, unfocusedBorderColor = BorderSub, focusedTextColor = TextWhite, unfocusedTextColor = TextWhite, cursorColor = AccentCyan, focusedLabelColor = AccentCyan, unfocusedLabelColor = TextMuted))
+}
+
 // ── Subscription Receipt PDF ─────────────────────────────
-private fun generateSubscriptionReceiptPdf(context: Context, r: SubscriptionReceiptData): File {
+internal fun generateSubscriptionReceiptPdf(context: Context, r: SubscriptionReceiptData): File {
     val document = PdfDocument()
-    val page = document.startPage(PdfDocument.PageInfo.Builder(595, 842, 1).create()) // A4
+    val page = document.startPage(PdfDocument.PageInfo.Builder(612, 792, 1).create()) // Letter size
     val canvas = page.canvas
     val dateFmt = SimpleDateFormat("dd MMM yyyy", Locale.getDefault())
-    val w = 595f; val h = 842f
+    val w = 612f; val h = 792f
 
     val white = android.graphics.Color.WHITE
-    val darkBg = android.graphics.Color.parseColor("#0F172A")
+    val darkBg = android.graphics.Color.parseColor("#0B1121")
     val cyan = android.graphics.Color.parseColor("#22D3EE")
     val muted = android.graphics.Color.parseColor("#64748B")
-    val textDark = android.graphics.Color.parseColor("#1E293B")
-    val lightBg = android.graphics.Color.parseColor("#F1F5F9")
+    val textDark = android.graphics.Color.parseColor("#111827")
+    val textWhite = android.graphics.Color.parseColor("#F8FAFC")
+    val lightBg = android.graphics.Color.parseColor("#F8FAFC")
     val green = android.graphics.Color.parseColor("#16A34A")
     val red = android.graphics.Color.parseColor("#EF4444")
+    val gold = android.graphics.Color.parseColor("#F59E0B")
     val gray200 = android.graphics.Color.parseColor("#E2E8F0")
+    val darkAccent = android.graphics.Color.parseColor("#1E293B")
 
     val fill = Paint().apply { style = Paint.Style.FILL }
-    val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 11f; color = textDark }
+    val stroke = Paint().apply { style = Paint.Style.STROKE; color = gray200; strokeWidth = 0.5f }
+    val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 10f; color = textDark }
     val bold = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 13f; color = textDark; isFakeBoldText = true }
-    val whiteText = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 14f; color = white; isFakeBoldText = true }
+    val whiteBold = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 14f; color = white; isFakeBoldText = true }
+    val title = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 20f; color = white; isFakeBoldText = true; textAlign = Paint.Align.CENTER }
+    val center = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 10f; color = muted; textAlign = Paint.Align.CENTER }
 
-    // ── Header ──
+    // ── Try loading app logo ──
+    var logoBitmap: android.graphics.Bitmap? = null
+    try {
+        logoBitmap = android.graphics.BitmapFactory.decodeResource(context.resources,
+            context.resources.getIdentifier("app_logo", "drawable", context.packageName))
+    } catch (_: Exception) { }
+
+    // ── Dark header band ──
     fill.color = darkBg
-    canvas.drawRect(0f, 0f, w, 140f, fill)
-    whiteText.textSize = 22f
-    canvas.drawText("SUBSCRIPTION RECEIPT", 40f, 55f, whiteText)
-    whiteText.textSize = 13f
-    canvas.drawText(r.instituteName, 40f, 80f, whiteText)
-    whiteText.textSize = 10f
-    canvas.drawText("Receipt #: ${r.receiptNumber}  •  ${dateFmt.format(Date(r.startDateMs))}", 40f, 100f, whiteText)
+    canvas.drawRect(0f, 0f, w, 145f, fill)
 
-    // ── Institute Owner Info ──
-    var y = 170f
-    fill.color = lightBg
-    canvas.drawRect(30f, y - 5, w - 30f, y + 65f, fill)
-    bold.textSize = 14f; bold.color = textDark
-    canvas.drawText("Institute Details", 40f, y + 15f, bold)
-    text.textSize = 10f; text.color = muted
-    canvas.drawText("Owner: ${r.ownerName}", 40f, y + 30f, text)
-    canvas.drawText("Phone: ${r.ownerPhone}", 40f, y + 42f, text)
-    if (r.ownerEmail.isNotBlank()) canvas.drawText("Email: ${r.ownerEmail}", 40f, y + 54f, text)
-    if (r.instituteCode.isNotBlank()) canvas.drawText("Institute Code: ${r.instituteCode}", 240f, y + 30f, text)
-    if (r.instituteAddress.isNotBlank()) canvas.drawText("Address: ${r.instituteAddress}", 240f, y + 42f, text)
-
-    // ── Plan Details ──
-    y += 85f
-    bold.textSize = 14f
-    canvas.drawText("Subscription Details", 40f, y, bold)
-    y += 20f
-    fill.color = gray200; canvas.drawRect(40f, y, w - 40f, y + 1f, fill); y += 15f
-
-    val rows = listOf(
-        "Plan" to r.planName,
-        "Duration" to "${r.durationMonths} Month(s)",
-        "Period" to "${dateFmt.format(Date(r.startDateMs))} — ${dateFmt.format(Date(r.endDateMs))}",
-        "Amount Paid" to "BDT ${"%,.0f".format(r.amountPaid)}",
-        "Payment Method" to r.paymentMethod.uppercase(),
-        "Transaction Ref" to "***${r.transactionLast4}"
-    )
-    rows.forEach { (label, value) ->
-        text.textSize = 10f; text.color = muted
-        canvas.drawText(label, 40f, y + 8f, text)
-        text.textSize = 11f; text.color = if (label == "Amount Paid") green else textDark
-        text.isFakeBoldText = label == "Amount Paid"
-        canvas.drawText(value, 280f, y + 8f, text)
-        text.isFakeBoldText = false
-        y += if (label == "Amount Paid") 24f else 18f
+    // Logo circle with initial fallback
+    if (logoBitmap != null) {
+        val scaled = android.graphics.Bitmap.createScaledBitmap(logoBitmap, 52, 52, true)
+        canvas.save()
+        canvas.clipRect(39f, 42f, 91f, 94f)
+        val circular = android.graphics.Bitmap.createBitmap(52, 52, android.graphics.Bitmap.Config.ARGB_8888)
+        val circleCanvas = Canvas(circular)
+        val clipPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { isAntiAlias = true }
+        circleCanvas.drawCircle(26f, 26f, 26f, clipPaint)
+        clipPaint.xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.SRC_IN)
+        circleCanvas.drawBitmap(scaled, 0f, 0f, clipPaint)
+        canvas.drawBitmap(circular, 39f, 42f, null)
+        canvas.restore()
+    } else {
+        // Fallback: BF circle
+        fill.color = cyan
+        canvas.drawCircle(65f, 68f, 26f, fill)
+        val initPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = darkBg; textSize = 20f; isFakeBoldText = true; textAlign = Paint.Align.CENTER
+        }
+        canvas.drawText("BF", 65f, 76f, initPaint)
     }
 
-    // ── Status ──
-    y += 15f
-    fill.color = lightBg
-    canvas.drawRect(40f, y, w - 40f, y + 30f, fill)
-    bold.textSize = 12f; bold.color = green
-    canvas.drawText("STATUS: APPROVED & ACTIVE", 50f, y + 19f, bold)
+    // App name
+    whiteBold.textSize = 20f; whiteBold.textAlign = Paint.Align.LEFT
+    canvas.drawText("BatchFee", 105f, 60f, whiteBold)
+    whiteBold.textSize = 11f; whiteBold.color = cyan
+    canvas.drawText("Education Management Platform", 105f, 78f, whiteBold)
+    whiteBold.color = white
 
-    // ── Expiry Warning ──
-    y += 50f
-    bold.textSize = 11f; bold.color = red
-    canvas.drawText("Subscription Expires:", 40f, y, bold)
-    bold.textSize = 13f
-    canvas.drawText(dateFmt.format(Date(r.endDateMs)), 200f, y, bold)
+    // Receipt title
+    title.textSize = 18f
+    canvas.drawText("SUBSCRIPTION RECEIPT", w / 2, 118f, title)
+    // Subtitle line
+    val subPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 9f; color = muted; textAlign = Paint.Align.CENTER }
+    canvas.drawText("Receipt #: ${r.receiptNumber}  •  Issued: ${dateFmt.format(Date(r.startDateMs))}", w / 2, 133f, subPaint)
+
+    // ── Institute Details box ──
+    var y = 170f
+    fill.color = lightBg
+    canvas.drawRoundRect(36f, y, w - 36f, y + 72f, 8f, 8f, fill)
+    bold.textSize = 13f; bold.color = textDark; bold.textAlign = Paint.Align.LEFT
+    canvas.drawText("Bill To", 52f, y + 18f, bold)
+    text.textSize = 10f; text.color = textDark
+    canvas.drawText(r.instituteName, 52f, y + 34f, text)
+    text.color = muted
+    canvas.drawText("Owner: ${r.ownerName}", 52f, y + 48f, text)
+    if (r.ownerPhone.isNotBlank()) canvas.drawText("Phone: ${r.ownerPhone}", 52f, y + 62f, text)
+
+    // Right column: code + email
+    if (r.instituteCode.isNotBlank()) {
+        text.textSize = 10f; text.color = muted
+        canvas.drawText("Institute Code: ${r.instituteCode}", 310f, y + 34f, text)
+    }
+    if (r.ownerEmail.isNotBlank()) {
+        canvas.drawText("Email: ${r.ownerEmail}", 310f, y + 48f, text)
+    }
+    if (r.instituteAddress.isNotBlank()) {
+        canvas.drawText("Address: ${r.instituteAddress}", 310f, y + 62f, text)
+    }
+
+    // ── Subscription Details ──
+    y += 98f
+    bold.textSize = 14f; bold.color = textDark
+    canvas.drawText("Subscription Details", 40f, y, bold)
+    y += 18f
+    fill.color = cyan; canvas.drawRect(40f, y, 40f + 94f, y + 3f, fill)
+    y += 16f
+
+    // Table header
+    fill.color = darkBg
+    canvas.drawRect(40f, y, w - 40f, y + 22f, fill)
+    text.textSize = 9f; text.color = white; text.isFakeBoldText = true
+    canvas.drawText("Description", 52f, y + 15f, text)
+    canvas.drawText("Details", 340f, y + 15f, text)
+    canvas.drawText("Amount", 490f, y + 15f, text)
+    text.isFakeBoldText = false; text.color = textDark
+    y += 26f
+
+    // Table rows
+    fun drawRow(label: String, value: String, amount: String = "", highlight: Boolean = false, rowHeight: Float = 20f) {
+        if (highlight) {
+            fill.color = android.graphics.Color.parseColor("#F0FDF4")
+            canvas.drawRect(40f, y - 2f, w - 40f, y + rowHeight, fill)
+        }
+        text.textSize = 10f; text.color = muted; text.isFakeBoldText = false
+        canvas.drawText(label, 52f, y + 11f, text)
+        text.color = textDark
+        canvas.drawText(value, 340f, y + 11f, text)
+        if (amount.isNotBlank()) {
+            text.color = if (highlight) green else textDark
+            text.isFakeBoldText = highlight
+            canvas.drawText(amount, 490f, y + 11f, text)
+            text.isFakeBoldText = false
+        }
+        if (!highlight) {
+            canvas.drawLine(40f, y + rowHeight + 2f, w - 40f, y + rowHeight + 2f, stroke)
+        }
+        y += rowHeight + 4f
+    }
+
+    drawRow("Plan", r.planName)
+    drawRow("Duration", "${r.durationMonths} Month(s)")
+    drawRow("Period", "${dateFmt.format(Date(r.startDateMs))} — ${dateFmt.format(Date(r.endDateMs))}")
+    if (r.paymentMethod.isNotBlank()) {
+        drawRow("Payment Method", r.paymentMethod.uppercase())
+    }
+    if (r.transactionLast4.isNotBlank()) {
+        drawRow("Transaction Ref", "••••${r.transactionLast4}")
+    }
+
+    // Amount row — highlighted
+    y += 4f
+    drawRow("Amount Paid", "", "BDT ${"%,.0f".format(r.amountPaid)}", highlight = true, rowHeight = 24f)
+
+    // ── Status badge ──
+    y += 20f
+    val green12 = android.graphics.Color.argb((0.12f * 255).toInt(), 22, 163, 74)
+    fill.color = green12
+    canvas.drawRoundRect(40f, y, w - 40f, y + 32f, 6f, 6f, fill)
+    val statusLabel = if (r.paymentMethod == "free_trial") "FREE TRIAL — 15 DAYS" else "PAID — APPROVED & ACTIVE"
+    bold.textSize = 11f; bold.color = green
+    canvas.drawText(statusLabel, 56f, y + 21f, bold)
+
+    // ── Watermark ──
+    y += 60f
+    val watermarkPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = muted; textSize = 120f; alpha = 8; isFakeBoldText = true
+        textAlign = Paint.Align.CENTER
+    }
+    canvas.drawText("BatchFee", w / 2, h / 2 + 40, watermarkPaint)
 
     // ── Footer ──
-    y = h - 50f
-    fill.color = gray200; canvas.drawRect(40f, y, w - 40f, y + 1f, fill)
-    y += 15f
-    text.textSize = 9f; text.color = muted
-    canvas.drawText("Generated by BatchFee Super Admin  •  This is a computer-generated receipt.", 40f, y + 5f, text)
+    val footerY = h - 82f
+    fill.color = darkBg; canvas.drawRect(0f, footerY, w, h, fill)
+    var fy = footerY + 20f
+    center.textSize = 11f; center.color = textWhite; center.isFakeBoldText = true
+    canvas.drawText("BatchFee Education Management Platform", w / 2, fy, center)
+    fy += 18f
+    center.textSize = 9f; center.color = muted; center.isFakeBoldText = false
+    canvas.drawText("This is a computer-generated receipt from the BatchFee admin panel.", w / 2, fy, center)
+    fy += 16f
+    canvas.drawText("For any queries, contact your institute administrator or visit batchfee.app", w / 2, fy, center)
+    fy += 20f
+    canvas.drawText("© ${java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)} BatchFee. All rights reserved.", w / 2, fy, center)
 
     document.finishPage(page)
     val file = File(context.cacheDir, "sub_receipt_${r.receiptNumber}.pdf")
@@ -2919,121 +3451,239 @@ private fun generateSubscriptionReceiptPdf(context: Context, r: SubscriptionRece
     return file
 }
 
-// ── Subscription Receipt Bitmap (Canvas) ──────────────────
-private fun createSubscriptionReceiptBitmap(
-    receiptNumber: String,
-    instituteName: String,
-    planName: String,
-    durationMonths: Int,
-    amountPaid: Double,
-    paymentMethod: String,
-    transactionLast4: String,
-    startDateMs: Long,
-    endDateMs: Long
-): Bitmap {
-    val w = 600; val h = 800
-    val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-    val c = Canvas(bmp)
-    val dateFmt = SimpleDateFormat("dd MMM yyyy", Locale.getDefault())
-    val darkBg = android.graphics.Color.parseColor("#0F172A")
-    val white = android.graphics.Color.WHITE
-    val muted = android.graphics.Color.parseColor("#94A3B8")
-    val cyan = android.graphics.Color.parseColor("#22D3EE")
-    val dark = android.graphics.Color.parseColor("#1E293B")
-    val textDark = android.graphics.Color.parseColor("#0F172A")
+@Composable
+private fun BroadcastSection(
+    announceText: String,
+    onAnnounceTextChange: (String) -> Unit,
+    onSend: (String, Int) -> Unit,
+    announcements: List<AnnouncementData>,
+    onEdit: (AnnouncementData, String, Int) -> Unit,
+    onArchive: (AnnouncementData) -> Unit,
+    onDelete: (AnnouncementData) -> Unit
+) {
+    var showConfirm by remember { mutableStateOf(false) }
+    var expiryDays by remember { mutableIntStateOf(0) }
+    val expiryOptions = listOf(0 to "Never", 1 to "1 Day", 3 to "3 Days", 7 to "7 Days", 30 to "30 Days")
+    val selectedExpiryLabel = remember(expiryDays) { expiryOptions.firstOrNull { it.first == expiryDays }?.second ?: "Never" }
 
-    // White background
-    c.drawColor(white)
+    Column {
+        Text("System Broadcast", color = TextMuted, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(8.dp))
 
-    // ── Header bar ──
-    val headerBg = Paint().apply { color = darkBg }
-    c.drawRect(0f, 0f, w.toFloat(), 120f, headerBg)
+        Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = CardBg)) {
+            Column(Modifier.padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(AccentPink.copy(alpha = 0.15f)), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Filled.Campaign, null, tint = AccentPink, modifier = Modifier.size(20.dp))
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("Global Notification", color = TextWhite, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                        Text("${announceText.length}/500", color = if (announceText.length > 450) AccentRed else TextMuted, fontSize = 10.sp)
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = announceText, onValueChange = { if (it.length <= 500) onAnnounceTextChange(it) },
+                    placeholder = { Text("Type announcement for all institutes...", color = TextMuted) },
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 80.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = CardBg, unfocusedContainerColor = CardBg,
+                        focusedBorderColor = AccentPink, unfocusedBorderColor = BorderSub,
+                        focusedTextColor = TextWhite, unfocusedTextColor = TextWhite, cursorColor = AccentPink
+                    )
+                )
 
-    // BF logo circle
-    val logoBg = Paint().apply { color = cyan; isAntiAlias = true }
-    c.drawCircle(50f, 60f, 28f, logoBg)
-    val logoTxt = Paint().apply { color = darkBg; textSize = 28f; typeface = Typeface.DEFAULT_BOLD; isAntiAlias = true; textAlign = Paint.Align.CENTER }
-    c.drawText("BF", 50f, 72f, logoTxt)
+                // Expiry selector
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Expires:", color = TextMuted, fontSize = 11.sp)
+                    Spacer(Modifier.width(8.dp))
+                    expiryOptions.forEach { (value, label) ->
+                        val selected = expiryDays == value
+                        FilterChip(
+                            selected = selected,
+                            onClick = { expiryDays = value },
+                            label = { Text(label, fontSize = 9.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                containerColor = CardBg, selectedContainerColor = AccentPink.copy(alpha = 0.15f),
+                                labelColor = TextMuted, selectedLabelColor = AccentPink
+                            ),
+                            border = FilterChipDefaults.filterChipBorder(borderColor = BorderSub, selectedBorderColor = AccentPink.copy(alpha = 0.4f), enabled = true, selected = selected),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.padding(end = 4.dp)
+                        )
+                    }
+                }
 
-    // Institute name
-    val headerName = Paint().apply { color = white; textSize = 22f; typeface = Typeface.DEFAULT_BOLD; isAntiAlias = true }
-    c.drawText(instituteName, 95f, 50f, headerName)
-    // Subtitle
-    val headerSub = Paint().apply { color = muted; textSize = 13f; isAntiAlias = true }
-    c.drawText("BatchFee Subscription", 95f, 70f, headerSub)
-    c.drawText("Management Platform", 95f, 88f, headerSub)
+                // Live preview
+                if (announceText.isNotBlank()) {
+                    Spacer(Modifier.height(10.dp))
+                    Card(
+                        Modifier.fillMaxWidth(), shape = RoundedCornerShape(10.dp),
+                        colors = CardDefaults.cardColors(containerColor = AccentPink.copy(alpha = 0.08f)),
+                        border = BorderStroke(1.dp, AccentPink.copy(alpha = 0.2f))
+                    ) {
+                        Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Filled.Campaign, null, tint = AccentPink.copy(alpha = 0.6f), modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text("Preview", color = AccentPink, fontSize = 9.sp, fontWeight = FontWeight.SemiBold)
+                                Text(announceText, color = TextWhite, fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                    }
+                }
 
-    // ── Title ──
-    val titlePaint = Paint().apply { color = darkBg; textSize = 26f; typeface = Typeface.DEFAULT_BOLD; isAntiAlias = true; textAlign = Paint.Align.CENTER }
-    c.drawText("SUBSCRIPTION RECEIPT", w / 2f, 160f, titlePaint)
-
-    val lbl = Paint().apply { color = muted; textSize = 18f; isAntiAlias = true }
-    val vlu = Paint().apply { color = darkBg; textSize = 20f; typeface = Typeface.DEFAULT_BOLD; isAntiAlias = true }
-    val div = Paint().apply { color = android.graphics.Color.parseColor("#E2E8F0"); strokeWidth = 1.5f }
-
-    var y = 210f; val lh = 44f; val c1 = 40f; val c2 = 220f
-
-    // Receipt number + date
-    c.drawText("Receipt #", c1, y, lbl)
-    c.drawText(receiptNumber, c2, y, vlu); y += lh
-    c.drawText("Date", c1, y, lbl)
-    c.drawText(dateFmt.format(Date(startDateMs)), c2, y, vlu); y += lh + 10f
-    c.drawLine(c1, y, w - 40f, y, div); y += 24f
-
-    // ── Plan details ──
-    c.drawText("Plan", c1, y, lbl)
-    c.drawText(planName, c2, y, vlu); y += lh
-    c.drawText("Duration", c1, y, lbl)
-    c.drawText("${durationMonths} Month(s)", c2, y, vlu); y += lh
-    c.drawText("Period", c1, y, lbl)
-    c.drawText("${dateFmt.format(Date(startDateMs))} - ${dateFmt.format(Date(endDateMs))}", c2, y, Paint().apply { color = darkBg; textSize = 17f; isAntiAlias = true }); y += lh + 10f
-    c.drawLine(c1, y, w - 40f, y, div); y += 24f
-
-    // ── Payment ──
-    c.drawText("Amount Paid", c1, y, lbl)
-    c.drawText("BDT ${"%,.0f".format(amountPaid)}", c2, y, Paint().apply { color = cyan; textSize = 26f; typeface = Typeface.DEFAULT_BOLD; isAntiAlias = true }); y += lh + 8f
-    c.drawText("Method", c1, y, lbl)
-    c.drawText(paymentMethod.uppercase(), c2, y, vlu); y += lh
-    c.drawText("Transaction", c1, y, lbl)
-    c.drawText("***$transactionLast4", c2, y, vlu); y += lh + 10f
-    c.drawLine(c1, y, w - 40f, y, div); y += 24f
-
-    // ── Expiry ──
-    c.drawText("Expiry Date", c1, y, lbl)
-    c.drawText(dateFmt.format(Date(endDateMs)), c2, y, Paint().apply { color = android.graphics.Color.parseColor("#F87171"); textSize = 20f; typeface = Typeface.DEFAULT_BOLD; isAntiAlias = true }); y += lh + 10f
-
-    // ── Footer ──
-    c.drawLine(c1, y, w - 40f, y, div); y += 30f
-    val foot = Paint().apply { color = muted; textSize = 14f; isAntiAlias = true; textAlign = Paint.Align.CENTER }
-    c.drawText("Generated by BatchFee Super Admin", w / 2f, y, foot); y += 22f
-    c.drawText("This is a computer-generated receipt.", w / 2f, y, foot)
-
-    return bmp
-}
-
-private fun shareSubscriptionReceipt(context: Context, bitmap: Bitmap, phone: String?) {
-    val cleanPhone = phone?.replace("+", "")?.replace(" ", "")?.replace("-", "")?.takeIf { it.isNotBlank() }
-    val file = File(context.cacheDir, "sub_receipt_${System.currentTimeMillis()}.png")
-    FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
-    val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-    val intent = Intent(Intent.ACTION_SEND).apply {
-        type = "image/png"
-        putExtra(Intent.EXTRA_STREAM, uri)
-        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        `package` = "com.whatsapp"
-        if (cleanPhone != null) {
-            putExtra("jid", "${cleanPhone}@s.whatsapp.net")
+                Spacer(Modifier.height(10.dp))
+                Button(
+                    onClick = { showConfirm = true },
+                    modifier = Modifier.fillMaxWidth().height(44.dp),
+                    enabled = announceText.isNotBlank(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = AccentPink, disabledContainerColor = BorderSub)
+                ) {
+                    Icon(Icons.Filled.Send, null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Send Announcement", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = if (announceText.isNotBlank()) Color.White else TextMuted)
+                }
+            }
         }
-    }
-    try {
-        context.startActivity(Intent.createChooser(intent, "Share Subscription Receipt"))
-    } catch (_: Exception) {
-        // Fallback: generic share
-        context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
-            type = "image/png"
-            putExtra(Intent.EXTRA_STREAM, uri)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }, "Share Receipt"))
+
+        // Confirmation dialog
+        if (showConfirm) {
+            AlertDialog(
+                onDismissRequest = { showConfirm = false },
+                title = { Text("Send Announcement?", color = TextWhite, fontWeight = FontWeight.Bold) },
+                text = {
+                    Column {
+                        Text("This will be sent to ALL institutes on the platform.", color = TextMuted, fontSize = 13.sp)
+                        Spacer(Modifier.height(8.dp))
+                        Card(shape = RoundedCornerShape(10.dp), colors = CardDefaults.cardColors(containerColor = BorderSub.copy(alpha = 0.3f))) {
+                            Text(announceText, color = TextWhite, fontSize = 12.sp, modifier = Modifier.padding(10.dp))
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        Text("Expiry: $selectedExpiryLabel", color = TextMuted, fontSize = 11.sp)
+                    }
+                },
+                confirmButton = {
+                    Button(onClick = { onSend(announceText, expiryDays); showConfirm = false; expiryDays = 0 }, colors = ButtonDefaults.buttonColors(containerColor = AccentPink)) {
+                        Text("Confirm & Send", color = Color.White)
+                    }
+                },
+                dismissButton = { TextButton(onClick = { showConfirm = false }) { Text("Cancel", color = TextMuted) } },
+                containerColor = CardBg, shape = RoundedCornerShape(16.dp)
+            )
+        }
+
+        // Announcement History
+        val activeAnnouncements = announcements.filter { it.status != "deleted" }
+        if (activeAnnouncements.isNotEmpty()) {
+            Spacer(Modifier.height(12.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("History · ${activeAnnouncements.size}", color = TextMuted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                Text("Tap to edit", color = TextMuted.copy(alpha = 0.5f), fontSize = 10.sp)
+            }
+            Spacer(Modifier.height(6.dp))
+            activeAnnouncements.take(15).forEach { a ->
+                var showActions by remember { mutableStateOf(false) }
+                var editText by remember { mutableStateOf("") }
+                var editExpiry by remember { mutableIntStateOf(0) }
+                var showEditDialog by remember { mutableStateOf(false) }
+                var showDeleteConfirm by remember { mutableStateOf(false) }
+                val aDateFmt = remember { SimpleDateFormat("dd MMM yy, HH:mm", Locale.getDefault()) }
+                val statusColor = when (a.status) {
+                    "active" -> AccentGreen; "archived" -> AccentAmber; "expired" -> AccentRed; else -> TextMuted
+                }
+                Card(
+                    Modifier.fillMaxWidth().clickable { showActions = true }.padding(bottom = 6.dp),
+                    shape = RoundedCornerShape(10.dp),
+                    colors = CardDefaults.cardColors(containerColor = CardBg),
+                    border = BorderStroke(1.dp, BorderSub)
+                ) {
+                    Column(Modifier.padding(12.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.size(24.dp).clip(RoundedCornerShape(7.dp)).background(statusColor.copy(alpha = 0.15f)), contentAlignment = Alignment.Center) {
+                                Icon(Icons.Filled.Campaign, null, tint = statusColor, modifier = Modifier.size(14.dp))
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(a.message, color = TextWhite, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                Row {
+                                    Text(aDateFmt.format(Date(a.sentAt)), color = TextMuted, fontSize = 10.sp)
+                                    if (a.status == "expired") { Text(" · Expired", color = AccentRed, fontSize = 10.sp) }
+                                    else if (a.expiresAt != null) {
+                                        val remMs = a.expiresAt - System.currentTimeMillis()
+                                        if (remMs > 0) { Text(" · ${(remMs / MILLIS_PER_DAY).toInt()}d left", color = TextMuted, fontSize = 10.sp) }
+                                    }
+                                }
+                            }
+                            Box(Modifier.clip(RoundedCornerShape(5.dp)).background(statusColor.copy(alpha = 0.12f)).padding(horizontal = 6.dp, vertical = 2.dp)) {
+                                Text(a.status.replaceFirstChar { it.uppercase() }, color = statusColor, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+                // Actions dialog
+                if (showActions) {
+                    AlertDialog(
+                        onDismissRequest = { showActions = false },
+                        title = { Text("Announcement", color = TextWhite, fontWeight = FontWeight.Bold) },
+                        text = { Column {
+                            Text(a.message, color = TextWhite, fontSize = 13.sp); Spacer(Modifier.height(6.dp))
+                            Text("Sent: ${aDateFmt.format(Date(a.sentAt))}", color = TextMuted, fontSize = 11.sp)
+                            if (a.updatedAt != a.sentAt) Text("Edited: ${aDateFmt.format(Date(a.updatedAt))}", color = TextMuted, fontSize = 11.sp)
+                            Text("Status: ${a.status.uppercase()} · Expires: ${if (a.expiresAt != null) aDateFmt.format(Date(a.expiresAt)) else "Never"}", color = TextMuted, fontSize = 11.sp)
+                        } },
+                        confirmButton = {
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                if (a.status == "active") {
+                                    Button(onClick = { editText = a.message; editExpiry = if (a.expiresAt != null) ((a.expiresAt - a.sentAt) / MILLIS_PER_DAY).toInt() else 0; showEditDialog = true; showActions = false }, colors = ButtonDefaults.buttonColors(containerColor = AccentCyan), modifier = Modifier.weight(1f)) {
+                                        Text("Edit", fontSize = 11.sp)
+                                    }
+                                    OutlinedButton(onClick = { onArchive(a); showActions = false }, modifier = Modifier.weight(1f)) { Text("Archive", fontSize = 11.sp) }
+                                }
+                                OutlinedButton(onClick = { showDeleteConfirm = true; showActions = false }, modifier = Modifier.weight(1f), colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentRed)) {
+                                    Text("Delete", fontSize = 11.sp)
+                                }
+                            }
+                        },
+                        dismissButton = { TextButton(onClick = { showActions = false }) { Text("Close", color = TextMuted) } },
+                        containerColor = CardBg, shape = RoundedCornerShape(16.dp)
+                    )
+                }
+                // Edit dialog
+                if (showEditDialog) {
+                    AlertDialog(
+                        onDismissRequest = { showEditDialog = false },
+                        title = { Text("Edit Announcement", color = TextWhite, fontWeight = FontWeight.Bold) },
+                        text = {
+                            Column {
+                                OutlinedTextField(value = editText, onValueChange = { if (it.length <= 500) editText = it }, label = { Text("Message") }, modifier = Modifier.fillMaxWidth().heightIn(min = 60.dp), shape = RoundedCornerShape(10.dp), colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = AccentCyan, focusedTextColor = TextWhite, unfocusedTextColor = TextWhite, cursorColor = AccentCyan))
+                                Spacer(Modifier.height(8.dp))
+                                Text("Expiry: ${expiryOptions.firstOrNull { it.first == editExpiry }?.second ?: "Never"}", color = TextMuted, fontSize = 11.sp)
+                                Row { expiryOptions.forEach { (v, l) -> FilterChip(selected = editExpiry == v, onClick = { editExpiry = v }, label = { Text(l, fontSize = 8.sp) }, colors = FilterChipDefaults.filterChipColors(containerColor = CardBg, selectedContainerColor = AccentCyan.copy(alpha = 0.15f), labelColor = TextMuted, selectedLabelColor = AccentCyan), border = FilterChipDefaults.filterChipBorder(borderColor = BorderSub, selectedBorderColor = AccentCyan.copy(alpha = 0.4f), enabled = true, selected = editExpiry == v), shape = RoundedCornerShape(6.dp), modifier = Modifier.padding(end = 4.dp)) } }
+                            }
+                        },
+                        confirmButton = { Button(onClick = { onEdit(a, editText, editExpiry); showEditDialog = false }, colors = ButtonDefaults.buttonColors(containerColor = AccentCyan)) { Text("Save", color = Color.White) } },
+                        dismissButton = { TextButton(onClick = { showEditDialog = false }) { Text("Cancel", color = TextMuted) } },
+                        containerColor = CardBg, shape = RoundedCornerShape(16.dp)
+                    )
+                }
+                // Delete confirmation
+                if (showDeleteConfirm) {
+                    AlertDialog(
+                        onDismissRequest = { showDeleteConfirm = false },
+                        title = { Text("Delete announcement?", color = TextWhite, fontWeight = FontWeight.Bold) },
+                        text = { Text("This will hide it from all institutes. It can be recovered within 90 days.", color = TextMuted, fontSize = 13.sp) },
+                        confirmButton = { Button(onClick = { onDelete(a); showDeleteConfirm = false }, colors = ButtonDefaults.buttonColors(containerColor = AccentRed)) { Text("Delete", color = Color.White) } },
+                        dismissButton = { TextButton(onClick = { showDeleteConfirm = false }) { Text("Cancel", color = TextMuted) } },
+                        containerColor = CardBg, shape = RoundedCornerShape(16.dp)
+                    )
+                }
+            }
+        }
     }
 }
 
