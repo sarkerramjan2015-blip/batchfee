@@ -29,7 +29,7 @@ class BatchViewModel(private val db: AppDatabase) : ViewModel() {
     private fun loadBatches() {
         viewModelScope.launch {
             val instId = SessionManager.currentInstituteId.value ?: return@launch
-            InstituteCacheRefreshManager.refreshIfStale(db, instId)
+            InstituteCacheRefreshManager.refreshIfStaleInBackground(db, instId)
             db.batchDao().getBatchesByInstitute(instId).collect {
                 _batchList.value = it
             }

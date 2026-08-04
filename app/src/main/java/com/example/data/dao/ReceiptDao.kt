@@ -18,6 +18,9 @@ interface ReceiptDao {
     @Query("DELETE FROM receipts WHERE instituteId = :instituteId AND feeId IN (:feeIds)")
     suspend fun deleteReceiptsByFeeIds(instituteId: String, feeIds: List<String>)
 
+    @Query("DELETE FROM receipts WHERE instituteId = :instituteId AND studentId = :studentId")
+    suspend fun deleteReceiptsForStudent(instituteId: String, studentId: String)
+
     @Query("DELETE FROM receipts WHERE paymentId = :paymentId AND instituteId = :instituteId")
     suspend fun deleteReceiptByPaymentId(paymentId: String, instituteId: String)
 }

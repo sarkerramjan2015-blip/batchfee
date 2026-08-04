@@ -485,7 +485,7 @@ fun ExamDetailScreen(db: AppDatabase, examId: String, onBack: () -> Unit, onEdit
                             Spacer(Modifier.height(12.dp))
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                                 StatLabel("Total", formatNum(exam.totalMarks), Cyan)
-                                StatLabel("Pass", formatNum(exam.passingMarks), AccentAmber)
+                                StatLabel("Pass", formatNum(exam.passingMarks), Cyan)
                                 StatLabel("Students", "${batchStudents.size}", ElectricBlue)
                             }
                         }

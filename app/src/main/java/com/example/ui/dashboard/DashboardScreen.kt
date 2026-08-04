@@ -40,9 +40,10 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.batchfee.edu.data.database.AppDatabase
-import com.batchfee.edu.data.database.DemoDataSeeder
+import com.batchfee.edu.data.cloudinary.CloudinaryImageUploadHelper
 import com.batchfee.edu.data.firestore.EnquirySyncHelper
 import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
+import com.batchfee.edu.data.firestore.InstituteRefreshScope
 import com.batchfee.edu.data.models.InstituteEntity
 
 import com.batchfee.edu.domain.SessionManager
@@ -60,6 +61,7 @@ import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import android.content.Intent
 import android.net.Uri
 import java.net.URLEncoder
@@ -231,24 +233,31 @@ class DashboardViewModel(private val db: AppDatabase) : ViewModel() {
         loadData()
     }
 
+    fun retryBootstrap() {
+        if (_isBootstrapReady.value) return
+        _bootstrapError.value = null
+        loadData()
+    }
+
     private fun loadData() {
         viewModelScope.launch {
             val sessionUserId = SessionManager.currentUserId.value ?: return@launch
             val instId = SessionManager.currentInstituteId.value ?: return@launch
 
-            val bootstrap = try {
+            // Render Room's cached data first. A slow or offline Firestore refresh must never
+            // hold the dashboard hostage on the loading spinner.
+            var bootstrap = readBootstrapSnapshot(instId)
+            if (bootstrap == null) {
                 withContext(Dispatchers.IO) {
-                    // Refresh the current institute scope before taking the first visible snapshot.
-                    InstituteCacheRefreshManager.forceRefresh(db, instId)
-                    DashboardBootstrapSnapshot(
-                        institute = checkNotNull(db.instituteDao().getInstitute(instId)),
-                        studentCount = db.studentDao().getStudentsByInstituteOnce(instId).size,
-                        batchCount = db.batchDao().getBatchesByInstituteOnce(instId).size,
-                        staffCount = db.staffDao().getStaffByInstituteAsList(instId).size
-                    )
+                    withTimeoutOrNull(8_000L) {
+                        com.batchfee.edu.data.firestore.InstituteSyncHelper
+                            .syncInstituteFromFirestore(db, instId)
+                    }
                 }
-            } catch (e: Exception) {
-                _bootstrapError.value = "Unable to load your institute dashboard."
+                bootstrap = readBootstrapSnapshot(instId)
+            }
+            if (bootstrap == null) {
+                _bootstrapError.value = "We could not prepare your dashboard. Check your connection and try again."
                 return@launch
             }
 
@@ -263,6 +272,19 @@ class DashboardViewModel(private val db: AppDatabase) : ViewModel() {
             _batchCount.value = bootstrap.batchCount
             _staffCount.value = bootstrap.staffCount
             _isBootstrapReady.value = true
+
+            // Keep dashboard sync narrow. Downloading every operational collection here made
+            // every login compete with 14 independent Firestore syncs.
+            launch(Dispatchers.IO) {
+                try {
+                    InstituteCacheRefreshManager.prefetchHighUseData(db, instId)
+                    InstituteCacheRefreshManager.refreshScopeIfStale(
+                        db, instId, InstituteRefreshScope.FINANCE
+                    )
+                } catch (_: Exception) {
+                    // Cached Room data remains available; individual sync helpers log failures.
+                }
+            }
 
             launch {
                 db.instituteDao().getInstituteFlow(instId).collect { inst ->
@@ -360,7 +382,11 @@ class DashboardViewModel(private val db: AppDatabase) : ViewModel() {
                     var closedNonMonthlyDue = 0.0
                     fees.filter { !MonthlyDueCalculator.isMonthlyFeeType(it.feeType) }.forEach { fee ->
                         val sid = fee.studentId
-                        if (isClosedStudentStatus(students[sid]?.status)) {
+                        // A fee without an active student record is an orphan from a historical
+                        // soft-delete. The Due Fees screen already excludes it; doing the same
+                        // here keeps both totals and student counts identical.
+                        val student = students[sid] ?: return@forEach
+                        if (isClosedStudentStatus(student.status)) {
                             closedNonMonthlyDue += fee.dueAmount
                             closedStudentIds += sid
                         } else {
@@ -406,6 +432,17 @@ class DashboardViewModel(private val db: AppDatabase) : ViewModel() {
             }
         }
     }
+
+    private suspend fun readBootstrapSnapshot(instituteId: String): DashboardBootstrapSnapshot? =
+        withContext(Dispatchers.IO) {
+            val institute = db.instituteDao().getInstitute(instituteId) ?: return@withContext null
+            DashboardBootstrapSnapshot(
+                institute = institute,
+                studentCount = db.studentDao().getStudentsByInstituteOnce(instituteId).size,
+                batchCount = db.batchDao().getBatchesByInstituteOnce(instituteId).size,
+                staffCount = db.staffDao().getStaffByInstituteAsList(instituteId).size
+            )
+        }
 
     fun addEnquiry(
         name: String,
@@ -499,7 +536,7 @@ fun DashboardTabsScreen(
         ) {
             when (currentRoute) {
                 "DashboardRoute" -> DashboardScreen(db, onNavigatePricing, onNavigateBilling, onLogout, onNavigate)
-                "More" -> MoreScreen(db, onNavigateBilling, onLogout, onNavigate)
+                "More" -> MoreScreen(onLogout, onNavigate)
             }
         }
     }
@@ -573,7 +610,11 @@ private fun SubscriptionWarningBanner(
 }
 
 @Composable
-private fun DashboardBootstrapLoading(errorMessage: String?) {
+private fun DashboardBootstrapLoading(
+    errorMessage: String?,
+    onRetry: () -> Unit,
+    onLogout: () -> Unit
+) {
     val loaderTransition = rememberInfiniteTransition(label = "dashboardBootstrapLoader")
     val ringRotation by loaderTransition.animateFloat(
         initialValue = 0f,
@@ -655,6 +696,14 @@ private fun DashboardBootstrapLoading(errorMessage: String?) {
                 )
             } else {
                 Text(errorMessage, color = TextSecondary, fontSize = 14.sp, textAlign = TextAlign.Center)
+                Spacer(Modifier.height(18.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Button(
+                        onClick = onRetry,
+                        colors = ButtonDefaults.buttonColors(containerColor = AccentBlue)
+                    ) { Text("Try again") }
+                    OutlinedButton(onClick = onLogout) { Text("Logout", color = TextSecondary) }
+                }
             }
         }
     }
@@ -682,7 +731,11 @@ fun DashboardScreen(
     val bootstrapError by viewModel.bootstrapError.collectAsState()
 
     if (!isBootstrapReady) {
-        DashboardBootstrapLoading(bootstrapError)
+        DashboardBootstrapLoading(
+            errorMessage = bootstrapError,
+            onRetry = viewModel::retryBootstrap,
+            onLogout = onLogout
+        )
         return
     }
 
@@ -1033,10 +1086,10 @@ fun DashboardScreen(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Box(
                                 modifier = Modifier.size(38.dp).clip(RoundedCornerShape(12.dp))
-                                    .background(AccentAmber.copy(alpha = 0.12f)),
+                                    .background(AccentCyan.copy(alpha = 0.12f)),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Icon(Icons.Filled.Calculate, contentDescription = null, tint = AccentAmber, modifier = Modifier.size(21.dp))
+                                Icon(Icons.Filled.Calculate, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(21.dp))
                             }
                             Spacer(Modifier.width(12.dp))
                             Text("Due Fees", color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
@@ -1764,12 +1817,13 @@ fun DashboardScreen(
                             try {
                                 val profilePhotoUri = when {
                                     editProfilePhotoUri == null -> {
-                                        inst.profilePhotoUri?.let { withContext(Dispatchers.IO) { com.batchfee.edu.data.firestore.FirebaseStorageHelper.deleteInstituteLogo(inst.id) } }
+                                        deleteLocalInstituteProfilePhoto(inst.profilePhotoUri)
                                         null
                                     }
                                     editProfilePhotoUri.toString() == inst.profilePhotoUri -> inst.profilePhotoUri
-                                    else -> com.batchfee.edu.data.firestore.FirebaseStorageHelper.uploadInstituteLogo(
-                                        context, inst.id, editProfilePhotoUri!!
+                                    else -> CloudinaryImageUploadHelper.uploadInstituteLogo(
+                                        context,
+                                        editProfilePhotoUri!!
                                     )
                                 }
 
@@ -1781,6 +1835,9 @@ fun DashboardScreen(
                                 )
                                 db.instituteDao().updateInstitute(updated)
                                 db.userDao().updateUser(owner.copy(name = editOwnerName.trim()))
+                                if (profilePhotoUri != inst.profilePhotoUri) {
+                                    deleteLocalInstituteProfilePhoto(inst.profilePhotoUri)
+                                }
                                 
                                 // Sync to Firestore
                                 withContext(Dispatchers.IO) {
@@ -1813,6 +1870,13 @@ fun DashboardScreen(
     }
 }
 }
+}
+
+private fun deleteLocalInstituteProfilePhoto(photoUri: String?) {
+    val uri = photoUri?.let(Uri::parse) ?: return
+    if (uri.scheme == "file") {
+        uri.path?.let(::File)?.delete()
+    }
 }
 
 @Composable
@@ -2391,7 +2455,7 @@ private fun HomeFeatureTile(
                 .padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(icon, contentDescription = null, tint = AccentAmber, modifier = Modifier.size(24.dp))
+            Icon(icon, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(24.dp))
             Spacer(Modifier.width(10.dp))
             Text(
                 title,
@@ -2405,7 +2469,7 @@ private fun HomeFeatureTile(
             Spacer(Modifier.width(5.dp))
             Text(
                 "($count)",
-                color = AccentAmber,
+                color = AccentCyan,
                 fontSize = 15.sp,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1
@@ -2435,7 +2499,7 @@ private fun HomeFullActionTile(
                 .padding(horizontal = 14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(icon, contentDescription = null, tint = AccentAmber, modifier = Modifier.size(23.dp))
+            Icon(icon, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(23.dp))
             Spacer(Modifier.width(12.dp))
             Text(
                 title,
@@ -3145,13 +3209,12 @@ private fun AnimatedCounter(
 
 @Composable
 fun MoreScreen(
-    db: AppDatabase,
-    onNavigateBilling: () -> Unit,
     onLogout: () -> Unit,
     onNavigate: (String) -> Unit
 ) {
     val currentRole by SessionManager.currentUserRole.collectAsState()
     val currentStaffPermissions by SessionManager.currentStaffPermissions.collectAsState()
+    var showLogoutConfirmation by remember { mutableStateOf(false) }
     val moreItems = remember(currentRole, currentStaffPermissions) {
         listOf(
             "Staff Management" to "StaffRoute",
@@ -3181,7 +3244,12 @@ fun MoreScreen(
         ) {
             Column {
                 if (moreItems.isEmpty()) {
-                    Text("No extra features available for this account.", color = TextSecondary, fontSize = 13.sp, modifier = Modifier.padding(16.dp))
+                    Text(
+                        "Your admin has not enabled any work permissions for this account yet.",
+                        color = TextSecondary,
+                        fontSize = 13.sp,
+                        modifier = Modifier.padding(16.dp)
+                    )
                 } else {
                     moreItems.forEachIndexed { index, item ->
                         ListItem(
@@ -3189,55 +3257,16 @@ fun MoreScreen(
                             modifier = Modifier.fillMaxWidth().clickable { onNavigate(item.second) },
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent)
                         )
-                        if (index != moreItems.lastIndex || AccessControl.canAccessRoute("BillingRoute")) {
+                        if (index != moreItems.lastIndex) {
                             HorizontalDivider(color = DashboardStroke)
                         }
                     }
                 }
-                if (AccessControl.canAccessRoute("BillingRoute")) {
-                    ListItem(headlineContent = { Text("Billing & Subscription", color = TextPrimary) }, modifier = Modifier.fillMaxWidth().clickable { onNavigateBilling() }, colors = ListItemDefaults.colors(containerColor = Color.Transparent))
-                }
             }
         }
         Spacer(Modifier.height(24.dp))
-        // Secret Demo Data button — only visible for specific admin account
-        val currentUserEmail by SessionManager.currentUserId.collectAsState()
-        var userEmail by remember { mutableStateOf<String?>(null) }
-        val scope = rememberCoroutineScope()
-        var isSeeding by remember { mutableStateOf(false) }
-        LaunchedEffect(currentUserEmail) {
-            if (currentUserEmail != null) {
-                val user = db.userDao().getUserFlow(currentUserEmail!!).first()
-                userEmail = user?.email
-            }
-        }
-        if (userEmail == "mohammad.ramjan.sarker1999@gmail.com") {
-            OutlinedButton(
-                onClick = {
-                    isSeeding = true
-                    scope.launch {
-                        val instId = SessionManager.currentInstituteId.value ?: return@launch
-                        val userId = currentUserEmail ?: return@launch
-                        DemoDataSeeder.seed(db, instId, userId)
-                        isSeeding = false
-                    }
-                },
-                modifier = Modifier.fillMaxWidth().height(40.dp),
-                enabled = !isSeeding,
-                shape = RoundedCornerShape(10.dp),
-                border = BorderStroke(1.dp, AccentViolet.copy(alpha = 0.35f)),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentViolet.copy(alpha = 0.6f))
-            ) {
-                if (isSeeding) {
-                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = AccentViolet)
-                    Spacer(Modifier.width(8.dp))
-                }
-                Text("Load Demo Data", fontSize = 11.sp)
-            }
-            Spacer(Modifier.height(12.dp))
-        }
         Button(
-            onClick = onLogout, 
+            onClick = { showLogoutConfirmation = true },
             modifier = Modifier.fillMaxWidth().height(48.dp),
             colors = ButtonDefaults.buttonColors(containerColor = AccentRed),
             shape = RoundedCornerShape(12.dp)
@@ -3245,6 +3274,28 @@ fun MoreScreen(
             Text("Logout", fontWeight = FontWeight.Bold, color = TextPrimary)
         }
         Spacer(Modifier.height(100.dp))
+    }
+
+    if (showLogoutConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showLogoutConfirmation = false },
+            containerColor = DashboardCard,
+            title = { Text("Log out?", color = TextPrimary, fontWeight = FontWeight.Bold) },
+            text = { Text("You will need to sign in again to access this institute.", color = TextSecondary) },
+            confirmButton = {
+                TextButton(onClick = {
+                    showLogoutConfirmation = false
+                    onLogout()
+                }) {
+                    Text("Logout", color = AccentRed, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showLogoutConfirmation = false }) {
+                    Text("Cancel", color = TextSecondary)
+                }
+            }
+        )
     }
 }
 

@@ -3,16 +3,39 @@
 import android.os.SystemClock
 import android.util.Log
 import com.batchfee.edu.data.database.AppDatabase
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 object InstituteCacheRefreshManager {
     private const val TAG = "BatchFeeDataLoad"
     private const val DEFAULT_MIN_INTERVAL_MS = 30_000L
+    private const val BACKGROUND_FULL_REFRESH_INTERVAL_MS = 120_000L
     private val lastRefreshAtMs = mutableMapOf<String, Long>()
     private val lastScopedRefreshAtMs = mutableMapOf<Pair<String, InstituteRefreshScope>, Long>()
     private val inFlightScopedRefreshes = mutableSetOf<Pair<String, InstituteRefreshScope>>()
     private val refreshMutex = Mutex()
+    // Long-running Firestore reads must never hold a Compose screen on a loading state.
+    // This process-lifetime scope is intentionally independent from an individual screen.
+    private val backgroundRefreshScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /**
+     * Starts a normal cache refresh without making the caller wait for Firebase. Room remains
+     * the source rendered by the UI and its flows update when this refresh completes.
+     */
+    fun refreshIfStaleInBackground(
+        db: AppDatabase,
+        instituteId: String,
+        minIntervalMs: Long = BACKGROUND_FULL_REFRESH_INTERVAL_MS
+    ) {
+        if (instituteId.isBlank()) return
+        backgroundRefreshScope.launch {
+            refreshIfStale(db, instituteId, minIntervalMs)
+        }
+    }
 
     suspend fun refreshIfStale(
         db: AppDatabase,

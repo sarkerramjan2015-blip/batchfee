@@ -5,6 +5,8 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -43,11 +45,17 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.FileProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
+import coil.compose.AsyncImage
+import com.batchfee.edu.data.cloudinary.CloudinaryImageUploadHelper
 import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.domain.SessionManager
 import com.batchfee.edu.domain.StaffPermissions
 import com.batchfee.edu.ui.components.PhoneInputField
+import kotlinx.coroutines.launch
+import java.io.File
+import java.util.UUID
 
 private val BgColor = Color(0xFF07111F)
 private val CardBg = Color(0xFF0F172A)
@@ -68,6 +76,7 @@ fun AddEditStaffScreen(
     staffId: String? = null,
     onBack: () -> Unit
 ) {
+    val context = LocalContext.current
     val viewModel: StaffViewModel = viewModel(factory = StaffViewModelFactory(db))
     val isEdit = staffId != null
     val isAdmin = remember { SessionManager.isAdmin() }
@@ -88,6 +97,22 @@ fun AddEditStaffScreen(
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var showCredentialShare by remember { mutableStateOf(false) }
     var savedCredentials by remember { mutableStateOf(CredentialInfo("", "")) }
+    var photoUri by remember { mutableStateOf<Uri?>(null) }
+    var isSaving by remember { mutableStateOf(false) }
+    val photoSaveScope = rememberCoroutineScope()
+
+    val tempPhotoFile = remember {
+        File(context.cacheDir, "staff_photo_${UUID.randomUUID()}.jpg").apply { parentFile?.mkdirs() }
+    }
+    val tempPhotoUri = remember {
+        FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", tempPhotoFile)
+    }
+    val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { success ->
+        if (success) photoUri = tempPhotoUri
+    }
+    val galleryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) photoUri = uri
+    }
 
     val staff by viewModel.selectedStaff.collectAsState()
     val batches by viewModel.batches.collectAsState()
@@ -111,6 +136,7 @@ fun AddEditStaffScreen(
             selectedPermissions = StaffPermissions.parse(s.permissions)
             selectedBatchIds = s.assignedBatchIds?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() }?.toSet() ?: emptySet()
             status = s.status
+            photoUri = s.photoUri?.let(Uri::parse)
             loadedStaff = true
         }
     }
@@ -146,6 +172,12 @@ fun AddEditStaffScreen(
             CredentialNotice(isEdit)
 
             Spacer(Modifier.height(14.dp))
+            StaffPhotoPicker(
+                photoUri = photoUri,
+                onCameraClick = { cameraLauncher.launch(tempPhotoUri) },
+                onGalleryClick = { galleryLauncher.launch("image/*") }
+            )
+            Spacer(Modifier.height(16.dp))
             SectionLabel("Staff Login ID")
             DarkTextField(
                 value = loginId,
@@ -276,7 +308,7 @@ fun AddEditStaffScreen(
 
             Spacer(Modifier.height(20.dp))
             val salary = monthlySalary.toDoubleOrNull()
-            val canSave = fullName.isNotBlank() &&
+            val canSave = !isSaving && fullName.isNotBlank() &&
                 loginId.isNotBlank() &&
                 email.isNotBlank() &&
                 roleTitle.isNotBlank() &&
@@ -302,47 +334,78 @@ fun AddEditStaffScreen(
                             errorMessage = "Enter a valid monthly salary."
                             return@TextButton
                         }
-                        if (isEdit && staffId != null) {
-                            viewModel.updateStaff(
-                                staffId = staffId,
-                                fullName = fullName,
-                                staffCode = loginId,
-                                roleTitle = roleTitle,
-                                phone = phone,
-                                email = email,
-                                monthlySalary = salary,
-                                permissions = selectedPermissions,
-                                assignedBatchIds = selectedBatchIds,
-                                status = status,
-                                password = password.takeIf { it.isNotBlank() },
-                                onSuccess = onBack,
-                                onError = { errorMessage = it }
-                            )
-                        } else {
-                            viewModel.addStaff(
-                                fullName = fullName,
-                                staffCode = loginId,
-                                roleTitle = roleTitle,
-                                phone = phone,
-                                email = email,
-                                monthlySalary = salary,
-                                permissions = selectedPermissions,
-                                assignedBatchIds = selectedBatchIds,
-                                password = password,
-                                status = status,
-                                onSuccess = { staffId, loginIdResult, staffPassword, _ ->
-                                    savedCredentials = CredentialInfo(loginIdResult, staffPassword)
-                                    showCredentialShare = true
-                                },
-                                onError = { errorMessage = it }
-                            )
+                        isSaving = true
+                        photoSaveScope.launch {
+                            try {
+                                val cloudPhotoUrl = photoUri?.let { selectedUri ->
+                                    if (selectedUri.scheme == "https" || selectedUri.scheme == "http") {
+                                        selectedUri.toString()
+                                    } else {
+                                        CloudinaryImageUploadHelper.uploadStaffPhoto(context, selectedUri)
+                                    }
+                                }
+                                if (isEdit && staffId != null) {
+                                    viewModel.updateStaff(
+                                        staffId = staffId,
+                                        fullName = fullName,
+                                        staffCode = loginId,
+                                        photoUri = cloudPhotoUrl,
+                                        roleTitle = roleTitle,
+                                        phone = phone,
+                                        email = email,
+                                        monthlySalary = salary,
+                                        permissions = selectedPermissions,
+                                        assignedBatchIds = selectedBatchIds,
+                                        status = status,
+                                        password = password.takeIf { it.isNotBlank() },
+                                        onSuccess = {
+                                            isSaving = false
+                                            onBack()
+                                        },
+                                        onError = {
+                                            errorMessage = it
+                                            isSaving = false
+                                        }
+                                    )
+                                } else {
+                                    viewModel.addStaff(
+                                        fullName = fullName,
+                                        staffCode = loginId,
+                                        photoUri = cloudPhotoUrl,
+                                        roleTitle = roleTitle,
+                                        phone = phone,
+                                        email = email,
+                                        monthlySalary = salary,
+                                        permissions = selectedPermissions,
+                                        assignedBatchIds = selectedBatchIds,
+                                        password = password,
+                                        status = status,
+                                        onSuccess = { _, loginIdResult, staffPassword, _ ->
+                                            isSaving = false
+                                            savedCredentials = CredentialInfo(loginIdResult, staffPassword)
+                                            showCredentialShare = true
+                                        },
+                                        onError = {
+                                            errorMessage = it
+                                            isSaving = false
+                                        }
+                                    )
+                                }
+                            } catch (error: Exception) {
+                                errorMessage = error.message ?: "Photo upload failed. Check your connection and try again."
+                                isSaving = false
+                            }
                         }
                     },
                     modifier = Modifier.fillMaxSize(),
                     enabled = canSave,
                     colors = ButtonDefaults.textButtonColors(contentColor = if (canSave) Color.White else TextMuted, disabledContentColor = TextMuted)
                 ) {
-                    Text(if (isEdit) "Update Staff Account" else "Create Staff Account", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Text(
+                        if (isSaving) "Optimizing photo..." else if (isEdit) "Update Staff Account" else "Create Staff Account",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp
+                    )
                 }
             }
             Spacer(Modifier.height(24.dp))
@@ -363,6 +426,51 @@ fun AddEditStaffScreen(
 }
 
 private data class CredentialInfo(val loginId: String, val password: String)
+
+@Composable
+private fun StaffPhotoPicker(
+    photoUri: Uri?,
+    onCameraClick: () -> Unit,
+    onGalleryClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(76.dp)
+                .clip(CircleShape)
+                .background(CardBgAlt)
+                .border(1.dp, Cyan.copy(alpha = 0.5f), CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            if (photoUri != null) {
+                AsyncImage(
+                    model = photoUri,
+                    contentDescription = "Staff photo preview",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                )
+            } else {
+                Icon(Icons.Filled.Person, contentDescription = null, tint = Cyan, modifier = Modifier.size(30.dp))
+            }
+        }
+        Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            Text("Staff Photo", color = TextWhite, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+            Text("App ছবিটি optimize করে কম data-তে upload করবে.", color = TextMuted, fontSize = 11.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onCameraClick, shape = RoundedCornerShape(9.dp)) {
+                    Text("Camera", fontSize = 11.sp)
+                }
+                OutlinedButton(onClick = onGalleryClick, shape = RoundedCornerShape(9.dp)) {
+                    Text("Gallery", fontSize = 11.sp)
+                }
+            }
+        }
+    }
+}
 
 @Composable
 private fun CredentialNotice(isEdit: Boolean) {
@@ -565,7 +673,7 @@ private fun CredentialShareDialog(loginId: String, password: String, onDismiss: 
                         }
                         Spacer(Modifier.height(10.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Filled.Lock, null, tint = AccentAmber, modifier = Modifier.size(16.dp))
+                            Icon(Icons.Filled.Lock, null, tint = Cyan, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(8.dp))
                             Text("Password", color = TextMuted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                         }
@@ -578,7 +686,7 @@ private fun CredentialShareDialog(loginId: String, password: String, onDismiss: 
                                 },
                                 modifier = Modifier.size(36.dp)
                             ) {
-                                Icon(Icons.Filled.ContentCopy, "Copy Password", tint = AccentAmber, modifier = Modifier.size(18.dp))
+                                Icon(Icons.Filled.ContentCopy, "Copy Password", tint = Cyan, modifier = Modifier.size(18.dp))
                             }
                         }
                     }

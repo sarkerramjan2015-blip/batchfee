@@ -3,6 +3,7 @@ package com.batchfee.edu
 import android.app.Application
 import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.domain.ThemePreferences
+import com.batchfee.edu.domain.SessionManager
 import com.google.firebase.FirebaseApp
 import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.google.firebase.firestore.FirebaseFirestore
@@ -19,6 +20,7 @@ class BatchFeeApp : Application() {
     override fun onCreate() {
         super.onCreate()
         ThemePreferences.init(this)
+        SessionManager.initialize(this)
 
         FirebaseApp.initializeApp(this)
 
@@ -38,8 +40,14 @@ class BatchFeeApp : Application() {
                 .build()
         }
 
-        applicationScope.launch {
-            AppDatabase.ensureDemoDataSeeded(database)
+        // Demo account provisioning makes multiple Auth and Firestore requests. It is useful
+        // only to developers and must never compete with a real customer's startup/login.
+        if (BuildConfig.DEBUG) {
+            applicationScope.launch {
+                if (database.userDao().getUserByEmail("superadmin@batchfee.app") == null) {
+                    AppDatabase.ensureDemoDataSeeded(database)
+                }
+            }
         }
     }
 }

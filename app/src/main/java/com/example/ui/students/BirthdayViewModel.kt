@@ -26,7 +26,7 @@ class BirthdayViewModel(private val db: AppDatabase) : ViewModel() {
     private fun loadData() {
         val instId = SessionManager.currentInstituteId.value ?: return
         viewModelScope.launch {
-            InstituteCacheRefreshManager.refreshIfStale(db, instId)
+            InstituteCacheRefreshManager.refreshIfStaleInBackground(db, instId)
             db.studentDao().getStudentsByInstitute(instId).collect { students ->
                 val today = Calendar.getInstance()
                 val withDays = students

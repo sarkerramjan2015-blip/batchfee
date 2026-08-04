@@ -118,7 +118,7 @@ fun BatchDetailScreen(
     LaunchedEffect(batchId) { paymentVM.loadBatchDetail(batchId) }
     LaunchedEffect(instId, batchId, monthOffset) {
         val instituteId = instId ?: return@LaunchedEffect
-        InstituteCacheRefreshManager.forceRefresh(db, instituteId)
+        InstituteCacheRefreshManager.refreshIfStaleInBackground(db, instituteId)
         val range = monthRangeForOffset(monthOffset)
         launch {
             db.attendanceDao().getAttendanceForBatchByDateRange(instituteId, batchId, range.first, range.second)
@@ -664,7 +664,7 @@ private fun BatchMenuDialog(
                 ) {
                     Text(
                         "Student Batch Menu",
-                        color = AccentAmber,
+                        color = Cyan,
                         fontSize = 21.sp,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.weight(1f)
@@ -700,7 +700,7 @@ private fun BatchMenuItem(
                 .padding(horizontal = 22.dp, vertical = 17.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(icon, contentDescription = null, tint = AccentAmber, modifier = Modifier.size(30.dp))
+            Icon(icon, contentDescription = null, tint = Cyan, modifier = Modifier.size(30.dp))
             Spacer(Modifier.width(18.dp))
             Column(Modifier.weight(1f)) {
                 Text(title, color = TextWhite, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
@@ -1057,7 +1057,7 @@ private fun BatchSmallTile(title: String, modifier: Modifier = Modifier) {
         contentAlignment = Alignment.CenterStart
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Filled.TableChart, contentDescription = null, tint = AccentAmber, modifier = Modifier.size(26.dp))
+            Icon(Icons.Filled.TableChart, contentDescription = null, tint = Cyan, modifier = Modifier.size(26.dp))
             Spacer(Modifier.width(10.dp))
             Text(title, color = TextWhite, fontSize = 17.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
@@ -1068,11 +1068,11 @@ private fun BatchSmallTile(title: String, modifier: Modifier = Modifier) {
 private fun AllowedStaffCard(staff: List<StaffEntity>) {
     DashboardCard {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Icon(Icons.Filled.Groups, contentDescription = null, tint = AccentAmber, modifier = Modifier.size(25.dp))
+            Icon(Icons.Filled.Groups, contentDescription = null, tint = Cyan, modifier = Modifier.size(25.dp))
             Spacer(Modifier.width(10.dp))
             Text("Allowed Staffs", color = TextWhite, fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-            Box(modifier = Modifier.clip(RoundedCornerShape(9.dp)).background(Color(0xFF8A6500)).padding(horizontal = 12.dp, vertical = 8.dp)) {
-                Text(staff.size.toString(), color = AccentAmber, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            Box(modifier = Modifier.clip(RoundedCornerShape(9.dp)).background(Cyan.copy(alpha = 0.15f)).padding(horizontal = 12.dp, vertical = 8.dp)) {
+                Text(staff.size.toString(), color = Cyan, fontSize = 20.sp, fontWeight = FontWeight.Bold)
             }
         }
         Spacer(Modifier.height(18.dp))
@@ -1370,7 +1370,7 @@ fun EnrollStudentsScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
 
     LaunchedEffect(instId, batchId) {
         if (instId != null) {
-            InstituteCacheRefreshManager.refreshIfStale(db, instId)
+            InstituteCacheRefreshManager.refreshIfStaleInBackground(db, instId)
             launch {
                 db.studentDao().getStudentsByInstitute(instId).collect { allStudents = it }
             }

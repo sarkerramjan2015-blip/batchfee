@@ -2,6 +2,7 @@ package com.batchfee.edu.ui.students
 
 import android.content.Intent
 import android.net.Uri
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -46,6 +47,7 @@ import com.batchfee.edu.data.models.FeeEntity
 import com.batchfee.edu.data.models.PaymentEntity
 import com.batchfee.edu.data.models.StudentEntity
 import com.batchfee.edu.data.repository.FeeCollectionRepository
+import com.batchfee.edu.data.repository.StudentDeletionRepository
 import com.batchfee.edu.domain.appendInstituteSignature
 import com.batchfee.edu.domain.loadInstituteSignature
 import com.batchfee.edu.domain.MonthlyDueCalculator
@@ -90,6 +92,8 @@ fun StudentProfileScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val instId = SessionManager.currentInstituteId.collectAsState().value
+    val currentUserRole = SessionManager.currentUserRole.collectAsState().value
+    val canPermanentlyDeleteStudent = currentUserRole in setOf("InstituteOwner", "SuperAdmin")
 
     var student by remember { mutableStateOf<StudentEntity?>(null) }
     var instituteSignature by remember { mutableStateOf("") }
@@ -97,6 +101,7 @@ fun StudentProfileScreen(
     var showMessageDialog by remember { mutableStateOf(false) }
     var directMessage by remember { mutableStateOf("") }
     var pendingConfirmAction by remember { mutableStateOf<StudentMenuConfirmAction?>(null) }
+    var isDeletingStudent by remember { mutableStateOf(false) }
     var showStudentInsights by remember { mutableStateOf(false) }
     var totalPaid by remember { mutableStateOf(0.0) }
     var totalDue by remember { mutableStateOf(0.0) }
@@ -119,6 +124,7 @@ fun StudentProfileScreen(
     // ── Fee collection state ─────────────────────────────────
     var showFeeForm by remember { mutableStateOf(false) }
     val feeRepository = remember { FeeCollectionRepository(db) }
+    val studentDeletionRepository = remember(db) { StudentDeletionRepository(db) }
     var selectedBatchId by remember { mutableStateOf<String?>(null) }
     var feePeriod by remember { mutableStateOf("") }
     var feeAmount by remember { mutableStateOf("") }
@@ -149,7 +155,7 @@ fun StudentProfileScreen(
     // ── Load data ────────────────────────────────────────────
     LaunchedEffect(instId, studentId) {
         if (instId != null) {
-            InstituteCacheRefreshManager.refreshIfStale(db, instId)
+            InstituteCacheRefreshManager.refreshIfStaleInBackground(db, instId)
             launch {
                 db.studentDao().getStudentById(studentId, instId).collect { student = it }
             }
@@ -926,7 +932,6 @@ fun StudentProfileScreen(
                 SectionHeader("Guardian Info")
                 InfoCard {
                     InfoRow("Father / Guardian", s.guardianName ?: "N/A")
-                    InfoRow("Mother Name", s.emergencyContact ?: "N/A")
                     InfoRow("Guardian Phone", s.guardianPhone ?: "N/A")
                 }
 
@@ -954,7 +959,7 @@ fun StudentProfileScreen(
                 var allBatches by remember { mutableStateOf<List<BatchEntity>>(emptyList()) }
                 LaunchedEffect(instId) {
                     if (instId != null) {
-                        InstituteCacheRefreshManager.refreshIfStale(db, instId)
+                        InstituteCacheRefreshManager.refreshIfStaleInBackground(db, instId)
                         db.batchDao().getBatchesByInstitute(instId).collect { allBatches = it }
                     }
                 }
@@ -1034,7 +1039,7 @@ fun StudentProfileScreen(
                 var isShifting by remember { mutableStateOf(false) }
                 LaunchedEffect(instId) {
                     if (instId != null) {
-                        InstituteCacheRefreshManager.refreshIfStale(db, instId)
+                        InstituteCacheRefreshManager.refreshIfStaleInBackground(db, instId)
                         db.batchDao().getBatchesByInstitute(instId).collect { allBatches = it }
                     }
                 }
@@ -1165,6 +1170,7 @@ fun StudentProfileScreen(
                         showStudentMenu = false
                         pendingConfirmAction = StudentMenuConfirmAction.Delete
                     },
+                    canDeleteStudent = canPermanentlyDeleteStudent,
                     onGenerateReport = {
                         showStudentMenu = false
                         shareStudentText(context, "Student Report", buildStudentReportText(s, batches, totalPaid, computedTotalDue, instituteSignature))
@@ -1202,7 +1208,7 @@ fun StudentProfileScreen(
 
             pendingConfirmAction?.let { action ->
                 AlertDialog(
-                    onDismissRequest = { pendingConfirmAction = null },
+                    onDismissRequest = { if (!isDeletingStudent) pendingConfirmAction = null },
                     containerColor = CardBgAlt,
                     shape = RoundedCornerShape(14.dp),
                     title = {
@@ -1215,7 +1221,7 @@ fun StudentProfileScreen(
                     text = {
                         Text(
                             if (action == StudentMenuConfirmAction.Delete)
-                                "This will hide the student from active lists."
+                                "This permanently deletes the student and all related fees, payments, receipts, batch enrolments, attendance and exam results. This cannot be undone."
                             else
                                 "This will mark the student status as inactive.",
                             color = TextMuted
@@ -1226,28 +1232,48 @@ fun StudentProfileScreen(
                             onClick = {
                                 val currentStudent = student ?: return@TextButton
                                 scope.launch {
-                                    val updated = when (action) {
-                                        StudentMenuConfirmAction.Close -> currentStudent.copy(status = "inactive", updatedAtMs = System.currentTimeMillis())
-                                        StudentMenuConfirmAction.Delete -> currentStudent.copy(archivedAtMs = System.currentTimeMillis(), updatedAtMs = System.currentTimeMillis())
-                                    }
-                                    StudentSyncHelper.upsertStudent(updated)
-                                    db.studentDao().updateStudent(updated)
-                                    try {
-                                        val count = withContext(Dispatchers.IO) {
-                                            db.studentDao().getStudentsByInstituteOnce(instId ?: "").size
+                                    if (action == StudentMenuConfirmAction.Delete) {
+                                        isDeletingStudent = true
+                                        try {
+                                            studentDeletionRepository.permanentlyDelete(currentStudent)
+                                            pendingConfirmAction = null
+                                            onBack()
+                                        } catch (_: Exception) {
+                                            Toast.makeText(
+                                                context,
+                                                "Student could not be deleted. Check your connection and try again.",
+                                                Toast.LENGTH_LONG
+                                            ).show()
+                                        } finally {
+                                            isDeletingStudent = false
                                         }
-                                        InstituteSyncHelper.updateStudentCount(instId ?: "", count)
-                                    } catch (_: Exception) { }
-                                    pendingConfirmAction = null
-                                    if (action == StudentMenuConfirmAction.Delete) onBack()
+                                    } else {
+                                        val updated = currentStudent.copy(
+                                            status = "inactive",
+                                            updatedAtMs = System.currentTimeMillis()
+                                        )
+                                        StudentSyncHelper.upsertStudent(updated)
+                                        db.studentDao().updateStudent(updated)
+                                        try {
+                                            val count = withContext(Dispatchers.IO) {
+                                                db.studentDao().getStudentsByInstituteOnce(instId ?: "").size
+                                            }
+                                            InstituteSyncHelper.updateStudentCount(instId ?: "", count)
+                                        } catch (_: Exception) { }
+                                        pendingConfirmAction = null
+                                    }
                                 }
-                            }
+                            },
+                            enabled = !isDeletingStudent
                         ) {
-                            Text(if (action == StudentMenuConfirmAction.Delete) "Delete" else "Close", color = Color(0xFFEF4444))
+                            Text(
+                                if (isDeletingStudent) "Deleting..." else if (action == StudentMenuConfirmAction.Delete) "Delete permanently" else "Close",
+                                color = Color(0xFFEF4444)
+                            )
                         }
                     },
                     dismissButton = {
-                        TextButton(onClick = { pendingConfirmAction = null }) {
+                        TextButton(onClick = { pendingConfirmAction = null }, enabled = !isDeletingStudent) {
                             Text("Cancel", color = TextMuted)
                         }
                     }
@@ -1280,24 +1306,29 @@ private fun StudentBatchMenuDialog(
     onShareLogin: () -> Unit,
     onMessage: () -> Unit,
     onDeleteStudent: () -> Unit,
+    canDeleteStudent: Boolean,
     onGenerateReport: () -> Unit,
     onRegistrationForm: () -> Unit,
     onFeeSummary: () -> Unit,
     onGenerateIdCard: () -> Unit
 ) {
-    val items = listOf(
+    val items = buildList {
+        addAll(listOf(
         StudentBatchMenuItem("Edit Student", "You can edit student details here", Icons.Filled.Edit, onEdit),
         StudentBatchMenuItem("Assign Batch", "You can assign new batch here", Icons.Filled.Groups, onAssignBatch),
         StudentBatchMenuItem("Shift Batch", "You can shift this student to another batch", Icons.Filled.SwapHoriz, onShiftBatch),
         StudentBatchMenuItem("Close", "You can mark student status as inactive.", Icons.Filled.Close, onCloseStudent),
         StudentBatchMenuItem("Share Login Id And Password", "Share login Id And Password", Icons.Filled.Share, onShareLogin),
         StudentBatchMenuItem("Message", "Send a direct message", Icons.Filled.Email, onMessage),
-        StudentBatchMenuItem("Delete student", "You can delete student here", Icons.Filled.Delete, onDeleteStudent),
         StudentBatchMenuItem("Generate Report", "You can generate student report here", Icons.Filled.Article, onGenerateReport),
         StudentBatchMenuItem("Registration Form", "You can generate student registration form here", Icons.Filled.Article, onRegistrationForm),
         StudentBatchMenuItem("Fees Summary", "Generate complete fee summary with collected fees and pending dues", Icons.Filled.Article, onFeeSummary),
         StudentBatchMenuItem("Generate ID card", "You can generate student ID card.", Icons.Filled.Badge, onGenerateIdCard)
-    )
+        ))
+        if (canDeleteStudent) {
+            add(StudentBatchMenuItem("Delete student", "Permanently remove all student data", Icons.Filled.Delete, onDeleteStudent))
+        }
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1491,7 +1522,6 @@ private fun buildStudentRegistrationText(student: StudentEntity, instituteSignat
         appendLine("Student ID: ${student.studentCode}")
         appendLine("Phone: ${student.phone ?: "N/A"}")
         appendLine("Guardian: ${student.guardianName ?: "N/A"}")
-        appendLine("Mother Name: ${student.emergencyContact ?: "N/A"}")
         appendLine("Address: ${student.address ?: "N/A"}")
         appendLine("School: ${student.schoolName ?: "N/A"}")
         appendLine("Class: ${student.className ?: "N/A"}")
@@ -1714,7 +1744,7 @@ private fun StudentDashboardContent(
         Column(modifier = Modifier.padding(18.dp)) {
             Text("Personal Info", color = TextWhite, fontSize = 19.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(14.dp))
-            TwoColumnInfo("Guardian name", student.guardianName ?: "N/A", "Mother name", student.emergencyContact ?: "N/A")
+            TwoColumnInfo("Guardian name", student.guardianName ?: "N/A", "Student ID", student.studentCode)
             Spacer(Modifier.height(14.dp))
             TwoColumnInfo(
                 "Date of Birth",

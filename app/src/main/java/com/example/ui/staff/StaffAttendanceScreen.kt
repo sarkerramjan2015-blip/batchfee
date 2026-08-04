@@ -87,7 +87,7 @@ class StaffAttendanceViewModel(private val db: AppDatabase) : ViewModel() {
         val start = startOfDay(System.currentTimeMillis())
         val end = start + 24L * 60 * 60 * 1000
         viewModelScope.launch {
-            InstituteCacheRefreshManager.refreshIfStale(db, instId)
+            InstituteCacheRefreshManager.refreshIfStaleInBackground(db, instId)
             db.staffDao().getActiveStaff(instId).collect { _staff.value = it }
         }
         viewModelScope.launch {

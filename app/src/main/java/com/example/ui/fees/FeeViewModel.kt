@@ -73,7 +73,7 @@ class FeeViewModel(private val db: AppDatabase) : ViewModel() {
     private fun loadData() {
         viewModelScope.launch {
             val instId = SessionManager.currentInstituteId.value ?: return@launch
-            InstituteCacheRefreshManager.refreshIfStale(db, instId)
+            InstituteCacheRefreshManager.refreshIfStaleInBackground(db, instId)
             launch {
                 db.feeDao().getAllFees(instId).collect { allFees ->
                     _feeList.value = allFees

@@ -27,6 +27,27 @@ private val firestore by lazy { FirebaseFirestore.getInstance() }
 private fun instituteCollection(instituteId: String, name: String) =
     firestore.collection("institutes").document(instituteId).collection(name)
 
+/**
+ * Removes every document owned by one student. Firestore batches are capped below 500 writes
+ * so a student with a long history can still be deleted safely.
+ */
+private suspend fun deleteDocumentsForStudent(
+    instituteId: String,
+    collection: String,
+    studentId: String
+) {
+    val documents = instituteCollection(instituteId, collection)
+        .whereEqualTo("studentId", studentId)
+        .get()
+        .await()
+        .documents
+    documents.chunked(450).forEach { chunk ->
+        firestore.batch().apply {
+            chunk.forEach { delete(it.reference) }
+        }.commit().await()
+    }
+}
+
 private fun recordException(e: Exception) {
     FirebaseCrashlytics.getInstance().recordException(e)
 }
@@ -77,6 +98,15 @@ object BatchStudentSyncHelper {
                     )
                 ).await()
             }
+        } catch (e: Exception) {
+            recordException(e)
+            throw e
+        }
+    }
+
+    suspend fun deleteEnrollmentsForStudent(instituteId: String, studentId: String) = withContext(Dispatchers.IO) {
+        try {
+            deleteDocumentsForStudent(instituteId, COLLECTION, studentId)
         } catch (e: Exception) {
             recordException(e)
             throw e
@@ -200,6 +230,17 @@ object FinanceSyncHelper {
     suspend fun deleteReceipt(receiptId: String, instituteId: String) = withContext(Dispatchers.IO) {
         try {
             instituteCollection(instituteId, RECEIPTS).document(receiptId).delete().await()
+        } catch (e: Exception) {
+            recordException(e)
+            throw e
+        }
+    }
+
+    suspend fun deleteRecordsForStudent(instituteId: String, studentId: String) = withContext(Dispatchers.IO) {
+        try {
+            deleteDocumentsForStudent(instituteId, RECEIPTS, studentId)
+            deleteDocumentsForStudent(instituteId, PAYMENTS, studentId)
+            deleteDocumentsForStudent(instituteId, FEES, studentId)
         } catch (e: Exception) {
             recordException(e)
             throw e
@@ -359,6 +400,16 @@ object AttendanceSyncHelper {
                     "updatedAtMs" to record.updatedAtMs
                 )
             ).await()
+        } catch (e: Exception) {
+            recordException(e)
+            throw e
+        }
+    }
+
+    suspend fun deleteRecordsForStudent(instituteId: String, studentId: String) = withContext(Dispatchers.IO) {
+        try {
+            deleteDocumentsForStudent(instituteId, ABSENT_MESSAGES, studentId)
+            deleteDocumentsForStudent(instituteId, ATTENDANCE, studentId)
         } catch (e: Exception) {
             recordException(e)
             throw e
@@ -528,6 +579,15 @@ object ExamSyncHelper {
                     "updatedAtMs" to result.updatedAtMs
                 )
             ).await()
+        } catch (e: Exception) {
+            recordException(e)
+            throw e
+        }
+    }
+
+    suspend fun deleteResultsForStudent(instituteId: String, studentId: String) = withContext(Dispatchers.IO) {
+        try {
+            deleteDocumentsForStudent(instituteId, RESULTS, studentId)
         } catch (e: Exception) {
             recordException(e)
             throw e

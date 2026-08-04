@@ -9,6 +9,40 @@ import com.batchfee.edu.data.models.ReceiptEntity
 import java.util.UUID
 import kotlin.math.abs
 
+/**
+ * Cloud persistence used by fee mutations. Keeping it behind this interface lets
+ * the repository's local accounting rules be tested without a Firebase session.
+ */
+interface FinanceSyncGateway {
+    suspend fun upsertFee(fee: FeeEntity)
+    suspend fun upsertPayment(payment: PaymentEntity)
+    suspend fun upsertReceipt(receipt: ReceiptEntity)
+    suspend fun deletePayment(paymentId: String, instituteId: String)
+    suspend fun deleteReceipt(receiptId: String, instituteId: String)
+}
+
+object FirestoreFinanceSyncGateway : FinanceSyncGateway {
+    override suspend fun upsertFee(fee: FeeEntity) {
+        FinanceSyncHelper.upsertFee(fee)
+    }
+
+    override suspend fun upsertPayment(payment: PaymentEntity) {
+        FinanceSyncHelper.upsertPayment(payment)
+    }
+
+    override suspend fun upsertReceipt(receipt: ReceiptEntity) {
+        FinanceSyncHelper.upsertReceipt(receipt)
+    }
+
+    override suspend fun deletePayment(paymentId: String, instituteId: String) {
+        FinanceSyncHelper.deletePayment(paymentId, instituteId)
+    }
+
+    override suspend fun deleteReceipt(receiptId: String, instituteId: String) {
+        FinanceSyncHelper.deleteReceipt(receiptId, instituteId)
+    }
+}
+
 data class FeeCollectionResult(
     val paymentId: String,
     val receiptNumber: String,
@@ -21,7 +55,10 @@ data class FeeCreationResult(
     val receiptNumber: String? = null
 )
 
-class FeeCollectionRepository(private val db: AppDatabase) {
+class FeeCollectionRepository(
+    private val db: AppDatabase,
+    private val financeSync: FinanceSyncGateway = FirestoreFinanceSyncGateway
+) {
 
     suspend fun createFee(
         instituteId: String,
@@ -57,7 +94,7 @@ class FeeCollectionRepository(private val db: AppDatabase) {
             updatedAtMs = now,
             cancelledAtMs = null
         )
-        FinanceSyncHelper.upsertFee(fee)
+        financeSync.upsertFee(fee)
         db.feeDao().insertFee(fee)
         fee
     }
@@ -108,7 +145,7 @@ class FeeCollectionRepository(private val db: AppDatabase) {
             updatedAtMs = now,
             cancelledAtMs = null
         )
-        FinanceSyncHelper.upsertFee(fee)
+        financeSync.upsertFee(fee)
         db.feeDao().insertFee(fee)
 
         if (collectedAmount <= 0.0) {
@@ -203,7 +240,7 @@ class FeeCollectionRepository(private val db: AppDatabase) {
             status = statusForAdjustedFee(adjustedDue, fee.paidAmount),
             updatedAtMs = now
         )
-        FinanceSyncHelper.upsertFee(adjustedFee)
+        financeSync.upsertFee(adjustedFee)
         db.feeDao().updateFee(adjustedFee)
 
         collectFromFee(
@@ -260,7 +297,7 @@ class FeeCollectionRepository(private val db: AppDatabase) {
             status = statusAfterPayment(newDue),
             updatedAtMs = now
         )
-        FinanceSyncHelper.upsertFee(updatedFee)
+        financeSync.upsertFee(updatedFee)
         db.feeDao().updateFee(updatedFee)
 
         val paymentId = UUID.randomUUID().toString()
@@ -281,7 +318,7 @@ class FeeCollectionRepository(private val db: AppDatabase) {
             createdAtMs = now,
             updatedAtMs = now
         )
-        FinanceSyncHelper.upsertPayment(payment)
+        financeSync.upsertPayment(payment)
         db.paymentDao().insertPayment(payment)
         val receipt = ReceiptEntity(
             id = UUID.randomUUID().toString(),
@@ -298,7 +335,7 @@ class FeeCollectionRepository(private val db: AppDatabase) {
             receiptText = receiptText ?: "Payment of $normalizedAmount received.",
             createdAtMs = now
         )
-        FinanceSyncHelper.upsertReceipt(receipt)
+        financeSync.upsertReceipt(receipt)
         db.receiptDao().insertReceipt(receipt)
         return FeeCollectionResult(paymentId, receiptNumber, updatedFee)
     }
@@ -333,12 +370,12 @@ class FeeCollectionRepository(private val db: AppDatabase) {
         // Delete receipt
         db.receiptDao().getReceiptByPaymentIdOnce(instituteId, paymentId)?.let { receipt ->
             db.receiptDao().deleteReceiptByPaymentId(paymentId, instituteId)
-            FinanceSyncHelper.deleteReceipt(receipt.id, instituteId)
+            financeSync.deleteReceipt(receipt.id, instituteId)
         }
 
         // Delete payment
         db.paymentDao().deletePaymentById(paymentId, instituteId)
-        FinanceSyncHelper.deletePayment(paymentId, instituteId)
+        financeSync.deletePayment(paymentId, instituteId)
 
         // Recalculate fee
         val remainingPayments = db.paymentDao().getAllPaymentsOnce(instituteId)
@@ -356,7 +393,7 @@ class FeeCollectionRepository(private val db: AppDatabase) {
             updatedAtMs = now
         )
         db.feeDao().updateFee(updatedFee)
-        FinanceSyncHelper.upsertFee(updatedFee)
+        financeSync.upsertFee(updatedFee)
     }
 
     private fun normalizeFeeType(feeType: String): String =

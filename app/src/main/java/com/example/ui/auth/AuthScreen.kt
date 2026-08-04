@@ -1,6 +1,7 @@
 package com.batchfee.edu.ui.auth
 
 import android.content.Context
+import android.os.SystemClock
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
@@ -77,7 +78,11 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
             ?: throw IllegalStateException("Your institute profile could not be resolved. Please try again.")
 
         withContext(Dispatchers.IO) {
-            InstituteSyncHelper.syncInstituteFromFirestore(db, resolvedInstituteId)
+            // A successful login already writes the canonical profile to Room. Avoid a second
+            // identical Firestore read before allowing the user to see the dashboard.
+            if (db.instituteDao().getInstitute(resolvedInstituteId) == null) {
+                InstituteSyncHelper.syncInstituteFromFirestore(db, resolvedInstituteId)
+            }
             checkNotNull(db.instituteDao().getInstitute(resolvedInstituteId)) {
                 "Your institute profile is still unavailable. Please try again."
             }
@@ -209,7 +214,9 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
 
                 val existingPlans = db.subscriptionPlanDao().getAllPlans().first()
                 if (existingPlans.isEmpty()) {
-                    AppDatabase.ensureDemoDataSeeded(db)
+                    // A new real institute only needs the local plan catalog. Provisioning
+                    // demo Firebase accounts here added several unrelated network waits.
+                    AppDatabase.populateInitialPlans(db.subscriptionPlanDao())
                 }
 
                 db.instituteDao().insertInstitute(institute)
@@ -253,6 +260,7 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
         
         viewModelScope.launch {
             try {
+                val loginStartedAt = SystemClock.elapsedRealtime()
                 val input = credential.trim()
                 val cleanPassword = passwordHash.trim()
                 val hasAt = input.contains("@")
@@ -282,6 +290,7 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
 
                 // ── Firebase Auth ──
                 android.util.Log.d("AUTH_LOGIN", "Calling signInWithEmailAndPassword: email=$firebaseEmail")
+                val authStartedAt = SystemClock.elapsedRealtime()
                 val authResult = withContext(Dispatchers.IO) {
                     // Sign out any stale session first to avoid credential expiry errors
                     try { FirebaseAuth.getInstance().signOut() } catch (_: Exception) { }
@@ -291,18 +300,23 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                 }
                 val uid = authResult.user?.uid
                     ?: throw IllegalStateException("Firebase Auth returned null UID")
-                android.util.Log.d("AUTH_LOGIN", "AUTH OK: uid=$uid")
+                android.util.Log.i("BatchFeeDataLoad", "login_auth_ms=${SystemClock.elapsedRealtime() - authStartedAt}")
 
                 // ── Fetch or rebuild local user record ──
+                val profileStartedAt = SystemClock.elapsedRealtime()
                 val managedUser = withContext(Dispatchers.IO) {
                     AppUserSyncHelper.fetchManagedUser(uid)
                 }
                 var localUser = db.userDao().getUserById(uid)
-                val firestoreUserDoc = withContext(Dispatchers.IO) {
-                    FirebaseFirestore.getInstance()
-                        .collection("institutes").document(uid)
-                        .get().await()
-                }
+                // Most production accounts have a managed-user record. The legacy institute
+                // lookup is only needed if that record is absent (or for staff resolution).
+                val firestoreUserDoc = if (managedUser == null || managedUser.role == "Staff") {
+                    withContext(Dispatchers.IO) {
+                        FirebaseFirestore.getInstance()
+                            .collection("institutes").document(uid)
+                            .get().await()
+                    }
+                } else null
 
                 val role: String
                 val instituteId: String?
@@ -343,7 +357,11 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                         db.userDao().updateUser(localUser)
                     }
 
-                    if (role != "SuperAdmin" && !instituteId.isNullOrBlank()) {
+                    if (
+                        role != "SuperAdmin" &&
+                        !instituteId.isNullOrBlank() &&
+                        db.instituteDao().getInstitute(instituteId) == null
+                    ) {
                         val canonicalInstituteDoc = withContext(Dispatchers.IO) {
                             FirebaseFirestore.getInstance()
                                 .collection("institutes").document(instituteId)
@@ -376,7 +394,7 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                             )
                         }
                     }
-                } else if (firestoreUserDoc.exists()) {
+                } else if (firestoreUserDoc?.exists() == true) {
                     val data = firestoreUserDoc.data ?: emptyMap()
                     role = when (val r = data["role"] as? String) {
                         "owner" -> "InstituteOwner"
@@ -518,7 +536,7 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                 } else {
                     val existingPlans = db.subscriptionPlanDao().getAllPlans().first()
                     if (existingPlans.isEmpty()) {
-                        AppDatabase.ensureDemoDataSeeded(db)
+                        AppDatabase.populateInitialPlans(db.subscriptionPlanDao())
                     }
                 }
 
@@ -529,6 +547,11 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
 
                 resolveInstituteBeforeNavigation(instituteId, role)
                 SessionManager.login(uid, instituteId ?: "", role, staffPermissions)
+                android.util.Log.i(
+                    "BatchFeeDataLoad",
+                    "login_profile_ms=${SystemClock.elapsedRealtime() - profileStartedAt} " +
+                        "login_total_ms=${SystemClock.elapsedRealtime() - loginStartedAt}"
+                )
                 
                 // Log staff login
                 if (role == "Staff") {
@@ -834,6 +857,11 @@ fun AuthScreen(
 
     LaunchedEffect(Unit) { contentVisible = true }
     LaunchedEffect(sessionNotice, isLoginMode) {
+        // An expiry notice must not be hidden behind an old informational/error message.
+        if (isLoginMode && sessionNotice != null) {
+            errorMessage = null
+            infoMessage = null
+        }
         biometricLoginAvailable = isLoginMode &&
             BiometricAuthManager.savedSession(context) != null &&
             BiometricAuthManager.canAuthenticate(context)

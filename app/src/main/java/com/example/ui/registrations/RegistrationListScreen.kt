@@ -91,15 +91,20 @@ fun RegistrationListScreen(
             // ── Generate Link Button ──
             Button(
                 onClick = {
-                    viewModel.generateRegistrationLink { url ->
-                        if (url.isNotEmpty()) {
+                    viewModel.generateRegistrationLink(
+                        onText = { shareText ->
+                        if (shareText.isNotEmpty()) {
                             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                            clipboard.setPrimaryClip(ClipData.newPlainText("Registration Link", url))
+                            clipboard.setPrimaryClip(ClipData.newPlainText("Official Registration Link", shareText))
                             coroutineScope.launch {
-                                snackbarHostState.showSnackbar("Registration link copied to clipboard!")
+                                snackbarHostState.showSnackbar("Official institute registration link copied!")
                             }
                         }
-                    }
+                    },
+                        onError = { error ->
+                            coroutineScope.launch { snackbarHostState.showSnackbar(error) }
+                        }
+                    )
                 },
                 modifier = Modifier
                     .fillMaxWidth()
@@ -118,7 +123,7 @@ fun RegistrationListScreen(
             }
 
             Text(
-                "Link will be copied to clipboard",
+                "Official institute name and link will be copied to clipboard",
                 color = TextMuted,
                 fontSize = 11.sp,
                 textAlign = TextAlign.Center,

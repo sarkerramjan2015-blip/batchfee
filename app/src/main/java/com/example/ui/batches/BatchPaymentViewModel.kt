@@ -97,7 +97,7 @@ class BatchPaymentViewModel(private val db: AppDatabase) : ViewModel() {
             val instId = SessionManager.currentInstituteId.value ?: return
         _isLoading.value = true
         viewModelScope.launch {
-            InstituteCacheRefreshManager.forceRefresh(db, instId)
+            InstituteCacheRefreshManager.refreshIfStaleInBackground(db, instId)
             launch {
                 db.batchDao().getBatchById(batchId, instId).collect { _batch.value = it }
             }

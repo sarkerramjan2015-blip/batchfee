@@ -29,6 +29,18 @@ object StudentSyncHelper {
         }
     }
 
+    /** Deletes the source student document only after its dependent records have been removed. */
+    suspend fun deleteStudent(studentId: String, instituteId: String) {
+        withContext(Dispatchers.IO) {
+            try {
+                studentsCollection(instituteId).document(studentId).delete().await()
+            } catch (e: Exception) {
+                FirebaseCrashlytics.getInstance().recordException(e)
+                throw e
+            }
+        }
+    }
+
     suspend fun syncAllFromFirestore(db: AppDatabase, instituteId: String) {
         withContext(Dispatchers.IO) {
             try {

@@ -46,16 +46,22 @@ class RegistrationListViewModel(private val db: AppDatabase) : ViewModel() {
         }
     }
 
-    fun generateRegistrationLink(onUrl: (String) -> Unit) {
+    fun generateRegistrationLink(onText: (String) -> Unit, onError: (String) -> Unit) {
         val instId = SessionManager.currentInstituteId.value ?: return
         viewModelScope.launch {
             try {
                 val institute = db.instituteDao().getInstitute(instId)
-                if (institute != null) {
-                    repository.syncInstituteInfo(institute.id, institute.name, institute.phone, institute.profilePhotoUri)
-                }
-            } catch (_: Exception) {}
-            onUrl(repository.getRegistrationFormUrl(instId))
+                    ?: throw IllegalStateException("Institute profile could not be found.")
+                val profile = repository.syncPublicRegistrationProfile(
+                    instituteId = institute.id,
+                    name = institute.name,
+                    phone = institute.phone,
+                    logoUri = institute.profilePhotoUri
+                )
+                onText(repository.getRegistrationShareText(profile))
+            } catch (e: Exception) {
+                onError("Could not create the official registration link. Check your connection and try again.")
+            }
         }
     }
 

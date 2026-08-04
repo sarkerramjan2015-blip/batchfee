@@ -298,7 +298,7 @@ fun UnifiedCollectScreen(
                 collectError = "No active institute session."
                 return@launch
             }
-            InstituteCacheRefreshManager.refreshIfStale(db, instId)
+            InstituteCacheRefreshManager.refreshIfStaleInBackground(db, instId)
 
             val allFees = withContext(Dispatchers.IO) {
                 db.feeDao().getAllFeesOnce(instId)
@@ -409,7 +409,7 @@ fun UnifiedCollectScreen(
 
     LaunchedEffect(Unit) {
         val instId = SessionManager.currentInstituteId.value ?: return@LaunchedEffect
-        InstituteCacheRefreshManager.refreshIfStale(db, instId)
+        InstituteCacheRefreshManager.refreshIfStaleInBackground(db, instId)
         allStudents = withContext(Dispatchers.IO) {
             db.studentDao().getStudentsByInstituteOnce(instId)
         }

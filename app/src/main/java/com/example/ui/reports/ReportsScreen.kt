@@ -192,7 +192,7 @@ fun ReportsScreen(db: AppDatabase, period: String = "today", onBack: () -> Unit)
 @Composable
 private fun GrandTotalCard(total: Double, label: String, period: String) {
     val accent = when (period) {
-        "month" -> AccentAmber
+        "month" -> AccentViolet
         "lifetime" -> AccentViolet
         else -> Cyan
     }
@@ -241,11 +241,11 @@ private fun MonthHeader(label: String, count: Int, total: Double) {
 private fun DayHeader(label: String, count: Int, total: Double) {
     Column {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Filled.Today, null, tint = AccentAmber, modifier = Modifier.size(20.dp))
+            Icon(Icons.Filled.Today, null, tint = Cyan, modifier = Modifier.size(20.dp))
             Spacer(Modifier.width(8.dp))
             Text(label, color = TextWhite, fontSize = 17.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.weight(1f))
-            Text("$count · BDT ${formatAmount(total)}", color = AccentAmber, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            Text("$count · BDT ${formatAmount(total)}", color = Cyan, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
         }
         Spacer(Modifier.height(4.dp))
         HorizontalDivider(color = BorderSub, thickness = 1.dp)

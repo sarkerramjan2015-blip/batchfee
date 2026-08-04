@@ -12,6 +12,18 @@ object SessionManager {
 
     private const val PREFS_LOGIN = "batchfee_login_prefs"
     private const val KEY_LAST_LOGIN_ID = "last_login_id"
+    private const val PREFS_SESSION = "batchfee_session_prefs"
+    private const val KEY_PENDING_SESSION_NOTICE = "pending_session_notice"
+
+    private var appContext: Context? = null
+
+    /** Restores an expiry notice after process recreation so the user is never logged out silently. */
+    fun initialize(context: Context) {
+        appContext = context.applicationContext
+        _sessionNotice.value = appContext
+            ?.getSharedPreferences(PREFS_SESSION, Context.MODE_PRIVATE)
+            ?.getString(KEY_PENDING_SESSION_NOTICE, null)
+    }
 
     fun saveLastLoginId(context: Context, loginId: String) {
         context.applicationContext.getSharedPreferences(PREFS_LOGIN, Context.MODE_PRIVATE)
@@ -42,7 +54,7 @@ object SessionManager {
     val lastActivityAtMs: StateFlow<Long> = _lastActivityAtMs.asStateFlow()
 
     fun login(userId: String, instituteId: String?, role: String, staffPermissions: String? = null) {
-        _sessionNotice.value = null
+        clearSessionNotice()
         _currentUserId.value = userId
         _currentInstituteId.value = instituteId
         _currentUserRole.value = role
@@ -51,7 +63,13 @@ object SessionManager {
     }
 
     fun logout(expired: Boolean = false) {
-        _sessionNotice.value = if (expired) SESSION_EXPIRED_MESSAGE else null
+        if (expired) {
+            _sessionNotice.value = SESSION_EXPIRED_MESSAGE
+            appContext?.getSharedPreferences(PREFS_SESSION, Context.MODE_PRIVATE)
+                ?.edit()?.putString(KEY_PENDING_SESSION_NOTICE, SESSION_EXPIRED_MESSAGE)?.apply()
+        } else {
+            clearSessionNotice()
+        }
         _currentUserId.value = null
         _currentInstituteId.value = null
         _currentUserRole.value = null
@@ -61,6 +79,12 @@ object SessionManager {
     }
 
     fun expireSession() = logout(expired = true)
+
+    fun clearSessionNotice() {
+        _sessionNotice.value = null
+        appContext?.getSharedPreferences(PREFS_SESSION, Context.MODE_PRIVATE)
+            ?.edit()?.remove(KEY_PENDING_SESSION_NOTICE)?.apply()
+    }
 
     fun markActivity() {
         if (_currentUserId.value != null) {

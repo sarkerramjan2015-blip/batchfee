@@ -53,6 +53,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -72,7 +73,9 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.cloudinary.CloudinaryImageUploadHelper
 import com.batchfee.edu.ui.components.COUNTRY_CODES
+import kotlinx.coroutines.launch
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -123,6 +126,9 @@ fun AddEditStudentScreen(
     var loaded by remember { mutableStateOf(!isEdit) }
     var showDobPicker by remember { mutableStateOf(false) }
     var showAdmissionDatePicker by remember { mutableStateOf(false) }
+    var isSaving by remember { mutableStateOf(false) }
+    var saveError by remember { mutableStateOf<String?>(null) }
+    val saveScope = rememberCoroutineScope()
 
     val tempPhotoFile = remember {
         File(context.cacheDir, "student_photo_${UUID.randomUUID()}.jpg").apply { parentFile?.mkdirs() }
@@ -265,6 +271,12 @@ fun AddEditStudentScreen(
                     }
                 },
                 onGalleryClick = { galleryLauncher.launch("image/*") }
+            )
+            Text(
+                "JPG, PNG বা WebP দিন — app automatic optimize করে কম data-তে upload করবে.",
+                color = TextMuted,
+                fontSize = 11.sp,
+                modifier = Modifier.padding(top = 6.dp)
             )
 
             Spacer(Modifier.height(14.dp))
@@ -415,61 +427,95 @@ fun AddEditStudentScreen(
 
             Spacer(Modifier.height(20.dp))
 
+            saveError?.let { message ->
+                Spacer(Modifier.height(12.dp))
+                Text(message, color = AccentRed, fontSize = 12.sp)
+            }
+
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(52.dp)
                     .clip(RoundedCornerShape(14.dp))
                     .background(Brush.horizontalGradient(listOf(ElectricBlue, Cyan)))
-                    .clickable {
+                    .clickable(enabled = !isSaving) {
                         nameError = fullName.isBlank()
                         phoneError = phone.isBlank()
                         if (nameError || phoneError) return@clickable
 
-                        val numericStudentCode = studentCode.filter(Char::isDigit)
-                            .ifBlank { viewModel.generateStudentCode() }
-
-                        if (isEdit) {
-                            viewModel.updateStudent(
-                                id = existingId,
-                                studentCode = numericStudentCode,
-                                fullName = fullName.trim(),
-                                phone = phone.trim(),
-                                guardianName = guardianName.trim().takeIf { it.isNotEmpty() },
-                                motherName = null,
-                                whatsappNumber = whatsappNumber.trim().takeIf { it.isNotEmpty() },
-                                gender = gender,
-                                dateOfBirthMs = dateOfBirthMs,
-                                schoolName = schoolName.trim().takeIf { it.isNotEmpty() },
-                                className = className.trim().takeIf { it.isNotEmpty() },
-                                address = address.trim().takeIf { it.isNotEmpty() },
-                                admissionDateMs = admissionDateMs,
-                                photoUri = photoUri?.toString(),
-                                onSuccess = onBack
-                            )
-                        } else {
-                            viewModel.addStudent(
-                                studentCode = numericStudentCode,
-                                fullName = fullName.trim(),
-                                phone = phone.trim(),
-                                guardianName = guardianName.trim().takeIf { it.isNotEmpty() },
-                                motherName = null,
-                                whatsappNumber = whatsappNumber.trim().takeIf { it.isNotEmpty() },
-                                gender = gender,
-                                dateOfBirthMs = dateOfBirthMs,
-                                schoolName = schoolName.trim().takeIf { it.isNotEmpty() },
-                                className = className.trim().takeIf { it.isNotEmpty() },
-                                address = address.trim().takeIf { it.isNotEmpty() },
-                                admissionDateMs = admissionDateMs,
-                                photoUri = photoUri?.toString(),
-                                onSuccess = onBack
-                            )
+                        isSaving = true
+                        saveError = null
+                        saveScope.launch {
+                            try {
+                                val cloudPhotoUrl = photoUri?.let { selectedUri ->
+                                    if (selectedUri.scheme == "https" || selectedUri.scheme == "http") {
+                                        selectedUri.toString()
+                                    } else {
+                                        CloudinaryImageUploadHelper.uploadStudentPhoto(context, selectedUri)
+                                    }
+                                }
+                                val numericStudentCode = studentCode.filter(Char::isDigit)
+                                    .ifBlank { viewModel.generateStudentCode() }
+                                if (isEdit) {
+                                    viewModel.updateStudent(
+                                        id = existingId,
+                                        studentCode = numericStudentCode,
+                                        fullName = fullName.trim(),
+                                        phone = phone.trim(),
+                                        guardianName = guardianName.trim().takeIf { it.isNotEmpty() },
+                                        motherName = null,
+                                        whatsappNumber = whatsappNumber.trim().takeIf { it.isNotEmpty() },
+                                        gender = gender,
+                                        dateOfBirthMs = dateOfBirthMs,
+                                        schoolName = schoolName.trim().takeIf { it.isNotEmpty() },
+                                        className = className.trim().takeIf { it.isNotEmpty() },
+                                        address = address.trim().takeIf { it.isNotEmpty() },
+                                        admissionDateMs = admissionDateMs,
+                                        photoUri = cloudPhotoUrl,
+                                        onSuccess = {
+                                            isSaving = false
+                                            onBack()
+                                        },
+                                        onError = {
+                                            saveError = it
+                                            isSaving = false
+                                        }
+                                    )
+                                } else {
+                                    viewModel.addStudent(
+                                        studentCode = numericStudentCode,
+                                        fullName = fullName.trim(),
+                                        phone = phone.trim(),
+                                        guardianName = guardianName.trim().takeIf { it.isNotEmpty() },
+                                        motherName = null,
+                                        whatsappNumber = whatsappNumber.trim().takeIf { it.isNotEmpty() },
+                                        gender = gender,
+                                        dateOfBirthMs = dateOfBirthMs,
+                                        schoolName = schoolName.trim().takeIf { it.isNotEmpty() },
+                                        className = className.trim().takeIf { it.isNotEmpty() },
+                                        address = address.trim().takeIf { it.isNotEmpty() },
+                                        admissionDateMs = admissionDateMs,
+                                        photoUri = cloudPhotoUrl,
+                                        onSuccess = {
+                                            isSaving = false
+                                            onBack()
+                                        },
+                                        onError = {
+                                            saveError = it
+                                            isSaving = false
+                                        }
+                                    )
+                                }
+                                } catch (error: Exception) {
+                                    saveError = error.message ?: "Photo upload failed. Check your connection and try again."
+                                    isSaving = false
+                                }
                         }
                     },
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    if (isEdit) "Update" else "Save",
+                if (isSaving) "Optimizing photo..." else if (isEdit) "Update" else "Save",
                     color = Color.White,
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold

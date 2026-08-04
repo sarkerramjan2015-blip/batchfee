@@ -137,7 +137,7 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
 
     suspend fun loadStudent(studentId: String): StudentEntity? {
         val instId = SessionManager.currentInstituteId.value ?: return null
-        InstituteCacheRefreshManager.refreshIfStale(db, instId)
+        InstituteCacheRefreshManager.refreshIfStaleInBackground(db, instId)
         return db.studentDao().getStudentById(studentId, instId).firstOrNull()
     }
 
@@ -156,11 +156,15 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
         address: String?,
         admissionDateMs: Long,
         photoUri: String?,
-        onSuccess: () -> Unit
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit = {}
     ) {
         viewModelScope.launch {
             val instId = SessionManager.currentInstituteId.value ?: return@launch
-            val existing = db.studentDao().getStudentById(id, instId).firstOrNull() ?: return@launch
+            val existing = db.studentDao().getStudentById(id, instId).firstOrNull() ?: run {
+                onError("Student profile was not found.")
+                return@launch
+            }
             val combinedNotes = buildString {
                 if (!whatsappNumber.isNullOrBlank()) {
                     appendLine("WhatsApp: $whatsappNumber")

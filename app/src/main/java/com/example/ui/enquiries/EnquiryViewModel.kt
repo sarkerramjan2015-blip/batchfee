@@ -46,7 +46,7 @@ class EnquiryViewModel(private val db: AppDatabase) : ViewModel() {
         viewModelScope.launch {
             val instId = SessionManager.currentInstituteId.value ?: return@launch
             _isLoading.value = true
-            InstituteCacheRefreshManager.refreshIfStale(db, instId)
+            InstituteCacheRefreshManager.refreshIfStaleInBackground(db, instId)
             db.enquiryDao().getEnquiriesByInstitute(instId).collect { list ->
                 _allEnquiries.value = list
 

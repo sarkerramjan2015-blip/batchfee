@@ -154,7 +154,7 @@ fun IdCardPreviewScreen(db: AppDatabase, type: String, studentId: String, onBack
     LaunchedEffect(studentId) {
         val instId = SessionManager.currentInstituteId.value
         if (instId != null) {
-            InstituteCacheRefreshManager.refreshIfStale(db, instId)
+            InstituteCacheRefreshManager.refreshIfStaleInBackground(db, instId)
             val s = withContext(Dispatchers.IO) { db.studentDao().getStudentById(studentId, instId).firstOrNull() }
             val inst = withContext(Dispatchers.IO) { db.instituteDao().getInstitute(instId) }
             student = s

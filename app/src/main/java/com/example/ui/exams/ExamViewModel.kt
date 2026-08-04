@@ -52,7 +52,7 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
     private fun loadData() {
         val instId = SessionManager.currentInstituteId.value ?: return
         viewModelScope.launch {
-            InstituteCacheRefreshManager.refreshIfStale(db, instId)
+            InstituteCacheRefreshManager.refreshIfStaleInBackground(db, instId)
             db.examDao().getExamsByInstitute(instId).collect { _exams.value = it }
         }
         viewModelScope.launch {
@@ -69,7 +69,7 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
         val instId = SessionManager.currentInstituteId.value ?: return
         _isLoading.value = true
         viewModelScope.launch {
-            InstituteCacheRefreshManager.refreshIfStale(db, instId)
+            InstituteCacheRefreshManager.refreshIfStaleInBackground(db, instId)
             db.examDao().getExamById(examId, instId).collect { exam ->
                 _selectedExam.value = exam
                 if (exam != null) {

@@ -1473,7 +1473,7 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
             // ── Revenue Section ──
             item {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Box(Modifier.weight(1f)) { RevenueCard("Lifetime\nRevenue", if (isLoading) "..." else "BDT ${NumberFormat.getNumberInstance(Locale.getDefault()).apply { maximumFractionDigits = 0 }.format(stats.lifetimeRevenue)}", AccentAmber, Icons.Filled.TrendingUp) }
+                    Box(Modifier.weight(1f)) { RevenueCard("Lifetime\nRevenue", if (isLoading) "..." else "BDT ${NumberFormat.getNumberInstance(Locale.getDefault()).apply { maximumFractionDigits = 0 }.format(stats.lifetimeRevenue)}", AccentCyan, Icons.Filled.TrendingUp) }
                     Box(Modifier.weight(1f)) { RevenueCard("This Month", if (isLoading) "..." else "BDT ${NumberFormat.getNumberInstance(Locale.getDefault()).apply { maximumFractionDigits = 0 }.format(stats.thisMonthRevenue)}", AccentGreen, Icons.Filled.MonetizationOn) }
                 }
             }

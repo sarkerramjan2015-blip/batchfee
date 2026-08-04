@@ -417,7 +417,7 @@ fun CreateFeeScreen(db: AppDatabase, onBack: () -> Unit) {
     
     LaunchedEffect(instId) {
         if(instId != null) {
-            InstituteCacheRefreshManager.refreshIfStale(db, instId)
+            InstituteCacheRefreshManager.refreshIfStaleInBackground(db, instId)
             db.studentDao().getStudentsByInstitute(instId).collect { students = it }
         }
     }
@@ -606,14 +606,14 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
     // ── Load fee ──
     LaunchedEffect(instId, feeId) {
         if (instId != null) {
-            InstituteCacheRefreshManager.refreshIfStale(db, instId)
+            InstituteCacheRefreshManager.refreshIfStaleInBackground(db, instId)
             fee = db.feeDao().getFeeById(feeId, instId)
             isLoading = false
         }
     }
     LaunchedEffect(instId) {
         if (instId != null) {
-            InstituteCacheRefreshManager.refreshIfStale(db, instId)
+            InstituteCacheRefreshManager.refreshIfStaleInBackground(db, instId)
             db.instituteDao().getInstituteFlow(instId).collect { institute = it }
         }
     }
@@ -1202,13 +1202,13 @@ fun ReceiptDetailScreen(db: AppDatabase, paymentId: String, onBack: () -> Unit) 
 
     LaunchedEffect(instId, paymentId) {
         if (instId != null) {
-            InstituteCacheRefreshManager.refreshIfStale(db, instId)
+            InstituteCacheRefreshManager.refreshIfStaleInBackground(db, instId)
             db.receiptDao().getReceiptByPaymentId(instId, paymentId).collect { receipt = it }
         }
     }
     LaunchedEffect(instId) {
         if (instId != null) {
-            InstituteCacheRefreshManager.refreshIfStale(db, instId)
+            InstituteCacheRefreshManager.refreshIfStaleInBackground(db, instId)
             db.instituteDao().getInstituteFlow(instId).collect { institute = it }
         }
     }

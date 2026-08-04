@@ -13,7 +13,7 @@ data class AbsentMessageEntity(
     val messageType: String,  // "whatsapp" | "sms"
     val messageText: String,
     val sentByUserId: String,
-    val status: String,       // "sent" | "failed"
+    val status: String,       // "opened" (external app compose screen opened) | "failed"
     val createdAtMs: Long
 )
 

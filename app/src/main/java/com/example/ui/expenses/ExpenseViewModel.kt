@@ -34,7 +34,7 @@ class ExpenseViewModel(private val db: AppDatabase) : ViewModel() {
     private fun loadExpenses() {
         val instId = SessionManager.currentInstituteId.value ?: return
         viewModelScope.launch {
-            InstituteCacheRefreshManager.refreshIfStale(db, instId)
+            InstituteCacheRefreshManager.refreshIfStaleInBackground(db, instId)
             db.expenseDao().getExpensesByInstitute(instId).collect { list ->
                 _expenses.value = list
                 computeSummary(list)

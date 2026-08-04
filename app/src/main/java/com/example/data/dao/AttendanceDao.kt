@@ -29,4 +29,7 @@ interface AttendanceDao {
 
     @Query("DELETE FROM attendance WHERE instituteId = :instituteId AND batchId = :batchId")
     suspend fun deleteAttendanceForBatch(instituteId: String, batchId: String)
+
+    @Query("DELETE FROM attendance WHERE instituteId = :instituteId AND studentId = :studentId")
+    suspend fun deleteAttendanceForStudent(instituteId: String, studentId: String)
 }

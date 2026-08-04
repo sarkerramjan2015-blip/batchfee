@@ -67,7 +67,7 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
         val editId = batchId
         val instituteId = instId
         if (editId != null && instituteId != null) {
-            InstituteCacheRefreshManager.forceRefresh(db, instituteId)
+            InstituteCacheRefreshManager.refreshIfStaleInBackground(db, instituteId)
             db.batchDao().getBatchById(editId, instituteId).collect { batch ->
                 editingBatch = batch
                 if (batch != null && loadedBatchId != batch.id) {

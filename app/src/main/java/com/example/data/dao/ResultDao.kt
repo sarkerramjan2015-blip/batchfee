@@ -20,4 +20,7 @@ interface ResultDao {
 
     @Query("DELETE FROM results WHERE instituteId = :instituteId AND batchId = :batchId")
     suspend fun deleteResultsForBatch(instituteId: String, batchId: String)
+
+    @Query("DELETE FROM results WHERE instituteId = :instituteId AND studentId = :studentId")
+    suspend fun deleteResultsForStudent(instituteId: String, studentId: String)
 }

@@ -77,7 +77,7 @@ class ReportsViewModel(private val db: AppDatabase, private val period: String =
         viewModelScope.launch {
             val instId = SessionManager.currentInstituteId.value ?: return@launch
             _isLoading.value = true
-            InstituteCacheRefreshManager.refreshIfStale(db, instId)
+            InstituteCacheRefreshManager.refreshIfStaleInBackground(db, instId)
 
             launch { db.studentDao().countStudents(instId).collect { _studentCount.value = it } }
 

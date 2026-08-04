@@ -168,7 +168,7 @@ fun PricingScreen(
         val instId = SessionManager.currentInstituteId.value
         if (instId != null) {
             instituteId = instId
-            InstituteCacheRefreshManager.refreshIfStale(db, instId)
+            InstituteCacheRefreshManager.refreshIfStaleInBackground(db, instId)
             val inst = db.instituteDao().getInstituteFlow(instId).firstOrNull()
             inst?.let {
                 instituteName = it.name

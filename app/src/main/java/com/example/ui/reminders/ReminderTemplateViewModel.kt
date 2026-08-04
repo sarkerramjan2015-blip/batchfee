@@ -23,7 +23,7 @@ class ReminderTemplateViewModel(private val db: AppDatabase) : ViewModel() {
     private fun loadTemplates() {
         viewModelScope.launch {
             val instId = SessionManager.currentInstituteId.value ?: return@launch
-            InstituteCacheRefreshManager.refreshIfStale(db, instId)
+            InstituteCacheRefreshManager.refreshIfStaleInBackground(db, instId)
             db.reminderTemplateDao().getTemplatesForInstitute(instId).collect { list ->
                 _templates.value = list
             }

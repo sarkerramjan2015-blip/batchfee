@@ -18,6 +18,16 @@ service cloud.firestore {
       allow read, write: if request.auth != null;
     }
 
+    // Visitor-facing registration identity. This deliberately contains only public branding
+    // fields; the private institute document remains authenticated-only.
+    match /public_registration_profiles/{profileId} {
+      allow get: if true;
+      allow create, update: if request.auth != null
+        && (request.auth.uid == request.resource.data.instituteId || isSuperAdmin());
+      allow delete: if request.auth != null
+        && (request.auth.uid == resource.data.instituteId || isSuperAdmin());
+    }
+
     // Institutes — authenticated read, owner or superadmin write
     match /institutes/{instituteId} {
       allow read: if request.auth != null;

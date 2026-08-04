@@ -8,6 +8,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
@@ -88,15 +89,15 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
     val isLoggedIn by SessionManager.currentUserId.collectAsState()
     val sessionNotice by SessionManager.sessionNotice.collectAsState()
     val lastActivityAtMs by SessionManager.lastActivityAtMs.collectAsState()
-    var wasLoggedIn by remember { mutableStateOf(false) }
 
+    // Navigation is derived directly from session state. The previous implementation used a
+    // temporary "was logged in" flag, which could miss a fast expiry event during bootstrap.
     LaunchedEffect(isLoggedIn) {
-        if (isLoggedIn == null && wasLoggedIn) {
+        if (isLoggedIn == null) {
             navController.navigate(AuthRoute) {
                 popUpTo(navController.graph.id) { inclusive = true }
             }
         }
-        wasLoggedIn = isLoggedIn != null
     }
 
     DisposableEffect(lifecycleOwner) {
@@ -104,8 +105,6 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
             if (event == Lifecycle.Event.ON_RESUME && SessionManager.isLoggedIn()) {
                 if (SessionManager.isSessionInactive()) {
                     SessionManager.expireSession()
-                } else {
-                    SessionManager.markActivity()
                 }
             }
         }
@@ -182,20 +181,26 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
                 db = appDb,
                 sessionNotice = sessionNotice,
                 onNavigateDashboard = {
-                    scope.launch {
-                        val instituteId = SessionManager.currentInstituteId.value
-                        val role = SessionManager.currentUserRole.value
-                        if (role != "SuperAdmin" && role != "Staff" && instituteId != null) {
+                    val instituteId = SessionManager.currentInstituteId.value
+                    val role = SessionManager.currentUserRole.value
+                    navController.navigate(DashboardRoute) {
+                        popUpTo(navController.graph.id) { inclusive = true }
+                    }
+
+                    // Subscription enforcement remains remote-authoritative, but it must not
+                    // keep a successfully authenticated user on the login spinner.
+                    if (role != "SuperAdmin" && role != "Staff" && instituteId != null) {
+                        scope.launch {
                             val isExpired = checkSubscriptionExpired(instituteId, appDb)
-                            if (isExpired) {
+                            if (
+                                isExpired &&
+                                SessionManager.currentInstituteId.value == instituteId &&
+                                SessionManager.isLoggedIn()
+                            ) {
                                 navController.navigate(SubscriptionExpiredRoute) {
                                     popUpTo(navController.graph.id) { inclusive = true }
                                 }
-                                return@launch
                             }
-                        }
-                        navController.navigate(DashboardRoute) {
-                            popUpTo(navController.graph.id) { inclusive = true }
                         }
                     }
                 },
@@ -222,7 +227,7 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
         }
         
         composable<DashboardRoute> {
-            var currentTab by remember { mutableStateOf("DashboardRoute") }
+            var currentTab by rememberSaveable { mutableStateOf("DashboardRoute") }
             com.batchfee.edu.ui.dashboard.DashboardTabsScreen(
                 db = appDb,
                 currentRoute = currentTab,

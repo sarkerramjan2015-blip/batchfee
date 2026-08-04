@@ -29,7 +29,7 @@ class SalaryViewModel(private val db: AppDatabase) : ViewModel() {
     private fun loadData() {
         val instId = SessionManager.currentInstituteId.value ?: return
         viewModelScope.launch {
-            InstituteCacheRefreshManager.refreshIfStale(db, instId)
+            InstituteCacheRefreshManager.refreshIfStaleInBackground(db, instId)
             db.salaryDao().getSalariesByInstitute(instId).collect { list ->
                 _salaries.value = list
             }

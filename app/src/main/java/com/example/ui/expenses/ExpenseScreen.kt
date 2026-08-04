@@ -51,7 +51,7 @@ private val AccentViolet = Color(0xFFA855F7)
 private data class CategoryMeta(val icon: ImageVector, val color: Color)
 private val categoryMeta = mapOf(
     "Rent" to CategoryMeta(Icons.Filled.MeetingRoom, Color(0xFF60A5FA)),
-    "Electricity" to CategoryMeta(Icons.Filled.Bolt, AccentAmber),
+    "Electricity" to CategoryMeta(Icons.Filled.Bolt, ElectricBlue),
     "Internet" to CategoryMeta(Icons.Filled.Wifi, AccentGreen),
     "Staff Salary" to CategoryMeta(Icons.Filled.People, AccentViolet),
     "Marketing" to CategoryMeta(Icons.Filled.Campaign, Color(0xFFF472B6)),
@@ -143,7 +143,7 @@ fun ExpenseListScreen(db: AppDatabase, onBack: () -> Unit, onAddExpense: () -> U
                 Text("Summary", color = TextMuted, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(6.dp))
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    SummaryCard("Today", summary.todayExpense, AccentAmber, Icons.Filled.Today, Modifier.weight(1f))
+                    SummaryCard("Today", summary.todayExpense, AccentCyan, Icons.Filled.Today, Modifier.weight(1f))
                     SummaryCard("This Month", summary.monthExpense, AccentCyan, Icons.Filled.CalendarMonth, Modifier.weight(1f))
                 }
             }

@@ -26,11 +26,11 @@ fun AnimatedGlowBorder(
     animationDurationMillis: Int = 4500,
     backgroundColor: Color = Color(0xFF101827),
     borderColors: List<Color> = listOf(
-        Color(0xFFFBBF24).copy(alpha = 0f),
-        Color(0xFFFBBF24),
+        Color(0xFF22D3EE).copy(alpha = 0f),
+        Color(0xFF22D3EE),
         Color(0xFF38BDF8),
         Color(0xFFA855F7),
-        Color(0xFFFBBF24).copy(alpha = 0f)
+        Color(0xFF22D3EE).copy(alpha = 0f)
     ),
     content: @Composable BoxScope.() -> Unit
 ) {

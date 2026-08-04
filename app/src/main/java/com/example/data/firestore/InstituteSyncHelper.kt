@@ -51,6 +51,7 @@ object InstituteSyncHelper {
                 val snapshot = firestore.collection("institutes").document(instituteId).get().await()
                 if (!snapshot.exists()) return@withContext
                 val data = snapshot.data ?: emptyMap<String, Any?>()
+                val localProfilePhotoUri = db.instituteDao().getInstitute(instituteId)?.profilePhotoUri
                 val now = System.currentTimeMillis()
                 val currentPlanId = data["currentPlanId"] as? String ?: "plan_free_trial"
                 val subscriptionStatus = data["subscriptionStatus"] as? String
@@ -69,7 +70,10 @@ object InstituteSyncHelper {
                         phone = data["phone"] as? String,
                         address = data["address"] as? String,
                         whatsappNumber = data["whatsappNumber"] as? String,
-                        profilePhotoUri = data["profilePhotoUri"] as? String,
+                        // Local logos are free and device-only. Preserve them during a cloud refresh
+                        // instead of replacing them with an unavailable Firebase Storage URL.
+                        profilePhotoUri = localProfilePhotoUri?.takeIf { it.startsWith("file:") }
+                            ?: data["profilePhotoUri"] as? String,
                         ownerName = data["ownerName"] as? String,
                         email = data["email"] as? String,
                         instituteCode = data["instituteCode"] as? String,
@@ -91,7 +95,9 @@ object InstituteSyncHelper {
                         "phone" to institute.phone,
                         "address" to institute.address,
                         "whatsappNumber" to institute.whatsappNumber,
-                        "profilePhotoUri" to institute.profilePhotoUri,
+                        // Cloudinary returns a public HTTPS URL, so this value is safe to sync
+                        // and can be displayed by every authorised app user on any device.
+                        "profilePhotoUri" to institute.profilePhotoUri?.takeUnless { it.startsWith("file:") },
                         "ownerName" to institute.ownerName,
                         "email" to institute.email,
                         "instituteCode" to institute.instituteCode,

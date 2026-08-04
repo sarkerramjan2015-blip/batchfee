@@ -20,4 +20,7 @@ interface AbsentMessageDao {
 
     @Query("DELETE FROM absent_messages WHERE instituteId = :instituteId AND batchId = :batchId")
     suspend fun deleteMessagesForBatch(instituteId: String, batchId: String)
+
+    @Query("DELETE FROM absent_messages WHERE instituteId = :instituteId AND studentId = :studentId")
+    suspend fun deleteMessagesForStudent(instituteId: String, studentId: String)
 }

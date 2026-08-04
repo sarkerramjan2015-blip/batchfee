@@ -29,7 +29,6 @@ import com.batchfee.edu.BuildConfig
 import com.batchfee.edu.domain.BiometricAuthManager
 import com.batchfee.edu.domain.DataExporter
 import com.batchfee.edu.domain.ThemePreferences
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 // ── Premium palette (matching other polished screens) ───────────
@@ -55,7 +54,6 @@ fun SettingsScreen(
     val isDark by ThemePreferences.isDarkMode.collectAsState()
     val currentDark = isDark ?: true
     var biometricEnabled by remember { mutableStateOf(BiometricAuthManager.isEnabled(context)) }
-    var showResetConfirmation by remember { mutableStateOf(false) }
     Scaffold(
         containerColor = BgColor, // polish: navy background
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -91,15 +89,17 @@ fun SettingsScreen(
                 Column {
                     SettingsRow("Subscription & Billing", Icons.Filled.WorkspacePremium, onClick = { onNavigate("BillingRoute") })
                     HorizontalDivider(color = BorderSub)
-                    SettingsRow("Reminder Templates", Icons.Filled.Notifications, onClick = { onNavigate("ReminderTemplatesRoute") })
-                    HorizontalDivider(color = BorderSub)
-                    SettingsRow("Backup & Restore", Icons.Filled.Backup, onClick = { onNavigate("BackupRestoreRoute") })
-                    HorizontalDivider(color = BorderSub)
                     SettingsRow("Student Registration", Icons.Filled.PersonAdd, onClick = { onNavigate("StudentRegistrationRoute") })
                     HorizontalDivider(color = BorderSub)
                     SettingsRow("Export All Data", Icons.Filled.FileDownload, onClick = {
-                        scope.launch(Dispatchers.IO) {
-                            DataExporter.exportAllToCsv(context, db)
+                        scope.launch {
+                            runCatching { DataExporter.exportAllToCsv(context, db) }
+                                .onSuccess { fileName ->
+                                    snackbarHostState.showSnackbar("Export ready: $fileName")
+                                }
+                                .onFailure {
+                                    snackbarHostState.showSnackbar("Could not export data. Please try again.")
+                                }
                         }
                     })
                 }
@@ -193,40 +193,6 @@ fun SettingsScreen(
                 )
             }
 
-            // polish: preferences card (non-clickable items)
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 16.dp)
-                    .shadow(2.dp, RoundedCornerShape(14.dp), spotColor = Cyan.copy(alpha = 0.15f)),
-                shape = RoundedCornerShape(14.dp),
-                colors = CardDefaults.cardColors(containerColor = CardBg),
-                border = BorderStroke(1.dp, BorderSub)
-            ) {
-                Column {
-                    SettingsRow("Currency / Locale", Icons.Filled.Language, subtitle = "BDT (Future Update)", onClick = null)
-                }
-            }
-
-            // polish: styled Reset Demo Data button
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp)
-                    .clip(RoundedCornerShape(14.dp))
-                    .border(1.dp, AccentRed.copy(alpha = 0.4f), RoundedCornerShape(14.dp))
-                    .background(AccentRed.copy(alpha = 0.1f))
-                    .shadow(2.dp, RoundedCornerShape(14.dp), spotColor = AccentRed.copy(alpha = 0.2f))
-                    .clickable { showResetConfirmation = true },
-                contentAlignment = Alignment.Center
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Filled.Delete, contentDescription = null, tint = AccentRed, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Reset Demo Data", color = AccentRed, fontWeight = FontWeight.Medium, fontSize = 13.sp)
-                }
-            }
-
             Spacer(Modifier.weight(1f))
 
             // polish: centered version text
@@ -240,34 +206,6 @@ fun SettingsScreen(
         }
     }
 
-    if (showResetConfirmation) {
-        AlertDialog(
-            onDismissRequest = { showResetConfirmation = false },
-            containerColor = CardBg,
-            title = { Text("Reset Demo Data?", color = TextWhite, fontWeight = FontWeight.Bold) },
-            text = {
-                Text(
-                    "This will delete all local students, batches, fees, payments, receipts, attendance, reports, and settings data in this app database. This cannot be undone.",
-                    color = TextMuted
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        showResetConfirmation = false
-                        scope.launch(Dispatchers.IO) { db.clearAllTables() }
-                    }
-                ) {
-                    Text("Delete Everything", color = AccentRed, fontWeight = FontWeight.Bold)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showResetConfirmation = false }) {
-                    Text("Cancel", color = TextMuted)
-                }
-            }
-        )
-    }
 }
 
 // polish: reusable settings row — clickable rows get a chevron and ripple

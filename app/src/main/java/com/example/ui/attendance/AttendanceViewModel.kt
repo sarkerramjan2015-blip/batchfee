@@ -9,20 +9,30 @@ import androidx.lifecycle.viewModelScope
 import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.data.firestore.AttendanceSyncHelper
 import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
+import com.batchfee.edu.data.firestore.ReminderTemplateSyncHelper
 import com.batchfee.edu.data.models.AbsentMessageEntity
 import com.batchfee.edu.data.models.AttendanceEntity
 import com.batchfee.edu.data.models.BatchEntity
+import com.batchfee.edu.data.models.ReminderTemplateEntity
 import com.batchfee.edu.data.models.StudentEntity
-import com.batchfee.edu.domain.appendInstituteSignature
-import com.batchfee.edu.domain.loadInstituteSignature
 import com.batchfee.edu.domain.SessionManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
-import java.net.URLEncoder
 import java.text.SimpleDateFormat
 import java.util.*
+
+private const val ATTENDANCE_ABSENT_TEMPLATE_TYPE = "AttendanceAbsent"
+private val DEFAULT_ATTENDANCE_ABSENT_TEMPLATE = """
+    প্রিয় {guardianName},
+
+    আজ {date}-এ {studentName} ({studentCode}) {batchName} ব্যাচে অনুপস্থিত ছিল।
+
+    অনুগ্রহ করে অনুপস্থিতির কারণ জানাবেন।
+
+    — {instituteName}
+""".trimIndent()
 
 data class BatchAttendanceSummary(
     val batchId: String = "",
@@ -98,6 +108,10 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
     private val _absentMessageMap = MutableStateFlow<Map<String, Boolean>>(emptyMap())
     val absentMessageMap = _absentMessageMap.asStateFlow()
 
+    private val _absentMessageTemplate = MutableStateFlow(DEFAULT_ATTENDANCE_ABSENT_TEMPLATE)
+    val absentMessageTemplate = _absentMessageTemplate.asStateFlow()
+    private val _instituteName = MutableStateFlow("BatchFee")
+
     private val _currentBatch = MutableStateFlow<BatchEntity?>(null)
     val currentBatch = _currentBatch.asStateFlow()
 
@@ -121,7 +135,10 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
     private val _selectedDateMs = MutableStateFlow(startOfDay(System.currentTimeMillis()))
     val selectedDateMs = _selectedDateMs.asStateFlow()
 
-    init { loadBatches() }
+    init {
+        loadBatches()
+        loadAttendanceMessageTemplate()
+    }
 
     fun selectDate(dateMs: Long) {
         _selectedDateMs.value = startOfDay(dateMs)
@@ -148,7 +165,7 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
     private fun loadBatches() {
         viewModelScope.launch {
             val instId = SessionManager.currentInstituteId.value ?: return@launch
-            InstituteCacheRefreshManager.refreshIfStale(db, instId)
+            InstituteCacheRefreshManager.refreshIfStaleInBackground(db, instId)
             db.batchDao().getBatchesByInstitute(instId).collect { allBatches ->
                 if (isAdmin()) _batches.value = allBatches
                 else {
@@ -164,10 +181,91 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
         }
     }
 
+    /** Creates the editable attendance template once per institute, then keeps it in sync. */
+    fun loadAttendanceMessageTemplate() {
+        viewModelScope.launch {
+            val instituteId = SessionManager.currentInstituteId.value ?: return@launch
+            _instituteName.value = db.instituteDao().getInstitute(instituteId)?.name
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?: "BatchFee"
+            val existing = db.reminderTemplateDao()
+                .getTemplateByTypeOnce(instituteId, ATTENDANCE_ABSENT_TEMPLATE_TYPE)
+            if (existing != null) {
+                _absentMessageTemplate.value = existing.messageTemplate
+                return@launch
+            }
+
+            val defaultTemplate = ReminderTemplateEntity(
+                id = "attendance_absent_$instituteId",
+                instituteId = instituteId,
+                title = "Attendance: Student Absent",
+                type = ATTENDANCE_ABSENT_TEMPLATE_TYPE,
+                messageTemplate = DEFAULT_ATTENDANCE_ABSENT_TEMPLATE,
+                isDefault = true,
+                createdAtMs = System.currentTimeMillis(),
+                updatedAtMs = System.currentTimeMillis()
+            )
+            db.reminderTemplateDao().insertTemplate(defaultTemplate)
+            _absentMessageTemplate.value = defaultTemplate.messageTemplate
+            try {
+                ReminderTemplateSyncHelper.upsertTemplate(defaultTemplate)
+            } catch (_: Exception) {
+                // The local template is still usable and will be refreshed when cloud sync succeeds.
+            }
+        }
+    }
+
+    fun saveAttendanceMessageTemplate(template: String, onError: (String) -> Unit = {}) {
+        val cleanTemplate = template.trim()
+        if (cleanTemplate.isBlank()) {
+            onError("Message template cannot be empty.")
+            return
+        }
+        viewModelScope.launch {
+            val instituteId = SessionManager.currentInstituteId.value ?: return@launch
+            val current = db.reminderTemplateDao()
+                .getTemplateByTypeOnce(instituteId, ATTENDANCE_ABSENT_TEMPLATE_TYPE)
+            val updated = ReminderTemplateEntity(
+                id = current?.id ?: "attendance_absent_$instituteId",
+                instituteId = instituteId,
+                title = "Attendance: Student Absent",
+                type = ATTENDANCE_ABSENT_TEMPLATE_TYPE,
+                messageTemplate = cleanTemplate,
+                isDefault = true,
+                createdAtMs = current?.createdAtMs ?: System.currentTimeMillis(),
+                updatedAtMs = System.currentTimeMillis()
+            )
+            db.reminderTemplateDao().insertTemplate(updated)
+            _absentMessageTemplate.value = cleanTemplate
+            try {
+                ReminderTemplateSyncHelper.upsertTemplate(updated)
+            } catch (_: Exception) {
+                // Keep the saved local template; cloud sync can be retried later.
+            }
+        }
+    }
+
+    fun buildAbsentMessage(student: StudentEntity, batchName: String, dateMs: Long): String {
+        val date = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(startOfDay(dateMs)))
+        val guardianName = student.guardianName?.trim()?.takeIf { it.isNotBlank() } ?: "অভিভাবক"
+        val replacements = mapOf(
+            "{guardianName}" to guardianName,
+            "{studentName}" to student.fullName,
+            "{studentCode}" to student.studentCode,
+            "{batchName}" to batchName,
+            "{date}" to date,
+            "{instituteName}" to _instituteName.value
+        )
+        return replacements.entries.fold(_absentMessageTemplate.value.trim()) { message, (key, value) ->
+            message.replace(key, value)
+        }
+    }
+
     fun loadBatchStudentsAndAttendance(batchId: String, dateMs: Long) {
         val instId = SessionManager.currentInstituteId.value ?: return
         val startDay = startOfDay(dateMs)
-        viewModelScope.launch { InstituteCacheRefreshManager.refreshIfStale(db, instId) }
+        InstituteCacheRefreshManager.refreshIfStaleInBackground(db, instId)
         viewModelScope.launch { db.batchDao().getBatchById(batchId, instId).collect { _currentBatch.value = it } }
         viewModelScope.launch { db.batchStudentDao().getStudentsForBatch(batchId, instId).collect { _students.value = it } }
         viewModelScope.launch {
@@ -253,54 +351,76 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
     }
 
     fun sendAbsentMessage(
-        context: Context, studentId: String, batchId: String, dateMs: Long,
-        channel: String, studentName: String, batchName: String,
-        phone: String?, staffLabel: String,
-        onSent: () -> Unit, onError: () -> Unit
+        context: Context,
+        student: StudentEntity,
+        batchId: String,
+        dateMs: Long,
+        channel: String,
+        messageText: String,
+        onSent: () -> Unit,
+        onError: (String) -> Unit
     ) {
         val instId = SessionManager.currentInstituteId.value ?: return
         val userId = SessionManager.currentUserId.value ?: return
         val startDay = startOfDay(dateMs)
-        val dateLabel = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(startDay))
-        addSendingId(studentId)
+        val recipientPhone = student.guardianPhone
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?: student.phone?.trim()?.takeIf { it.isNotBlank() }
+        if (recipientPhone == null) {
+            onError("No guardian or student phone number is saved.")
+            return
+        }
+        val recipientDigits = recipientPhone.replace(Regex("[^0-9]"), "")
+        if (recipientDigits.isBlank()) {
+            onError("The saved phone number is not valid.")
+            return
+        }
+        val cleanMessage = messageText.trim()
+        if (cleanMessage.isBlank()) {
+            onError("Message cannot be empty.")
+            return
+        }
+        addSendingId(student.id)
 
         viewModelScope.launch {
-            val instituteSignature = loadInstituteSignature(db, instId)
-            val msg = buildString {
-                append("Dear Parent, $studentName was absent on $dateLabel in $batchName.")
-                append(" Please note your attendance.")
-                if (staffLabel.isNotBlank()) append(" \u2013 $staffLabel")
-            }.let { appendInstituteSignature(it, instituteSignature) }
-            val alreadySent = db.absentMessageDao().hasMessageForStudentDate(instId, studentId, startDay)
-            if (alreadySent > 0) {
-                removeSendingId(studentId)
-                onSent(); return@launch
-            }
-            val message = AbsentMessageEntity(
-                id = UUID.randomUUID().toString(), instituteId = instId,
-                batchId = batchId, studentId = studentId, attendanceDateMs = startDay,
-                messageType = channel, messageText = msg, sentByUserId = userId,
-                status = "sent", createdAtMs = System.currentTimeMillis()
-            )
-            AttendanceSyncHelper.upsertAbsentMessage(message)
-            db.absentMessageDao().insertMessage(message)
             try {
-                val encoded = URLEncoder.encode(msg, "UTF-8")
                 when (channel) {
                     "whatsapp" -> {
-                        val number = phone?.replace("+", "")?.replace(" ", "")
-                        val url = if (!number.isNullOrBlank()) "https://wa.me/$number?text=$encoded" else "https://wa.me/?text=$encoded"
+                        val encoded = java.net.URLEncoder.encode(cleanMessage, "UTF-8")
+                        val url = "https://wa.me/$recipientDigits?text=$encoded"
                         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
                     }
                     "sms" -> context.startActivity(
-                        Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${phone ?: ""}")).apply { putExtra("sms_body", msg) }
+                        Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:$recipientPhone")).apply {
+                            putExtra("sms_body", cleanMessage)
+                        }
                     )
+                    else -> {
+                        removeSendingId(student.id)
+                        onError("Unsupported message channel.")
+                        return@launch
+                    }
                 }
-                removeSendingId(studentId)
+
+                // Android lets us open the external compose screen but not confirm delivery.
+                val message = AbsentMessageEntity(
+                    id = UUID.randomUUID().toString(), instituteId = instId,
+                    batchId = batchId, studentId = student.id, attendanceDateMs = startDay,
+                    messageType = channel, messageText = cleanMessage, sentByUserId = userId,
+                    status = "opened", createdAtMs = System.currentTimeMillis()
+                )
+                db.absentMessageDao().insertMessage(message)
+                try {
+                    AttendanceSyncHelper.upsertAbsentMessage(message)
+                } catch (_: Exception) {
+                    // Message history remains safely available on this device while offline.
+                }
+                removeSendingId(student.id)
                 onSent()
             } catch (e: Exception) {
-                removeSendingId(studentId)
-                onError()
+                removeSendingId(student.id)
+                onError("Could not open $channel. Please check that the app is installed.")
             }
         }
     }
@@ -313,8 +433,13 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
         absentRecords.forEach { record ->
             val student = _students.value.find { it.id == record.studentId } ?: run { completed.incrementAndGet(); return@forEach }
             val batchName = _currentBatch.value?.name ?: ""
-            sendAbsentMessage(context, record.studentId, batchId, dateMs, channel,
-                student.fullName, batchName, student.phone, _staffName.value,
+            sendAbsentMessage(
+                context = context,
+                student = student,
+                batchId = batchId,
+                dateMs = dateMs,
+                channel = channel,
+                messageText = buildAbsentMessage(student, batchName, dateMs),
                 onSent = { if (completed.incrementAndGet() >= total) onComplete() },
                 onError = { if (completed.incrementAndGet() >= total) onComplete() }
             )
@@ -360,7 +485,7 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
     fun loadDailySummaries(dateMs: Long = System.currentTimeMillis()) {
         val instId = SessionManager.currentInstituteId.value ?: return
         val selectedDay = startOfDay(dateMs)
-        viewModelScope.launch { InstituteCacheRefreshManager.refreshIfStale(db, instId) }
+        InstituteCacheRefreshManager.refreshIfStaleInBackground(db, instId)
         viewModelScope.launch {
             db.batchDao().getBatchesByInstitute(instId).collect { allBatches ->
                 val assignedIds = if (isAdmin()) allBatches.map { it.id }.toSet() else getStaffAssignedBatchIds()
@@ -397,7 +522,7 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
     fun loadMonthlySummaries() {
         val instId = SessionManager.currentInstituteId.value ?: return
         val (start, end) = getCurrentMonthRange()
-        viewModelScope.launch { InstituteCacheRefreshManager.refreshIfStale(db, instId) }
+        InstituteCacheRefreshManager.refreshIfStaleInBackground(db, instId)
         viewModelScope.launch {
             db.batchDao().getBatchesByInstitute(instId).collect { allBatches ->
                 val assignedIds = if (isAdmin()) allBatches.map { it.id }.toSet() else getStaffAssignedBatchIds()
@@ -426,7 +551,7 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
         val instId = SessionManager.currentInstituteId.value ?: return
         val (start, end) = getCurrentMonthRange()
         viewModelScope.launch {
-            InstituteCacheRefreshManager.refreshIfStale(db, instId)
+            InstituteCacheRefreshManager.refreshIfStaleInBackground(db, instId)
             val batch = db.batchDao().getBatchById(batchId, instId).firstOrNull() ?: return@launch
             val students = db.batchStudentDao().getStudentsForBatch(batchId, instId).firstOrNull() ?: return@launch
             val activeDayCount = db.attendanceDao().getAttendanceByInstituteDateRange(instId, start, end)
@@ -450,7 +575,7 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
     fun loadStudentHistory(studentId: String, batchId: String) {
         val instId = SessionManager.currentInstituteId.value ?: return
         viewModelScope.launch {
-            InstituteCacheRefreshManager.refreshIfStale(db, instId)
+            InstituteCacheRefreshManager.refreshIfStaleInBackground(db, instId)
             db.attendanceDao().getAttendanceForStudent(instId, studentId, batchId).collect { _studentHistory.value = it }
         }
     }

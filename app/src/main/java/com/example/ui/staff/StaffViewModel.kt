@@ -87,7 +87,7 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
         viewModelScope.launch {
             val instId = SessionManager.currentInstituteId.value ?: return@launch
             _isLoading.value = true
-            InstituteCacheRefreshManager.refreshIfStale(db, instId)
+            InstituteCacheRefreshManager.refreshIfStaleInBackground(db, instId)
             db.staffDao().getStaffByInstitute(instId).collect { list ->
                 _staffList.value = list
                 _isLoading.value = false
@@ -107,7 +107,7 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
     private fun loadBatches() {
         viewModelScope.launch {
             val instId = SessionManager.currentInstituteId.value ?: return@launch
-            InstituteCacheRefreshManager.refreshIfStale(db, instId)
+            InstituteCacheRefreshManager.refreshIfStaleInBackground(db, instId)
             db.batchDao().getBatchesByInstitute(instId).collect { list ->
                 _batches.value = list
             }
@@ -117,7 +117,7 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
     fun loadStaffById(staffId: String) {
         viewModelScope.launch {
             val instId = SessionManager.currentInstituteId.value ?: return@launch
-            InstituteCacheRefreshManager.refreshIfStale(db, instId)
+            InstituteCacheRefreshManager.refreshIfStaleInBackground(db, instId)
             db.staffDao().getStaffById(staffId, instId).collect { staff ->
                 _selectedStaff.value = staff
             }
@@ -141,6 +141,7 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
     fun addStaff(
         fullName: String,
         staffCode: String,
+        photoUri: String?,
         roleTitle: String,
         phone: String,
         email: String?,
@@ -201,7 +202,7 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
                     instituteId = instId,
                     staffCode = loginId,
                     fullName = name,
-                    photoUri = null,
+                    photoUri = photoUri,
                     roleTitle = role,
                     phone = phone.trim().takeIf { it.isNotBlank() },
                     email = staffEmail,
@@ -247,6 +248,7 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
         staffId: String,
         fullName: String,
         staffCode: String,
+        photoUri: String?,
         roleTitle: String,
         phone: String,
         email: String?,
@@ -297,6 +299,7 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
                 val updated = existing.copy(
                     staffCode = loginId,
                     fullName = name,
+                    photoUri = photoUri,
                     roleTitle = role,
                     phone = phone.trim().takeIf { it.isNotBlank() },
                     email = staffEmail,

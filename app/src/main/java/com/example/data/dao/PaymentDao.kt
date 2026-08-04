@@ -21,6 +21,9 @@ interface PaymentDao {
     @Query("DELETE FROM payments WHERE instituteId = :instituteId AND feeId IN (:feeIds)")
     suspend fun deletePaymentsByFeeIds(instituteId: String, feeIds: List<String>)
 
+    @Query("DELETE FROM payments WHERE instituteId = :instituteId AND studentId = :studentId")
+    suspend fun deletePaymentsForStudent(instituteId: String, studentId: String)
+
     @Query("DELETE FROM payments WHERE id = :id AND instituteId = :instituteId")
     suspend fun deletePaymentById(id: String, instituteId: String)
 }

@@ -5,6 +5,8 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.data.models.FeeEntity
+import com.batchfee.edu.data.models.PaymentEntity
+import com.batchfee.edu.data.models.ReceiptEntity
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -29,7 +31,7 @@ class FeeCollectionRepositoryTest {
         db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
             .allowMainThreadQueries()
             .build()
-        repository = FeeCollectionRepository(db)
+        repository = FeeCollectionRepository(db, NoOpFinanceSyncGateway)
     }
 
     @After
@@ -253,5 +255,13 @@ class FeeCollectionRepositoryTest {
         const val BATCH_ID = "batch-1"
         const val MONEY_DELTA = 0.0001
     }
+}
+
+private object NoOpFinanceSyncGateway : FinanceSyncGateway {
+    override suspend fun upsertFee(fee: FeeEntity) = Unit
+    override suspend fun upsertPayment(payment: PaymentEntity) = Unit
+    override suspend fun upsertReceipt(receipt: ReceiptEntity) = Unit
+    override suspend fun deletePayment(paymentId: String, instituteId: String) = Unit
+    override suspend fun deleteReceipt(receiptId: String, instituteId: String) = Unit
 }
 

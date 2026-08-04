@@ -1,5 +1,7 @@
 package com.batchfee.edu.ui.attendance
 
+import android.widget.Toast
+
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -317,7 +319,7 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
     val batch by viewModel.currentBatch.collectAsState()
     val absentMsgMap by viewModel.absentMessageMap.collectAsState()
     val sendingIds by viewModel.sendingMessageIds.collectAsState()
-    val staffLabel by viewModel.staffName.collectAsState()
+    val absentMessageTemplate by viewModel.absentMessageTemplate.collectAsState()
     val selectedDateMs by viewModel.selectedDateMs.collectAsState()
     val context = LocalContext.current
 
@@ -326,6 +328,7 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
     }
 
     LaunchedEffect(batchId, selectedDateMs) {
+        viewModel.loadAttendanceMessageTemplate()
         viewModel.loadBatchStudentsAndAttendance(batchId, selectedDateMs)
     }
 
@@ -333,6 +336,9 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
     var showChannelDialog by remember { mutableStateOf(false) }
     var dialogStudentId by remember { mutableStateOf<String?>(null) }
     var showAllChannelDialog by remember { mutableStateOf(false) }
+    var messageDraft by remember { mutableStateOf("") }
+    var showTemplateEditor by remember { mutableStateOf(false) }
+    var templateDraft by remember { mutableStateOf("") }
 
     val studentsWithStatus = remember(students, records) {
         students.map { s ->
@@ -425,6 +431,7 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
                     onUndo = { viewModel.undoAttendance(student.id, selectedDateMs, batchId) },
                     onSendMessage = {
                         dialogStudentId = student.id
+                        messageDraft = viewModel.buildAbsentMessage(student, batch?.name.orEmpty(), selectedDateMs)
                         showChannelDialog = true
                     }
                 )
@@ -437,7 +444,6 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
     if (showChannelDialog && dialogStudentId != null) {
         val sid = dialogStudentId!!
         val student = students.find { it.id == sid }
-        val bname = batch?.name ?: ""
         AlertDialog(
             onDismissRequest = { showChannelDialog = false },
             containerColor = CardBg,
@@ -445,17 +451,67 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
             text = {
                 Column {
                     Text("${student?.fullName ?: "Student"} — absent $dateLabel", color = TextMuted, fontSize = 13.sp)
-                    Spacer(Modifier.height(12.dp))
+                    val recipient = student?.guardianPhone?.takeIf { it.isNotBlank() }
+                        ?: student?.phone?.takeIf { it.isNotBlank() }
+                    Text(
+                        if (student?.guardianPhone?.isNullOrBlank() == false) "Sending to guardian: $recipient"
+                        else "Sending to student: ${recipient ?: "No phone saved"}",
+                        color = TextMuted,
+                        fontSize = 12.sp
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = messageDraft,
+                        onValueChange = { messageDraft = it },
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 128.dp),
+                        label = { Text("Message preview") },
+                        minLines = 5,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Cyan,
+                            unfocusedBorderColor = BorderSub,
+                            focusedTextColor = TextWhite,
+                            unfocusedTextColor = TextWhite,
+                            focusedLabelColor = Cyan,
+                            unfocusedLabelColor = TextMuted
+                        )
+                    )
+                    TextButton(onClick = {
+                        templateDraft = absentMessageTemplate
+                        showChannelDialog = false
+                        showTemplateEditor = true
+                    }) {
+                        Text("Edit default template", color = Cyan, fontSize = 12.sp)
+                    }
+                    if (absentMsgMap[sid] == true) {
+                        Text(
+                            "A message was already opened today. You can still send an updated message.",
+                            color = AccentSky,
+                            fontSize = 11.sp
+                        )
+                    }
+                    Spacer(Modifier.height(4.dp))
                     channelCard("WhatsApp", Icons.Filled.Message, WAGreen, {
                         showChannelDialog = false
-                        viewModel.sendAbsentMessage(context, sid, batchId, selectedDateMs, "whatsapp",
-                            student?.fullName ?: "", bname, student?.phone, staffLabel, {}, {})
+                        student?.let {
+                            viewModel.sendAbsentMessage(
+                                context = context, student = it, batchId = batchId,
+                                dateMs = selectedDateMs, channel = "whatsapp", messageText = messageDraft,
+                                onSent = {},
+                                onError = { error -> Toast.makeText(context, error, Toast.LENGTH_LONG).show() }
+                            )
+                        }
                     })
                     Spacer(Modifier.height(8.dp))
                     channelCard("SMS", Icons.Filled.Sms, ElectricBlue, {
                         showChannelDialog = false
-                        viewModel.sendAbsentMessage(context, sid, batchId, selectedDateMs, "sms",
-                            student?.fullName ?: "", bname, student?.phone, staffLabel, {}, {})
+                        student?.let {
+                            viewModel.sendAbsentMessage(
+                                context = context, student = it, batchId = batchId,
+                                dateMs = selectedDateMs, channel = "sms", messageText = messageDraft,
+                                onSent = {},
+                                onError = { error -> Toast.makeText(context, error, Toast.LENGTH_LONG).show() }
+                            )
+                        }
                     })
                 }
             },
@@ -488,6 +544,47 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
             },
             confirmButton = {},
             dismissButton = { TextButton(onClick = { showAllChannelDialog = false }) { Text("Cancel", color = TextMuted) } }
+        )
+    }
+
+    if (showTemplateEditor) {
+        AlertDialog(
+            onDismissRequest = { showTemplateEditor = false },
+            containerColor = CardBg,
+            title = { Text("Attendance absent template", color = TextWhite, fontSize = 16.sp) },
+            text = {
+                Column {
+                    Text(
+                        "Available: {guardianName}, {studentName}, {studentCode}, {batchName}, {date}, {instituteName}",
+                        color = TextMuted,
+                        fontSize = 11.sp
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = templateDraft,
+                        onValueChange = { templateDraft = it },
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 190.dp),
+                        minLines = 7,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Cyan,
+                            unfocusedBorderColor = BorderSub,
+                            focusedTextColor = TextWhite,
+                            unfocusedTextColor = TextWhite
+                        )
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.saveAttendanceMessageTemplate(templateDraft) { error ->
+                        Toast.makeText(context, error, Toast.LENGTH_LONG).show()
+                    }
+                    showTemplateEditor = false
+                }) { Text("Save template", color = Cyan) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showTemplateEditor = false }) { Text("Cancel", color = TextMuted) }
+            }
         )
     }
 }
@@ -572,7 +669,7 @@ private fun StudentAttendanceCard(
                 if (status == "absent") {
                     OutlinedButton(
                         onClick = onSendMessage,
-                        enabled = !hasMessage && !isSending,
+                        enabled = !isSending,
                         contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
                         modifier = Modifier.height(28.dp),
                         shape = RoundedCornerShape(6.dp),
@@ -581,7 +678,7 @@ private fun StudentAttendanceCard(
                     ) {
                         when {
                             isSending -> CircularProgressIndicator(color = WAGreen, strokeWidth = 2.dp, modifier = Modifier.size(12.dp))
-                            hasMessage -> { Icon(Icons.Filled.Check, null, tint = WAGreen, modifier = Modifier.size(14.dp)); Spacer(Modifier.width(2.dp)); Text("Sent", fontSize = 10.sp) }
+                            hasMessage -> { Icon(Icons.Filled.Message, null, tint = WAGreen, modifier = Modifier.size(14.dp)); Spacer(Modifier.width(2.dp)); Text("Msg again", fontSize = 10.sp) }
                             else -> { Icon(Icons.Filled.Message, null, tint = WAGreen, modifier = Modifier.size(14.dp)); Spacer(Modifier.width(2.dp)); Text("Msg", fontSize = 10.sp) }
                         }
                     }

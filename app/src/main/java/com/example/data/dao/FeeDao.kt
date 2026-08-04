@@ -55,6 +55,12 @@ interface FeeDao {
     @Query("SELECT id FROM fees WHERE instituteId = :instituteId AND batchId = :batchId AND cancelledAtMs IS NULL")
     suspend fun getFeeIdsForBatch(instituteId: String, batchId: String): List<String>
 
+    @Query("SELECT id FROM fees WHERE instituteId = :instituteId AND studentId = :studentId")
+    suspend fun getFeeIdsForStudent(instituteId: String, studentId: String): List<String>
+
     @Query("DELETE FROM fees WHERE instituteId = :instituteId AND batchId = :batchId")
     suspend fun deleteFeesForBatch(instituteId: String, batchId: String)
+
+    @Query("DELETE FROM fees WHERE instituteId = :instituteId AND studentId = :studentId")
+    suspend fun deleteFeesForStudent(instituteId: String, studentId: String)
 }
