@@ -17,5 +17,5 @@ View your app in AI Studio: https://ai.studio/apps/469fece6-82f9-44e9-b38e-be107
 2. Select **Open** and choose the directory containing this project
 3. Allow Android Studio to fix any incompatibilities as it imports the project.
 4. Create a file named `.env` in the project directory and set `GEMINI_API_KEY` in that file to your Gemini API key (see `.env.example` for an example)
-5. For local development, you can run the app without a release keystore. If you want a signed release build, create `keystore.properties` in the project root with `storeFile`, `storePassword`, `keyAlias`, and `keyPassword`.
+5. For local development, you can run the app without a release keystore. Release APK/AAB tasks fail closed unless an ignored `keystore.properties` file or CI secret Gradle properties provide `releaseStoreFile`, `releaseStorePassword`, `releaseKeyAlias`, and `releaseKeyPassword`. Copy `keystore.properties.example`; never commit private keys or passwords.
 6. Run the app on an emulator or physical device

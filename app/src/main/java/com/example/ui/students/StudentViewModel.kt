@@ -12,8 +12,8 @@ import com.batchfee.edu.data.models.StudentEntity
 import com.batchfee.edu.domain.SessionManager
 import com.batchfee.edu.data.firestore.InstituteSyncHelper
 import com.batchfee.edu.data.firestore.BatchStudentSyncHelper
-import com.batchfee.edu.data.firestore.FinanceSyncHelper
 import com.batchfee.edu.data.models.BatchStudentEntity
+import com.batchfee.edu.data.repository.StudentAccountRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -24,6 +24,7 @@ import java.text.SimpleDateFormat
 import java.util.*
 
 class StudentViewModel(private val db: AppDatabase) : ViewModel() {
+    private val studentAccountRepository = StudentAccountRepository()
     private val _studentList = MutableStateFlow<List<StudentEntity>>(emptyList())
     val studentList = _studentList.asStateFlow()
 
@@ -69,6 +70,7 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
     }
 
     fun addStudent(
+        id: String,
         studentCode: String,
         fullName: String,
         phone: String,
@@ -82,6 +84,8 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
         address: String?,
         admissionDateMs: Long,
         photoUri: String?,
+        isAppAccessEnabled: Boolean = false,
+        appAccessPassword: String? = null,
         onSuccess: () -> Unit,
         onError: (String) -> Unit = {}
     ) {
@@ -94,8 +98,16 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
             }
         }.trimEnd().takeIf { it.isNotEmpty() }
 
+        if (isAppAccessEnabled && appAccessPassword.isNullOrEmpty()) {
+            onError("A password is required when enabling student app access.")
+            return
+        }
+        if (appAccessPassword != null && appAccessPassword.length !in 6..128) {
+            onError("Student app password must contain 6 to 128 characters.")
+            return
+        }
         val student = StudentEntity(
-            id = UUID.randomUUID().toString(),
+            id = id,
             instituteId = instId,
             studentCode = studentCode,
             fullName = fullName,
@@ -117,20 +129,33 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
             notes = combinedNotes,
             createdAtMs = System.currentTimeMillis(),
             updatedAtMs = System.currentTimeMillis(),
-            archivedAtMs = null
+            archivedAtMs = null,
+            // The backend is the only writer of cloud authentication state.
+            isAppAccessEnabled = false
         )
         viewModelScope.launch {
-            db.studentDao().insertStudent(student)
-            onSuccess()
-            // Firestore sync in background after immediate local save
-            launch { StudentSyncHelper.upsertStudent(student) }
-            launch {
-                try {
-                    val count = withContext(Dispatchers.IO) {
-                        db.studentDao().getStudentsByInstituteOnce(instId).size
-                    }
-                    InstituteSyncHelper.updateStudentCount(instId, count)
-                } catch (_: Exception) { }
+            try {
+                db.studentDao().insertStudent(student)
+                val savedStudent = if (isAppAccessEnabled) {
+                    StudentSyncHelper.upsertStudentOrThrow(student)
+                    studentAccountRepository.provision(instId, student.id, appAccessPassword!!)
+                    student.copy(isAppAccessEnabled = true)
+                } else {
+                    launch { StudentSyncHelper.upsertStudent(student) }
+                    student
+                }
+                if (savedStudent !== student) db.studentDao().updateStudent(savedStudent)
+                onSuccess()
+                launch {
+                    try {
+                        val count = withContext(Dispatchers.IO) {
+                            db.studentDao().getStudentsByInstituteOnce(instId).size
+                        }
+                        InstituteSyncHelper.updateStudentCount(instId, count)
+                    } catch (_: Exception) { }
+                }
+            } catch (error: Exception) {
+                onError(accountErrorMessage(error, "Student account could not be created."))
             }
         }
     }
@@ -139,6 +164,56 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
         val instId = SessionManager.currentInstituteId.value ?: return null
         InstituteCacheRefreshManager.refreshIfStaleInBackground(db, instId)
         return db.studentDao().getStudentById(studentId, instId).firstOrNull()
+    }
+
+    /**
+     * Sets a student app password through the existing trusted account service.
+     * The password is intentionally only an in-memory call argument; it is never
+     * written to Room or any client-side profile field.
+     */
+    fun setStudentAppPassword(
+        studentId: String,
+        password: String,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit = {}
+    ) {
+        if (password.length !in 6..128) {
+            onError("Student app password must contain 6 to 128 characters.")
+            return
+        }
+        val instId = SessionManager.currentInstituteId.value
+        if (instId == null) {
+            onError("No active institute session.")
+            return
+        }
+
+        viewModelScope.launch {
+            try {
+                val existing = db.studentDao().getStudentById(studentId, instId).firstOrNull()
+                    ?: run {
+                        onError("Student profile was not found.")
+                        return@launch
+                    }
+                if (existing.status != "active" || existing.archivedAtMs != null) {
+                    onError("Only active students can use app access.")
+                    return@launch
+                }
+
+                // Ensure the trusted backend has the current student record before
+                // it creates or resets the managed account identity.
+                StudentSyncHelper.upsertStudentOrThrow(existing)
+                studentAccountRepository.provision(instId, studentId, password)
+                db.studentDao().updateStudent(
+                    existing.copy(
+                        isAppAccessEnabled = true,
+                        updatedAtMs = System.currentTimeMillis()
+                    )
+                )
+                onSuccess()
+            } catch (error: Exception) {
+                onError(accountErrorMessage(error, "Student password could not be set."))
+            }
+        }
     }
 
     fun updateStudent(
@@ -156,6 +231,8 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
         address: String?,
         admissionDateMs: Long,
         photoUri: String?,
+        isAppAccessEnabled: Boolean = false,
+        appAccessPassword: String? = null,
         onSuccess: () -> Unit,
         onError: (String) -> Unit = {}
     ) {
@@ -163,6 +240,31 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
             val instId = SessionManager.currentInstituteId.value ?: return@launch
             val existing = db.studentDao().getStudentById(id, instId).firstOrNull() ?: run {
                 onError("Student profile was not found.")
+                return@launch
+            }
+            if (isAppAccessEnabled && !existing.isAppAccessEnabled && appAccessPassword.isNullOrEmpty()) {
+                onError("A password is required when enabling student app access.")
+                return@launch
+            }
+            if (appAccessPassword != null && appAccessPassword.length !in 6..128) {
+                onError("Student app password must contain 6 to 128 characters.")
+                return@launch
+            }
+            if (isAppAccessEnabled && existing.isAppAccessEnabled && appAccessPassword.isNullOrEmpty()) {
+                val securelyLinked = try {
+                    studentAccountRepository.isSecurelyLinked(instId, id)
+                } catch (error: Exception) {
+                    onError(accountErrorMessage(error, "Could not verify the existing student account."))
+                    return@launch
+                }
+                if (!securelyLinked) {
+                    onError("This legacy student account needs a one-time password reset before app access can continue.")
+                    return@launch
+                }
+            }
+            if (isAppAccessEnabled && existing.isAppAccessEnabled &&
+                existing.studentCode != studentCode && appAccessPassword.isNullOrEmpty()) {
+                onError("Re-enter the app password after changing the student ID.")
                 return@launch
             }
             val combinedNotes = buildString {
@@ -184,11 +286,29 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
                 admissionDateMs = admissionDateMs,
                 notes = combinedNotes,
                 photoUri = photoUri,
-                updatedAtMs = System.currentTimeMillis()
+                updatedAtMs = System.currentTimeMillis(),
+                isAppAccessEnabled = existing.isAppAccessEnabled
             )
-            StudentSyncHelper.upsertStudent(updated)
-            db.studentDao().updateStudent(updated)
-            onSuccess()
+            try {
+                val requiresAccountChange = appAccessPassword != null ||
+                    isAppAccessEnabled != existing.isAppAccessEnabled
+                val finalStudent = if (requiresAccountChange) {
+                    StudentSyncHelper.upsertStudentOrThrow(updated)
+                    if (isAppAccessEnabled) {
+                        studentAccountRepository.provision(instId, id, appAccessPassword!!)
+                    } else {
+                        studentAccountRepository.disable(instId, id)
+                    }
+                    updated.copy(isAppAccessEnabled = isAppAccessEnabled)
+                } else {
+                    launch { StudentSyncHelper.upsertStudent(updated) }
+                    updated
+                }
+                db.studentDao().updateStudent(finalStudent)
+                onSuccess()
+            } catch (error: Exception) {
+                onError(accountErrorMessage(error, "Student account could not be updated."))
+            }
         }
     }
 
@@ -231,29 +351,33 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
                     db.batchStudentDao().enrollStudent(enrollment)
                 }
 
-                // Step 3: Update fee batchIds (local)
-                withContext(Dispatchers.IO) {
-                    db.feeDao().updateFeeBatchIdForStudent(studentId, oldBatchId, newBatchId, instId, now)
-                }
-
                 onSuccess()
 
-                // Step 4: Firestore sync (background, non-blocking)
+                // Historical fee ledger entries retain the batch under which they
+                // were posted. Only the enrollment relationship is moved.
                 launch {
                     try {
                         BatchStudentSyncHelper.markRemoved(instId, oldBatchId, studentId, now)
                         BatchStudentSyncHelper.upsertEnrollment(enrollment)
-                        val fees = withContext(Dispatchers.IO) {
-                            db.feeDao().getFeesByStudentOnce(instId, studentId, newBatchId)
-                        }
-                        fees.forEach { fee ->
-                            try { FinanceSyncHelper.upsertFee(fee) } catch (_: Exception) { }
-                        }
                     } catch (_: Exception) { }
                 }
             } catch (e: Exception) {
                 onError(e.message ?: "Failed to shift student batch.")
             }
+        }
+    }
+
+    private fun accountErrorMessage(error: Exception, fallback: String): String {
+        val message = error.message.orEmpty()
+        return when {
+            message.contains("PERMISSION_DENIED", ignoreCase = true) ->
+                "You do not have permission to manage student app access."
+            message.contains("ALREADY_EXISTS", ignoreCase = true) ->
+                "This institute code and student ID are already linked to another account."
+            message.contains("UNAVAILABLE", ignoreCase = true) ||
+                message.contains("DEADLINE_EXCEEDED", ignoreCase = true) ->
+                "Account service is temporarily unavailable. Check your connection and try again."
+            else -> fallback
         }
     }
 }

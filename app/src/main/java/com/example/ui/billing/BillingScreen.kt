@@ -140,8 +140,11 @@ class BillingViewModel(private val db: AppDatabase) : ViewModel() {
         }
         viewModelScope.launch {
             val instId = SessionManager.currentInstituteId.value ?: return@launch
-            firestore.collection("institutes").document(instId)
-                .collection("receipts")
+            // Subscription history is sourced from subscription requests/receipts only.
+            // Student fee receipts intentionally share no billing UI or data path.
+            firestore.collection("subscriptionRequests")
+                .whereEqualTo("instituteId", instId)
+                .orderBy("requestSentAt", Query.Direction.DESCENDING)
                 .addSnapshotListener { snapshot, error ->
                     if (error != null) {
                         FirebaseCrashlytics.getInstance().recordException(error)
@@ -149,6 +152,7 @@ class BillingViewModel(private val db: AppDatabase) : ViewModel() {
                     }
                     _receipts.value = snapshot?.documents?.mapNotNull { doc ->
                         val d = doc.data ?: return@mapNotNull null
+                        if (d["status"] != "approved") return@mapNotNull null
                         SubscriptionReceiptData(
                             receiptNumber = d["receiptNumber"] as? String ?: doc.id,
                             instituteName = d["instituteName"] as? String ?: "",

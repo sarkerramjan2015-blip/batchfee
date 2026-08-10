@@ -24,6 +24,4 @@ interface StudentDao {
     @Update
     suspend fun updateStudent(student: StudentEntity)
 
-    @Query("DELETE FROM students WHERE id = :studentId AND instituteId = :instituteId")
-    suspend fun deleteStudent(studentId: String, instituteId: String)
 }

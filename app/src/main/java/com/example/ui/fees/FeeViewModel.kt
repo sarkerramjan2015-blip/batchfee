@@ -10,6 +10,7 @@ import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
 import com.batchfee.edu.data.models.FeeEntity
 import com.batchfee.edu.data.repository.FeeCollectionRepository
+import com.batchfee.edu.data.repository.FinancialOperationPendingException
 import com.batchfee.edu.domain.appendInstituteSignature
 import com.batchfee.edu.domain.loadInstituteSignature
 import com.batchfee.edu.domain.MonthlyDueCalculator
@@ -94,8 +95,12 @@ class FeeViewModel(private val db: AppDatabase) : ViewModel() {
         var total = 0.0
         val details = mutableListOf<DueFeeDetail>()
 
-        // Non-monthly due fees (admission, one-time, etc.) — kept as-is
-        fees.filter { !MonthlyDueCalculator.isMonthlyFeeType(it.feeType) && it.dueAmount > 0.0 }.forEach { fee ->
+        // Non-monthly due fees — only include past months, never current or future
+        fees.filter {
+            !MonthlyDueCalculator.isMonthlyFeeType(it.feeType)
+            && it.dueAmount > 0.0
+            && MonthlyDueCalculator.isPastMonth(it.feePeriod)
+        }.forEach { fee ->
             val student = allStudents[fee.studentId] ?: return@forEach
             val batchName = fee.batchId?.let { allBatches[it]?.name } ?: ""
             total += fee.dueAmount
@@ -280,6 +285,8 @@ class FeeViewModel(private val db: AppDatabase) : ViewModel() {
                     note = note
                 )
                 onSuccess(result.paymentId)
+            } catch (e: FinancialOperationPendingException) {
+                onError(e.message ?: "Payment is pending reconciliation. Do not retry it.")
             } catch (e: IllegalArgumentException) {
                 onError(e.message ?: "Payment rejected.")
             } catch (e: Exception) {
@@ -325,6 +332,8 @@ class FeeViewModel(private val db: AppDatabase) : ViewModel() {
                     note = note
                 )
                 onSuccess(result.paymentId)
+            } catch (e: FinancialOperationPendingException) {
+                onError(e.message ?: "Payment is pending reconciliation. Do not retry it.")
             } catch (e: IllegalArgumentException) {
                 onError(e.message ?: "Payment rejected.")
             } catch (e: Exception) {

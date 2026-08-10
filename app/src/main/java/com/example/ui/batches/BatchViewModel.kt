@@ -9,6 +9,7 @@ import com.batchfee.edu.data.firestore.CoreDataSyncCoordinator
 import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
 import com.batchfee.edu.data.firestore.InstituteSyncHelper
 import com.batchfee.edu.data.models.BatchEntity
+import com.batchfee.edu.data.repository.SafeDeletionRepository
 import com.batchfee.edu.domain.SessionManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -110,7 +111,7 @@ class BatchViewModel(private val db: AppDatabase) : ViewModel() {
         }
     }
 
-    fun deleteBatch(batch: BatchEntity, onError: (String) -> Unit = {}, onSuccess: () -> Unit) {
+    fun archiveBatch(batch: BatchEntity, onError: (String) -> Unit = {}, onSuccess: () -> Unit) {
         val instId = SessionManager.currentInstituteId.value
         if (instId == null) {
             onError("No active institute session.")
@@ -118,19 +119,10 @@ class BatchViewModel(private val db: AppDatabase) : ViewModel() {
         }
         viewModelScope.launch {
             try {
-                val feeIds = db.feeDao().getFeeIdsForBatch(instId, batch.id)
-                BatchSyncHelper.deleteBatchPermanently(batch)
-                if (feeIds.isNotEmpty()) {
-                    db.paymentDao().deletePaymentsByFeeIds(instId, feeIds)
-                    db.receiptDao().deleteReceiptsByFeeIds(instId, feeIds)
-                }
-                db.absentMessageDao().deleteMessagesForBatch(instId, batch.id)
-                db.attendanceDao().deleteAttendanceForBatch(instId, batch.id)
-                db.resultDao().deleteResultsForBatch(instId, batch.id)
-                db.examDao().deleteExamsForBatch(instId, batch.id)
-                db.batchStudentDao().deleteStudentsForBatch(batch.id, instId)
-                db.feeDao().deleteFeesForBatch(instId, batch.id)
-                db.batchDao().deleteBatch(batch.id, instId)
+                SafeDeletionRepository(db).archiveBatch(
+                    batch,
+                    reason = "Batch archived from batch management"
+                )
                 try {
                     val count = withContext(Dispatchers.IO) {
                         db.batchDao().getBatchesByInstituteOnce(instId).size
@@ -139,7 +131,7 @@ class BatchViewModel(private val db: AppDatabase) : ViewModel() {
                 } catch (_: Exception) { }
                 onSuccess()
             } catch (e: Exception) {
-                onError(e.message ?: "Failed to delete batch.")
+                onError(e.message ?: "Failed to archive batch safely.")
             }
         }
     }
@@ -182,7 +174,6 @@ class BatchViewModel(private val db: AppDatabase) : ViewModel() {
                             leftAtMs = null
                         )
                         db.batchStudentDao().enrollStudent(enrollment)
-                        db.feeDao().updateFeeBatchIdForStudent(student.id, fromBatch.id, toBatch.id, instId, now)
                     }
                 }
                 onSuccess()

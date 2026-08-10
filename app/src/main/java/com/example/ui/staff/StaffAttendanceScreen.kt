@@ -78,13 +78,38 @@ class StaffAttendanceViewModel(private val db: AppDatabase) : ViewModel() {
     private val _records = MutableStateFlow<Map<String, StaffAttendanceEntity>>(emptyMap())
     val records = _records.asStateFlow()
 
+    private val _selectedDateMs = MutableStateFlow(startOfDay(System.currentTimeMillis()))
+    val selectedDateMs = _selectedDateMs.asStateFlow()
+
+    private val _lastOperation = MutableStateFlow<String?>(null)
+    val lastOperation = _lastOperation.asStateFlow()
+
     init {
-        loadToday()
+        loadDate()
     }
 
-    private fun loadToday() {
+    fun navigateDate(delta: Int) {
+        val current = _selectedDateMs.value
+        val cal = java.util.Calendar.getInstance().apply { timeInMillis = current }
+        cal.add(java.util.Calendar.DAY_OF_MONTH, delta)
+        val newDate = startOfDay(cal.timeInMillis)
+        if (newDate <= startOfDay(System.currentTimeMillis())) {
+            _selectedDateMs.value = newDate
+            loadDate()
+        }
+    }
+
+    fun canGoForward(): Boolean {
+        val today = startOfDay(System.currentTimeMillis())
+        val next = _selectedDateMs.value + 24L * 60 * 60 * 1000
+        return next <= today
+    }
+
+    fun canGoBackward(): Boolean = true
+
+    private fun loadDate() {
         val instId = SessionManager.currentInstituteId.value ?: return
-        val start = startOfDay(System.currentTimeMillis())
+        val start = _selectedDateMs.value
         val end = start + 24L * 60 * 60 * 1000
         viewModelScope.launch {
             InstituteCacheRefreshManager.refreshIfStaleInBackground(db, instId)
@@ -100,7 +125,7 @@ class StaffAttendanceViewModel(private val db: AppDatabase) : ViewModel() {
     fun mark(staffId: String, status: String) {
         val instId = SessionManager.currentInstituteId.value ?: return
         val userId = SessionManager.currentUserId.value ?: return
-        val today = startOfDay(System.currentTimeMillis())
+        val selectedDate = _selectedDateMs.value
         viewModelScope.launch {
             val existing = _records.value[staffId]
             val now = System.currentTimeMillis()
@@ -109,7 +134,7 @@ class StaffAttendanceViewModel(private val db: AppDatabase) : ViewModel() {
                     id = UUID.randomUUID().toString(),
                     instituteId = instId,
                     staffId = staffId,
-                    attendanceDateMs = today,
+                    attendanceDateMs = selectedDate,
                     status = status,
                     note = null,
                     markedByUserId = userId,
@@ -118,8 +143,19 @@ class StaffAttendanceViewModel(private val db: AppDatabase) : ViewModel() {
                 )
             AttendanceSyncHelper.upsertStaffAttendance(record)
             db.staffAttendanceDao().insertOrUpdateAttendance(record)
+            _lastOperation.value = staffId
         }
     }
+
+    fun undo(staffId: String) {
+        viewModelScope.launch {
+            val existing = _records.value[staffId] ?: return@launch
+            db.staffAttendanceDao().deleteAttendance(existing.id)
+            _lastOperation.value = null
+        }
+    }
+
+    fun canUndo(staffId: String): Boolean = _records.value[staffId] != null
 }
 
 class StaffAttendanceViewModelFactory(private val db: AppDatabase) : ViewModelProvider.Factory {

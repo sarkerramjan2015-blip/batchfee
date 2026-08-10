@@ -25,14 +25,14 @@ data class SubscriptionRequest(
             ownerName = data["ownerName"] as? String ?: "",
             institutePhone = data["institutePhone"] as? String,
             requestedPlanId = data["requestedPlanId"] as? String ?: "",
-            durationMonths = (data["durationMonths"] as? Long)?.toInt() ?: 1,
+            durationMonths = (data["durationMonths"] as? Number)?.toInt() ?: 1,
             amountPaid = (data["amountPaid"] as? Number)?.toDouble() ?: 0.0,
             transactionLast4 = data["transactionLast4"] as? String ?: "",
             paymentMethod = data["paymentMethod"] as? String ?: "",
             status = data["status"] as? String ?: "pending",
-            requestSentAt = (data["requestSentAt"] as? Long) ?: System.currentTimeMillis(),
+            requestSentAt = (data["requestSentAt"] as? Number)?.toLong() ?: System.currentTimeMillis(),
             reviewedBy = data["reviewedBy"] as? String,
-            reviewedAt = data["reviewedAt"] as? Long,
+            reviewedAt = (data["reviewedAt"] as? Number)?.toLong(),
             reviewerNote = data["reviewerNote"] as? String
         )
     }

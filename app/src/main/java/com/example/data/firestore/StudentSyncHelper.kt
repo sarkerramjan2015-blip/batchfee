@@ -4,6 +4,7 @@ import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.data.models.StudentEntity
 import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.SetOptions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
@@ -18,10 +19,7 @@ object StudentSyncHelper {
     suspend fun upsertStudent(student: StudentEntity) {
         withContext(Dispatchers.IO) {
             try {
-                studentsCollection(student.instituteId)
-                    .document(student.id)
-                    .set(student.toFirestore())
-                    .await()
+                upsertStudentOrThrow(student)
             } catch (e: Exception) {
                 FirebaseCrashlytics.getInstance().recordException(e)
                 // Best-effort sync — don't crash local operations
@@ -29,15 +27,13 @@ object StudentSyncHelper {
         }
     }
 
-    /** Deletes the source student document only after its dependent records have been removed. */
-    suspend fun deleteStudent(studentId: String, instituteId: String) {
+    /** Required before provisioning a student Auth identity; failures must not be hidden. */
+    suspend fun upsertStudentOrThrow(student: StudentEntity) {
         withContext(Dispatchers.IO) {
-            try {
-                studentsCollection(instituteId).document(studentId).delete().await()
-            } catch (e: Exception) {
-                FirebaseCrashlytics.getInstance().recordException(e)
-                throw e
-            }
+            studentsCollection(student.instituteId)
+                .document(student.id)
+                .set(student.toFirestore(), SetOptions.merge())
+                .await()
         }
     }
 
@@ -107,7 +103,8 @@ object StudentSyncHelper {
             notes = getString("notes"),
             createdAtMs = getLongCompat("createdAtMs") ?: System.currentTimeMillis(),
             updatedAtMs = getLongCompat("updatedAtMs") ?: System.currentTimeMillis(),
-            archivedAtMs = getLongCompat("archivedAtMs")
+            archivedAtMs = getLongCompat("archivedAtMs"),
+            isAppAccessEnabled = getBoolean("isAppAccessEnabled") ?: false
         )
     }
 

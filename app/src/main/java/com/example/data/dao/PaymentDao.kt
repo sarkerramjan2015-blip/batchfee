@@ -15,15 +15,16 @@ interface PaymentDao {
     @Query("SELECT * FROM payments WHERE instituteId = :instituteId AND feeId = :feeId ORDER BY paymentDateMs DESC")
     fun getPaymentsByFeeId(instituteId: String, feeId: String): Flow<List<PaymentEntity>>
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Upsert
     suspend fun insertPayment(payment: PaymentEntity)
 
-    @Query("DELETE FROM payments WHERE instituteId = :instituteId AND feeId IN (:feeIds)")
-    suspend fun deletePaymentsByFeeIds(instituteId: String, feeIds: List<String>)
+    @Query("SELECT * FROM payments WHERE id = :id AND instituteId = :instituteId LIMIT 1")
+    suspend fun getPaymentById(id: String, instituteId: String): PaymentEntity?
 
-    @Query("DELETE FROM payments WHERE instituteId = :instituteId AND studentId = :studentId")
-    suspend fun deletePaymentsForStudent(instituteId: String, studentId: String)
+    @Query("SELECT * FROM payments WHERE instituteId = :instituteId AND operationId = :operationId LIMIT 1")
+    suspend fun getPaymentByOperationId(instituteId: String, operationId: String): PaymentEntity?
 
-    @Query("DELETE FROM payments WHERE id = :id AND instituteId = :instituteId")
-    suspend fun deletePaymentById(id: String, instituteId: String)
+    @Query("DELETE FROM payments WHERE instituteId = :instituteId AND id = :paymentId")
+    suspend fun deletePaymentById(instituteId: String, paymentId: String)
+
 }

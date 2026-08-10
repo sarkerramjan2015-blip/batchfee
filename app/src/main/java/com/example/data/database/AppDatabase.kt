@@ -41,6 +41,9 @@ import java.util.Locale
         com.batchfee.edu.data.models.FeeEntity::class,
         com.batchfee.edu.data.models.PaymentEntity::class,
         com.batchfee.edu.data.models.ReceiptEntity::class,
+        com.batchfee.edu.data.models.PaymentReversalEntity::class,
+        com.batchfee.edu.data.models.FinancialOutboxEntity::class,
+        com.batchfee.edu.data.models.DeletionOutboxEntity::class,
         com.batchfee.edu.data.models.ReminderTemplateEntity::class,
         com.batchfee.edu.data.models.StaffEntity::class,
         com.batchfee.edu.data.models.StaffAttendanceEntity::class,
@@ -50,9 +53,14 @@ import java.util.Locale
         com.batchfee.edu.data.models.ResultEntity::class,
         com.batchfee.edu.data.models.AuditLogEntity::class,
         com.batchfee.edu.data.models.AbsentMessageEntity::class,
-        com.batchfee.edu.data.models.EnquiryEntity::class
+        com.batchfee.edu.data.models.EnquiryEntity::class,
+        com.batchfee.edu.data.models.WorkEntity::class,
+        com.batchfee.edu.data.models.HomeworkEntity::class,
+        com.batchfee.edu.data.models.AssignmentEntity::class,
+        com.batchfee.edu.data.models.HomeworkSubmissionEntity::class,
+        com.batchfee.edu.data.models.AssignmentSubmissionEntity::class
     ],
-    version = 16,
+    version = 23,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -67,6 +75,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun feeDao(): com.batchfee.edu.data.dao.FeeDao
     abstract fun paymentDao(): com.batchfee.edu.data.dao.PaymentDao
     abstract fun receiptDao(): com.batchfee.edu.data.dao.ReceiptDao
+    abstract fun financialLedgerDao(): com.batchfee.edu.data.dao.FinancialLedgerDao
+    abstract fun safeDeletionDao(): com.batchfee.edu.data.dao.SafeDeletionDao
     abstract fun reminderTemplateDao(): com.batchfee.edu.data.dao.ReminderTemplateDao
     abstract fun staffDao(): com.batchfee.edu.data.dao.StaffDao
     abstract fun staffAttendanceDao(): com.batchfee.edu.data.dao.StaffAttendanceDao
@@ -77,6 +87,9 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun auditLogDao(): com.batchfee.edu.data.dao.AuditLogDao
     abstract fun absentMessageDao(): com.batchfee.edu.data.dao.AbsentMessageDao
     abstract fun enquiryDao(): com.batchfee.edu.data.dao.EnquiryDao
+    abstract fun workDao(): com.batchfee.edu.data.dao.WorkDao
+    abstract fun homeworkDao(): com.batchfee.edu.data.dao.HomeworkDao
+    abstract fun assignmentDao(): com.batchfee.edu.data.dao.AssignmentDao
 
     companion object {
         @Volatile
@@ -165,6 +178,169 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_16_17 = object : androidx.room.migration.Migration(16, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE students ADD COLUMN isAppAccessEnabled INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE students ADD COLUMN studentPasswordHash TEXT")
+            }
+        }
+
+        private val MIGRATION_17_18 = object : androidx.room.migration.Migration(17, 18) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE students ADD COLUMN appAccessEmail TEXT")
+            }
+        }
+
+        private val MIGRATION_18_19 = object : androidx.room.migration.Migration(18, 19) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS works (id TEXT NOT NULL PRIMARY KEY, instituteId TEXT NOT NULL, batchId TEXT, type TEXT NOT NULL, title TEXT NOT NULL, description TEXT NOT NULL, dueDateMs INTEGER, createdAtMs INTEGER NOT NULL, updatedAtMs INTEGER NOT NULL, archivedAtMs INTEGER)")
+            }
+        }
+
+        private val MIGRATION_19_20 = object : androidx.room.migration.Migration(19, 20) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS homework (id TEXT NOT NULL PRIMARY KEY, instituteId TEXT NOT NULL, batchId TEXT, title TEXT NOT NULL, subject TEXT, className TEXT, instructions TEXT NOT NULL, bookPage TEXT, startDateMs INTEGER NOT NULL, dueDateMs INTEGER, attachmentUri TEXT, requiresSubmission INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'active', createdAtMs INTEGER NOT NULL, updatedAtMs INTEGER NOT NULL, archivedAtMs INTEGER)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS assignments (id TEXT NOT NULL PRIMARY KEY, instituteId TEXT NOT NULL, batchId TEXT, title TEXT NOT NULL, subject TEXT, className TEXT, assignmentType TEXT NOT NULL DEFAULT 'individual', instructions TEXT NOT NULL, learningObjective TEXT, totalMarks REAL, passingMarks REAL, gradingMethod TEXT NOT NULL DEFAULT 'marks', rubricJson TEXT, startDateMs INTEGER NOT NULL, dueDateMs INTEGER, allowLateSubmission INTEGER NOT NULL DEFAULT 0, latePenalty TEXT, submissionFormat TEXT NOT NULL DEFAULT 'any', maxFileSizeKb INTEGER, referenceMaterials TEXT, status TEXT NOT NULL DEFAULT 'draft', publishDateMs INTEGER, createdAtMs INTEGER NOT NULL, updatedAtMs INTEGER NOT NULL, archivedAtMs INTEGER)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS homework_submissions (id TEXT NOT NULL PRIMARY KEY, homeworkId TEXT NOT NULL, studentId TEXT NOT NULL, instituteId TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', submittedAtMs INTEGER, attachmentUri TEXT, studentNote TEXT)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS assignment_submissions (id TEXT NOT NULL PRIMARY KEY, assignmentId TEXT NOT NULL, studentId TEXT NOT NULL, instituteId TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', submittedAtMs INTEGER, attachmentUri TEXT, studentNote TEXT, marksObtained REAL, grade TEXT, percentage REAL, teacherFeedback TEXT, feedbackAttachmentUri TEXT, gradedAtMs INTEGER, resubmitRequested INTEGER NOT NULL DEFAULT 0)")
+            }
+        }
+
+        // Purge the two legacy student credential columns instead of merely
+        // nulling them, so old hashes/emails cannot survive in an upgraded local DB.
+        internal val MIGRATION_20_21 = object : androidx.room.migration.Migration(20, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.query("PRAGMA secure_delete = ON").close()
+                db.execSQL(
+                    """
+                    CREATE TABLE students_without_legacy_credentials (
+                        id TEXT NOT NULL PRIMARY KEY,
+                        instituteId TEXT NOT NULL,
+                        studentCode TEXT NOT NULL,
+                        fullName TEXT NOT NULL,
+                        photoUri TEXT,
+                        gender TEXT,
+                        dateOfBirthMs INTEGER,
+                        phone TEXT,
+                        email TEXT,
+                        address TEXT,
+                        schoolName TEXT,
+                        className TEXT,
+                        guardianName TEXT,
+                        guardianPhone TEXT,
+                        guardianEmail TEXT,
+                        emergencyContact TEXT,
+                        bloodGroup TEXT,
+                        admissionDateMs INTEGER NOT NULL,
+                        status TEXT NOT NULL,
+                        notes TEXT,
+                        createdAtMs INTEGER NOT NULL,
+                        updatedAtMs INTEGER NOT NULL,
+                        archivedAtMs INTEGER,
+                        isAppAccessEnabled INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    INSERT INTO students_without_legacy_credentials (
+                        id, instituteId, studentCode, fullName, photoUri, gender,
+                        dateOfBirthMs, phone, email, address, schoolName, className,
+                        guardianName, guardianPhone, guardianEmail, emergencyContact,
+                        bloodGroup, admissionDateMs, status, notes, createdAtMs,
+                        updatedAtMs, archivedAtMs, isAppAccessEnabled
+                    )
+                    SELECT
+                        id, instituteId, studentCode, fullName, photoUri, gender,
+                        dateOfBirthMs, phone, email, address, schoolName, className,
+                        guardianName, guardianPhone, guardianEmail, emergencyContact,
+                        bloodGroup, admissionDateMs, status, notes, createdAtMs,
+                        updatedAtMs, archivedAtMs, isAppAccessEnabled
+                    FROM students
+                    """.trimIndent()
+                )
+                db.execSQL("DROP TABLE students")
+                db.execSQL("ALTER TABLE students_without_legacy_credentials RENAME TO students")
+            }
+        }
+
+        internal val MIGRATION_21_22 = object : androidx.room.migration.Migration(21, 22) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE fees ADD COLUMN businessKey TEXT")
+                db.execSQL("ALTER TABLE fees ADD COLUMN ledgerVersion INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE payments ADD COLUMN operationId TEXT")
+                db.execSQL("ALTER TABLE payments ADD COLUMN ledgerVersion INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE receipts ADD COLUMN operationId TEXT")
+                db.execSQL("ALTER TABLE receipts ADD COLUMN ledgerVersion INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_fees_instituteId_businessKey ON fees(instituteId, businessKey)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_payments_instituteId_operationId ON payments(instituteId, operationId)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_receipts_instituteId_operationId ON receipts(instituteId, operationId)")
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS payment_reversals (
+                        id TEXT NOT NULL PRIMARY KEY,
+                        instituteId TEXT NOT NULL,
+                        paymentId TEXT NOT NULL,
+                        feeId TEXT NOT NULL,
+                        studentId TEXT NOT NULL,
+                        amount REAL NOT NULL,
+                        receiptNumber TEXT NOT NULL,
+                        reason TEXT NOT NULL,
+                        reversedByUserId TEXT NOT NULL,
+                        reversedAtMs INTEGER NOT NULL,
+                        operationId TEXT NOT NULL,
+                        ledgerVersion INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_payment_reversals_instituteId_paymentId ON payment_reversals(instituteId, paymentId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_payment_reversals_instituteId_feeId ON payment_reversals(instituteId, feeId)")
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS financial_outbox (
+                        operationId TEXT NOT NULL,
+                        instituteId TEXT NOT NULL,
+                        action TEXT NOT NULL,
+                        requestJson TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        attempts INTEGER NOT NULL,
+                        createdAtMs INTEGER NOT NULL,
+                        updatedAtMs INTEGER NOT NULL,
+                        lastError TEXT,
+                        PRIMARY KEY(instituteId, operationId)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_financial_outbox_instituteId_status ON financial_outbox(instituteId, status)")
+            }
+        }
+
+        internal val MIGRATION_22_23 = object : androidx.room.migration.Migration(22, 23) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS deletion_outbox (
+                        operationId TEXT NOT NULL,
+                        instituteId TEXT NOT NULL,
+                        entityType TEXT NOT NULL,
+                        entityId TEXT NOT NULL,
+                        action TEXT NOT NULL,
+                        reason TEXT NOT NULL,
+                        requestJson TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        attempts INTEGER NOT NULL,
+                        createdAtMs INTEGER NOT NULL,
+                        updatedAtMs INTEGER NOT NULL,
+                        lastError TEXT,
+                        PRIMARY KEY(instituteId, operationId)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_deletion_outbox_status ON deletion_outbox(status)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_deletion_outbox_instituteId_entityType_entityId_action_status ON deletion_outbox(instituteId, entityType, entityId, action, status)")
+            }
+        }
+
         fun getDatabase(context: Context, scope: CoroutineScope): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val builder = Room.databaseBuilder(
@@ -172,7 +348,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "batchfee_database"
                 )
-                .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16)
+                .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23)
 
                 if (BuildConfig.DEBUG) {
                     builder.fallbackToDestructiveMigration()

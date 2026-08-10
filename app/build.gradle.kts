@@ -1,4 +1,20 @@
 import java.util.Properties
+import org.gradle.api.DefaultTask
+import org.gradle.api.provider.Property
+import org.gradle.api.tasks.Input
+import org.gradle.api.tasks.TaskAction
+
+abstract class VerifyReleaseSigningTask : DefaultTask() {
+  @get:Input
+  abstract val validationMessage: Property<String>
+
+  @TaskAction
+  fun verify() {
+    validationMessage.orNull?.takeIf { it.isNotBlank() }?.let { message ->
+      throw GradleException("Release signing validation failed: $message")
+    }
+  }
+}
 
 plugins {
   alias(libs.plugins.android.application)
@@ -12,12 +28,65 @@ plugins {
   kotlin("plugin.serialization") version "2.2.10"
 }
 
-val keystorePropertiesFile = rootProject.file("keystore.properties")
-val keystoreProperties = Properties()
-val hasReleaseKeystore = keystorePropertiesFile.exists().also { exists ->
-  if (exists) {
-    keystorePropertiesFile.inputStream().use { keystoreProperties.load(it) }
+val releaseSigningPropertiesFileName = "keystore.properties"
+
+val localSigningProperties = Properties().apply {
+  val propertiesFile = rootProject.file(releaseSigningPropertiesFileName)
+  if (propertiesFile.isFile) propertiesFile.inputStream().use(::load)
+}
+
+/**
+ * CI should supply these through Gradle properties (including ORG_GRADLE_PROJECT_* environment
+ * variables). The ignored local properties file is only a developer convenience. Legacy names are
+ * accepted for existing local setups, but are never written to the repository or build output.
+ */
+fun releaseSigningValue(propertyName: String, legacyPropertyName: String): String? =
+  providers.gradleProperty(propertyName).orNull?.trim()?.takeIf(String::isNotEmpty)
+    ?: localSigningProperties.getProperty(propertyName)?.trim()?.takeIf(String::isNotEmpty)
+    ?: localSigningProperties.getProperty(legacyPropertyName)?.trim()?.takeIf(String::isNotEmpty)
+
+data class ReleaseSigningInput(
+  val storeFileValue: String?,
+  val storePassword: String?,
+  val keyAliasValue: String?,
+  val keyPassword: String?,
+)
+
+val releaseSigningInput = ReleaseSigningInput(
+  storeFileValue = releaseSigningValue("releaseStoreFile", "storeFile"),
+  storePassword = releaseSigningValue("releaseStorePassword", "storePassword"),
+  keyAliasValue = releaseSigningValue("releaseKeyAlias", "keyAlias"),
+  keyPassword = releaseSigningValue("releaseKeyPassword", "keyPassword"),
+)
+
+fun releaseSigningValidationError(input: ReleaseSigningInput): String? {
+  val missing = buildList {
+    if (input.storeFileValue == null) add("releaseStoreFile")
+    if (input.storePassword == null) add("releaseStorePassword")
+    if (input.keyAliasValue == null) add("releaseKeyAlias")
+    if (input.keyPassword == null) add("releaseKeyPassword")
   }
+  if (missing.isNotEmpty()) {
+    return "Missing required release signing properties: ${missing.joinToString()}. " +
+      "Use CI secret Gradle properties or the ignored $releaseSigningPropertiesFileName file."
+  }
+  val resolvedStoreFile = rootProject.file(requireNotNull(input.storeFileValue))
+  if (!resolvedStoreFile.isFile || !resolvedStoreFile.canRead()) {
+    return "Release keystore file is missing or unreadable."
+  }
+  if (resolvedStoreFile.name.equals("debug.keystore", ignoreCase = true) ||
+      input.keyAliasValue.equals("androiddebugkey", ignoreCase = true)) {
+    return "Debug signing keys are forbidden for release artifacts."
+  }
+  return null
+}
+
+val releaseSigningValidationMessage = releaseSigningValidationError(releaseSigningInput)
+
+val releaseSigningPreflight = tasks.register<VerifyReleaseSigningTask>("verifyReleaseSigning") {
+  group = "verification"
+  description = "Fails release artifact creation unless a non-debug release keystore is configured."
+  validationMessage.set(releaseSigningValidationMessage.orEmpty())
 }
 
 android {
@@ -35,12 +104,12 @@ android {
   }
 
   signingConfigs {
-    if (hasReleaseKeystore) {
+    if (releaseSigningValidationError(releaseSigningInput) == null) {
       create("release") {
-        storeFile = file(keystoreProperties["storeFile"] as String)
-        storePassword = keystoreProperties["storePassword"] as String
-        keyAlias = keystoreProperties["keyAlias"] as String
-        keyPassword = keystoreProperties["keyPassword"] as String
+        storeFile = rootProject.file(requireNotNull(releaseSigningInput.storeFileValue))
+        storePassword = requireNotNull(releaseSigningInput.storePassword)
+        keyAlias = requireNotNull(releaseSigningInput.keyAliasValue)
+        keyPassword = requireNotNull(releaseSigningInput.keyPassword)
       }
     }
   }
@@ -51,11 +120,7 @@ android {
       isMinifyEnabled = true
       isShrinkResources = true
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-      signingConfig = if (hasReleaseKeystore) {
-        signingConfigs.getByName("release")
-      } else {
-        signingConfigs.getByName("debug")
-      }
+      signingConfig = signingConfigs.findByName("release")
     }
   }
   compileOptions {
@@ -74,6 +139,30 @@ android {
   testOptions { unitTests { isIncludeAndroidResources = true } }
 }
 
+// These are the only tasks that create or validate a distributable release artifact. Compilation
+// and lint remain usable without private signing material, but no APK/AAB can be packaged unsigned
+// or with the debug key.
+tasks.configureEach {
+  val isReleaseArtifactTask = name in setOf(
+    "assembleRelease",
+    "bundleRelease",
+    "packageRelease",
+    "signReleaseBundle",
+    "validateSigningRelease",
+    "zipAlignRelease",
+  ) || (name.contains("Release", ignoreCase = true) &&
+    (name.startsWith("package", ignoreCase = true) ||
+      name.startsWith("sign", ignoreCase = true) ||
+      name.startsWith("bundle", ignoreCase = true) ||
+      name.startsWith("assemble", ignoreCase = true)))
+  if (isReleaseArtifactTask) {
+    dependsOn(releaseSigningPreflight)
+    notCompatibleWithConfigurationCache(
+      "Release signing credentials must not be retained in the Gradle configuration cache.",
+    )
+  }
+}
+
 // Configure the Secrets Gradle Plugin to use .env and .env.example files
 // to match the convention used in Web projects.
 secrets {
@@ -90,6 +179,7 @@ dependencies {
   implementation(libs.firebase.appcheck.playintegrity)
   implementation(libs.firebase.auth)
   implementation(libs.firebase.firestore)
+  implementation(libs.firebase.functions)
   implementation(libs.firebase.crashlytics)
   // implementation(libs.accompanist.permissions)
   implementation(libs.androidx.activity.compose)
@@ -139,6 +229,7 @@ dependencies {
   androidTestImplementation(libs.androidx.runner)
   debugImplementation(libs.androidx.compose.ui.test.manifest)
   debugImplementation(libs.androidx.compose.ui.tooling)
+  debugImplementation(libs.firebase.appcheck.debug)
   "ksp"(libs.androidx.room.compiler)
   "ksp"(libs.moshi.kotlin.codegen)
 }

@@ -70,10 +70,15 @@ object InstituteSyncHelper {
                         phone = data["phone"] as? String,
                         address = data["address"] as? String,
                         whatsappNumber = data["whatsappNumber"] as? String,
-                        // Local logos are free and device-only. Preserve them during a cloud refresh
-                        // instead of replacing them with an unavailable Firebase Storage URL.
-                        profilePhotoUri = localProfilePhotoUri?.takeIf { it.startsWith("file:") }
-                            ?: data["profilePhotoUri"] as? String,
+                        // Preserve local file URIs. For remote URLs, use Firestore as authority
+                        // with local fallback so a stale Firestore doc doesn't nuke a valid URL.
+                        profilePhotoUri = when {
+                            localProfilePhotoUri != null && localProfilePhotoUri.startsWith("file:") -> localProfilePhotoUri
+                            else -> {
+                                val cloudUri = data["profilePhotoUri"] as? String
+                                if (!cloudUri.isNullOrBlank()) cloudUri else localProfilePhotoUri
+                            }
+                        },
                         ownerName = data["ownerName"] as? String,
                         email = data["email"] as? String,
                         instituteCode = data["instituteCode"] as? String,
@@ -100,18 +105,13 @@ object InstituteSyncHelper {
                         "profilePhotoUri" to institute.profilePhotoUri?.takeUnless { it.startsWith("file:") },
                         "ownerName" to institute.ownerName,
                         "email" to institute.email,
-                        "instituteCode" to institute.instituteCode,
-                        "currentPlanId" to institute.currentPlanId,
-                        "subscriptionStatus" to institute.subscriptionStatus,
-                        "trialStartDateMs" to institute.trialStartDateMs,
-                        "trialEndDateMs" to institute.trialEndDateMs,
-                        "currentPeriodEndMs" to institute.currentPeriodEndMs,
-                        "createdAt" to institute.createdAtMs
+                        "instituteCode" to institute.instituteCode
                     ),
                     com.google.firebase.firestore.SetOptions.merge()
                 ).await()
             } catch (e: Exception) {
                 FirebaseCrashlytics.getInstance().recordException(e)
+                throw e
             }
         }
     }

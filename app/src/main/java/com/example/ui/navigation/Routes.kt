@@ -83,3 +83,16 @@ object BillingRoute
 
 @Serializable object StudentRegistrationRoute
 
+@Serializable object StudentLoginRoute
+
+@Serializable object StudentDashboardRoute
+
+@Serializable object WorksListRoute
+
+@Serializable object AddWorkRoute
+
+@Serializable object HomeworkListRoute
+@Serializable object AddHomeworkRoute
+@Serializable object AssignmentListRoute
+@Serializable object AddAssignmentRoute
+

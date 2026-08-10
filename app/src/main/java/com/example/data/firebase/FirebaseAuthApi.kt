@@ -32,6 +32,12 @@ object FirebaseAuthApi {
     data class SignUpResponse(val localId: String? = null, val idToken: String? = null)
 
     @com.squareup.moshi.JsonClass(generateAdapter = true)
+    data class SignInWithTokenResponse(val localId: String? = null, val idToken: String? = null)
+
+    @com.squareup.moshi.JsonClass(generateAdapter = true)
+    data class DeleteAccountRequest(val idToken: String)
+
+    @com.squareup.moshi.JsonClass(generateAdapter = true)
     data class FirebaseError(val error: ErrorDetail)
 
     @com.squareup.moshi.JsonClass(generateAdapter = true)
@@ -75,6 +81,65 @@ object FirebaseAuthApi {
     }
 
     /**
+     * Deletes a Firebase Auth account by email+password using REST API.
+     * First signs in to obtain an idToken, then calls accounts:delete.
+     * Returns true on success, false if the account was not found, throws on other errors.
+     */
+    suspend fun deleteUser(email: String, password: String): Boolean {
+        return withContext(Dispatchers.IO) {
+            try {
+                val requestBody = moshi.adapter(SignUpRequest::class.java)
+                    .toJson(SignUpRequest(email = email, password = password, returnSecureToken = true))
+                val signInRequest = Request.Builder()
+                    .url(SIGN_IN_URL)
+                    .post(requestBody.toRequestBody("application/json".toMediaType()))
+                    .build()
+                val signInResponse = client.newCall(signInRequest).execute()
+
+                if (!signInResponse.isSuccessful) {
+                    val errorBody = signInResponse.body?.string() ?: ""
+                    val error = try {
+                        moshi.adapter(FirebaseError::class.java).fromJson(errorBody)
+                    } catch (_: Exception) { null }
+                    val code = error?.error?.message ?: ""
+                    if (code.contains("EMAIL_NOT_FOUND")) return@withContext false
+                    throw SignUpException("Sign-in for deletion failed: ${code.replace("_", " ")}")
+                }
+
+                val signInBody = signInResponse.body?.string()
+                    ?: throw SignUpException("Empty sign-in response")
+                val signInParsed = moshi.adapter(SignInWithTokenResponse::class.java).fromJson(signInBody)
+                val idToken = signInParsed?.idToken
+                    ?: throw SignUpException("No idToken in sign-in response")
+
+                val deleteUrl = "https://identitytoolkit.googleapis.com/v1/accounts:delete?key=$API_KEY"
+                val deleteBody = moshi.adapter(DeleteAccountRequest::class.java)
+                    .toJson(DeleteAccountRequest(idToken = idToken))
+                val deleteRequest = Request.Builder()
+                    .url(deleteUrl)
+                    .post(deleteBody.toRequestBody("application/json".toMediaType()))
+                    .build()
+                val deleteResponse = client.newCall(deleteRequest).execute()
+
+                if (!deleteResponse.isSuccessful) {
+                    val errorBody = deleteResponse.body?.string() ?: ""
+                    val error = try {
+                        moshi.adapter(FirebaseError::class.java).fromJson(errorBody)
+                    } catch (_: Exception) { null }
+                    val msg = error?.error?.message?.replace("_", " ") ?: "Unknown"
+                    if (msg.contains("USER NOT FOUND", ignoreCase = true)) return@withContext false
+                    throw SignUpException("Delete failed: $msg")
+                }
+                true
+            } catch (e: SignUpException) { throw e }
+            catch (e: Exception) {
+                FirebaseCrashlytics.getInstance().log("Firebase deleteUser failed: ${e.message}")
+                false
+            }
+        }
+    }
+
+    /**
      * Signs in via REST API to fetch the real Firebase Auth UID without
      * affecting the SDK auth session. Returns the UID (localId).
      * Throws [SignUpException] on failure.
@@ -106,6 +171,12 @@ object FirebaseAuthApi {
                 throw SignUpException(message)
             }
         }
+    }
+
+    /** Generates a unique virtual email for a student account. */
+    fun generateVirtualEmail(studentCode: String, instituteCode: String): String {
+        val uniqueId = (1..9999).random().toString().padStart(4, '0')
+        return "${studentCode.lowercase()}.${instituteCode.lowercase()}.$uniqueId@s.batchfee.app"
     }
 }
 

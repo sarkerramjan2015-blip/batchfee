@@ -1,0 +1,22 @@
+{
+  "name": "batchfee-functions",
+  "private": true,
+  "main": "src/index.js",
+  "engines": {
+    "node": "22"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "check": "node --check src/index.js && node --check src/platformAdmin.js && node --check src/studentAuthCore.js && node --check src/publicRegistrationCore.js && node --check src/publicRegistration.js && node --check src/financialLedgerCore.js && node --check src/financialLedger.js && node --check src/subscriptionBillingCore.js && node --check src/subscriptionBilling.js && node --check src/safeDeletionCore.js && node --check src/safeDeletion.js && node --check src/mediaSecurityCore.js && node --check src/mediaSecurity.js && node --check src/legacyStudentCredentialCleanup.js && node --check scripts/cleanupLegacyStudentCredentials.js",
+    "test:integration": "node integration/studentAuth.integration.js",
+    "test:financial-integration": "node integration/financialLedger.integration.js",
+    "test:deletion-integration": "node integration/safeDeletion.integration.js",
+    "test:media-integration": "node integration/mediaSecurity.integration.js",
+    "migrate:student-credentials": "node scripts/cleanupLegacyStudentCredentials.js"
+  },
+  "dependencies": {
+    "cloudinary": "^2.10.0",
+    "firebase-admin": "^14.2.0",
+    "firebase-functions": "^7.3.2"
+  }
+}

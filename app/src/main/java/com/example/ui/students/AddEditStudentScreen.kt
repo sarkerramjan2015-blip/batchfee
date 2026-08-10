@@ -1,10 +1,12 @@
 ﻿package com.batchfee.edu.ui.students
 
+import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -31,6 +33,11 @@ import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Whatsapp
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
@@ -40,9 +47,12 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -66,6 +76,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
@@ -74,8 +86,12 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.data.cloudinary.CloudinaryImageUploadHelper
+import com.batchfee.edu.domain.SessionManager
 import com.batchfee.edu.ui.components.COUNTRY_CODES
+import com.batchfee.edu.ui.components.buildWhatsAppUrl
+import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -106,6 +122,7 @@ fun AddEditStudentScreen(
     val context = LocalContext.current
     val viewModel: StudentViewModel = viewModel(factory = StudentViewModelFactory(db))
     val isEdit = studentId != null
+    val newStudentId = remember { UUID.randomUUID().toString() }
 
     var studentCode by remember { mutableStateOf(viewModel.generateStudentCode()) }
     var existingId by remember { mutableStateOf("") }
@@ -120,6 +137,7 @@ fun AddEditStudentScreen(
     var address by remember { mutableStateOf("") }
     var admissionDateMs by remember { mutableStateOf(System.currentTimeMillis()) }
     var photoUri by remember { mutableStateOf<Uri?>(null) }
+    var originalPhotoReference by remember { mutableStateOf<String?>(null) }
 
     var nameError by remember { mutableStateOf(false) }
     var phoneError by remember { mutableStateOf(false) }
@@ -129,6 +147,11 @@ fun AddEditStudentScreen(
     var isSaving by remember { mutableStateOf(false) }
     var saveError by remember { mutableStateOf<String?>(null) }
     val saveScope = rememberCoroutineScope()
+
+    var isAppAccessEnabled by remember { mutableStateOf(false) }
+    var appAccessPassword by remember { mutableStateOf("") }
+    var showPasswordField by remember { mutableStateOf(false) }
+    var showPassword by remember { mutableStateOf(false) }
 
     val tempPhotoFile = remember {
         File(context.cacheDir, "student_photo_${UUID.randomUUID()}.jpg").apply { parentFile?.mkdirs() }
@@ -164,6 +187,7 @@ fun AddEditStudentScreen(
                 className = s.className ?: ""
                 address = s.address ?: ""
                 admissionDateMs = s.admissionDateMs
+                originalPhotoReference = s.photoUri
                 s.notes?.lineSequence()
                     ?.firstOrNull { it.startsWith("WhatsApp: ") }
                     ?.let { whatsappNumber = it.removePrefix("WhatsApp: ").trim() }
@@ -172,6 +196,11 @@ fun AddEditStudentScreen(
                         photoUri = Uri.parse(uriStr)
                     } catch (_: Exception) {
                     }
+                }
+                isAppAccessEnabled = s.isAppAccessEnabled
+                if (s.isAppAccessEnabled) {
+                    showPasswordField = true
+                    appAccessPassword = "" // Don't show existing hash, require re-entry
                 }
             }
             loaded = true
@@ -425,6 +454,182 @@ fun AddEditStudentScreen(
                 onClick = { showAdmissionDatePicker = true }
             )
 
+            Spacer(Modifier.height(14.dp))
+
+            // ── App Access ──
+            SectionLabel("Student App Access")
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Enable Student App Login",
+                        color = TextWhite,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        "Student can log in using their student ID and password",
+                        color = TextMuted,
+                        fontSize = 11.sp
+                    )
+                }
+                Switch(
+                    checked = isAppAccessEnabled,
+                    onCheckedChange = { enabled ->
+                        isAppAccessEnabled = enabled
+                        if (enabled) {
+                            showPasswordField = true
+                            if (appAccessPassword.isEmpty() && !isEdit) {
+                                appAccessPassword = (100000..999999).random().toString()
+                            }
+                        } else {
+                            showPasswordField = false
+                            appAccessPassword = ""
+                        }
+                    },
+                    colors = androidx.compose.material3.SwitchDefaults.colors(
+                        checkedThumbColor = Cyan,
+                        checkedTrackColor = Cyan.copy(alpha = 0.4f)
+                    )
+                )
+            }
+
+            if (showPasswordField) {
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedTextField(
+                        value = appAccessPassword,
+                        onValueChange = { appAccessPassword = it },
+                        label = { Text("Student Login Password", color = TextMuted, fontSize = 12.sp) },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
+                        supportingText = if (isAppAccessEnabled && !isEdit) { { Text("Share this password with the student", color = TextMuted, fontSize = 11.sp) } } else null,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = TextWhite,
+                            unfocusedTextColor = TextWhite,
+                            focusedBorderColor = Cyan,
+                            unfocusedBorderColor = BorderSub,
+                            focusedContainerColor = CardBgAlt,
+                            unfocusedContainerColor = CardBgAlt,
+                            cursorColor = Cyan
+                        ),
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                    IconButton(onClick = { showPassword = !showPassword }) {
+                        Icon(
+                            if (showPassword) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                            contentDescription = if (showPassword) "Hide password" else "Show password",
+                            tint = TextMuted,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                    if (!isEdit) {
+                        Spacer(Modifier.width(4.dp))
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Cyan.copy(alpha = 0.14f))
+                                .border(1.dp, Cyan.copy(alpha = 0.35f), RoundedCornerShape(8.dp))
+                                .clickable { appAccessPassword = (100000..999999).random().toString() }
+                                .padding(horizontal = 8.dp, vertical = 6.dp)
+                        ) {
+                            Text("New", fontSize = 11.sp, color = Cyan, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+
+            // ── Share Credentials button (visible when app access enabled) ──
+            if (showPasswordField && appAccessPassword.isNotEmpty()) {
+                Spacer(Modifier.height(10.dp))
+                val shareScope = rememberCoroutineScope()
+                val ctx = LocalContext.current
+                val numericCode = studentCode.filter(Char::isDigit)
+                var shareInstituteCode by remember { mutableStateOf("") }
+
+                LaunchedEffect(Unit) {
+                    shareInstituteCode = SessionManager.currentInstituteId.value?.let { iid ->
+                        try {
+                            FirebaseFirestore.getInstance()
+                                .collection("institutes").document(iid).get().await()
+                                .getString("instituteCode") ?: ""
+                        } catch (_: Exception) { "" }
+                    } ?: ""
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            shareScope.launch {
+                                if (shareInstituteCode.isEmpty()) {
+                                    shareInstituteCode = try {
+                                        SessionManager.currentInstituteId.value?.let { iid ->
+                                            FirebaseFirestore.getInstance()
+                                                .collection("institutes").document(iid).get().await()
+                                                .getString("instituteCode") ?: ""
+                                        } ?: ""
+                                    } catch (_: Exception) { "" }
+                                }
+                                val text = buildString {
+                                    appendLine("Student: $fullName")
+                                    appendLine("Login ID: $numericCode")
+                                    if (shareInstituteCode.isNotEmpty()) {
+                                        appendLine("Institute Code: $shareInstituteCode")
+                                    }
+                                    appendLine("Password: $appAccessPassword")
+                                }
+                                val intent = Intent(Intent.ACTION_SEND).apply {
+                                    type = "text/plain"
+                                    putExtra(Intent.EXTRA_SUBJECT, "Student Login Credentials")
+                                    putExtra(Intent.EXTRA_TEXT, text)
+                                }
+                                ctx.startActivity(Intent.createChooser(intent, "Share Credentials"))
+                            }
+                        },
+                        modifier = Modifier.weight(1f).height(42.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        border = BorderStroke(1.dp, Cyan.copy(alpha = 0.5f)),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Cyan)
+                    ) {
+                        Icon(Icons.Filled.Share, null, Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Share Credentials", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            val text = buildString {
+                                appendLine("*Student:* $fullName")
+                                appendLine("*Login ID:* $numericCode")
+                                if (shareInstituteCode.isNotEmpty()) {
+                                    appendLine("*Institute Code:* $shareInstituteCode")
+                                }
+                                appendLine("*Password:* $appAccessPassword")
+                            }
+                            val waUrl = buildWhatsAppUrl(null, text)
+                            ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(waUrl)))
+                        },
+                        modifier = Modifier.weight(1f).height(42.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        border = BorderStroke(1.dp, Color(0xFF25D366).copy(alpha = 0.5f)),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF25D366))
+                    ) {
+                        Icon(Icons.Filled.Whatsapp, null, Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("WhatsApp", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+
             Spacer(Modifier.height(20.dp))
 
             saveError?.let { message ->
@@ -451,11 +656,18 @@ fun AddEditStudentScreen(
                                     if (selectedUri.scheme == "https" || selectedUri.scheme == "http") {
                                         selectedUri.toString()
                                     } else {
-                                        CloudinaryImageUploadHelper.uploadStudentPhoto(context, selectedUri)
+                                        CloudinaryImageUploadHelper.uploadStudentPhoto(
+                                            context = context,
+                                            sourceUri = selectedUri,
+                                            subjectId = if (isEdit) existingId else newStudentId,
+                                            replacesReference = originalPhotoReference
+                                        )
                                     }
                                 }
                                 val numericStudentCode = studentCode.filter(Char::isDigit)
                                     .ifBlank { viewModel.generateStudentCode() }
+                                val accountPassword = appAccessPassword.takeIf { it.isNotEmpty() }
+
                                 if (isEdit) {
                                     viewModel.updateStudent(
                                         id = existingId,
@@ -472,6 +684,8 @@ fun AddEditStudentScreen(
                                         address = address.trim().takeIf { it.isNotEmpty() },
                                         admissionDateMs = admissionDateMs,
                                         photoUri = cloudPhotoUrl,
+                                        isAppAccessEnabled = isAppAccessEnabled,
+                                        appAccessPassword = accountPassword,
                                         onSuccess = {
                                             isSaving = false
                                             onBack()
@@ -483,6 +697,7 @@ fun AddEditStudentScreen(
                                     )
                                 } else {
                                     viewModel.addStudent(
+                                        id = newStudentId,
                                         studentCode = numericStudentCode,
                                         fullName = fullName.trim(),
                                         phone = phone.trim(),
@@ -496,6 +711,8 @@ fun AddEditStudentScreen(
                                         address = address.trim().takeIf { it.isNotEmpty() },
                                         admissionDateMs = admissionDateMs,
                                         photoUri = cloudPhotoUrl,
+                                        isAppAccessEnabled = isAppAccessEnabled,
+                                        appAccessPassword = accountPassword,
                                         onSuccess = {
                                             isSaving = false
                                             onBack()

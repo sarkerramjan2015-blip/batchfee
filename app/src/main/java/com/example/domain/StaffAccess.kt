@@ -59,7 +59,7 @@ object StaffPermissions {
 }
 
 object AccessControl {
-    private val alwaysAllowedRoutes = setOf("DashboardRoute", "More")
+    private val alwaysAllowedRoutes = setOf("DashboardRoute", "More", "WorksListRoute", "AddWorkRoute", "HomeworkListRoute", "AddHomeworkRoute", "AssignmentListRoute", "AddAssignmentRoute")
 
     private val adminOnlyRoutes = setOf(
         "SettingsRoute",
@@ -110,7 +110,9 @@ object AccessControl {
         "IdCardGeneratorRoute" to setOf(StaffPermissions.GENERATE_ID_CARDS),
         "IdCardPreviewRoute" to setOf(StaffPermissions.GENERATE_ID_CARDS),
         "BirthdayReminderRoute" to setOf(StaffPermissions.BIRTHDAY_REMINDERS),
-        "EnquiryListRoute" to setOf(StaffPermissions.VIEW_REPORTS)
+        "EnquiryListRoute" to setOf(StaffPermissions.VIEW_REPORTS),
+        "HomeworkListRoute" to setOf("VIEW_STUDENTS"),
+        "AssignmentListRoute" to setOf("VIEW_STUDENTS")
     )
 
     fun isKnownRoute(route: String): Boolean {

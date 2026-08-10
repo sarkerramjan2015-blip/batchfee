@@ -24,4 +24,7 @@ interface InstituteDao {
 
     @Update
     suspend fun updateInstitute(institute: InstituteEntity)
+
+    @Query("SELECT COUNT(*) FROM institutes WHERE currentPlanId = :planId")
+    suspend fun countByPlanId(planId: String): Int
 }

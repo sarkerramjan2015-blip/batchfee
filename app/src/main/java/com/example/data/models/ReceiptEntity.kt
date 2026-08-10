@@ -1,9 +1,13 @@
 ﻿package com.batchfee.edu.data.models
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 
-@Entity(tableName = "receipts")
+@Entity(
+    tableName = "receipts",
+    indices = [Index(value = ["instituteId", "operationId"], unique = true)]
+)
 data class ReceiptEntity(
     @PrimaryKey val id: String,
     val instituteId: String,
@@ -17,6 +21,8 @@ data class ReceiptEntity(
     val dueAmount: Double,
     val paymentMethod: String,
     val receiptText: String?,
-    val createdAtMs: Long
+    val createdAtMs: Long,
+    val operationId: String? = null,
+    val ledgerVersion: Int = 0
 )
 

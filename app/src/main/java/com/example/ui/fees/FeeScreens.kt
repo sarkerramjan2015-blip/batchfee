@@ -213,6 +213,7 @@ private fun generatePdfReceipt(
 private fun createReceiptBitmap(
     context: Context,
     receiptNumber: String, studentName: String, batchName: String, feePeriod: String,
+    baseAmount: Double, discountPercent: Double, discountAmount: Double,
     payableAmount: Double, collectedAmount: Double, dueAmount: Double, paymentMethod: String,
     instituteName: String,
     instituteLogoUri: String?
@@ -252,6 +253,11 @@ private fun createReceiptBitmap(
     )) { c.drawText(label, c1, y, lbl); c.drawText(value, c2, y, vlu); y += lh }
     y += 20f; c.drawLine(c1, y, 770f, y, div); y += 30f
 
+    c.drawText("Base Amount", c1, y, lbl); c.drawText("BDT ${"%.0f".format(baseAmount)}", c2, y, vlu); y += lh
+    if (discountAmount > 0.0) {
+        c.drawText("Discount (${discountPercent.toInt()}%)", c1, y, lbl)
+        c.drawText("- BDT ${"%.0f".format(discountAmount)}", c2, y, vlu); y += lh
+    }
     c.drawText("Payable", c1, y, lbl); c.drawText("BDT ${"%.0f".format(payableAmount)}", c2, y, vlu); y += lh
     c.drawText("Collected", c1, y, lbl)
     c.drawText("BDT ${"%.0f".format(collectedAmount)}", c2, y, Paint().apply {
@@ -305,6 +311,8 @@ private fun loadBitmapFromUri(context: Context, uriString: String?): Bitmap? {
         if (uri.scheme == "http" || uri.scheme == "https") {
             val connection = java.net.URL(uriString).openConnection() as java.net.HttpURLConnection
             connection.doInput = true
+            connection.connectTimeout = 5000
+            connection.readTimeout = 5000
             connection.connect()
             BitmapFactory.decodeStream(connection.inputStream)
         } else {
@@ -588,10 +596,6 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
     val paymentDateLabel = remember(paymentDateMs) {
         SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()).format(Date(paymentDateMs))
     }
-    val previewReceiptNumber = remember {
-        "Rc-${(System.currentTimeMillis() % 1000000).toString().padStart(6, '0')}"
-    }
-
     // ── Image ──
     var paymentBitmap by remember { mutableStateOf<Bitmap?>(null) }
     val galleryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
@@ -680,7 +684,7 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
             fee == null -> Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
                 Text("Fee not found.", color = TextMuted)
             }
-            savedPaymentId != null -> {
+            savedPaymentId != null && savedReceipt != null -> {
                 // ── Success state ──
                 Column(
                     Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState())
@@ -718,7 +722,7 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
 
                     Spacer(Modifier.height(20.dp))
                     // Receipt actions
-                    val receiptNumber = savedReceipt?.receiptNumber ?: previewReceiptNumber
+                    val receiptNumber = savedReceipt!!.receiptNumber
                     val receiptPeriod = if (isDirectFee) fee?.feePeriod ?: "" else monthOptions.getOrNull(startMonthIdx)?.label ?: ""
                     val collectedNow = collectedAmount.toDoubleOrNull() ?: 0.0
                     val remainingDue = dueAmount - collectedNow.coerceAtMost(dueAmount)
@@ -765,6 +769,7 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
                                     context,
                                     receiptNumber, student?.fullName ?: "",
                                     selectedBatch?.name ?: "", receiptPeriod,
+                                    baseAmount, discountPercent, discountAmount.toDouble(),
                                     payableAmount, collectedNow,
                                     remainingDue, paymentMethod,
                                     institute?.name ?: "BatchFee",
@@ -801,6 +806,7 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
                                     context,
                                     receiptNumber, student?.fullName ?: "",
                                     selectedBatch?.name ?: "", receiptPeriod,
+                                    baseAmount, discountPercent, discountAmount.toDouble(),
                                     payableAmount, collectedNow,
                                     remainingDue, paymentMethod,
                                     institute?.name ?: "BatchFee",
@@ -856,7 +862,7 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         ReadOnlyPaymentBox(
                             label = "No. of Receipts",
-                            value = savedReceipt?.receiptNumber ?: previewReceiptNumber,
+                            value = savedReceipt!!.receiptNumber,
                             modifier = Modifier.weight(1f)
                         )
                         ReadOnlyPaymentBox(
@@ -1078,8 +1084,15 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
                                         note = remarks.ifBlank { null },
                                         onSuccess = { pid ->
                                             scope.launch {
-                                                savedPaymentId = pid
-                                                savedReceipt = instId?.let { db.receiptDao().getReceiptByPaymentIdOnce(it, pid) }
+                                                val canonicalReceipt = instId?.let {
+                                                    db.receiptDao().getReceiptByPaymentIdOnce(it, pid)
+                                                }
+                                                if (canonicalReceipt == null) {
+                                                    errorMsg = "Payment saved, but its canonical receipt is not available yet. Refresh and try again."
+                                                } else {
+                                                    savedReceipt = canonicalReceipt
+                                                    savedPaymentId = pid
+                                                }
                                             }
                                         },
                                         onError = { errorMsg = it }
@@ -1098,8 +1111,15 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
                                     note = remarks.ifBlank { null },
                                     onSuccess = { pid ->
                                         scope.launch {
-                                            savedPaymentId = pid
-                                            savedReceipt = instId?.let { db.receiptDao().getReceiptByPaymentIdOnce(it, pid) }
+                                            val canonicalReceipt = instId?.let {
+                                                db.receiptDao().getReceiptByPaymentIdOnce(it, pid)
+                                            }
+                                            if (canonicalReceipt == null) {
+                                                errorMsg = "Payment saved, but its canonical receipt is not available yet. Refresh and try again."
+                                            } else {
+                                                savedReceipt = canonicalReceipt
+                                                savedPaymentId = pid
+                                            }
                                         }
                                     },
                                     onError = { errorMsg = it }
@@ -1199,6 +1219,8 @@ fun ReceiptDetailScreen(db: AppDatabase, paymentId: String, onBack: () -> Unit) 
     var batchName by remember { mutableStateOf("") }
     var feePeriod by remember { mutableStateOf("") }
     var discountPercent by remember { mutableDoubleStateOf(0.0) }
+    var discountAmount by remember { mutableDoubleStateOf(0.0) }
+    var baseAmount by remember { mutableDoubleStateOf(0.0) }
 
     LaunchedEffect(instId, paymentId) {
         if (instId != null) {
@@ -1224,7 +1246,12 @@ fun ReceiptDetailScreen(db: AppDatabase, paymentId: String, onBack: () -> Unit) 
         val fid = receipt?.feeId ?: return@LaunchedEffect
         if (instId != null) {
             val fee = db.feeDao().getFeeById(fid, instId)
-            fee?.let { feePeriod = it.feePeriod; discountPercent = if (it.baseAmount > 0) it.discountAmount / it.baseAmount * 100.0 else 0.0 }
+            fee?.let {
+                feePeriod = it.feePeriod
+                discountAmount = it.discountAmount
+                baseAmount = it.baseAmount
+                discountPercent = if (it.baseAmount > 0) it.discountAmount / it.baseAmount * 100.0 else 0.0
+            }
             fee?.batchId?.let { bid ->
                 db.batchDao().getBatchById(bid, instId).firstOrNull()?.let { batchName = it.name }
             }
@@ -1261,6 +1288,9 @@ fun ReceiptDetailScreen(db: AppDatabase, paymentId: String, onBack: () -> Unit) 
                         if (studentName.isNotBlank()) { ReceiptRow("Student", studentName); Spacer(Modifier.height(6.dp)) }
                         if (batchName.isNotBlank()) { ReceiptRow("Batch", batchName); Spacer(Modifier.height(6.dp)) }
                         if (feePeriod.isNotBlank()) { ReceiptRow("Period", feePeriod); Spacer(Modifier.height(6.dp)) }
+                        if (baseAmount > 0.0) { ReceiptRow("Base Amount", "BDT ${"%.0f".format(baseAmount)}"); Spacer(Modifier.height(6.dp)) }
+                        if (discountAmount > 0.0) { ReceiptRow("Discount (${discountPercent.toInt()}%)", "- BDT ${"%.0f".format(discountAmount)}"); Spacer(Modifier.height(6.dp)) }
+                        ReceiptRow("Payable Amount", "BDT ${"%.0f".format(r.totalAmount)}")
                         Text("Paid: BDT ${"%.2f".format(r.paidAmount)}", color = Cyan, fontSize = 24.sp, fontWeight = FontWeight.Bold)
                         Spacer(Modifier.height(4.dp))
                         Text("Remaining Due: BDT ${"%.2f".format(r.dueAmount)}", color = TextMuted, fontSize = 14.sp)
@@ -1280,7 +1310,7 @@ fun ReceiptDetailScreen(db: AppDatabase, paymentId: String, onBack: () -> Unit) 
                             try {
                                 val uri = generatePdfReceipt(
                                     context, r.receiptNumber, studentName, batchName, feePeriod,
-                                    r.totalAmount, discountPercent, r.totalAmount * discountPercent / 100.0,
+                                    baseAmount, discountPercent, discountAmount,
                                     r.totalAmount, r.paidAmount, r.dueAmount, r.paidAmount, r.paymentMethod
                                 )
                                 context.startActivity(Intent(Intent.ACTION_VIEW).apply {
@@ -1301,6 +1331,7 @@ fun ReceiptDetailScreen(db: AppDatabase, paymentId: String, onBack: () -> Unit) 
                             val bmp = createReceiptBitmap(
                                 context,
                                 r.receiptNumber, studentName, batchName, feePeriod,
+                                baseAmount, discountPercent, discountAmount,
                                 r.totalAmount, r.paidAmount, r.dueAmount, r.paymentMethod,
                                 institute?.name ?: "BatchFee",
                                 institute?.profilePhotoUri

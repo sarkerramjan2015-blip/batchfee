@@ -98,6 +98,7 @@ fun AddEditStaffScreen(
     var showCredentialShare by remember { mutableStateOf(false) }
     var savedCredentials by remember { mutableStateOf(CredentialInfo("", "")) }
     var photoUri by remember { mutableStateOf<Uri?>(null) }
+    var originalPhotoReference by remember { mutableStateOf<String?>(null) }
     var isSaving by remember { mutableStateOf(false) }
     val photoSaveScope = rememberCoroutineScope()
 
@@ -136,6 +137,7 @@ fun AddEditStaffScreen(
             selectedPermissions = StaffPermissions.parse(s.permissions)
             selectedBatchIds = s.assignedBatchIds?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() }?.toSet() ?: emptySet()
             status = s.status
+            originalPhotoReference = s.photoUri
             photoUri = s.photoUri?.let(Uri::parse)
             loadedStaff = true
         }
@@ -341,7 +343,12 @@ fun AddEditStaffScreen(
                                     if (selectedUri.scheme == "https" || selectedUri.scheme == "http") {
                                         selectedUri.toString()
                                     } else {
-                                        CloudinaryImageUploadHelper.uploadStaffPhoto(context, selectedUri)
+                                        CloudinaryImageUploadHelper.uploadStaffPhoto(
+                                            context = context,
+                                            sourceUri = selectedUri,
+                                            subjectId = staffId,
+                                            replacesReference = originalPhotoReference
+                                        )
                                     }
                                 }
                                 if (isEdit && staffId != null) {

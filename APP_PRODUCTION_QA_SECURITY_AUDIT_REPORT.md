@@ -251,7 +251,9 @@ Fix direction: Require Firebase Auth and tenant-specific authorization. Validate
 Severity: Critical  
 Evidence: `app/build.gradle.kts:27-33`  
 Impact: If the keystore is present or leaked, an attacker could sign malicious releases or impersonate app updates outside Play App Signing protections. Even without the keystore, credentials in source are a severe release-process failure.  
-Root cause: Release signing config hardcodes `storePassword = "batchfee123"` and `keyPassword = "batchfee123"`.  
+Root cause at audit time: the legacy release signing configuration contained plaintext passwords.
+The values have been redacted from the repository; any key that used them must be rotated before
+production use.
 Fix direction: Rotate the release key if it has ever been used. Move signing config to CI secrets or local untracked properties. Do not keep release keystores or passwords in the repository.
 
 ### C3. Demo accounts with known passwords are seeded in app startup/login paths

@@ -15,7 +15,17 @@
 .cxx
 local.properties
 .env
+# Android signing secrets and private key material. Keep only the documented example in Git.
 debug.keystore
-keystore.properties
+/keystore.properties
+/keystore.properties.*
+!/keystore.properties.example
 *.jks
+*.keystore
+*.p12
+*.pfx
 *.apk
+/node_modules/
+/functions/node_modules/
+/functions/.env*
+!/functions/.env.example

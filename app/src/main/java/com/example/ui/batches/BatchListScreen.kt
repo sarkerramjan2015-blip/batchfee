@@ -70,25 +70,18 @@ fun BatchListScreen(
     LaunchedEffect(instId, batches) {
         if (instId == null) return@LaunchedEffect
         statsLoading = true
-        val stats = mutableMapOf<String, BatchMonthStats>()
-        batches.forEach { batch ->
-            scope.launch {
-                combine(
-                    db.batchStudentDao().getStudentsForBatch(batch.id, instId),
-                    db.feeDao().getFeesByBatch(batch.id, instId)
-                ) { students, fees ->
-                    val enrolled = students.size
-                    val currentMonthFees = fees.filter { it.feePeriod.equals(currentMonth, ignoreCase = true) }
-                    val paid = currentMonthFees.count { it.status == "paid" }
-                    val due = currentMonthFees.count { it.dueAmount > 0 }
-                    BatchMonthStats(enrolled, paid, due)
-                }.collect { stat ->
-                    batchStats = batchStats + (batch.id to stat)
-                    if (batchStats.size == batches.size) statsLoading = false
-                }
-            }
+        val newStats = mutableMapOf<String, BatchMonthStats>()
+        for (batch in batches) {
+            val students = db.batchStudentDao().getStudentsForBatchOnce(instId, batch.id)
+            val fees = db.feeDao().getFeesByBatchOnce(batch.id, instId)
+            val enrolled = students.size
+            val currentMonthFees = fees.filter { it.feePeriod.equals(currentMonth, ignoreCase = true) }
+            val paid = currentMonthFees.count { it.status == "paid" }
+            val due = currentMonthFees.count { it.dueAmount > 0 }
+            newStats[batch.id] = BatchMonthStats(enrolled, paid, due)
         }
-        if (batches.isEmpty()) statsLoading = false
+        batchStats = newStats
+        statsLoading = false
     }
 
     Scaffold(

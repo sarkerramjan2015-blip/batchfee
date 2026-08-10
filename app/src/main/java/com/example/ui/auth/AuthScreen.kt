@@ -327,6 +327,7 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                         "owner" -> "InstituteOwner"
                         "admin", "InstituteAdmin", "instituteAdmin", "institute_admin" -> "InstituteAdmin"
                         "superAdmin", "super_admin" -> "SuperAdmin"
+                        "PlatformAdmin", "RootSuperAdmin", "BillingAdmin", "SupportAdmin", "OperationsAdmin", "ReadOnlyAdmin" -> "SuperAdmin"
                         else -> managedUser.role
                     }
                     instituteId = managedUser.instituteId ?: uid
@@ -831,7 +832,8 @@ fun AuthScreen(
     onNavigateDashboard: () -> Unit,
     onNavigateSuperAdmin: () -> Unit,
     onNavigatePrivacyPolicy: () -> Unit,
-    onNavigateTermsConditions: () -> Unit
+    onNavigateTermsConditions: () -> Unit,
+    onNavigateStudentLogin: () -> Unit = {}
 ) {
     val viewModel: AuthViewModel = viewModel(factory = AuthViewModelFactory(db))
     val context = LocalContext.current
@@ -1406,7 +1408,14 @@ fun AuthScreen(
                     )
                 }
 
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(8.dp))
+
+                // Student Login
+                TextButton(onClick = onNavigateStudentLogin) {
+                    Text("👤 Student Login", color = AuthCyan, fontWeight = FontWeight.Medium, fontSize = 14.sp)
+                }
+
+                Spacer(Modifier.height(4.dp))
 
                 Text(
                     text = "v" + BuildConfig.VERSION_NAME + " · BatchFee",

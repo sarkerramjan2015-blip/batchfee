@@ -41,7 +41,7 @@ object MonthlyDueCalculator {
         var month = startCal.get(Calendar.MONTH)
         val result = mutableListOf<ComputedMonthDue>()
 
-        while (year < targetYear || (year == targetYear && month <= targetMonth)) {
+        while (year < targetYear || (year == targetYear && month < targetMonth)) {
             val period = "${monthNames[month]} $year"
             val paid = paidByPeriod[period] ?: 0.0
             val existingFee = feeByPeriod[period]
@@ -66,4 +66,24 @@ object MonthlyDueCalculator {
 
     fun isMonthlyFeeType(feeType: String): Boolean =
         feeType.trim().lowercase() in setOf("monthly", "monthly_fee", "monthly fee")
+
+    /**
+     * Checks whether a fee period string (e.g. "Jul 2026") represents a month
+     * that is strictly BEFORE the current month.
+     * Returns false for the current month and all future months.
+     */
+    fun isPastMonth(period: String): Boolean {
+        // Parse "MMM yyyy" or "MMM-yyyy" or similar
+        val cleaned = period.trim().take(3) + " " + period.trim().filter { it.isDigit() }.take(4)
+        val parts = cleaned.split(" ")
+        if (parts.size < 2) return false
+        val monthIdx = monthNames.indexOfFirst { it.equals(parts[0], ignoreCase = true) }
+        val year = parts[1].toIntOrNull() ?: return false
+        if (monthIdx < 0) return false
+
+        val now = Calendar.getInstance()
+        val feeYearMonth = year * 12 + monthIdx
+        val currentYearMonth = now.get(Calendar.YEAR) * 12 + now.get(Calendar.MONTH)
+        return feeYearMonth < currentYearMonth
+    }
 }

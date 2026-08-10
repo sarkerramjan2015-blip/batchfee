@@ -45,7 +45,9 @@ import com.batchfee.edu.data.models.SalaryEntity
 import com.batchfee.edu.domain.SessionManager
 import java.io.File
 import java.text.SimpleDateFormat
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.*
 
 // ── Colors ──────────────────────────────────────────────────────
@@ -73,9 +75,29 @@ fun SalaryDashboardScreen(
     val salaries by viewModel.salaries.collectAsState()
     val staffList by viewModel.activeStaff.collectAsState()
     val isAdmin = remember { SessionManager.isAdmin() }
+    val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    // Pre-fetch institute info once
+    var instName by remember { mutableStateOf("BatchFee Institute") }
+    var instCode by remember { mutableStateOf("N/A") }
+    var instPhone by remember { mutableStateOf("") }
+    LaunchedEffect(Unit) {
+        val iid = SessionManager.currentInstituteId.value
+        if (iid != null) {
+            withContext(Dispatchers.IO) {
+                db.instituteDao().getInstitute(iid)?.let { inst ->
+                    instName = inst.name ?: "BatchFee Institute"
+                    instCode = inst.instituteCode ?: "N/A"
+                    instPhone = inst.phone ?: ""
+                }
+            }
+        }
+    }
 
     Scaffold(
         containerColor = BgColor,
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text("Salary Management", color = TextWhite, fontWeight = FontWeight.Bold, fontSize = 20.sp) },
@@ -154,38 +176,64 @@ fun SalaryDashboardScreen(
                                 }
                                 Spacer(Modifier.height(4.dp))
                                 Text("Net: BDT ${s.netSalary}", color = TextMuted, fontSize = 14.sp)
+                                var showReceipt by remember { mutableStateOf(false) }
+                                var showPaymentChoice by remember { mutableStateOf(false) }
+                                if (showReceipt) {
+                                    SalaryReceiptDialog(
+                                        salary = s, staffName = staff?.fullName ?: "Staff",
+                                        instName = instName, instCode = instCode, instPhone = instPhone,
+                                        onDismiss = { showReceipt = false }
+                                    )
+                                }
                                 if (!isPaid && isAdmin) {
                                     Spacer(Modifier.height(8.dp))
-                                    var showReceipt by remember { mutableStateOf(false) }
-                                    if (showReceipt) {
-                                        SalaryReceiptDialog(
-                                            salary = s,
-                                            staffName = staff?.fullName ?: "Staff",
-                                            instName = staff?.instituteId?.let { id ->
-                                                runBlocking { db.instituteDao().getInstitute(id)?.name }
-                                            } ?: "BatchFee Institute",
-                                            instCode = staff?.instituteId?.let { id ->
-                                                runBlocking { db.instituteDao().getInstitute(id)?.instituteCode }
-                                            } ?: "N/A",
-                                            instPhone = staff?.instituteId?.let { id ->
-                                                runBlocking { db.instituteDao().getInstitute(id)?.phone }
-                                            } ?: "",
-                                            onDismiss = { showReceipt = false }
+                                    if (showPaymentChoice) {
+                                        AlertDialog(
+                                            onDismissRequest = { showPaymentChoice = false },
+                                            containerColor = CardBg,
+                                            title = { Text("Payment Method", color = TextWhite, fontWeight = FontWeight.Bold) },
+                                            text = {
+                                                Column {
+                                                    listOf("cash" to "Cash", "bank_transfer" to "Bank Transfer", "cheque" to "Cheque", "mobile_banking" to "Mobile Banking").forEach { (key, label) ->
+                                                        OutlinedButton(
+                                                            onClick = { viewModel.markAsPaid(s.id, key); showPaymentChoice = false; showReceipt = true },
+                                                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                                            shape = RoundedCornerShape(10.dp)
+                                                        ) { Text(label, color = TextWhite) }
+                                                    }
+                                                }
+                                            },
+                                            confirmButton = {},
+                                            dismissButton = { TextButton(onClick = { showPaymentChoice = false }) { Text("Cancel", color = TextMuted) } }
                                         )
                                     }
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(36.dp)
-                                            .clip(RoundedCornerShape(10.dp))
-                                            .background(brush = Brush.horizontalGradient(listOf(ElectricBlue, Cyan)))
-                                            .clickable {
-                                                viewModel.markAsPaid(s.id, "cash")
-                                                showReceipt = true
-                                            },
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Text("Mark Paid", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Box(
+                                            modifier = Modifier.weight(1f).height(36.dp).clip(RoundedCornerShape(10.dp))
+                                                .background(brush = Brush.horizontalGradient(listOf(ElectricBlue, Cyan)))
+                                                .clickable { showPaymentChoice = true },
+                                            contentAlignment = Alignment.Center
+                                        ) { Text("Mark Paid", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold) }
+                                        Box(
+                                            modifier = Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(AccentRed.copy(alpha = 0.2f))
+                                                .clickable { viewModel.cancelSalary(s.id); scope.launch { snackbarHostState.showSnackbar("Salary cancelled") } },
+                                            contentAlignment = Alignment.Center
+                                        ) { Icon(Icons.Filled.Close, null, tint = AccentRed, modifier = Modifier.size(18.dp)) }
+                                    }
+                                } else if (isPaid && isAdmin) {
+                                    Spacer(Modifier.height(8.dp))
+                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Box(
+                                            modifier = Modifier.weight(1f).height(36.dp).clip(RoundedCornerShape(10.dp))
+                                                .background(brush = Brush.horizontalGradient(listOf(ElectricBlue, Cyan)))
+                                                .clickable { showReceipt = true },
+                                            contentAlignment = Alignment.Center
+                                        ) { Text("Receipt", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold) }
+                                        Box(
+                                            modifier = Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(AccentRed.copy(alpha = 0.2f))
+                                                .clickable { viewModel.cancelSalary(s.id); scope.launch { snackbarHostState.showSnackbar("Salary cancelled") } },
+                                            contentAlignment = Alignment.Center
+                                        ) { Icon(Icons.Filled.Close, null, tint = AccentRed, modifier = Modifier.size(18.dp)) }
                                     }
                                 }
                             }
@@ -203,6 +251,7 @@ fun GenerateSalaryScreen(db: AppDatabase, onBack: () -> Unit) {
     val viewModel: SalaryViewModel = viewModel(factory = SalaryViewModelFactory(db))
     val activeStaff by viewModel.activeStaff.collectAsState()
     val isAdmin = remember { SessionManager.isAdmin() }
+    val snackbarHostState = remember { SnackbarHostState() }
 
     var selectedStaffId by remember { mutableStateOf<String?>(null) }
     var month by remember { mutableStateOf(SimpleDateFormat("yyyy-MM", Locale.getDefault()).format(Date())) }
@@ -213,6 +262,7 @@ fun GenerateSalaryScreen(db: AppDatabase, onBack: () -> Unit) {
 
     Scaffold(
         containerColor = BgColor,
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text("Generate Salary", color = TextWhite, fontWeight = FontWeight.Bold, fontSize = 20.sp) },
@@ -245,7 +295,7 @@ fun GenerateSalaryScreen(db: AppDatabase, onBack: () -> Unit) {
                 items(activeStaff) { s ->
                     FilterChip(
                         selected = selectedStaffId == s.id,
-                        onClick = { selectedStaffId = s.id; basic = s.monthlySalary.toString() },
+                        onClick = { selectedStaffId = s.id; basic = s.monthlySalary.toString(); bonus = "0"; deduction = "0"; advance = "0" },
                         label = { Text(s.fullName, fontSize = 12.sp) },
                         modifier = Modifier.padding(end = 6.dp),
                         colors = FilterChipDefaults.filterChipColors(
@@ -345,6 +395,7 @@ fun GenerateSalaryScreen(db: AppDatabase, onBack: () -> Unit) {
             Text("Net Salary: BDT ${net.toLong()}", color = Cyan, fontSize = 18.sp, fontWeight = FontWeight.Bold)
 
             Spacer(Modifier.height(16.dp))
+            val scope = rememberCoroutineScope()
             val canGenerate = selectedStaffId != null && month.isNotBlank() && net >= 0
             Box(
                 modifier = Modifier
@@ -363,7 +414,8 @@ fun GenerateSalaryScreen(db: AppDatabase, onBack: () -> Unit) {
                             viewModel.generateSalary(selectedStaffId!!, month,
                                 basic.toDoubleOrNull() ?: 0.0, bonus.toDoubleOrNull() ?: 0.0,
                                 deduction.toDoubleOrNull() ?: 0.0, advance.toDoubleOrNull() ?: 0.0,
-                                onSuccess = onBack)
+                                onSuccess = onBack,
+                                onError = { msg -> scope.launch { snackbarHostState.showSnackbar(msg) } })
                         }
                     },
                     modifier = Modifier.fillMaxSize(),

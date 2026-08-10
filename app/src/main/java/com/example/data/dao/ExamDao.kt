@@ -25,6 +25,4 @@ interface ExamDao {
     @Query("UPDATE exams SET archivedAtMs = :archivedAtMs, updatedAtMs = :archivedAtMs WHERE id = :examId AND instituteId = :instituteId")
     suspend fun archiveExam(instituteId: String, examId: String, archivedAtMs: Long)
 
-    @Query("DELETE FROM exams WHERE instituteId = :instituteId AND batchId = :batchId")
-    suspend fun deleteExamsForBatch(instituteId: String, batchId: String)
 }

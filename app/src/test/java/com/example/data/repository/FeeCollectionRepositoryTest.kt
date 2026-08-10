@@ -1,4 +1,4 @@
-﻿package com.batchfee.edu.data.repository
+package com.batchfee.edu.data.repository
 
 import android.content.Context
 import androidx.room.Room
@@ -6,6 +6,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.data.models.FeeEntity
 import com.batchfee.edu.data.models.PaymentEntity
+import com.batchfee.edu.data.models.PaymentReversalEntity
 import com.batchfee.edu.data.models.ReceiptEntity
 import kotlinx.coroutines.test.runTest
 import org.junit.After
@@ -23,6 +24,7 @@ import org.robolectric.annotation.Config
 @Config(sdk = [35])
 class FeeCollectionRepositoryTest {
     private lateinit var db: AppDatabase
+    private lateinit var gateway: ScriptedLedgerGateway
     private lateinit var repository: FeeCollectionRepository
 
     @Before
@@ -31,221 +33,273 @@ class FeeCollectionRepositoryTest {
         db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
             .allowMainThreadQueries()
             .build()
-        repository = FeeCollectionRepository(db, NoOpFinanceSyncGateway)
+        gateway = ScriptedLedgerGateway()
+        repository = FeeCollectionRepository(db, gateway)
     }
 
     @After
-    fun tearDown() {
-        db.close()
-    }
+    fun tearDown() = db.close()
 
     @Test
-    fun createFeeCreatesUnpaidDue() = runTest {
-        val fee = createFee(amount = 1_000.0)
-
-        val stored = db.feeDao().getFeeById(fee.id, INSTITUTE_ID)
-        assertNotNull(stored)
-        assertEquals(1_000.0, stored!!.totalAmount, MONEY_DELTA)
-        assertEquals(0.0, stored.paidAmount, MONEY_DELTA)
-        assertEquals(1_000.0, stored.dueAmount, MONEY_DELTA)
-        assertEquals("unpaid", stored.status)
-        assertNull(stored.cancelledAtMs)
-    }
-
-    @Test
-    fun partialPaymentUpdatesDueAndCreatesPaymentReceipt() = runTest {
-        val fee = createFee(amount = 1_000.0)
-
-        val result = repository.collectPayment(
-            instituteId = INSTITUTE_ID,
-            collectedByUserId = USER_ID,
-            feeId = fee.id,
-            amount = 400.0,
-            paymentMethod = "Cash",
-            now = 2_000L
-        )
-
-        val updated = db.feeDao().getFeeById(fee.id, INSTITUTE_ID)!!
-        assertEquals(400.0, updated.paidAmount, MONEY_DELTA)
-        assertEquals(600.0, updated.dueAmount, MONEY_DELTA)
-        assertEquals("partially_paid", updated.status)
-        assertEquals(1, db.paymentDao().getAllPaymentsOnce(INSTITUTE_ID).size)
-        assertNotNull(db.receiptDao().getReceiptByPaymentIdOnce(INSTITUTE_ID, result.paymentId))
-    }
-
-    @Test
-    fun fullPaymentSettlesFee() = runTest {
-        val fee = createFee(amount = 1_000.0)
-
-        repository.collectPayment(
-            instituteId = INSTITUTE_ID,
-            collectedByUserId = USER_ID,
-            feeId = fee.id,
-            amount = 1_000.0,
-            paymentMethod = "cash",
-            now = 3_000L
-        )
-
-        val updated = db.feeDao().getFeeById(fee.id, INSTITUTE_ID)!!
-        assertEquals(1_000.0, updated.paidAmount, MONEY_DELTA)
-        assertEquals(0.0, updated.dueAmount, MONEY_DELTA)
-        assertEquals("paid", updated.status)
-    }
-
-    @Test
-    fun overpaymentIsRejectedAndDoesNotCreateRecords() = runTest {
-        val fee = createFee(amount = 1_000.0)
-
-        assertIllegalArgument {
-            repository.collectPayment(
-                instituteId = INSTITUTE_ID,
-                collectedByUserId = USER_ID,
-                feeId = fee.id,
-                amount = 1_001.0,
-                paymentMethod = "cash",
-                now = 4_000L
+    fun trustedCanonicalResultIsAppliedAndOutboxCompletes() = runTest {
+        gateway.responder = { request ->
+            FinancialOperationResult(
+                operationId = request.getValue("operationId") as String,
+                action = "create_fee",
+                fees = listOf(fee(id = "canonical-fee", businessKey = "server-key"))
             )
         }
 
-        val unchanged = db.feeDao().getFeeById(fee.id, INSTITUTE_ID)!!
-        assertEquals(0.0, unchanged.paidAmount, MONEY_DELTA)
-        assertEquals(1_000.0, unchanged.dueAmount, MONEY_DELTA)
-        assertEquals(0, db.paymentDao().getAllPaymentsOnce(INSTITUTE_ID).size)
-    }
-
-    @Test
-    fun receiptUsesUpdatedFeeAmounts() = runTest {
-        val fee = createFee(amount = 1_000.0)
-
-        val result = repository.collectPayment(
+        val created = repository.createFee(
             instituteId = INSTITUTE_ID,
-            collectedByUserId = USER_ID,
-            feeId = fee.id,
-            amount = 250.0,
-            paymentMethod = "cash",
-            receiptText = "Custom receipt",
-            now = 5_000L
-        )
-
-        val receipt = db.receiptDao().getReceiptByPaymentIdOnce(INSTITUTE_ID, result.paymentId)
-        assertNotNull(receipt)
-        assertEquals("REC-5000", receipt!!.receiptNumber)
-        assertEquals(250.0, receipt.paidAmount, MONEY_DELTA)
-        assertEquals(750.0, receipt.dueAmount, MONEY_DELTA)
-        assertEquals("Custom receipt", receipt.receiptText)
-    }
-
-    @Test
-    fun createFeeWithInitialPaymentCalculatesDueAndReceipt() = runTest {
-        val result = repository.createFeeWithInitialPayment(
-            instituteId = INSTITUTE_ID,
-            collectedByUserId = USER_ID,
             studentId = STUDENT_ID,
             batchId = BATCH_ID,
-            feePeriod = "Jun 2026",
+            feePeriod = "May 2026",
             feeType = "monthly_fee",
             dueDateMs = 1_000L,
             baseAmount = 1_000.0,
-            discountAmount = 100.0,
-            lateFeeAmount = 50.0,
-            collectedAmount = 300.0,
-            paymentMethod = "cash",
-            paymentDateMs = 6_000L,
-            note = null,
-            receiptText = "Initial payment",
-            now = 6_000L
+            discountAmount = 0.0,
+            lateFeeAmount = 0.0,
+            now = 1_000L,
+            operationId = OPERATION_ID
         )
 
-        val fee = db.feeDao().getFeeById(result.fee.id, INSTITUTE_ID)!!
-        assertEquals(950.0, fee.totalAmount, MONEY_DELTA)
-        assertEquals(300.0, fee.paidAmount, MONEY_DELTA)
-        assertEquals(650.0, fee.dueAmount, MONEY_DELTA)
-        assertEquals("partially_paid", fee.status)
-        assertNotNull(result.paymentId)
-        assertNotNull(result.paymentId?.let { db.receiptDao().getReceiptByPaymentIdOnce(INSTITUTE_ID, it) })
+        assertEquals("canonical-fee", created.id)
+        assertEquals("server-key", db.feeDao().getFeeById(created.id, INSTITUTE_ID)?.businessKey)
+        assertEquals("completed", db.financialLedgerDao().getOperation(INSTITUTE_ID, OPERATION_ID)?.status)
+        assertEquals(OPERATION_ID, gateway.requests.single()["operationId"])
     }
 
     @Test
-    fun unifiedCollectActiveDueFilterIncludesDirectNullableFees() = runTest {
-        val directFee = createFee(amount = 800.0, batchId = null)
+    fun transientCloudFailureLeavesNoLocalLedgerAndReplayUsesSameOperationId() = runTest {
+        gateway.responder = { throw IllegalStateException("offline") }
 
-        val activeDues = db.feeDao().getAllFeesOnce(INSTITUTE_ID)
-            .filter { it.studentId == STUDENT_ID && it.dueAmount > 0.0 && it.cancelledAtMs == null }
-
-        assertTrue(activeDues.any { it.id == directFee.id })
-        repository.collectPayment(
-            instituteId = INSTITUTE_ID,
-            collectedByUserId = USER_ID,
-            feeId = directFee.id,
-            amount = 800.0,
-            paymentMethod = "cash",
-            now = 7_000L
-        )
-        assertEquals("paid", db.feeDao().getFeeById(directFee.id, INSTITUTE_ID)!!.status)
-    }
-
-    @Test
-    fun studentProfileCollectionPathsUseSameOverpaymentGuard() = runTest {
-        val existingFee = createFee(amount = 500.0, batchId = null)
-
-        repository.collectPayment(
-            instituteId = INSTITUTE_ID,
-            collectedByUserId = USER_ID,
-            feeId = existingFee.id,
-            amount = 200.0,
-            paymentMethod = "cash",
-            paymentDateMs = 8_000L,
-            receiptText = "Profile existing fee",
-            now = 8_000L
-        )
-        assertEquals(300.0, db.feeDao().getFeeById(existingFee.id, INSTITUTE_ID)!!.dueAmount, MONEY_DELTA)
-
-        assertIllegalArgument {
-            repository.createFeeWithInitialPayment(
+        assertThrowsSuspend<FinancialOperationPendingException> {
+            repository.createFee(
                 instituteId = INSTITUTE_ID,
-                collectedByUserId = USER_ID,
                 studentId = STUDENT_ID,
-                batchId = null,
-                feePeriod = "Jul 2026",
+                batchId = BATCH_ID,
+                feePeriod = "June 2026",
                 feeType = "monthly_fee",
-                dueDateMs = 8_500L,
-                baseAmount = 300.0,
+                dueDateMs = 2_000L,
+                baseAmount = 900.0,
                 discountAmount = 0.0,
                 lateFeeAmount = 0.0,
-                collectedAmount = 301.0,
-                paymentMethod = "cash",
-                paymentDateMs = 8_500L,
-                note = null,
-                receiptText = "Profile new fee",
-                now = 8_500L
+                now = 2_000L,
+                operationId = OPERATION_ID
             )
         }
+
+        assertNull(db.feeDao().getFeeById("canonical-fee", INSTITUTE_ID))
+        assertEquals("pending", db.financialLedgerDao().getOperation(INSTITUTE_ID, OPERATION_ID)?.status)
+
+        gateway.responder = { request ->
+            FinancialOperationResult(
+                operationId = request.getValue("operationId") as String,
+                action = "create_fee",
+                fees = listOf(fee(id = "canonical-fee"))
+            )
+        }
+        repository.replayPendingOperations(INSTITUTE_ID)
+
+        assertNotNull(db.feeDao().getFeeById("canonical-fee", INSTITUTE_ID))
+        assertEquals("completed", db.financialLedgerDao().getOperation(INSTITUTE_ID, OPERATION_ID)?.status)
+        assertEquals(listOf(OPERATION_ID, OPERATION_ID), gateway.requests.map { it["operationId"] })
     }
 
-    private suspend fun createFee(
-        amount: Double,
-        batchId: String? = BATCH_ID
-    ): FeeEntity = repository.createFee(
+    @Test
+    fun roomApplyIsAtomicWhenAChildRecordConflicts() = runTest {
+        val originalFee = fee(id = "fee-atomic")
+        db.feeDao().insertFee(originalFee)
+        db.paymentDao().insertPayment(payment(id = "existing-payment", operationId = OPERATION_ID))
+        gateway.responder = {
+            FinancialOperationResult(
+                operationId = OPERATION_ID,
+                action = "collect_payment",
+                fees = listOf(originalFee.copy(paidAmount = 400.0, dueAmount = 600.0, status = "partially_paid")),
+                payments = listOf(payment(id = "conflicting-payment", operationId = OPERATION_ID)),
+                receipts = listOf(receipt(
+                    id = "must-roll-back",
+                    paymentId = "conflicting-payment",
+                    operationId = OPERATION_ID
+                ))
+            )
+        }
+
+        assertThrowsSuspend<FinancialOperationPendingException> {
+            repository.collectPayment(
+                instituteId = INSTITUTE_ID,
+                collectedByUserId = USER_ID,
+                feeId = originalFee.id,
+                amount = 400.0,
+                paymentMethod = "cash",
+                now = 3_000L,
+                operationId = OPERATION_ID
+            )
+        }
+
+        val unchanged = db.feeDao().getFeeById(originalFee.id, INSTITUTE_ID)!!
+        assertEquals(0.0, unchanged.paidAmount, MONEY_DELTA)
+        assertNull(db.receiptDao().getReceiptByPaymentIdOnce(INSTITUTE_ID, "conflicting-payment"))
+        assertEquals("pending", db.financialLedgerDao().getOperation(INSTITUTE_ID, OPERATION_ID)?.status)
+    }
+
+    @Test
+    fun reversalRetainsPaymentAndReceiptAndStoresAuditRecord() = runTest {
+        val postedFee = fee(id = "fee-reverse").copy(
+            paidAmount = 400.0,
+            dueAmount = 600.0,
+            status = "partially_paid"
+        )
+        val postedPayment = payment(id = "payment-reverse", feeId = postedFee.id)
+        val postedReceipt = receipt(id = "receipt-reverse", paymentId = postedPayment.id, feeId = postedFee.id)
+        db.feeDao().insertFee(postedFee)
+        db.paymentDao().insertPayment(postedPayment)
+        db.receiptDao().insertReceipt(postedReceipt)
+        gateway.responder = {
+            FinancialOperationResult(
+                operationId = OPERATION_ID,
+                action = "reverse_payment",
+                fees = listOf(postedFee.copy(paidAmount = 0.0, dueAmount = 1_000.0, status = "unpaid")),
+                payments = listOf(postedPayment.copy(status = "reversed")),
+                reversals = listOf(reversal(postedPayment))
+            )
+        }
+
+        repository.reversePayment(
+            paymentId = postedPayment.id,
+            instituteId = INSTITUTE_ID,
+            reason = "Duplicate collection",
+            now = 4_000L,
+            operationId = OPERATION_ID
+        )
+
+        assertEquals("reversed", db.paymentDao().getPaymentById(postedPayment.id, INSTITUTE_ID)?.status)
+        assertNotNull(db.receiptDao().getReceiptByPaymentIdOnce(INSTITUTE_ID, postedPayment.id))
+        assertNotNull(db.financialLedgerDao().getReversalForPayment(INSTITUTE_ID, postedPayment.id))
+        assertEquals(1_000.0, db.feeDao().getFeeById(postedFee.id, INSTITUTE_ID)?.dueAmount ?: -1.0, MONEY_DELTA)
+    }
+
+    @Test
+    fun trustedRejectionIsNotRetriedAutomatically() = runTest {
+        gateway.responder = {
+            throw FinancialOperationRejectedException("Duplicate fee")
+        }
+
+        assertThrowsSuspend<FinancialOperationRejectedException> {
+            repository.createFee(
+                instituteId = INSTITUTE_ID,
+                studentId = STUDENT_ID,
+                batchId = BATCH_ID,
+                feePeriod = "May 2026",
+                feeType = "monthly_fee",
+                dueDateMs = 1_000L,
+                baseAmount = 1_000.0,
+                discountAmount = 0.0,
+                lateFeeAmount = 0.0,
+                operationId = OPERATION_ID
+            )
+        }
+
+        assertEquals("failed", db.financialLedgerDao().getOperation(INSTITUTE_ID, OPERATION_ID)?.status)
+        repository.replayPendingOperations(INSTITUTE_ID)
+        assertEquals(1, gateway.requests.size)
+    }
+
+    private fun fee(id: String, businessKey: String? = "business-key") = FeeEntity(
+        id = id,
         instituteId = INSTITUTE_ID,
         studentId = STUDENT_ID,
-        batchId = batchId,
+        batchId = BATCH_ID,
         feePeriod = "May 2026",
         feeType = "monthly_fee",
         dueDateMs = 1_000L,
-        baseAmount = amount,
+        baseAmount = 1_000.0,
         discountAmount = 0.0,
         lateFeeAmount = 0.0,
-        now = 1_000L
+        totalAmount = 1_000.0,
+        paidAmount = 0.0,
+        dueAmount = 1_000.0,
+        status = "unpaid",
+        note = null,
+        createdAtMs = 1_000L,
+        updatedAtMs = 1_000L,
+        cancelledAtMs = null,
+        businessKey = businessKey,
+        ledgerVersion = 1
     )
 
-    private suspend fun assertIllegalArgument(block: suspend () -> Unit) {
-        var thrown: IllegalArgumentException? = null
+    private fun payment(
+        id: String,
+        feeId: String = "fee-atomic",
+        operationId: String? = "payment-operation"
+    ) = PaymentEntity(
+        id = id,
+        instituteId = INSTITUTE_ID,
+        feeId = feeId,
+        studentId = STUDENT_ID,
+        amount = 400.0,
+        paymentMethod = "cash",
+        transactionId = null,
+        receiptNumber = "REC-0000000001",
+        paymentDateMs = 2_000L,
+        collectedByUserId = USER_ID,
+        status = "completed",
+        note = null,
+        createdAtMs = 2_000L,
+        updatedAtMs = 2_000L,
+        operationId = operationId,
+        ledgerVersion = 1
+    )
+
+    private fun receipt(
+        id: String,
+        paymentId: String,
+        feeId: String = "fee-atomic",
+        operationId: String = "receipt-operation-$id"
+    ) = ReceiptEntity(
+        id = id,
+        instituteId = INSTITUTE_ID,
+        paymentId = paymentId,
+        feeId = feeId,
+        studentId = STUDENT_ID,
+        receiptNumber = "REC-0000000001",
+        receiptDateMs = 2_000L,
+        totalAmount = 1_000.0,
+        paidAmount = 400.0,
+        dueAmount = 600.0,
+        paymentMethod = "cash",
+        receiptText = null,
+        createdAtMs = 2_000L,
+        operationId = operationId,
+        ledgerVersion = 1
+    )
+
+    private fun reversal(payment: PaymentEntity) = PaymentReversalEntity(
+        id = "reversal-${payment.id}",
+        instituteId = INSTITUTE_ID,
+        paymentId = payment.id,
+        feeId = payment.feeId,
+        studentId = STUDENT_ID,
+        amount = payment.amount,
+        receiptNumber = payment.receiptNumber,
+        reason = "Duplicate collection",
+        reversedByUserId = USER_ID,
+        reversedAtMs = 4_000L,
+        operationId = OPERATION_ID,
+        ledgerVersion = 1
+    )
+
+    private suspend inline fun <reified T : Exception> assertThrowsSuspend(
+        crossinline block: suspend () -> Unit
+    ) {
+        var thrown: Exception? = null
         try {
             block()
-        } catch (e: IllegalArgumentException) {
-            thrown = e
+        } catch (error: Exception) {
+            thrown = error
         }
-        assertNotNull(thrown)
+        assertTrue("Expected ${T::class.java.simpleName}, got ${thrown?.javaClass?.simpleName}", thrown is T)
     }
 
     private companion object {
@@ -253,15 +307,19 @@ class FeeCollectionRepositoryTest {
         const val USER_ID = "user-1"
         const val STUDENT_ID = "student-1"
         const val BATCH_ID = "batch-1"
+        const val OPERATION_ID = "operation-000001"
         const val MONEY_DELTA = 0.0001
     }
 }
 
-private object NoOpFinanceSyncGateway : FinanceSyncGateway {
-    override suspend fun upsertFee(fee: FeeEntity) = Unit
-    override suspend fun upsertPayment(payment: PaymentEntity) = Unit
-    override suspend fun upsertReceipt(receipt: ReceiptEntity) = Unit
-    override suspend fun deletePayment(paymentId: String, instituteId: String) = Unit
-    override suspend fun deleteReceipt(receiptId: String, instituteId: String) = Unit
-}
+private class ScriptedLedgerGateway : FinancialLedgerGateway {
+    val requests = mutableListOf<Map<String, Any?>>()
+    var responder: suspend (Map<String, Any?>) -> FinancialOperationResult = {
+        error("No ledger response configured")
+    }
 
+    override suspend fun commit(request: Map<String, Any?>): FinancialOperationResult {
+        requests += request
+        return responder(request)
+    }
+}

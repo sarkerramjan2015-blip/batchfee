@@ -43,7 +43,6 @@ import android.net.Uri
 import android.widget.Toast
 import androidx.compose.ui.platform.LocalContext
 import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
-import com.batchfee.edu.data.models.SubscriptionRequest
 import com.batchfee.edu.data.repository.SubscriptionRepository
 import kotlinx.coroutines.launch
 import java.net.URLEncoder
@@ -60,27 +59,36 @@ data class BatchFeePlan(
     val isEnterprise: Boolean = false
 )
 
-val batchFeePlans = listOf(
-    BatchFeePlan("basic",      "Basic",      50,  "50 Students",   199.0),
-    BatchFeePlan("standard",   "Standard",  100,  "100 Students",  299.0),
-    BatchFeePlan("spark",      "Spark",     150,  "150 Students",  399.0),
-    BatchFeePlan("grow",       "Grow",      200,  "200 Students",  499.0),
-    BatchFeePlan("pro",        "Pro",       250,  "250 Students",  599.0, isPopular = true),
-    BatchFeePlan("elite",      "Elite",     300,  "300 Students",  699.0),
-    BatchFeePlan("prime",      "Prime",     350,  "350 Students",  799.0),
-    BatchFeePlan("max",        "Max",       400,  "400 Students",  899.0),
-    BatchFeePlan("ultra",      "Ultra",     450,  "450 Students",  999.0),
-    BatchFeePlan("scale",      "Scale",     500,  "500 Students",  1099.0, isPremium = true),
-    BatchFeePlan("enterprise", "Enterprise", Int.MAX_VALUE, "500+ Students", 0.0, isEnterprise = true)
-)
-
 // ── ViewModel ───────────────────────────────────────────────────
-class PricingViewModel : ViewModel() {
-    private val _plans = MutableStateFlow(batchFeePlans)
+class PricingViewModel(private val db: AppDatabase) : ViewModel() {
+    private val _plans = MutableStateFlow<List<BatchFeePlan>>(emptyList())
     val plans = _plans.asStateFlow()
 
     private val _selectedDuration = MutableStateFlow(0) // 0=1M, 1=6M, 2=1Y
     val selectedDuration = _selectedDuration.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            db.subscriptionPlanDao().getAllPlans().collectLatest { planCatalog ->
+                _plans.value = planCatalog
+                    .filter { it.id != "plan_free_trial" && it.priceBdt > 0.0 }
+                    .sortedBy { it.tierLevel }
+                    .map { plan ->
+                        BatchFeePlan(
+                            id = plan.id,
+                            name = plan.name,
+                            studentCount = plan.maxStudents,
+                            studentLabel = "${plan.maxStudents} Students",
+                            priceMonthly = plan.priceBdt,
+                            isPopular = plan.tag.equals("popular", ignoreCase = true) ||
+                                plan.tag.equals("recommended", ignoreCase = true),
+                            isPremium = plan.tierLevel >= 3,
+                            isEnterprise = plan.maxStudents >= 1_000_000
+                        )
+                    }
+            }
+        }
+    }
 
     fun selectDuration(index: Int) { _selectedDuration.value = index }
 
@@ -113,9 +121,9 @@ class PricingViewModel : ViewModel() {
     }
 }
 
-class PricingViewModelFactory : ViewModelProvider.Factory {
+class PricingViewModelFactory(private val db: AppDatabase) : ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        if (modelClass.isAssignableFrom(PricingViewModel::class.java)) return PricingViewModel() as T
+        if (modelClass.isAssignableFrom(PricingViewModel::class.java)) return PricingViewModel(db) as T
         throw IllegalArgumentException()
     }
 }
@@ -154,7 +162,7 @@ fun PricingScreen(
     onBack: () -> Unit,
     onSubscribe: (planId: String) -> Unit
 ) {
-    val viewModel: PricingViewModel = viewModel(factory = PricingViewModelFactory())
+    val viewModel: PricingViewModel = viewModel(factory = PricingViewModelFactory(db))
     val plans by viewModel.plans.collectAsState()
     val selectedDuration by viewModel.selectedDuration.collectAsState()
     val context = LocalContext.current
@@ -180,7 +188,7 @@ fun PricingScreen(
 
     // Payment submission state
     var selectedPaymentMethod by remember { mutableStateOf("bkash") }
-    var lastTrxDigits by remember { mutableStateOf("") }
+    var transactionReference by remember { mutableStateOf("") }
     var isSubmitting by remember { mutableStateOf(false) }
     var submitSuccess by remember { mutableStateOf(false) }
     var submitError by remember { mutableStateOf<String?>(null) }
@@ -467,12 +475,16 @@ fun PricingScreen(
                                 }
                             }
 
-                            // Last 4 digits input
+                            // The Function stores only a hash and the final four characters.
                             OutlinedTextField(
-                                value = lastTrxDigits,
-                                onValueChange = { if (it.length <= 4 && it.all { c -> c.isDigit() }) lastTrxDigits = it },
-                                label = { Text("Last 4 digits of TrxID", color = TextMuted) },
-                                placeholder = { Text("e.g. 8X7K", color = TextMuted.copy(alpha = 0.5f)) },
+                                value = transactionReference,
+                                onValueChange = {
+                                    if (it.length <= 64 && it.all { c ->
+                                        c.isLetterOrDigit() || c == '-' || c == '_' || c.isWhitespace()
+                                    }) transactionReference = it
+                                },
+                                label = { Text("Payment transaction ID", color = TextMuted) },
+                                placeholder = { Text("e.g. 8N7A9BC123", color = TextMuted.copy(alpha = 0.5f)) },
                                 modifier = Modifier.fillMaxWidth(),
                                 singleLine = true,
                                 colors = OutlinedTextFieldDefaults.colors(
@@ -507,22 +519,15 @@ fun PricingScreen(
                                     isSubmitting = true
                                     submitError = null
                                     try {
-                                        val request = SubscriptionRequest(
-                                            requestId = "SR-${System.currentTimeMillis()}",
+                                        SubscriptionRepository().submitRequest(
                                             instituteId = instituteId!!,
-                                            instituteName = instituteName,
-                                            ownerName = ownerName,
-                                            institutePhone = institutePhone,
                                             requestedPlanId = selPlan.id,
                                             durationMonths = durationMonths,
-                                            amountPaid = selPrice,
-                                            transactionLast4 = lastTrxDigits,
                                             paymentMethod = selectedPaymentMethod,
-                                            requestSentAt = System.currentTimeMillis()
+                                            transactionReference = transactionReference
                                         )
-                                        SubscriptionRepository().submitRequest(request)
                                         submitSuccess = true
-                                        lastTrxDigits = ""
+                                        transactionReference = ""
                                     } catch (e: Exception) {
                                         submitError = e.message ?: "Submission failed. Try again."
                                     } finally {
@@ -530,7 +535,7 @@ fun PricingScreen(
                                     }
                                 }
                             },
-                            enabled = !isSubmitting && lastTrxDigits.length == 4 && !submitSuccess,
+                            enabled = !isSubmitting && transactionReference.trim().length >= 6 && !submitSuccess,
                             colors = ButtonDefaults.buttonColors(containerColor = Cyan),
                             shape = RoundedCornerShape(10.dp)
                         ) {

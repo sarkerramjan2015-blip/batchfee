@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.tasks.await
 import java.util.UUID
 
 class StaffViewModel(private val db: AppDatabase) : ViewModel() {
@@ -311,10 +312,54 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
                 )
                 db.staffDao().updateStaff(updated)
 
+                // ── Password reset via Firebase (only when password field is non‑blank) ──
+                // Firebase client SDK cannot set a new password on an existing account
+                // without the target user's idToken.  Instead we send a password‑reset email
+                // via Firebase Auth.  The staff completes the reset on their own, and the
+                // next login automatically syncs the Room passwordHash (AuthScreen line 340).
+                //
+                // Room hash is deliberately NOT updated here — Firebase is the source of
+                // truth for login credentials.  We stay consistent.
+                if (cleanPassword.isNotBlank() && staffEmail != null) {
+                    try {
+                        com.google.firebase.auth.FirebaseAuth.getInstance()
+                            .sendPasswordResetEmail(staffEmail)
+                            .await()
+                    } catch (e: Exception) {
+                        // Report failure — do NOT continue with a partial save.
+                        onError("Failed to send password reset email: ${e.localizedMessage ?: "Check connection and try again."}")
+                        return@launch
+                    }
+                }
+
+                // ── Password reset via Firebase (only when password field is non‑blank) ──
+                // Firebase client SDK cannot set a new password on an existing account
+                // without the target user's idToken.  Instead we send a password‑reset email
+                // via Firebase Auth.  The staff completes the reset on their own, and the
+                // next login automatically syncs their credentials.
+                //
+                // Room hash is deliberately NOT updated — Firebase is the source of
+                // truth for login credentials.  Staff login always validates against
+                // Firebase Auth, never against the Room hash.
+                if (cleanPassword.isNotBlank() && staffEmail != null) {
+                    try {
+                        com.google.firebase.auth.FirebaseAuth.getInstance()
+                            .sendPasswordResetEmail(staffEmail)
+                            .await()
+                    } catch (e: Exception) {
+                        // Report failure — do NOT continue with a partial save.
+                        onError("Failed to send password reset email: ${e.localizedMessage ?: "Check connection and try again."}")
+                        return@launch
+                    }
+                }
+
+                // ── Update local UserEntity ──
+                // Password hash preserved as-is — Firebase Auth is source of truth for login.
+                // When staff resets via email and logs in, AuthScreen line 340 auto-syncs the hash.
                 val currentUser = db.userDao().getUserById(staffId)
                 if (currentUser == null) {
-                    if (cleanPassword.isBlank()) {
-                        onError("Set a password to activate this staff login.")
+                    if (staffEmail == null) {
+                        onError("Email is required to create staff login.")
                         return@launch
                     }
                     db.userDao().insertUser(
@@ -322,8 +367,8 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
                             id = staffId,
                             instituteId = instId,
                             name = name,
-                            email = staffEmail ?: loginId,
-                            passwordHash = PasswordHasher.hash(cleanPassword),
+                            email = staffEmail,
+                            passwordHash = "",  // placeholder — Firebase is source of truth
                             role = "Staff",
                             createdAtMs = System.currentTimeMillis()
                         )
@@ -334,7 +379,7 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
                             instituteId = instId,
                             name = name,
                             email = staffEmail ?: currentUser.email,
-                            passwordHash = if (cleanPassword.isBlank()) currentUser.passwordHash else PasswordHasher.hash(cleanPassword),
+                            passwordHash = currentUser.passwordHash,  // preserve — Firebase is source of truth
                             role = "Staff"
                         )
                     )

@@ -12,9 +12,10 @@
 ```
 app/build/outputs/apk/release/app-release.apk
 ```
-Keystore: `app/batchfee-release.jks`
-- Alias: `batchfee`
-- Password: `batchfee123`
+Release signing material is intentionally not documented or stored in this repository. Supply the
+upload keystore path, alias, and passwords through CI secrets or an ignored local
+`keystore.properties` file. `assembleRelease` and `bundleRelease` fail if a non-debug release key
+is not configured.
 
 ### Option 2: Android App Bundle (.aab) — RECOMMENDED by Google
 Run this command:
@@ -22,6 +23,15 @@ Run this command:
 .\gradlew.bat bundleRelease
 ```
 Output: `app/build/outputs/bundle/release/app-release.aab`
+
+### Play App Signing
+
+- Enroll the app in Google Play App Signing. Google keeps the app-signing key; the CI/local key is
+  an upload key only.
+- Keep the upload key in a password manager or CI secret manager with restricted access and an
+  offline recovery process. Never commit its file, alias, or passwords.
+- Verify the produced AAB before upload with `jarsigner -verify -strict -certs <aab-path>` and
+  verify its certificate fingerprint against the registered upload certificate in Play Console.
 
 > ⚠️ **AAB is preferred over APK.** Google Play uses AAB to generate optimized APKs for different devices. Smaller download = more installs.
 
@@ -249,7 +259,8 @@ Based on our analysis, here's what to declare:
 - [ ] **Verify URLs work:**
   - https://batchfee-477b8.web.app/privacy-policy.html
   - https://batchfee-477b8.web.app/terms.html
-- [ ] **Build AAB:** `.\gradlew.bat bundleRelease`
+- [ ] **Configure release signing from CI secrets or ignored `keystore.properties`**
+- [ ] **Build and verify signed AAB:** `.\gradlew.bat bundleRelease`
 - [ ] **Take 5-7 screenshots** on a real device (1080×1920 minimum)
 - [ ] **Create Feature Graphic** (1024×500) — batchfee logo + tagline
 - [ ] **Fill Content Rating Questionnaire**
@@ -262,11 +273,14 @@ Based on our analysis, here's what to declare:
 
 ## ⚠️ Important Notes
 
-1. **Keystore is critical.** If you lose `batchfee-release.jks`, you cannot update the app on Play Store. Back it up securely.
+1. **Upload key is critical.** Preserve it in approved secret storage. With Play App Signing, an
+   upload key can be reset through Play Console, but the app-signing key remains protected by
+   Google.
 
 2. **Don't upload APK directly.** Use `.aab` (Android App Bundle) — Google requires it for new apps.
 
-3. **Firebase App Check** is currently commented out in code (`// TODO: RE-ENABLE BEFORE PLAY STORE UPLOAD`). Enable it before publishing for better security.
+3. **Firebase App Check** must be configured and enforced in the Firebase console before the
+   production rollout.
 
 4. **Demo accounts** are hardcoded. Remove or disable them before production release if you want a clean experience.
 

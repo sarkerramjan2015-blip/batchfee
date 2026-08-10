@@ -54,12 +54,11 @@ class SalaryViewModel(private val db: AppDatabase) : ViewModel() {
         val instId = SessionManager.currentInstituteId.value ?: return
         val net = basicSalary + bonusAmount - (deductionAmount + advanceAmount)
         if (net < 0) { onError("Net salary cannot be negative."); return }
+        if (basicSalary <= 0) { onError("Basic salary must be greater than zero."); return }
 
         viewModelScope.launch {
-            val existing = db.salaryDao().getSalariesByInstitute(instId).firstOrNull()?.any {
-                it.staffId == staffId && it.salaryMonth == salaryMonth && it.cancelledAtMs == null
-            } ?: false
-            if (existing) { onError("Salary already exists for ${staffId} in $salaryMonth."); return@launch }
+            val existing = db.salaryDao().countByStaffAndMonth(staffId, salaryMonth, instId)
+            if (existing > 0) { onError("Salary already exists for this staff in $salaryMonth."); return@launch }
 
             val entity = SalaryEntity(
                 id = UUID.randomUUID().toString(),
@@ -80,9 +79,19 @@ class SalaryViewModel(private val db: AppDatabase) : ViewModel() {
                 updatedAtMs = System.currentTimeMillis(),
                 cancelledAtMs = null
             )
-            SalarySyncHelper.upsertSalary(entity)
             db.salaryDao().insertSalary(entity)
+            try { SalarySyncHelper.upsertSalary(entity) } catch (_: Exception) {}
             onSuccess()
+        }
+    }
+
+    fun cancelSalary(salaryId: String) {
+        val instId = SessionManager.currentInstituteId.value ?: return
+        viewModelScope.launch {
+            val salary = db.salaryDao().getSalaryById(salaryId, instId) ?: return@launch
+            val updated = salary.copy(cancelledAtMs = System.currentTimeMillis(), updatedAtMs = System.currentTimeMillis())
+            db.salaryDao().updateSalary(updated)
+            try { SalarySyncHelper.upsertSalary(updated) } catch (_: Exception) {}
         }
     }
 

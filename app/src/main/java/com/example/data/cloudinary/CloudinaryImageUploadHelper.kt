@@ -6,74 +6,82 @@ import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.net.Uri
+import android.util.Base64
+import com.batchfee.edu.domain.SessionManager
+import com.google.firebase.functions.FirebaseFunctions
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.MultipartBody
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONObject
 import java.io.ByteArrayOutputStream
+import java.util.UUID
 
 /**
- * Uploads institute logos to the BatchFee Cloudinary account.
- *
- * The cloud name and unsigned upload preset identify a public upload endpoint;
- * they are not API credentials. API keys and secrets must never be shipped in
- * the Android application.
+ * Optimizes images locally, then sends them through an App Check and Firebase Auth
+ * protected callable. Cloudinary credentials, upload signatures and private asset
+ * identifiers never ship in the Android application.
  */
 object CloudinaryImageUploadHelper {
-    private const val cloudName = "cbhhlz9q"
-    private const val uploadPreset = "bf_institute_logo_9q7k2m4x"
-    private val httpClient = OkHttpClient()
+    private const val MANAGED_REFERENCE_PREFIX = "batchfee-media://v1/"
+    private val functions = FirebaseFunctions.getInstance("asia-south1")
 
-    suspend fun uploadInstituteLogo(context: Context, sourceUri: Uri): String =
-        uploadImage(context, sourceUri, ImagePolicy.INSTITUTE_LOGO)
+    suspend fun uploadInstituteLogo(
+        context: Context,
+        sourceUri: Uri,
+        replacesReference: String? = null
+    ): String = uploadImage(context, sourceUri, ImagePolicy.INSTITUTE_LOGO, null, replacesReference)
 
-    suspend fun uploadStudentPhoto(context: Context, sourceUri: Uri): String =
-        uploadImage(context, sourceUri, ImagePolicy.STUDENT_PHOTO)
+    suspend fun uploadStudentPhoto(
+        context: Context,
+        sourceUri: Uri,
+        subjectId: String? = null,
+        replacesReference: String? = null
+    ): String = uploadImage(context, sourceUri, ImagePolicy.STUDENT_PHOTO, subjectId, replacesReference)
 
-    suspend fun uploadStaffPhoto(context: Context, sourceUri: Uri): String =
-        uploadImage(context, sourceUri, ImagePolicy.STAFF_PHOTO)
+    suspend fun uploadStaffPhoto(
+        context: Context,
+        sourceUri: Uri,
+        subjectId: String? = null,
+        replacesReference: String? = null
+    ): String = uploadImage(context, sourceUri, ImagePolicy.STAFF_PHOTO, subjectId, replacesReference)
+
+    fun isManagedReference(value: String?): Boolean =
+        value?.startsWith(MANAGED_REFERENCE_PREFIX) == true
+
+    private fun isExistingCloudReference(value: String): Boolean =
+        isManagedReference(value) || value.startsWith("https://") || value.startsWith("http://")
 
     private suspend fun uploadImage(
         context: Context,
         sourceUri: Uri,
-        policy: ImagePolicy
-    ): String =
-        withContext(Dispatchers.IO) {
-            val imageBytes = optimizeToJpeg(context, sourceUri, policy)
-
-            val uploadUrl = "https://api.cloudinary.com/v1_1/$cloudName/image/upload"
-            val requestBody = MultipartBody.Builder()
-                .setType(MultipartBody.FORM)
-                .addFormDataPart("upload_preset", uploadPreset)
-                .addFormDataPart(
-                    "file",
-                    "${policy.filePrefix}-photo.jpg",
-                    imageBytes.toRequestBody("image/jpeg".toMediaType())
-                )
-                .build()
-
-            val request = Request.Builder()
-                .url(uploadUrl)
-                .post(requestBody)
-                .build()
-
-            httpClient.newCall(request).execute().use { response ->
-                val responseBody = response.body?.string().orEmpty()
-                if (!response.isSuccessful) {
-                    val message = runCatching {
-                        JSONObject(responseBody).getJSONObject("error").getString("message")
-                    }.getOrNull() ?: "Cloud logo upload failed (${response.code})."
-                    throw IllegalStateException(message)
-                }
-
-                JSONObject(responseBody).optString("secure_url").takeIf { it.isNotBlank() }
-                    ?: throw IllegalStateException("Cloudinary did not return an image URL.")
-            }
+        policy: ImagePolicy,
+        subjectId: String?,
+        replacesReference: String?
+    ): String {
+        val source = sourceUri.toString()
+        if (isExistingCloudReference(source)) return source
+        val instituteId = SessionManager.currentInstituteId.value
+            ?: throw IllegalStateException("Institute session was not found.")
+        val imageBytes = withContext(Dispatchers.IO) {
+            optimizeToJpeg(context, sourceUri, policy)
         }
+        val request = mutableMapOf<String, Any>(
+            "instituteId" to instituteId,
+            "purpose" to policy.purpose,
+            "operationId" to UUID.randomUUID().toString(),
+            "imageBase64" to Base64.encodeToString(imageBytes, Base64.NO_WRAP)
+        )
+        subjectId?.takeIf { it.isNotBlank() }?.let { request["subjectId"] = it }
+        // Legacy local file URIs were never Cloudinary assets and are deliberately rejected by
+        // the trusted backend. Omit them as replacement metadata so a new secure upload can
+        // replace a stale local-only logo; HTTPS and managed references remain auditable there.
+        replacesReference?.takeIf(::isExistingCloudReference)
+            ?.let { request["replacesReference"] = it }
+        val response = functions.getHttpsCallable("uploadSecureMedia").call(request).await()
+        val data = response.data as? Map<*, *>
+            ?: throw IllegalStateException("Secure media service returned an invalid response.")
+        return (data["reference"] as? String)?.takeIf { it.isNotBlank() }
+            ?: throw IllegalStateException("Secure media service did not return a reference.")
+    }
 
     /** Converts every selected image into a small JPEG before it leaves the device. */
     private fun optimizeToJpeg(context: Context, sourceUri: Uri, policy: ImagePolicy): ByteArray {
@@ -170,10 +178,10 @@ object CloudinaryImageUploadHelper {
     private enum class ImagePolicy(
         val maxDimension: Int,
         val targetBytes: Int,
-        val filePrefix: String
+        val purpose: String
     ) {
-        INSTITUTE_LOGO(maxDimension = 800, targetBytes = 500 * 1024, filePrefix = "institute-logo"),
-        STUDENT_PHOTO(maxDimension = 720, targetBytes = 300 * 1024, filePrefix = "student"),
-        STAFF_PHOTO(maxDimension = 720, targetBytes = 300 * 1024, filePrefix = "staff")
+        INSTITUTE_LOGO(maxDimension = 800, targetBytes = 500 * 1024, purpose = "institute_logo"),
+        STUDENT_PHOTO(maxDimension = 720, targetBytes = 300 * 1024, purpose = "student_photo"),
+        STAFF_PHOTO(maxDimension = 720, targetBytes = 300 * 1024, purpose = "staff_photo")
     }
 }

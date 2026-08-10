@@ -19,8 +19,8 @@ interface SalaryDao {
     @Query("SELECT * FROM salaries WHERE id = :salaryId AND instituteId = :instituteId LIMIT 1")
     fun getSalaryByIdFlow(salaryId: String, instituteId: String): Flow<SalaryEntity?>
 
-    @Query("SELECT * FROM salaries WHERE staffId = :staffId AND instituteId = :instituteId AND cancelledAtMs IS NULL ORDER BY createdAtMs DESC")
-    fun getSalariesByStaff(staffId: String, instituteId: String): Flow<List<SalaryEntity>>
+    @Query("SELECT COUNT(*) FROM salaries WHERE staffId = :staffId AND salaryMonth = :salaryMonth AND instituteId = :instituteId AND cancelledAtMs IS NULL")
+    suspend fun countByStaffAndMonth(staffId: String, salaryMonth: String, instituteId: String): Int
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertSalary(salary: SalaryEntity)

@@ -27,6 +27,7 @@ data class StudentEntity(
     val notes: String?,
     val createdAtMs: Long,
     val updatedAtMs: Long,
-    val archivedAtMs: Long?
+    val archivedAtMs: Long?,
+    val isAppAccessEnabled: Boolean = false
 )
 

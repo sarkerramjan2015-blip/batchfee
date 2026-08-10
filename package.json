@@ -1,5 +1,10 @@
 {
+  "scripts": {
+    "test:firestore-rules": "firebase emulators:exec --project demo-batchfee-rules --only firestore \"node --test tests/firestore.rules.test.cjs\""
+  },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.1",
+    "firebase-tools": "^15.26.0",
     "sharp": "^0.34.5"
   }
 }

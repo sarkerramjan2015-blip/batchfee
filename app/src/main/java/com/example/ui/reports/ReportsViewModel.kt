@@ -85,33 +85,33 @@ class ReportsViewModel(private val db: AppDatabase, private val period: String =
                 db.paymentDao().getRecentPayments(instId),
                 db.studentDao().getStudentsByInstitute(instId)
             ) { payments, students ->
-                buildData(payments, students)
+                try {
+                    buildData(payments, students)
+                } catch (_: Exception) {
+                    // Ignore — corrupt data won't crash
+                }
             }.collect { _isLoading.value = false }
         }
     }
 
     private fun buildData(allPayments: List<PaymentEntity>, allStudents: List<StudentEntity>) {
         val studentMap = allStudents.associateBy { it.id }
-        val now = Calendar.getInstance()
+        val now = Calendar.getInstance() ?: return
+        val todayStartMs = now.clone() as Calendar
+        todayStartMs.set(Calendar.HOUR_OF_DAY, 0); todayStartMs.set(Calendar.MINUTE, 0); todayStartMs.set(Calendar.SECOND, 0); todayStartMs.set(Calendar.MILLISECOND, 0)
+        val todayStart = todayStartMs.timeInMillis
+        val monthStartMs = now.clone() as Calendar
+        monthStartMs.set(Calendar.DAY_OF_MONTH, 1); monthStartMs.set(Calendar.HOUR_OF_DAY, 0); monthStartMs.set(Calendar.MINUTE, 0); monthStartMs.set(Calendar.SECOND, 0); monthStartMs.set(Calendar.MILLISECOND, 0)
+        val monthStart = monthStartMs.timeInMillis
 
-        val startOfToday = Calendar.getInstance().apply {
-            set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
-        }.timeInMillis
+        val sdfDay = SimpleDateFormat("EEE, dd MMM", Locale.ENGLISH)
+        val sdfMonth = SimpleDateFormat("MMM yyyy", Locale.ENGLISH)
+        val sdfMonthKey = SimpleDateFormat("yyyyMM", Locale.ENGLISH)
 
-        val startOfMonth = Calendar.getInstance().apply {
-            set(Calendar.DAY_OF_MONTH, 1); set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
-            set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
-        }.timeInMillis
-
-        val sdfDay = SimpleDateFormat("EEE, dd MMM", Locale.getDefault())
-        val sdfMonth = SimpleDateFormat("MMM yyyy", Locale.getDefault())
-        val sdfMonthKey = SimpleDateFormat("yyyyMM", Locale.getDefault())
-
-        // Filter by period
         val filtered = when (period) {
-            "month" -> allPayments.filter { it.paymentDateMs >= startOfMonth }
-            "lifetime" -> allPayments
-            else -> allPayments.filter { it.paymentDateMs >= startOfToday }
+            "month" -> allPayments.filter { it.paymentDateMs > 0 && it.paymentDateMs >= monthStart }
+            "lifetime" -> allPayments.filter { it.paymentDateMs > 0 }
+            else -> allPayments.filter { it.paymentDateMs > 0 && it.paymentDateMs >= todayStart }
         }
 
         val items = filtered.sortedByDescending { it.paymentDateMs }.map { p ->

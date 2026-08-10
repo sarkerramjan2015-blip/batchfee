@@ -17,4 +17,7 @@ interface StaffAttendanceDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertOrUpdateAttendance(attendance: StaffAttendanceEntity)
+
+    @Query("DELETE FROM staff_attendance WHERE id = :id")
+    suspend fun deleteAttendance(id: String)
 }

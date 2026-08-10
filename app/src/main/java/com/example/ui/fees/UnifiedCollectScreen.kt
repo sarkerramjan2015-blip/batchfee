@@ -44,6 +44,8 @@ import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Message
 import androidx.compose.material.icons.filled.Payments
@@ -77,6 +79,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.AlertDialog
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
@@ -104,13 +107,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.Row
 import com.batchfee.edu.data.database.AppDatabase
-import com.batchfee.edu.data.firestore.FinanceSyncHelper
 import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
 import com.batchfee.edu.data.models.BatchEntity
 import com.batchfee.edu.data.models.FeeEntity
 import com.batchfee.edu.data.models.PaymentEntity
 import com.batchfee.edu.data.models.StudentEntity
 import com.batchfee.edu.data.repository.FeeCollectionRepository
+import com.batchfee.edu.data.repository.FinancialOperationPendingException
 import com.batchfee.edu.domain.SessionManager
 import com.batchfee.edu.domain.MonthlyDueCalculator
 import androidx.core.content.FileProvider
@@ -125,6 +128,7 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import java.util.UUID
 
 private val BgColor = Color(0xFF07111F)
 private val CardBg = Color(0xFF0F172A)
@@ -149,18 +153,6 @@ private data class StudentPaymentHistory(
     val discountAmount: Double,
     val totalAmount: Double,
     val remainingDue: Double
-)
-
-private data class PaymentEditRequest(
-    val amount: Double,
-    val method: String,
-    val note: String,
-    val feePeriod: String,
-    val batchId: String?,
-    val batchName: String?,
-    val paymentDateMs: Long,
-    val baseAmount: Double,
-    val discountAmount: Double
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -228,6 +220,8 @@ fun UnifiedCollectScreen(
     var note by remember { mutableStateOf("") }
     var collectError by remember { mutableStateOf<String?>(null) }
     var editingHistoryItem by remember { mutableStateOf<StudentPaymentHistory?>(null) }
+    var reversingHistoryItem by remember { mutableStateOf<StudentPaymentHistory?>(null) }
+    var deletingHistoryItem by remember { mutableStateOf<StudentPaymentHistory?>(null) }
     var isPartialPayment by remember { mutableStateOf(false) }
 
     val selectedBatch = studentBatches.firstOrNull { it.id == selectedBatchId }
@@ -561,7 +555,9 @@ fun UnifiedCollectScreen(
                                 onWhatsApp = { item -> sendHistoryReceiptWhatsApp(context, instituteInfo, student, student.phone, item) },
                                 onMessage = { item -> sendHistoryReceiptMessage(context, student.phone, buildHistoryReceiptText(instituteInfo, student, item)) },
                                 onShare = { item -> shareHistoryReceipt(context, buildHistoryReceiptText(instituteInfo, student, item)) },
-                                onEdit = { item -> editingHistoryItem = item }
+                                    onEdit = { item -> editingHistoryItem = item },
+                                    onReverse = { item -> reversingHistoryItem = item },
+                                    onDelete = { item -> deletingHistoryItem = item }
                             )
                         }
 
@@ -863,6 +859,9 @@ fun UnifiedCollectScreen(
                                         isSaving = true
                                         try {
                                             val now = System.currentTimeMillis()
+                                            // All allocations from one Save action share one trusted,
+                                            // server-issued receipt number while retaining separate payments.
+                                            val receiptGroupId = UUID.randomUUID().toString()
                                             val remainingDue = if (showDueSelector) {
                                                 ((selectedDue?.fee?.dueAmount ?: 0.0) - collecting).coerceAtLeast(0.0)
                                             } else {
@@ -885,7 +884,9 @@ fun UnifiedCollectScreen(
                                                 val dueFee = selectedDue!!.fee
                                                 if (dueFee.id.isBlank()) {
                                                     // Virtual fee — create it first with discount support
-                                                    val discAmount = (dueFee.totalAmount * discountPercent / 100.0).coerceAtLeast(0.0)
+                                                    val discAmount = (
+                                                        kotlin.math.round(dueFee.totalAmount * discountPercent) / 100.0
+                                                    ).coerceAtLeast(0.0)
                                                     val createResult = feeRepository.createFeeWithInitialPayment(
                                                         instituteId = instId,
                                                         collectedByUserId = userId,
@@ -902,6 +903,7 @@ fun UnifiedCollectScreen(
                                                         paymentDateMs = now,
                                                         note = note.ifBlank { null },
                                                         receiptText = receiptText,
+                                                        receiptGroupId = receiptGroupId,
                                                         now = now
                                                     )
                                                     createResult.receiptNumber ?: "payment"
@@ -914,6 +916,7 @@ fun UnifiedCollectScreen(
                                                         paymentMethod = paymentMethod,
                                                         note = note.ifBlank { null },
                                                         receiptText = receiptText,
+                                                        receiptGroupId = receiptGroupId,
                                                         now = now
                                                     ).receiptNumber
                                                 }
@@ -926,7 +929,9 @@ fun UnifiedCollectScreen(
                                                     var remainingPayment = collecting
                                                     // Distribute discount proportionally per month
                                                     val totalBase = months * (selectedBatch?.monthlyFeeAmount ?: 0.0)
-                                                    val discPerMonth = if (totalBase > 0.0) discountAmount / months else 0.0
+                                                    val discPerMonth = if (totalBase > 0.0) {
+                                                        kotlin.math.round(discountAmount / months * 100.0) / 100.0
+                                                    } else 0.0
                                                     for (i in realStart..realEnd) {
                                                         if (remainingPayment <= 0.0) break
                                                         val monthLabel = monthOptions[i].label
@@ -951,6 +956,7 @@ fun UnifiedCollectScreen(
                                                                 paymentMethod = paymentMethod,
                                                                 note = note.ifBlank { null },
                                                                 receiptText = receiptText,
+                                                                receiptGroupId = receiptGroupId,
                                                                 now = now
                                                             )
                                                             receiptNumber = receiptNumber ?: result.receiptNumber
@@ -971,6 +977,7 @@ fun UnifiedCollectScreen(
                                                                 paymentDateMs = now,
                                                                 note = null,
                                                                 receiptText = null,
+                                                                receiptGroupId = receiptGroupId,
                                                                 now = now
                                                             )
                                                             receiptNumber = receiptNumber ?: result.receiptNumber
@@ -978,31 +985,56 @@ fun UnifiedCollectScreen(
                                                         remainingPayment -= monthPayment
                                                     }
                                                 } else {
-                                                    val result = feeRepository.createFeeWithInitialPayment(
-                                                        instituteId = instId,
-                                                        collectedByUserId = userId,
-                                                        studentId = student.id,
-                                                        batchId = selectedBatchId,
-                                                        feePeriod = feePeriod.trim(),
-                                                        feeType = if (autoFeeType == "Advance Fee") "advance_fee" else "monthly_fee",
-                                                        dueDateMs = now,
-                                                        baseAmount = base,
-                                                        discountAmount = discountAmount,
-                                                        lateFeeAmount = 0.0,
-                                                        collectedAmount = collecting,
-                                                        paymentMethod = paymentMethod,
-                                                        paymentDateMs = now,
-                                                        note = note.ifBlank { null },
-                                                        receiptText = receiptText,
-                                                        now = now
-                                                    )
-                                                    receiptNumber = result.receiptNumber
+                                                    // Single-month path — check for existing fee first
+                                                    val existingFee = studentAllFees.firstOrNull { fee ->
+                                                        fee.studentId == student.id &&
+                                                            fee.batchId == selectedBatchId &&
+                                                            fee.feePeriod.equals(feePeriod.trim(), ignoreCase = true) &&
+                                                            fee.cancelledAtMs == null
+                                                    }
+                                                    if (existingFee != null) {
+                                                        val result = feeRepository.collectPayment(
+                                                            instituteId = instId,
+                                                            collectedByUserId = userId,
+                                                            feeId = existingFee.id,
+                                                            amount = collecting,
+                                                            paymentMethod = paymentMethod,
+                                                            note = note.ifBlank { null },
+                                                            receiptText = receiptText,
+                                                            receiptGroupId = receiptGroupId,
+                                                            now = now
+                                                        )
+                                                        receiptNumber = result.receiptNumber
+                                                    } else {
+                                                        val result = feeRepository.createFeeWithInitialPayment(
+                                                            instituteId = instId,
+                                                            collectedByUserId = userId,
+                                                            studentId = student.id,
+                                                            batchId = selectedBatchId,
+                                                            feePeriod = feePeriod.trim(),
+                                                            feeType = if (autoFeeType == "Advance Fee") "advance_fee" else "monthly_fee",
+                                                            dueDateMs = now,
+                                                            baseAmount = base,
+                                                            discountAmount = kotlin.math.round(discountAmount * 100.0) / 100.0,
+                                                            lateFeeAmount = 0.0,
+                                                            collectedAmount = collecting,
+                                                            paymentMethod = paymentMethod,
+                                                            paymentDateMs = now,
+                                                            note = note.ifBlank { null },
+                                                            receiptText = receiptText,
+                                                            receiptGroupId = receiptGroupId,
+                                                            now = now
+                                                        )
+                                                        receiptNumber = result.receiptNumber
+                                                    }
                                                 }
                                                 receiptNumber ?: "payment"
                                             }
                                             snackbarHostState.showSnackbar("Payment saved: $receiptNumber")
                                             note = ""
                                             loadStudentLedger(student)
+                                        } catch (e: FinancialOperationPendingException) {
+                                            collectError = e.message ?: "Payment is pending reconciliation. Do not retry it."
                                         } catch (e: IllegalArgumentException) {
                                             collectError = e.message ?: "Payment rejected."
                                         } catch (e: Exception) {
@@ -1035,12 +1067,12 @@ fun UnifiedCollectScreen(
 
     editingHistoryItem?.let { item ->
         val student = selectedStudent
-        EditPaymentDialog(
+        PaymentEditDialog(
             item = item,
-            batches = studentBatches,
+            isSubmitting = isSaving,
             onDismiss = { editingHistoryItem = null },
-            onDelete = {
-                if (student == null) return@EditPaymentDialog
+            onSave = { update ->
+                if (student == null) return@PaymentEditDialog
                 scope.launch {
                     val instId = SessionManager.currentInstituteId.value
                     if (instId == null) {
@@ -1048,111 +1080,99 @@ fun UnifiedCollectScreen(
                         return@launch
                     }
                     try {
-                        val payment = item.payment
-                        feeRepository.deletePayment(
-                            paymentId = payment.id,
+                        isSaving = true
+                        feeRepository.ownerEditPayment(
+                            paymentId = item.payment.id,
                             instituteId = instId,
-                            feeId = payment.feeId
+                            amount = update.amount,
+                            paymentMethod = update.paymentMethod,
+                            paymentDateMs = update.paymentDateMs,
+                            feePeriod = update.feePeriod,
+                            note = update.note,
+                            reason = update.reason
                         )
                         editingHistoryItem = null
                         loadStudentLedger(student)
-                        snackbarHostState.showSnackbar("Payment deleted.")
+                        snackbarHostState.showSnackbar("Payment updated successfully.")
+                    } catch (e: FinancialOperationPendingException) {
+                        snackbarHostState.showSnackbar("Payment update is pending. Do not submit it again.")
                     } catch (e: Exception) {
-                        snackbarHostState.showSnackbar(e.message ?: "Could not delete payment.")
+                        snackbarHostState.showSnackbar(e.message ?: "Could not update this payment.")
+                    } finally {
+                        isSaving = false
                     }
                 }
             },
-            onSave = { editRequest ->
-                if (student == null) return@EditPaymentDialog
+            onDelete = { deletingHistoryItem = item }
+        )
+    }
+
+    reversingHistoryItem?.let { item ->
+        val student = selectedStudent
+        PaymentReversalDialog(
+            item = item,
+            isSubmitting = isSaving,
+            onDismiss = { reversingHistoryItem = null },
+            onReverse = { reason ->
+                if (student == null) return@PaymentReversalDialog
                 scope.launch {
                     val instId = SessionManager.currentInstituteId.value
                     if (instId == null) {
                         snackbarHostState.showSnackbar("No active institute session.")
                         return@launch
                     }
-                    if (editRequest.amount <= 0.0) {
-                        snackbarHostState.showSnackbar("Enter a valid payment amount.")
-                        return@launch
+                    try {
+                        isSaving = true
+                        val payment = item.payment
+                        feeRepository.reversePayment(
+                            paymentId = payment.id,
+                            instituteId = instId,
+                            reason = reason
+                        )
+                        reversingHistoryItem = null
+                        loadStudentLedger(student)
+                        snackbarHostState.showSnackbar("Payment cancelled. The original receipt is kept in history.")
+                    } catch (e: Exception) {
+                        snackbarHostState.showSnackbar(e.message ?: "Could not cancel this payment.")
+                    } finally {
+                        isSaving = false
                     }
-                    if (editRequest.feePeriod.isBlank()) {
-                        snackbarHostState.showSnackbar("Enter fee month/period.")
+                }
+            }
+        )
+    }
+
+    deletingHistoryItem?.let { item ->
+        val student = selectedStudent
+        PaymentPermanentDeleteDialog(
+            item = item,
+            isSubmitting = isSaving,
+            onDismiss = { deletingHistoryItem = null },
+            onDelete = { reason ->
+                if (student == null) return@PaymentPermanentDeleteDialog
+                scope.launch {
+                    val instId = SessionManager.currentInstituteId.value
+                    if (instId == null) {
+                        snackbarHostState.showSnackbar("No active institute session.")
                         return@launch
                     }
                     try {
-                        val payment = item.payment
-                        val fee = db.feeDao().getFeeById(payment.feeId, instId)
-                        if (fee == null) {
-                            snackbarHostState.showSnackbar("Fee record not found.")
-                            return@launch
-                        }
-                        val newTotal = (editRequest.baseAmount - editRequest.discountAmount).coerceAtLeast(0.0)
-                        val allPaymentsForFee = db.paymentDao().getAllPaymentsOnce(instId)
-                            .filter { it.feeId == fee.id && it.status == "completed" }
-                        val updatedPaid = allPaymentsForFee.sumOf {
-                            if (it.id == payment.id) editRequest.amount else it.amount
-                        }
-                        if (updatedPaid - newTotal > 0.001) {
-                            snackbarHostState.showSnackbar("Payment rejected - amount exceeds payable fee.")
-                            return@launch
-                        }
-                        val updatedDue = (newTotal - updatedPaid).coerceAtLeast(0.0)
-                        val updatedFee = fee.copy(
-                            batchId = editRequest.batchId,
-                            feePeriod = editRequest.feePeriod.trim(),
-                            dueDateMs = editRequest.paymentDateMs,
-                            baseAmount = editRequest.baseAmount,
-                            discountAmount = editRequest.discountAmount,
-                            totalAmount = newTotal,
-                            paidAmount = updatedPaid,
-                            dueAmount = updatedDue,
-                            status = when {
-                                updatedDue <= 0.001 -> "paid"
-                                updatedPaid > 0.001 -> "partially_paid"
-                                else -> "unpaid"
-                            },
-                            updatedAtMs = System.currentTimeMillis()
+                        isSaving = true
+                        feeRepository.ownerDeletePayment(
+                            paymentId = item.payment.id,
+                            instituteId = instId,
+                            reason = reason
                         )
-                        FinanceSyncHelper.upsertFee(updatedFee)
-                        db.feeDao().updateFee(updatedFee)
-                        val updatedPayment = payment.copy(
-                            amount = editRequest.amount,
-                            paymentMethod = editRequest.method,
-                            paymentDateMs = editRequest.paymentDateMs,
-                            note = editRequest.note.ifBlank { null },
-                            updatedAtMs = System.currentTimeMillis()
-                        )
-                        FinanceSyncHelper.upsertPayment(updatedPayment)
-                        db.paymentDao().insertPayment(updatedPayment)
-                        db.receiptDao().getReceiptByPaymentIdOnce(instId, payment.id)?.let { receipt ->
-                            val updatedReceipt = receipt.copy(
-                                totalAmount = updatedFee.totalAmount,
-                                paidAmount = updatedPaid,
-                                dueAmount = updatedDue,
-                                receiptDateMs = editRequest.paymentDateMs,
-                                paymentMethod = editRequest.method,
-                                receiptText = buildHistoryReceiptText(
-                                    institute = instituteInfo,
-                                    student = student,
-                                    item = StudentPaymentHistory(
-                                        payment = updatedPayment,
-                                        feePeriod = editRequest.feePeriod.trim(),
-                                        batchId = editRequest.batchId,
-                                        batchName = editRequest.batchName,
-                                        baseAmount = editRequest.baseAmount,
-                                        discountAmount = editRequest.discountAmount,
-                                        totalAmount = newTotal,
-                                        remainingDue = updatedDue
-                                    )
-                                )
-                            )
-                            FinanceSyncHelper.upsertReceipt(updatedReceipt)
-                            db.receiptDao().insertReceipt(updatedReceipt)
-                        }
+                        deletingHistoryItem = null
                         editingHistoryItem = null
                         loadStudentLedger(student)
-                        snackbarHostState.showSnackbar("Payment history updated.")
+                        snackbarHostState.showSnackbar("Payment permanently deleted.")
+                    } catch (e: FinancialOperationPendingException) {
+                        snackbarHostState.showSnackbar("Deletion is pending. Do not submit it again.")
                     } catch (e: Exception) {
-                        snackbarHostState.showSnackbar(e.message ?: "Could not update payment.")
+                        snackbarHostState.showSnackbar(e.message ?: "Could not delete this payment.")
+                    } finally {
+                        isSaving = false
                     }
                 }
             }
@@ -1289,9 +1309,12 @@ private fun PaymentHistoryCard(
     onWhatsApp: (StudentPaymentHistory) -> Unit,
     onMessage: (StudentPaymentHistory) -> Unit,
     onShare: (StudentPaymentHistory) -> Unit,
-    onEdit: (StudentPaymentHistory) -> Unit
+    onEdit: (StudentPaymentHistory) -> Unit,
+    onReverse: (StudentPaymentHistory) -> Unit,
+    onDelete: (StudentPaymentHistory) -> Unit
 ) {
-    val isAdmin = SessionManager.isAdmin()
+    val currentUserRole by SessionManager.currentUserRole.collectAsState()
+    val isFinancialOwner = currentUserRole in setOf("InstituteOwner", "SuperAdmin")
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
@@ -1348,8 +1371,16 @@ private fun PaymentHistoryCard(
                             item {
                                 HistoryActionButton("Share", Icons.Filled.Share, ElectricBlue) { onShare(item) }
                             }
-                            item {
-                                HistoryActionButton("Edit", Icons.Filled.Payments, AccentAmber) { if (isAdmin) onEdit(item) }
+                            if (isFinancialOwner && item.payment.status == "completed") {
+                                item {
+                                    HistoryActionButton("Edit Payment", Icons.Filled.Payments, Cyan) { onEdit(item) }
+                                }
+                                item {
+                                    HistoryActionButton("Reverse / Cancel Payment", Icons.Filled.Close, AccentRed) { onReverse(item) }
+                                }
+                                item {
+                                    HistoryActionButton("Delete Permanently", Icons.Filled.Delete, AccentRed) { onDelete(item) }
+                                }
                             }
                         }
                     }
@@ -1381,6 +1412,267 @@ private fun HistoryActionButton(
     }
 }
 
+private data class PaymentCorrectionRequest(
+    val amount: Double,
+    val paymentMethod: String,
+    val paymentDateMs: Long,
+    val feePeriod: String,
+    val note: String?,
+    val reason: String
+)
+
+private fun monthOptionMatchesFeePeriod(option: UcMonthYear, feePeriod: String): Boolean {
+    val periodStart = feePeriod.substringBefore(" - ").trim()
+    val calendar = Calendar.getInstance().apply { set(option.year, option.month - 1, 1) }
+    val longLabel = SimpleDateFormat("MMMM yyyy", Locale.getDefault()).format(calendar.time)
+    return option.label.equals(periodStart, ignoreCase = true) || longLabel.equals(periodStart, ignoreCase = true)
+}
+
+@Composable
+private fun PaymentEditDialog(
+    item: StudentPaymentHistory,
+    isSubmitting: Boolean,
+    onDismiss: () -> Unit,
+    onSave: (PaymentCorrectionRequest) -> Unit,
+    onDelete: () -> Unit
+) {
+    val monthOptions = remember { generateMonthOptions() }
+    val initialMonthIndex = monthOptions.indexOfFirst { monthOptionMatchesFeePeriod(it, item.feePeriod) }
+        .takeIf { it >= 0 } ?: monthOptions.indexOfFirst {
+            it.label.equals(monthLabelForOffset(0), ignoreCase = true)
+        }.coerceAtLeast(0)
+    var amount by remember(item.payment.id) { mutableStateOf("%.2f".format(Locale.US, item.payment.amount)) }
+    var paymentMethod by remember(item.payment.id) { mutableStateOf(item.payment.paymentMethod) }
+    var paymentDate by remember(item.payment.id) { mutableStateOf(formatEditDate(item.payment.paymentDateMs)) }
+    var selectedMonthIndex by remember(item.payment.id) { mutableIntStateOf(initialMonthIndex) }
+    var note by remember(item.payment.id) { mutableStateOf(item.payment.note.orEmpty()) }
+    var reason by remember(item.payment.id) { mutableStateOf("") }
+    val validAmount = amount.toDoubleOrNull()?.takeIf { it > 0.0 }
+    val validDate = parseEditDate(paymentDate)
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        modifier = Modifier.fillMaxWidth(0.94f),
+        containerColor = CardBg,
+        shape = RoundedCornerShape(20.dp),
+        title = {
+            Column {
+                Text("Edit Payment", color = TextWhite, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Text(item.payment.receiptNumber, color = TextMuted, fontSize = 11.sp)
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier.heightIn(max = 470.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    "Correct this saved payment. The receipt number stays the same.",
+                    color = TextMuted,
+                    fontSize = 12.sp
+                )
+                SmartTextField(
+                    value = amount,
+                    onValueChange = { amount = moneyInput(it) },
+                    placeholder = "Collected amount",
+                    keyboardType = KeyboardType.Decimal,
+                    leadingIcon = Icons.Filled.Payments
+                )
+                MonthPickerField(
+                    label = "Payment month",
+                    selectedIdx = selectedMonthIndex,
+                    monthOptions = monthOptions,
+                    onSelected = { selectedMonthIndex = it }
+                )
+                Text(
+                    "Changing the month moves only this payment; other receipts stay unchanged.",
+                    color = TextMuted,
+                    fontSize = 11.sp
+                )
+                SmartTextField(
+                    value = paymentDate,
+                    onValueChange = { paymentDate = it },
+                    placeholder = "Payment date (dd/MM/yyyy)"
+                )
+                Text("Payment method", color = TextMuted, fontSize = 12.sp)
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(listOf("cash", "bkash", "nagad", "bank")) { option ->
+                        FilterChip(
+                            selected = paymentMethod == option,
+                            onClick = { paymentMethod = option },
+                            label = { Text(option.replaceFirstChar { it.uppercase() }) },
+                            colors = smartChipColors()
+                        )
+                    }
+                }
+                SmartTextField(
+                    value = note,
+                    onValueChange = { note = it.take(1000) },
+                    placeholder = "Note (optional)",
+                    modifier = Modifier.heightIn(min = 48.dp)
+                )
+                SmartTextField(
+                    value = reason,
+                    onValueChange = { reason = it.take(500) },
+                    placeholder = "Why are you correcting this payment?",
+                    modifier = Modifier.heightIn(min = 48.dp)
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val selectedPeriod = if (selectedMonthIndex == initialMonthIndex) {
+                        item.feePeriod
+                    } else {
+                        monthOptions.getOrNull(selectedMonthIndex)?.label ?: item.feePeriod
+                    }
+                    val correctedAmount = validAmount ?: return@Button
+                    val correctedDate = validDate ?: return@Button
+                    onSave(
+                        PaymentCorrectionRequest(
+                            amount = correctedAmount,
+                            paymentMethod = paymentMethod,
+                            paymentDateMs = correctedDate,
+                            feePeriod = selectedPeriod,
+                            note = note.trim().takeIf { it.isNotEmpty() },
+                            reason = reason.trim()
+                        )
+                    )
+                },
+                enabled = !isSubmitting && validAmount != null && validDate != null && reason.trim().length >= 3,
+                colors = ButtonDefaults.buttonColors(containerColor = ElectricBlue)
+            ) {
+                Text(if (isSubmitting) "Saving..." else "Save Changes", color = Color.White, fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextButton(onClick = onDelete, enabled = !isSubmitting) {
+                    Text("Delete", color = AccentRed)
+                }
+                TextButton(onClick = onDismiss, enabled = !isSubmitting) {
+                    Text("Cancel", color = TextMuted)
+                }
+            }
+        }
+    )
+}
+
+@Composable
+private fun PaymentPermanentDeleteDialog(
+    item: StudentPaymentHistory,
+    isSubmitting: Boolean,
+    onDismiss: () -> Unit,
+    onDelete: (String) -> Unit
+) {
+    var reason by remember(item.payment.id) { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = CardBg,
+        shape = RoundedCornerShape(20.dp),
+        title = { Text("Delete Payment Permanently?", color = TextWhite, fontSize = 18.sp, fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "This removes the payment and its receipt. The outstanding due will be recalculated. This cannot be undone.",
+                    color = TextMuted,
+                    fontSize = 12.sp
+                )
+                Card(
+                    Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = CardBgAlt),
+                    border = BorderStroke(1.dp, AccentRed.copy(alpha = 0.45f))
+                ) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text(item.payment.receiptNumber, color = TextWhite, fontWeight = FontWeight.Bold)
+                        Text("BDT ${formatSmartAmount(item.payment.amount)} • ${item.feePeriod}", color = TextMuted, fontSize = 12.sp)
+                    }
+                }
+                SmartTextField(
+                    value = reason,
+                    onValueChange = { reason = it.take(500) },
+                    placeholder = "Why are you deleting this payment?",
+                    modifier = Modifier.heightIn(min = 48.dp)
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onDelete(reason.trim()) },
+                enabled = !isSubmitting && reason.trim().length >= 3,
+                colors = ButtonDefaults.buttonColors(containerColor = AccentRed)
+            ) {
+                Text(if (isSubmitting) "Deleting..." else "Delete Permanently", color = Color.White, fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !isSubmitting) { Text("Keep Payment", color = TextMuted) }
+        }
+    )
+}
+
+@Composable
+private fun PaymentReversalDialog(
+    item: StudentPaymentHistory,
+    isSubmitting: Boolean,
+    onDismiss: () -> Unit,
+    onReverse: (String) -> Unit
+) {
+    var reason by remember(item.payment.id) { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = CardBg,
+        shape = RoundedCornerShape(20.dp),
+        title = {
+            Column {
+                Text("Reverse / Cancel Payment", color = TextWhite, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Text(item.payment.receiptNumber, color = TextMuted, fontSize = 11.sp)
+            }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "Use this only when the full payment was entered by mistake. The old receipt will stay in history for safety.",
+                    color = TextMuted,
+                    fontSize = 12.sp
+                )
+                Card(
+                    Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = CardBgAlt),
+                    border = BorderStroke(1.dp, BorderSub)
+                ) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("Amount: BDT ${formatSmartAmount(item.payment.amount)}", color = TextWhite)
+                        Text("Period: ${item.feePeriod}", color = TextMuted, fontSize = 12.sp)
+                        Text("Method: ${item.payment.paymentMethod}", color = TextMuted, fontSize = 12.sp)
+                    }
+                }
+                SmartTextField(
+                    value = reason,
+                    onValueChange = { reason = it.take(500) },
+                    placeholder = "Why are you cancelling this payment?",
+                    modifier = Modifier.heightIn(min = 48.dp)
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onReverse(reason.trim()) },
+                enabled = !isSubmitting && reason.trim().length >= 3,
+                colors = ButtonDefaults.buttonColors(containerColor = AccentRed)
+            ) {
+                Text(if (isSubmitting) "Cancelling..." else "Cancel Payment", color = Color.White, fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Keep Payment", color = TextMuted) }
+        }
+    )
+}
+
+/* Retired P0-05 code kept only in source history; excluded from compilation.
+@Suppress("unused")
 @Composable
 private fun EditPaymentDialog(
     item: StudentPaymentHistory,
@@ -1630,6 +1922,7 @@ private fun EditPaymentDialog(
 }
 
 private fun Double.ifZero(fallback: Double): Double = if (this == 0.0) fallback else this
+*/
 
 @Composable
 private fun ExistingDueSelector(

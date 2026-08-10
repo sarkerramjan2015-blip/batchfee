@@ -17,27 +17,27 @@ class ProfitLossViewModel(private val db: AppDatabase) : ViewModel() {
     private val _totalExpense = MutableStateFlow(0.0)
     val totalExpense = _totalExpense.asStateFlow()
 
-    init {
-        loadData()
-    }
+    private val _isLoading = MutableStateFlow(true)
+    val isLoading = _isLoading.asStateFlow()
+
+    init { loadData() }
 
     private fun loadData() {
         val instId = SessionManager.currentInstituteId.value ?: return
         viewModelScope.launch {
             InstituteCacheRefreshManager.refreshIfStaleInBackground(db, instId)
         }
-        
         viewModelScope.launch {
             db.paymentDao().getRecentPayments(instId).collect { payments ->
                 val income = payments.filter { it.status == "completed" }.sumOf { it.amount }
                 _totalIncome.value = income
+                _isLoading.value = false
             }
         }
-        
         viewModelScope.launch {
             db.expenseDao().getExpensesByInstitute(instId).collect { expenses ->
-                val exp = expenses.sumOf { it.amount }
-                _totalExpense.value = exp
+                _totalExpense.value = expenses.sumOf { it.amount }
+                _isLoading.value = false
             }
         }
     }

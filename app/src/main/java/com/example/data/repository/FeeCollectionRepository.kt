@@ -1,47 +1,11 @@
-﻿package com.batchfee.edu.data.repository
+package com.batchfee.edu.data.repository
 
 import androidx.room.withTransaction
 import com.batchfee.edu.data.database.AppDatabase
-import com.batchfee.edu.data.firestore.FinanceSyncHelper
 import com.batchfee.edu.data.models.FeeEntity
-import com.batchfee.edu.data.models.PaymentEntity
-import com.batchfee.edu.data.models.ReceiptEntity
+import com.batchfee.edu.data.models.FinancialOutboxEntity
 import java.util.UUID
 import kotlin.math.abs
-
-/**
- * Cloud persistence used by fee mutations. Keeping it behind this interface lets
- * the repository's local accounting rules be tested without a Firebase session.
- */
-interface FinanceSyncGateway {
-    suspend fun upsertFee(fee: FeeEntity)
-    suspend fun upsertPayment(payment: PaymentEntity)
-    suspend fun upsertReceipt(receipt: ReceiptEntity)
-    suspend fun deletePayment(paymentId: String, instituteId: String)
-    suspend fun deleteReceipt(receiptId: String, instituteId: String)
-}
-
-object FirestoreFinanceSyncGateway : FinanceSyncGateway {
-    override suspend fun upsertFee(fee: FeeEntity) {
-        FinanceSyncHelper.upsertFee(fee)
-    }
-
-    override suspend fun upsertPayment(payment: PaymentEntity) {
-        FinanceSyncHelper.upsertPayment(payment)
-    }
-
-    override suspend fun upsertReceipt(receipt: ReceiptEntity) {
-        FinanceSyncHelper.upsertReceipt(receipt)
-    }
-
-    override suspend fun deletePayment(paymentId: String, instituteId: String) {
-        FinanceSyncHelper.deletePayment(paymentId, instituteId)
-    }
-
-    override suspend fun deleteReceipt(receiptId: String, instituteId: String) {
-        FinanceSyncHelper.deleteReceipt(receiptId, instituteId)
-    }
-}
 
 data class FeeCollectionResult(
     val paymentId: String,
@@ -57,7 +21,7 @@ data class FeeCreationResult(
 
 class FeeCollectionRepository(
     private val db: AppDatabase,
-    private val financeSync: FinanceSyncGateway = FirestoreFinanceSyncGateway
+    private val ledgerGateway: FinancialLedgerGateway = FirebaseFinancialLedgerGateway()
 ) {
 
     suspend fun createFee(
@@ -71,32 +35,24 @@ class FeeCollectionRepository(
         discountAmount: Double,
         lateFeeAmount: Double,
         note: String? = null,
-        now: Long = System.currentTimeMillis()
-    ): FeeEntity = db.withTransaction {
-        val totalAmount = calculateTotal(baseAmount, discountAmount, lateFeeAmount)
-        val fee = FeeEntity(
-            id = UUID.randomUUID().toString(),
-            instituteId = instituteId,
-            studentId = studentId,
-            batchId = batchId,
-            feePeriod = feePeriod,
-            feeType = normalizeFeeType(feeType),
-            dueDateMs = dueDateMs,
-            baseAmount = baseAmount,
-            discountAmount = discountAmount,
-            lateFeeAmount = lateFeeAmount,
-            totalAmount = totalAmount,
-            paidAmount = 0.0,
-            dueAmount = totalAmount,
-            status = statusForNewFee(totalAmount),
-            note = note,
-            createdAtMs = now,
-            updatedAtMs = now,
-            cancelledAtMs = null
+        now: Long = System.currentTimeMillis(),
+        operationId: String = UUID.randomUUID().toString()
+    ): FeeEntity {
+        val result = execute(
+            request = baseRequest(operationId, instituteId, "create_fee") + mapOf(
+                "studentId" to studentId,
+                "batchId" to batchId,
+                "feePeriod" to feePeriod,
+                "feeType" to feeType,
+                "dueDateMs" to dueDateMs,
+                "baseAmount" to baseAmount,
+                "discountAmount" to discountAmount,
+                "lateFeeAmount" to lateFeeAmount,
+                "note" to note
+            ),
+            queuedAtMs = now
         )
-        financeSync.upsertFee(fee)
-        db.feeDao().insertFee(fee)
-        fee
+        return result.fees.singleOrNull() ?: error("Fee was not returned by the ledger service.")
     }
 
     suspend fun createFeeWithInitialPayment(
@@ -115,59 +71,38 @@ class FeeCollectionRepository(
         paymentDateMs: Long,
         note: String?,
         receiptText: String?,
-        now: Long = System.currentTimeMillis()
-    ): FeeCreationResult = db.withTransaction {
-        val totalAmount = calculateTotal(baseAmount, discountAmount, lateFeeAmount)
-        if (collectedAmount < 0.0) {
-            throw IllegalArgumentException("Collected amount cannot be negative.")
-        }
-        if (collectedAmount - totalAmount > EPSILON) {
-            throw IllegalArgumentException("Payment rejected - amount exceeds remaining due.")
-        }
-
-        val fee = FeeEntity(
-            id = UUID.randomUUID().toString(),
-            instituteId = instituteId,
-            studentId = studentId,
-            batchId = batchId,
-            feePeriod = feePeriod,
-            feeType = normalizeFeeType(feeType),
-            dueDateMs = dueDateMs,
-            baseAmount = baseAmount,
-            discountAmount = discountAmount,
-            lateFeeAmount = lateFeeAmount,
-            totalAmount = totalAmount,
-            paidAmount = 0.0,
-            dueAmount = totalAmount,
-            status = statusForNewFee(totalAmount),
-            note = note,
-            createdAtMs = now,
-            updatedAtMs = now,
-            cancelledAtMs = null
+        now: Long = System.currentTimeMillis(),
+        receiptGroupId: String? = null,
+        transactionId: String? = null,
+        operationId: String = UUID.randomUUID().toString()
+    ): FeeCreationResult {
+        require(collectedByUserId.isNotBlank()) { "A signed-in collector is required." }
+        val result = execute(
+            request = baseRequest(operationId, instituteId, "create_fee") + mapOf(
+                "studentId" to studentId,
+                "batchId" to batchId,
+                "feePeriod" to feePeriod,
+                "feeType" to feeType,
+                "dueDateMs" to dueDateMs,
+                "baseAmount" to baseAmount,
+                "discountAmount" to discountAmount,
+                "lateFeeAmount" to lateFeeAmount,
+                "amount" to collectedAmount,
+                "paymentMethod" to paymentMethod,
+                "paymentDateMs" to paymentDateMs,
+                "note" to note,
+                "receiptText" to receiptText,
+                "receiptGroupId" to receiptGroupId,
+                "transactionId" to transactionId
+            ),
+            queuedAtMs = now
         )
-        financeSync.upsertFee(fee)
-        db.feeDao().insertFee(fee)
-
-        if (collectedAmount <= 0.0) {
-            FeeCreationResult(fee = fee)
-        } else {
-            val result = collectFromFee(
-                fee = fee,
-                instituteId = instituteId,
-                collectedByUserId = collectedByUserId,
-                amount = collectedAmount,
-                paymentMethod = paymentMethod,
-                paymentDateMs = paymentDateMs,
-                note = note,
-                receiptText = receiptText,
-                now = now
-            )
-            FeeCreationResult(
-                fee = result.updatedFee,
-                paymentId = result.paymentId,
-                receiptNumber = result.receiptNumber
-            )
-        }
+        val fee = result.fees.singleOrNull() ?: error("Fee was not returned by the ledger service.")
+        return FeeCreationResult(
+            fee = fee,
+            paymentId = result.payments.singleOrNull()?.id,
+            receiptNumber = result.receipts.singleOrNull()?.receiptNumber
+        )
     }
 
     suspend fun collectPayment(
@@ -179,21 +114,26 @@ class FeeCollectionRepository(
         paymentDateMs: Long = System.currentTimeMillis(),
         note: String? = null,
         receiptText: String? = null,
-        now: Long = System.currentTimeMillis()
-    ): FeeCollectionResult = db.withTransaction {
-        val fee = db.feeDao().getFeeById(feeId, instituteId)
-            ?: throw IllegalArgumentException("Fee not found.")
-        collectFromFee(
-            fee = fee,
-            instituteId = instituteId,
-            collectedByUserId = collectedByUserId,
-            amount = amount,
-            paymentMethod = paymentMethod,
-            paymentDateMs = paymentDateMs,
-            note = note,
-            receiptText = receiptText,
-            now = now
+        now: Long = System.currentTimeMillis(),
+        receiptGroupId: String? = null,
+        transactionId: String? = null,
+        operationId: String = UUID.randomUUID().toString()
+    ): FeeCollectionResult {
+        require(collectedByUserId.isNotBlank()) { "A signed-in collector is required." }
+        val result = execute(
+            request = baseRequest(operationId, instituteId, "collect_payment") + mapOf(
+                "feeId" to feeId,
+                "amount" to amount,
+                "paymentMethod" to paymentMethod,
+                "paymentDateMs" to paymentDateMs,
+                "note" to note,
+                "receiptText" to receiptText,
+                "receiptGroupId" to receiptGroupId,
+                "transactionId" to transactionId
+            ),
+            queuedAtMs = now
         )
+        return result.asCollectionResult()
     }
 
     suspend fun updateFeeAndCollectPayment(
@@ -206,214 +146,285 @@ class FeeCollectionRepository(
         paymentMethod: String,
         feePeriod: String,
         note: String? = null,
-        now: Long = System.currentTimeMillis()
-    ): FeeCollectionResult = db.withTransaction {
-        val fee = db.feeDao().getFeeById(feeId, instituteId)
-            ?: throw IllegalArgumentException("Fee not found.")
-        if (fee.cancelledAtMs != null) {
-            throw IllegalArgumentException("Fee is cancelled.")
-        }
-        if (newBaseAmount < 0.0) {
-            throw IllegalArgumentException("Fee amount cannot be negative.")
-        }
-        if (discountPercent < 0.0 || discountPercent > 100.0) {
-            throw IllegalArgumentException("Discount must be between 0 and 100%.")
-        }
-
-        val discountAmount = newBaseAmount * discountPercent / 100.0
-        val totalAmount = calculateTotal(newBaseAmount, discountAmount, 0.0)
-        if (totalAmount + EPSILON < fee.paidAmount) {
-            throw IllegalArgumentException("Adjusted fee total cannot be less than already paid.")
-        }
-        val adjustedDue = (totalAmount - fee.paidAmount).coerceAtLeast(0.0)
-        if (collectedAmount - adjustedDue > EPSILON) {
-            throw IllegalArgumentException("Payment rejected - amount exceeds remaining due.")
-        }
-
-        val adjustedFee = fee.copy(
-            baseAmount = newBaseAmount,
-            discountAmount = discountAmount,
-            lateFeeAmount = 0.0,
-            totalAmount = totalAmount,
-            feePeriod = feePeriod,
-            dueAmount = adjustedDue,
-            status = statusForAdjustedFee(adjustedDue, fee.paidAmount),
-            updatedAtMs = now
+        now: Long = System.currentTimeMillis(),
+        operationId: String = UUID.randomUUID().toString()
+    ): FeeCollectionResult {
+        require(collectedByUserId.isNotBlank()) { "A signed-in collector is required." }
+        val result = execute(
+            request = baseRequest(operationId, instituteId, "adjust_and_collect") + mapOf(
+                "feeId" to feeId,
+                "newBaseAmount" to newBaseAmount,
+                "discountPercent" to discountPercent,
+                "amount" to collectedAmount,
+                "paymentMethod" to paymentMethod,
+                "paymentDateMs" to now,
+                "feePeriod" to feePeriod,
+                "note" to note
+            ),
+            queuedAtMs = now
         )
-        financeSync.upsertFee(adjustedFee)
-        db.feeDao().updateFee(adjustedFee)
+        return result.asCollectionResult()
+    }
 
-        collectFromFee(
-            fee = adjustedFee,
-            instituteId = instituteId,
-            collectedByUserId = collectedByUserId,
-            amount = collectedAmount,
-            paymentMethod = paymentMethod,
-            paymentDateMs = now,
-            note = note,
-            receiptText = buildString {
-                append("Receipt\n")
-                append("Period: $feePeriod\n")
-                append("Base: BDT $newBaseAmount\n")
-                append("Discount (${discountPercent.toInt()}%): BDT ${"%.2f".format(discountAmount)}\n")
-                append("Payable: BDT ${"%.2f".format(totalAmount)}\n")
-                append("Collected Now: BDT ${"%.2f".format(collectedAmount)}")
-            },
-            now = now
+    suspend fun reversePayment(
+        paymentId: String,
+        instituteId: String,
+        reason: String,
+        now: Long = System.currentTimeMillis(),
+        operationId: String = UUID.randomUUID().toString()
+    ) {
+        require(reason.trim().length >= 3) { "A reversal reason is required." }
+        execute(
+            request = baseRequest(operationId, instituteId, "reverse_payment") + mapOf(
+                "paymentId" to paymentId,
+                "reason" to reason.trim()
+            ),
+            queuedAtMs = now
         )
     }
 
-    private suspend fun collectFromFee(
-        fee: FeeEntity,
+    suspend fun ownerEditPayment(
+        paymentId: String,
         instituteId: String,
-        collectedByUserId: String,
         amount: Double,
         paymentMethod: String,
         paymentDateMs: Long,
+        feePeriod: String,
         note: String?,
-        receiptText: String?,
-        now: Long
+        reason: String,
+        now: Long = System.currentTimeMillis(),
+        operationId: String = UUID.randomUUID().toString()
     ): FeeCollectionResult {
-        if (fee.cancelledAtMs != null) {
-            throw IllegalArgumentException("Fee is cancelled.")
-        }
-        if (amount <= 0.0) {
-            throw IllegalArgumentException("Amount must be greater than zero.")
-        }
-        val remainingDue = fee.dueAmount.coerceAtLeast(0.0)
-        if (remainingDue <= EPSILON) {
-            throw IllegalArgumentException("Fee already settled.")
-        }
-        if (amount - remainingDue > EPSILON) {
-            throw IllegalArgumentException("Payment rejected - amount exceeds remaining due.")
-        }
-
-        val normalizedAmount = if (abs(remainingDue - amount) <= EPSILON) remainingDue else amount
-        val newDue = (remainingDue - normalizedAmount).let { if (it <= EPSILON) 0.0 else it }
-        val newPaid = if (newDue <= EPSILON) fee.totalAmount else fee.paidAmount + normalizedAmount
-        val updatedFee = fee.copy(
-            paidAmount = newPaid,
-            dueAmount = newDue,
-            status = statusAfterPayment(newDue),
-            updatedAtMs = now
+        require(reason.trim().length >= 3) { "A correction reason is required." }
+        val result = execute(
+            request = baseRequest(operationId, instituteId, "owner_edit_payment") + mapOf(
+                "paymentId" to paymentId,
+                "amount" to amount,
+                "paymentMethod" to paymentMethod,
+                "paymentDateMs" to paymentDateMs,
+                "feePeriod" to feePeriod,
+                "note" to note,
+                "reason" to reason.trim()
+            ),
+            queuedAtMs = now
         )
-        financeSync.upsertFee(updatedFee)
-        db.feeDao().updateFee(updatedFee)
-
-        val paymentId = UUID.randomUUID().toString()
-        val receiptNumber = "REC-$now"
-        val payment = PaymentEntity(
-            id = paymentId,
-            instituteId = instituteId,
-            feeId = fee.id,
-            studentId = fee.studentId,
-            amount = normalizedAmount,
-            paymentMethod = paymentMethod.lowercase(),
-            transactionId = null,
-            receiptNumber = receiptNumber,
-            paymentDateMs = paymentDateMs,
-            collectedByUserId = collectedByUserId,
-            status = "completed",
-            note = note,
-            createdAtMs = now,
-            updatedAtMs = now
-        )
-        financeSync.upsertPayment(payment)
-        db.paymentDao().insertPayment(payment)
-        val receipt = ReceiptEntity(
-            id = UUID.randomUUID().toString(),
-            instituteId = instituteId,
-            paymentId = paymentId,
-            feeId = fee.id,
-            studentId = fee.studentId,
-            receiptNumber = receiptNumber,
-            receiptDateMs = paymentDateMs,
-            totalAmount = updatedFee.totalAmount,
-            paidAmount = updatedFee.paidAmount,
-            dueAmount = updatedFee.dueAmount,
-            paymentMethod = paymentMethod.lowercase(),
-            receiptText = receiptText ?: "Payment of $normalizedAmount received.",
-            createdAtMs = now
-        )
-        financeSync.upsertReceipt(receipt)
-        db.receiptDao().insertReceipt(receipt)
-        return FeeCollectionResult(paymentId, receiptNumber, updatedFee)
+        val payment = result.payments.singleOrNull() ?: error("Updated payment was not returned by the ledger service.")
+        val fee = result.fees.singleOrNull { it.id == payment.feeId }
+            ?: error("Updated payment fee was not returned by the ledger service.")
+        val receipt = result.receipts.singleOrNull() ?: error("Updated receipt was not returned by the ledger service.")
+        return FeeCollectionResult(payment.id, receipt.receiptNumber, fee)
     }
 
-    private fun calculateTotal(baseAmount: Double, discountAmount: Double, lateFeeAmount: Double): Double {
-        if (baseAmount < 0.0) {
-            throw IllegalArgumentException("Fee amount cannot be negative.")
-        }
-        if (discountAmount < 0.0 || lateFeeAmount < 0.0) {
-            throw IllegalArgumentException("Discount and late fee cannot be negative.")
-        }
-        val total = baseAmount - discountAmount + lateFeeAmount
-        if (total < -EPSILON) {
-            throw IllegalArgumentException("Total fee cannot be negative.")
-        }
-        return total.coerceAtLeast(0.0)
-    }
-
-    suspend fun deletePayment(
+    suspend fun ownerDeletePayment(
         paymentId: String,
         instituteId: String,
-        feeId: String
-    ) = db.withTransaction {
-        val now = System.currentTimeMillis()
-        val fee = db.feeDao().getFeeById(feeId, instituteId)
-            ?: throw IllegalStateException("Fee record not found.")
-
-        val payment = db.paymentDao().getAllPaymentsOnce(instituteId)
-            .firstOrNull { it.id == paymentId }
-            ?: throw IllegalStateException("Payment not found.")
-
-        // Delete receipt
-        db.receiptDao().getReceiptByPaymentIdOnce(instituteId, paymentId)?.let { receipt ->
-            db.receiptDao().deleteReceiptByPaymentId(paymentId, instituteId)
-            financeSync.deleteReceipt(receipt.id, instituteId)
-        }
-
-        // Delete payment
-        db.paymentDao().deletePaymentById(paymentId, instituteId)
-        financeSync.deletePayment(paymentId, instituteId)
-
-        // Recalculate fee
-        val remainingPayments = db.paymentDao().getAllPaymentsOnce(instituteId)
-            .filter { it.feeId == fee.id && it.status == "completed" && it.id != paymentId }
-        val updatedPaid = remainingPayments.sumOf { it.amount }
-        val updatedDue = (fee.totalAmount - updatedPaid).coerceAtLeast(0.0)
-        val updatedFee = fee.copy(
-            paidAmount = updatedPaid,
-            dueAmount = updatedDue,
-            status = when {
-                updatedDue <= EPSILON -> "paid"
-                updatedPaid > 0.0 -> "partially_paid"
-                else -> "unpaid"
-            },
-            updatedAtMs = now
+        reason: String,
+        now: Long = System.currentTimeMillis(),
+        operationId: String = UUID.randomUUID().toString()
+    ) {
+        require(reason.trim().length >= 3) { "A deletion reason is required." }
+        execute(
+            request = baseRequest(operationId, instituteId, "owner_delete_payment") + mapOf(
+                "paymentId" to paymentId,
+                "reason" to reason.trim()
+            ),
+            queuedAtMs = now
         )
-        db.feeDao().updateFee(updatedFee)
-        financeSync.upsertFee(updatedFee)
     }
 
-    private fun normalizeFeeType(feeType: String): String =
-        feeType.trim().lowercase().ifBlank { "monthly_fee" }
+    suspend fun replayPendingOperations(instituteId: String) {
+        db.financialLedgerDao().getPendingOperations(instituteId).forEach { pending ->
+            try {
+                execute(FinancialRequestCodec.decode(pending.requestJson), pending.createdAtMs)
+            } catch (_: Exception) {
+                // The durable pending/failed status is retained for a later retry or operator review.
+            }
+        }
+    }
 
-    private fun statusAfterPayment(dueAmount: Double): String =
-        if (dueAmount <= EPSILON) "paid" else "partially_paid"
+    private suspend fun execute(
+        request: Map<String, Any?>,
+        queuedAtMs: Long
+    ): FinancialOperationResult {
+        val operationId = request["operationId"] as? String ?: error("Missing operation ID.")
+        val instituteId = request["instituteId"] as? String ?: error("Missing institute ID.")
+        val action = request["action"] as? String ?: error("Missing financial action.")
+        val existing = db.financialLedgerDao().getOperation(instituteId, operationId)
+        val pending = FinancialOutboxEntity(
+            operationId = operationId,
+            instituteId = instituteId,
+            action = action,
+            requestJson = FinancialRequestCodec.encode(request),
+            status = "pending",
+            attempts = (existing?.attempts ?: 0) + 1,
+            createdAtMs = existing?.createdAtMs ?: queuedAtMs,
+            updatedAtMs = System.currentTimeMillis(),
+            lastError = null
+        )
+        db.financialLedgerDao().upsertOutbox(pending)
 
-    private fun statusForNewFee(dueAmount: Double): String =
-        if (dueAmount <= EPSILON) "paid" else "unpaid"
+        return try {
+            val result = ledgerGateway.commit(request)
+            validateCanonicalResult(request, result)
+            db.withTransaction {
+                result.fees.forEach { fee ->
+                    fee.businessKey?.let { businessKey ->
+                        val existingFee = db.feeDao().getFeeByBusinessKey(fee.instituteId, businessKey)
+                        check(existingFee == null || existingFee.id == fee.id) {
+                            "Local fee business key collision."
+                        }
+                    }
+                    db.feeDao().insertFee(fee)
+                }
+                result.payments.forEach { payment ->
+                    payment.operationId?.let { paymentOperationId ->
+                        val existingPayment = db.paymentDao()
+                            .getPaymentByOperationId(payment.instituteId, paymentOperationId)
+                        check(existingPayment == null || existingPayment.id == payment.id) {
+                            "Local payment operation collision."
+                        }
+                    }
+                    db.paymentDao().insertPayment(payment)
+                }
+                result.receipts.forEach { receipt ->
+                    receipt.operationId?.let { receiptOperationId ->
+                        val existingReceipt = db.receiptDao()
+                            .getReceiptByOperationId(receipt.instituteId, receiptOperationId)
+                        check(existingReceipt == null || existingReceipt.id == receipt.id) {
+                            "Local receipt operation collision."
+                        }
+                    }
+                    db.receiptDao().insertReceipt(receipt)
+                }
+                result.reversals.forEach { reversal ->
+                    val existingReversal = db.financialLedgerDao()
+                        .getReversalForPayment(reversal.instituteId, reversal.paymentId)
+                    check(existingReversal == null || existingReversal.id == reversal.id) {
+                        "Local payment reversal collision."
+                    }
+                    db.financialLedgerDao().upsertReversal(reversal)
+                }
+                result.deletedReceiptIds.forEach { receiptId ->
+                    db.receiptDao().deleteReceiptById(instituteId, receiptId)
+                }
+                result.deletedPaymentIds.forEach { paymentId ->
+                    db.paymentDao().deletePaymentById(instituteId, paymentId)
+                }
+                db.financialLedgerDao().upsertOutbox(
+                    pending.copy(
+                        status = "completed",
+                        updatedAtMs = System.currentTimeMillis(),
+                        lastError = null
+                    )
+                )
+            }
+            result
+        } catch (error: Exception) {
+            val rejected = error is FinancialOperationRejectedException
+            db.financialLedgerDao().upsertOutbox(
+                pending.copy(
+                    status = if (rejected) "failed" else "pending",
+                    updatedAtMs = System.currentTimeMillis(),
+                    lastError = error.message?.take(500)
+                )
+            )
+            if (rejected) throw error
+            throw FinancialOperationPendingException(operationId, error)
+        }
+    }
 
-    private fun statusForAdjustedFee(dueAmount: Double, paidAmount: Double): String =
-        when {
-            dueAmount <= EPSILON -> "paid"
-            paidAmount > EPSILON -> "partially_paid"
-            else -> "unpaid"
+    private fun baseRequest(operationId: String, instituteId: String, action: String) = mapOf(
+        "operationId" to operationId,
+        "instituteId" to instituteId,
+        "action" to action
+    )
+
+    private fun validateCanonicalResult(
+        request: Map<String, Any?>,
+        result: FinancialOperationResult
+    ) {
+        val operationId = request["operationId"] as String
+        val instituteId = request["instituteId"] as String
+        val action = request["action"] as String
+        check(result.operationId == operationId && result.action == action) {
+            "Ledger response does not match the queued operation."
+        }
+        check((result.fees + result.payments + result.receipts + result.reversals)
+            .all { record ->
+                when (record) {
+                    is com.batchfee.edu.data.models.FeeEntity -> record.instituteId == instituteId
+                    is com.batchfee.edu.data.models.PaymentEntity -> record.instituteId == instituteId
+                    is com.batchfee.edu.data.models.ReceiptEntity -> record.instituteId == instituteId
+                    is com.batchfee.edu.data.models.PaymentReversalEntity -> record.instituteId == instituteId
+                    else -> false
+                }
+            }) { "Ledger response crossed the institute boundary." }
+
+        check(result.fees.isNotEmpty()) { "Ledger response must contain a canonical fee." }
+        result.fees.forEach { fee ->
+            check(abs((fee.totalAmount - fee.paidAmount) - fee.dueAmount) <= 0.001) {
+                "Ledger response contains inconsistent fee totals."
+            }
+        }
+        when (action) {
+            "create_fee" -> {
+                val hasPayment = ((request["amount"] as? Number)?.toDouble() ?: 0.0) > 0.0
+                check(result.payments.size == if (hasPayment) 1 else 0)
+                check(result.receipts.size == if (hasPayment) 1 else 0)
+                check(result.reversals.isEmpty())
+            }
+            "collect_payment", "adjust_and_collect" -> {
+                check(result.payments.size == 1 && result.receipts.size == 1 && result.reversals.isEmpty())
+            }
+            "reverse_payment" -> {
+                check(result.payments.size == 1 && result.receipts.isEmpty() && result.reversals.size == 1)
+                check(result.payments.single().status == "reversed")
+            }
+            "owner_edit_payment" -> {
+                check(result.fees.size in 1..2 && result.payments.size == 1 && result.receipts.size == 1)
+                check(result.reversals.isEmpty() && result.deletedPaymentIds.isEmpty() && result.deletedReceiptIds.isEmpty())
+            }
+            "owner_delete_payment" -> {
+                check(result.fees.size == 1 && result.payments.isEmpty() && result.receipts.isEmpty())
+                check(result.reversals.isEmpty() && result.deletedPaymentIds == listOf(request["paymentId"] as String))
+            }
+            else -> error("Unsupported ledger response action.")
         }
 
-    private companion object {
-        const val EPSILON = 0.001
+        val feesById = result.fees.associateBy { it.id }
+        result.payments.forEach { payment ->
+            val paymentFee = feesById[payment.feeId]
+                ?: error("Ledger response payment references an unknown fee.")
+            check(payment.studentId == paymentFee.studentId)
+            if (action !in setOf("reverse_payment", "owner_edit_payment")) {
+                check(payment.operationId == operationId && payment.status == "completed")
+            }
+        }
+        result.receipts.forEach { receipt ->
+            val payment = result.payments.single()
+            val receiptFee = feesById[receipt.feeId]
+                ?: error("Ledger response receipt references an unknown fee.")
+            check((action == "owner_edit_payment" || receipt.operationId == operationId) &&
+                receipt.paymentId == payment.id &&
+                receipt.feeId == payment.feeId &&
+                receipt.studentId == receiptFee.studentId &&
+                receipt.receiptNumber == payment.receiptNumber)
+        }
+        result.reversals.forEach { reversal ->
+            val payment = result.payments.single()
+            val reversalFee = feesById[reversal.feeId]
+                ?: error("Ledger response reversal references an unknown fee.")
+            check(reversal.operationId == operationId &&
+                reversal.paymentId == payment.id &&
+                reversal.feeId == payment.feeId &&
+                reversal.studentId == reversalFee.studentId)
+        }
+    }
+
+    private fun FinancialOperationResult.asCollectionResult(): FeeCollectionResult {
+        val fee = fees.singleOrNull() ?: error("Updated fee was not returned by the ledger service.")
+        val payment = payments.singleOrNull() ?: error("Payment was not returned by the ledger service.")
+        val receipt = receipts.singleOrNull() ?: error("Receipt was not returned by the ledger service.")
+        return FeeCollectionResult(payment.id, receipt.receiptNumber, fee)
     }
 }
-

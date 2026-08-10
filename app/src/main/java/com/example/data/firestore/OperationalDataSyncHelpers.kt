@@ -1,5 +1,6 @@
 ﻿package com.batchfee.edu.data.firestore
 
+import androidx.room.withTransaction
 import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.data.models.AbsentMessageEntity
 import com.batchfee.edu.data.models.AttendanceEntity
@@ -10,6 +11,7 @@ import com.batchfee.edu.data.models.ExpenseEntity
 import com.batchfee.edu.data.models.FeeEntity
 import com.batchfee.edu.data.models.AuditLogEntity
 import com.batchfee.edu.data.models.PaymentEntity
+import com.batchfee.edu.data.models.PaymentReversalEntity
 import com.batchfee.edu.data.models.ReceiptEntity
 import com.batchfee.edu.data.models.ReminderTemplateEntity
 import com.batchfee.edu.data.models.ResultEntity
@@ -26,27 +28,6 @@ private val firestore by lazy { FirebaseFirestore.getInstance() }
 
 private fun instituteCollection(instituteId: String, name: String) =
     firestore.collection("institutes").document(instituteId).collection(name)
-
-/**
- * Removes every document owned by one student. Firestore batches are capped below 500 writes
- * so a student with a long history can still be deleted safely.
- */
-private suspend fun deleteDocumentsForStudent(
-    instituteId: String,
-    collection: String,
-    studentId: String
-) {
-    val documents = instituteCollection(instituteId, collection)
-        .whereEqualTo("studentId", studentId)
-        .get()
-        .await()
-        .documents
-    documents.chunked(450).forEach { chunk ->
-        firestore.batch().apply {
-            chunk.forEach { delete(it.reference) }
-        }.commit().await()
-    }
-}
 
 private fun recordException(e: Exception) {
     FirebaseCrashlytics.getInstance().recordException(e)
@@ -104,15 +85,6 @@ object BatchStudentSyncHelper {
         }
     }
 
-    suspend fun deleteEnrollmentsForStudent(instituteId: String, studentId: String) = withContext(Dispatchers.IO) {
-        try {
-            deleteDocumentsForStudent(instituteId, COLLECTION, studentId)
-        } catch (e: Exception) {
-            recordException(e)
-            throw e
-        }
-    }
-
     suspend fun syncAllFromFirestore(db: AppDatabase, instituteId: String) = withContext(Dispatchers.IO) {
         try {
             val snapshot = instituteCollection(instituteId, COLLECTION).get().await()
@@ -140,116 +112,14 @@ object FinanceSyncHelper {
     private const val PAYMENTS = "payments"
     private const val RECEIPTS = "receipts"
 
-    suspend fun upsertFee(fee: FeeEntity) = withContext(Dispatchers.IO) {
-        try {
-            instituteCollection(fee.instituteId, FEES).document(fee.id).set(
-                mapOf(
-                    "instituteId" to fee.instituteId,
-                    "studentId" to fee.studentId,
-                    "batchId" to fee.batchId,
-                    "feePeriod" to fee.feePeriod,
-                    "feeType" to fee.feeType,
-                    "dueDateMs" to fee.dueDateMs,
-                    "baseAmount" to fee.baseAmount,
-                    "discountAmount" to fee.discountAmount,
-                    "lateFeeAmount" to fee.lateFeeAmount,
-                    "totalAmount" to fee.totalAmount,
-                    "paidAmount" to fee.paidAmount,
-                    "dueAmount" to fee.dueAmount,
-                    "status" to fee.status,
-                    "note" to fee.note,
-                    "createdAtMs" to fee.createdAtMs,
-                    "updatedAtMs" to fee.updatedAtMs,
-                    "cancelledAtMs" to fee.cancelledAtMs
-                )
-            ).await()
-        } catch (e: Exception) {
-            recordException(e)
-            throw e
-        }
-    }
-
-    suspend fun upsertPayment(payment: PaymentEntity) = withContext(Dispatchers.IO) {
-        try {
-            instituteCollection(payment.instituteId, PAYMENTS).document(payment.id).set(
-                mapOf(
-                    "instituteId" to payment.instituteId,
-                    "feeId" to payment.feeId,
-                    "studentId" to payment.studentId,
-                    "amount" to payment.amount,
-                    "paymentMethod" to payment.paymentMethod,
-                    "transactionId" to payment.transactionId,
-                    "receiptNumber" to payment.receiptNumber,
-                    "paymentDateMs" to payment.paymentDateMs,
-                    "collectedByUserId" to payment.collectedByUserId,
-                    "status" to payment.status,
-                    "note" to payment.note,
-                    "createdAtMs" to payment.createdAtMs,
-                    "updatedAtMs" to payment.updatedAtMs
-                )
-            ).await()
-        } catch (e: Exception) {
-            recordException(e)
-            throw e
-        }
-    }
-
-    suspend fun upsertReceipt(receipt: ReceiptEntity) = withContext(Dispatchers.IO) {
-        try {
-            instituteCollection(receipt.instituteId, RECEIPTS).document(receipt.id).set(
-                mapOf(
-                    "instituteId" to receipt.instituteId,
-                    "paymentId" to receipt.paymentId,
-                    "feeId" to receipt.feeId,
-                    "studentId" to receipt.studentId,
-                    "receiptNumber" to receipt.receiptNumber,
-                    "receiptDateMs" to receipt.receiptDateMs,
-                    "totalAmount" to receipt.totalAmount,
-                    "paidAmount" to receipt.paidAmount,
-                    "dueAmount" to receipt.dueAmount,
-                    "paymentMethod" to receipt.paymentMethod,
-                    "receiptText" to receipt.receiptText,
-                    "createdAtMs" to receipt.createdAtMs
-                )
-            ).await()
-        } catch (e: Exception) {
-            recordException(e)
-            throw e
-        }
-    }
-
-    suspend fun deletePayment(paymentId: String, instituteId: String) = withContext(Dispatchers.IO) {
-        try {
-            instituteCollection(instituteId, PAYMENTS).document(paymentId).delete().await()
-        } catch (e: Exception) {
-            recordException(e)
-            throw e
-        }
-    }
-
-    suspend fun deleteReceipt(receiptId: String, instituteId: String) = withContext(Dispatchers.IO) {
-        try {
-            instituteCollection(instituteId, RECEIPTS).document(receiptId).delete().await()
-        } catch (e: Exception) {
-            recordException(e)
-            throw e
-        }
-    }
-
-    suspend fun deleteRecordsForStudent(instituteId: String, studentId: String) = withContext(Dispatchers.IO) {
-        try {
-            deleteDocumentsForStudent(instituteId, RECEIPTS, studentId)
-            deleteDocumentsForStudent(instituteId, PAYMENTS, studentId)
-            deleteDocumentsForStudent(instituteId, FEES, studentId)
-        } catch (e: Exception) {
-            recordException(e)
-            throw e
-        }
-    }
-
     suspend fun syncAllFromFirestore(db: AppDatabase, instituteId: String) = withContext(Dispatchers.IO) {
         try {
-            instituteCollection(instituteId, FEES).get().await().documents.mapNotNull { doc ->
+            val feeDocuments = instituteCollection(instituteId, FEES).get().await().documents
+            val paymentDocuments = instituteCollection(instituteId, PAYMENTS).get().await().documents
+            val receiptDocuments = instituteCollection(instituteId, RECEIPTS).get().await().documents
+            val reversalDocuments = instituteCollection(instituteId, "payment_reversals").get().await().documents
+
+            val fees = feeDocuments.mapNotNull { doc ->
                 val studentId = doc.getString("studentId") ?: return@mapNotNull null
                 FeeEntity(
                     id = doc.id,
@@ -269,11 +139,34 @@ object FinanceSyncHelper {
                     note = doc.getString("note"),
                     createdAtMs = (doc.get("createdAtMs") as? Number).asLong() ?: System.currentTimeMillis(),
                     updatedAtMs = (doc.get("updatedAtMs") as? Number).asLong() ?: System.currentTimeMillis(),
-                    cancelledAtMs = (doc.get("cancelledAtMs") as? Number).asLong()
+                    cancelledAtMs = (doc.get("cancelledAtMs") as? Number).asLong(),
+                    businessKey = doc.getString("businessKey"),
+                    ledgerVersion = (doc.get("ledgerVersion") as? Number)?.toInt() ?: 0
                 )
-            }.forEach { db.feeDao().insertFee(it) }
+            }
 
-            instituteCollection(instituteId, PAYMENTS).get().await().documents.mapNotNull { doc ->
+            val reversals = reversalDocuments.mapNotNull { doc ->
+                val paymentId = doc.getString("paymentId") ?: return@mapNotNull null
+                val feeId = doc.getString("feeId") ?: return@mapNotNull null
+                val studentId = doc.getString("studentId") ?: return@mapNotNull null
+                PaymentReversalEntity(
+                    id = doc.id,
+                    instituteId = doc.getString("instituteId") ?: instituteId,
+                    paymentId = paymentId,
+                    feeId = feeId,
+                    studentId = studentId,
+                    amount = (doc.get("amount") as? Number).asDouble() ?: 0.0,
+                    receiptNumber = doc.getString("receiptNumber") ?: "",
+                    reason = doc.getString("reason") ?: "Legacy reversal",
+                    reversedByUserId = doc.getString("reversedByUserId") ?: "",
+                    reversedAtMs = (doc.get("reversedAtMs") as? Number).asLong() ?: 0L,
+                    operationId = doc.getString("operationId") ?: doc.id,
+                    ledgerVersion = (doc.get("ledgerVersion") as? Number)?.toInt() ?: 1
+                )
+            }
+            val reversedPaymentIds = reversals.map { it.paymentId }.toSet()
+
+            val payments = paymentDocuments.mapNotNull { doc ->
                 val feeId = doc.getString("feeId") ?: return@mapNotNull null
                 val studentId = doc.getString("studentId") ?: return@mapNotNull null
                 PaymentEntity(
@@ -287,14 +180,16 @@ object FinanceSyncHelper {
                     receiptNumber = doc.getString("receiptNumber") ?: "",
                     paymentDateMs = (doc.get("paymentDateMs") as? Number).asLong() ?: 0L,
                     collectedByUserId = doc.getString("collectedByUserId") ?: "",
-                    status = doc.getString("status") ?: "completed",
+                    status = if (doc.id in reversedPaymentIds) "reversed" else doc.getString("status") ?: "completed",
                     note = doc.getString("note"),
                     createdAtMs = (doc.get("createdAtMs") as? Number).asLong() ?: System.currentTimeMillis(),
-                    updatedAtMs = (doc.get("updatedAtMs") as? Number).asLong() ?: System.currentTimeMillis()
+                    updatedAtMs = (doc.get("updatedAtMs") as? Number).asLong() ?: System.currentTimeMillis(),
+                    operationId = doc.getString("operationId"),
+                    ledgerVersion = (doc.get("ledgerVersion") as? Number)?.toInt() ?: 0
                 )
-            }.forEach { db.paymentDao().insertPayment(it) }
+            }
 
-            instituteCollection(instituteId, RECEIPTS).get().await().documents.mapNotNull { doc ->
+            val receipts = receiptDocuments.mapNotNull { doc ->
                 val paymentId = doc.getString("paymentId") ?: return@mapNotNull null
                 val feeId = doc.getString("feeId") ?: return@mapNotNull null
                 val studentId = doc.getString("studentId") ?: return@mapNotNull null
@@ -311,9 +206,130 @@ object FinanceSyncHelper {
                     dueAmount = (doc.get("dueAmount") as? Number).asDouble() ?: 0.0,
                     paymentMethod = doc.getString("paymentMethod") ?: "",
                     receiptText = doc.getString("receiptText"),
-                    createdAtMs = (doc.get("createdAtMs") as? Number).asLong() ?: System.currentTimeMillis()
+                    createdAtMs = (doc.get("createdAtMs") as? Number).asLong() ?: System.currentTimeMillis(),
+                    operationId = doc.getString("operationId"),
+                    ledgerVersion = (doc.get("ledgerVersion") as? Number)?.toInt() ?: 0
                 )
-            }.forEach { db.receiptDao().insertReceipt(it) }
+            }
+
+            val feesById = fees.associateBy { it.id }
+            val paymentsById = payments.associateBy { it.id }
+            val receiptsByPaymentId = receipts.groupBy { it.paymentId }
+            val canonicalBusinessKeys = fees.filter { it.ledgerVersion >= 1 }
+                .mapNotNull { fee -> fee.businessKey?.let { fee.instituteId to it } }
+            check(canonicalBusinessKeys.size == canonicalBusinessKeys.distinct().size) {
+                "Financial reconciliation: duplicate canonical fee business key."
+            }
+            val canonicalPaymentOperations = payments.filter { it.ledgerVersion >= 1 }
+                .mapNotNull { payment -> payment.operationId?.let { payment.instituteId to it } }
+            check(canonicalPaymentOperations.size == canonicalPaymentOperations.distinct().size) {
+                "Financial reconciliation: duplicate canonical payment operation."
+            }
+            val canonicalReceiptOperations = receipts.filter { it.ledgerVersion >= 1 }
+                .mapNotNull { receipt -> receipt.operationId?.let { receipt.instituteId to it } }
+            check(canonicalReceiptOperations.size == canonicalReceiptOperations.distinct().size) {
+                "Financial reconciliation: duplicate canonical receipt operation."
+            }
+            payments.filter { it.ledgerVersion >= 1 }.forEach { payment ->
+                val fee = feesById[payment.feeId]
+                val matchingReceipts = receiptsByPaymentId[payment.id].orEmpty()
+                    .filter { it.ledgerVersion >= 1 }
+                check(fee != null && fee.ledgerVersion >= 1 && fee.studentId == payment.studentId) {
+                    "Financial reconciliation: canonical payment has no canonical fee."
+                }
+                check(matchingReceipts.size == 1 &&
+                    matchingReceipts.single().feeId == payment.feeId &&
+                    matchingReceipts.single().studentId == payment.studentId &&
+                    matchingReceipts.single().receiptNumber == payment.receiptNumber) {
+                    "Financial reconciliation: canonical payment/receipt mismatch."
+                }
+            }
+            receipts.filter { it.ledgerVersion >= 1 }.forEach { receipt ->
+                check((paymentsById[receipt.paymentId]?.ledgerVersion ?: 0) >= 1) {
+                    "Financial reconciliation: canonical receipt has no canonical payment."
+                }
+            }
+            reversals.filter { it.ledgerVersion >= 1 }.forEach { reversal ->
+                val payment = paymentsById[reversal.paymentId]
+                val fee = feesById[reversal.feeId]
+                check(payment != null && fee != null && fee.ledgerVersion >= 1 &&
+                    payment.feeId == reversal.feeId && payment.studentId == reversal.studentId) {
+                    "Financial reconciliation: canonical reversal is orphaned."
+                }
+            }
+            val effectivePaymentsByFee = payments.filter { it.status == "completed" }.groupBy { it.feeId }
+            fees.filter { it.ledgerVersion >= 1 }.forEach { fee ->
+                val ledgerPaid = effectivePaymentsByFee[fee.id].orEmpty().sumOf { it.amount }
+                check(kotlin.math.abs(ledgerPaid - fee.paidAmount) <= 0.001) {
+                    "Financial reconciliation: canonical fee aggregate mismatch."
+                }
+            }
+            receipts.filter { it.ledgerVersion >= 1 }
+                .groupBy { it.receiptNumber }
+                .forEach { (_, groupedReceipts) ->
+                    check(groupedReceipts.map { it.studentId }.distinct().size == 1) {
+                        "Financial reconciliation: receipt number spans multiple students."
+                    }
+                }
+
+            db.withTransaction {
+                fees.forEach { fee ->
+                    fee.businessKey?.let { businessKey ->
+                        val existing = db.feeDao().getFeeByBusinessKey(fee.instituteId, businessKey)
+                        check(existing == null || existing.id == fee.id) {
+                            "Financial reconciliation: fee business key collision."
+                        }
+                    }
+                    db.feeDao().insertFee(fee)
+                }
+                payments.forEach { payment ->
+                    payment.operationId?.let { operationId ->
+                        val existing = db.paymentDao()
+                            .getPaymentByOperationId(payment.instituteId, operationId)
+                        check(existing == null || existing.id == payment.id) {
+                            "Financial reconciliation: payment operation collision."
+                        }
+                    }
+                    db.paymentDao().insertPayment(payment)
+                }
+                receipts.forEach { receipt ->
+                    receipt.operationId?.let { operationId ->
+                        val existing = db.receiptDao()
+                            .getReceiptByOperationId(receipt.instituteId, operationId)
+                        check(existing == null || existing.id == receipt.id) {
+                            "Financial reconciliation: receipt operation collision."
+                        }
+                    }
+                    db.receiptDao().insertReceipt(receipt)
+                }
+                reversals.forEach { reversal ->
+                    val existing = db.financialLedgerDao()
+                        .getReversalForPayment(reversal.instituteId, reversal.paymentId)
+                    check(existing == null || existing.id == reversal.id) {
+                        "Financial reconciliation: payment reversal collision."
+                    }
+                    db.financialLedgerDao().upsertReversal(reversal)
+                }
+            }
+
+            val completedPaymentIds = payments.filter { it.status == "completed" }.map { it.id }.toSet()
+            val receiptPaymentIds = receipts.map { it.paymentId }.toSet()
+            val missingReceipts = completedPaymentIds - receiptPaymentIds
+            if (missingReceipts.isNotEmpty()) {
+                recordException(IllegalStateException(
+                    "Financial reconciliation: ${missingReceipts.size} completed payment(s) have no receipt."
+                ))
+            }
+            val paymentsByFee = payments.filter { it.status == "completed" }.groupBy { it.feeId }
+            val mismatchedFees = fees.count { fee ->
+                val ledgerPaid = paymentsByFee[fee.id].orEmpty().sumOf { it.amount }
+                kotlin.math.abs(ledgerPaid - fee.paidAmount) > 0.001
+            }
+            if (mismatchedFees > 0) {
+                recordException(IllegalStateException(
+                    "Financial reconciliation: $mismatchedFees fee aggregate(s) mismatch immutable payments."
+                ))
+            }
         } catch (e: Exception) {
             recordException(e)
         }
@@ -400,16 +416,6 @@ object AttendanceSyncHelper {
                     "updatedAtMs" to record.updatedAtMs
                 )
             ).await()
-        } catch (e: Exception) {
-            recordException(e)
-            throw e
-        }
-    }
-
-    suspend fun deleteRecordsForStudent(instituteId: String, studentId: String) = withContext(Dispatchers.IO) {
-        try {
-            deleteDocumentsForStudent(instituteId, ABSENT_MESSAGES, studentId)
-            deleteDocumentsForStudent(instituteId, ATTENDANCE, studentId)
         } catch (e: Exception) {
             recordException(e)
             throw e
@@ -579,15 +585,6 @@ object ExamSyncHelper {
                     "updatedAtMs" to result.updatedAtMs
                 )
             ).await()
-        } catch (e: Exception) {
-            recordException(e)
-            throw e
-        }
-    }
-
-    suspend fun deleteResultsForStudent(instituteId: String, studentId: String) = withContext(Dispatchers.IO) {
-        try {
-            deleteDocumentsForStudent(instituteId, RESULTS, studentId)
         } catch (e: Exception) {
             recordException(e)
             throw e

@@ -22,6 +22,7 @@ import com.batchfee.edu.domain.AccessControl
 import com.batchfee.edu.domain.ForceUpdateChecker
 import com.batchfee.edu.domain.PasswordHasher
 import com.batchfee.edu.domain.SessionManager
+import com.batchfee.edu.domain.StudentSessionManager
 import com.batchfee.edu.domain.ThemePreferences
 import com.batchfee.edu.ui.auth.AuthScreen
 import com.batchfee.edu.ui.billing.BillingScreen
@@ -34,6 +35,8 @@ import com.batchfee.edu.ui.superadmin.SuperAdminScreen
 import com.batchfee.edu.ui.subscription.SubscriptionExpiredScreen
 import com.batchfee.edu.ui.theme.MyApplicationTheme
 import com.batchfee.edu.ui.update.ForceUpdateScreen
+import com.batchfee.edu.ui.studentapp.StudentLoginScreen
+import com.batchfee.edu.ui.studentapp.StudentMainScaffold
 import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
@@ -89,6 +92,11 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
     val isLoggedIn by SessionManager.currentUserId.collectAsState()
     val sessionNotice by SessionManager.sessionNotice.collectAsState()
     val lastActivityAtMs by SessionManager.lastActivityAtMs.collectAsState()
+    val studentSessionId by StudentSessionManager.studentId.collectAsState()
+    val studentSessionExpiry by StudentSessionManager.sessionExpiresAtMs.collectAsState()
+    val restoredStudentSession by StudentSessionManager.restoredSession.collectAsState()
+    val sessionScope = rememberCoroutineScope()
+    var hadStudentSession by rememberSaveable { mutableStateOf(StudentSessionManager.isLoggedIn()) }
 
     // Navigation is derived directly from session state. The previous implementation used a
     // temporary "was logged in" flag, which could miss a fast expiry event during bootstrap.
@@ -100,12 +108,44 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
         }
     }
 
+    LaunchedEffect(restoredStudentSession, studentSessionId, isLoggedIn) {
+        if (restoredStudentSession && studentSessionId != null && isLoggedIn == null) {
+            navController.navigate(StudentDashboardRoute) {
+                popUpTo(navController.graph.id) { inclusive = true }
+            }
+        }
+    }
+
+    LaunchedEffect(studentSessionId) {
+        if (studentSessionId != null) {
+            hadStudentSession = true
+        } else if (hadStudentSession) {
+            hadStudentSession = false
+            navController.navigate(AuthRoute) {
+                popUpTo(navController.graph.id) { inclusive = true }
+            }
+        }
+    }
+
+    LaunchedEffect(studentSessionId, studentSessionExpiry) {
+        val activeStudentId = studentSessionId ?: return@LaunchedEffect
+        val remainingMs = (studentSessionExpiry - System.currentTimeMillis()).coerceAtLeast(0L)
+        delay(remainingMs)
+        if (StudentSessionManager.studentId.value == activeStudentId &&
+            !StudentSessionManager.isLoggedIn()) {
+            StudentSessionManager.logout()
+        }
+    }
+
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME && SessionManager.isLoggedIn()) {
                 if (SessionManager.isSessionInactive()) {
                     SessionManager.expireSession()
                 }
+            }
+            if (event == Lifecycle.Event.ON_RESUME && StudentSessionManager.isLoggedIn()) {
+                sessionScope.launch { StudentSessionManager.validateActiveSession() }
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -119,6 +159,9 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
         val listener = FirebaseAuth.AuthStateListener { firebaseAuth ->
             if (SessionManager.isLoggedIn() && firebaseAuth.currentUser == null) {
                 SessionManager.expireSession()
+            }
+            if (StudentSessionManager.isLoggedIn() && firebaseAuth.currentUser == null) {
+                StudentSessionManager.onFirebaseSignedOut()
             }
         }
         auth.addAuthStateListener(listener)
@@ -214,6 +257,9 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
                 },
                 onNavigateTermsConditions = {
                     navController.navigate(TermsConditionsRoute)
+                },
+                onNavigateStudentLogin = {
+                    navController.navigate(StudentLoginRoute)
                 }
             )
         }
@@ -265,6 +311,9 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
                             "BirthdayReminderRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.BirthdayReminderRoute)
                             "SettingsRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.SettingsRoute)
                             "EnquiryListRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.EnquiryListRoute)
+                            "WorksListRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.WorksListRoute)
+                            "HomeworkListRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.HomeworkListRoute)
+                            "AssignmentListRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.AssignmentListRoute)
                             else -> {
                                 if (route.startsWith("TakeAttendanceRoute:")) {
                                     route.substringAfter(":").takeIf { it.isNotBlank() }?.let { batchId ->
@@ -647,6 +696,70 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
                         popUpTo(navController.graph.id) { inclusive = true }
                     }
                 }
+            )
+        }
+
+        composable<StudentLoginRoute> {
+            StudentLoginScreen(
+                onBack = { navController.popBackStack() },
+                onLoginSuccess = {
+                    navController.navigate(StudentDashboardRoute) {
+                        popUpTo(AuthRoute) { inclusive = true }
+                    }
+                }
+            )
+        }
+
+        composable<StudentDashboardRoute> {
+            StudentMainScaffold(
+                onLogout = {
+                    StudentSessionManager.logout()
+                }
+            )
+        }
+
+        composable<WorksListRoute> {
+            com.batchfee.edu.ui.works.WorksListScreen(
+                db = appDb,
+                onBack = { navController.popBackStack() },
+                onAddWork = { navController.navigate(AddWorkRoute) }
+            )
+        }
+
+        composable<AddWorkRoute> {
+            com.batchfee.edu.ui.works.AddWorkScreen(
+                db = appDb,
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        composable<HomeworkListRoute> {
+            com.batchfee.edu.ui.homework.HomeworkListScreen(
+                db = appDb,
+                onBack = { navController.popBackStack() },
+                onAddHomework = { navController.navigate(AddHomeworkRoute) }
+            )
+        }
+
+        composable<AddHomeworkRoute> {
+            com.batchfee.edu.ui.homework.AddHomeworkScreen(
+                db = appDb,
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        composable<AssignmentListRoute> {
+            com.batchfee.edu.ui.assignments.AssignmentListScreen(
+                db = appDb,
+                onBack = { navController.popBackStack() },
+                onAddAssignment = { navController.navigate(AddAssignmentRoute) }
+            )
+        }
+
+        composable<AddAssignmentRoute> {
+            com.batchfee.edu.ui.assignments.AddAssignmentScreen(
+                db = appDb,
+                onBack = { navController.popBackStack() }
             )
         }
     }

@@ -11,6 +11,8 @@ import android.graphics.pdf.PdfDocument
 import android.net.Uri
 import android.widget.Toast
 import androidx.compose.animation.core.*
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -30,8 +32,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -42,19 +46,21 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.batchfee.edu.data.database.AppDatabase
-import com.batchfee.edu.data.firebase.FirebaseAuthApi
-import com.batchfee.edu.data.firestore.AppUserSyncHelper
-import com.batchfee.edu.data.firestore.ManagedUserRecord
 import com.batchfee.edu.data.firestore.SubscriptionPlanSyncHelper
 import com.batchfee.edu.data.models.InstituteEntity
 import com.batchfee.edu.data.models.SubscriptionPlanEntity
 import com.batchfee.edu.data.models.SubscriptionRequest
-import com.batchfee.edu.data.models.UserEntity
-import com.batchfee.edu.domain.PasswordHasher
+import com.batchfee.edu.data.repository.SafeDeletionRepository
+import com.batchfee.edu.data.repository.SubscriptionRepository
+import com.batchfee.edu.data.repository.PlatformAdminRepository
+import com.batchfee.edu.data.repository.PlatformInstituteDraft
 import com.batchfee.edu.domain.SessionManager
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.crashlytics.FirebaseCrashlytics
+import com.google.firebase.firestore.AggregateSource
+import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.Query
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -69,22 +75,25 @@ import java.text.SimpleDateFormat
 import java.util.*
 
 // ── Theme ────────────────────────────────────────────────────
-private val BgColor = Color(0xFF0F0F14)
-private val CardBg = Color(0xFF1A1A24)
-private val BorderSub = Color(0xFF2A2A38)
-private val TextWhite = Color(0xFFF0F0F0)
-private val TextMuted = Color(0xFF8888A0)
+private val BgColor = Color(0xFF061525)
+private val CardBg = Color(0xFF0A2238)
+private val BorderSub = Color(0xFF17435B)
+private val TextWhite = Color(0xFFE6F7FF)
+private val TextMuted = Color(0xFF8FB8CC)
 private val AccentCyan = Color(0xFF22D3EE)
 private val AccentGreen = Color(0xFF4ADE80)
-private val AccentAmber = Color(0xFFFBBF24)
+private val AccentAmber = Color(0xFF38BDF8)
 private val AccentRed = Color(0xFFF87171)
-private val AccentViolet = Color(0xFFA855F7)
-private val AccentPink = Color(0xFFF472B6)
+private val AccentViolet = Color(0xFF38BDF8)
+private val AccentPink = Color(0xFF22D3EE)
 private val ElectricBlue = Color(0xFF3B82F6)
 
 private const val STANDARD_MONTHLY_FEE = 500.0
 private const val DEFAULT_TRIAL_PLAN_ID = "plan_free_trial"
 private const val MILLIS_PER_DAY = 24L * 60 * 60 * 1000
+
+private fun effectiveSubscriptionExpiryMs(institute: InstituteEntity): Long =
+    institute.currentPeriodEndMs.takeIf { it > 0L } ?: institute.trialEndDateMs
 
 private fun humanizePlanId(planId: String): String = planId
     .removePrefix("plan_")
@@ -126,7 +135,11 @@ data class SuperAdminStats(
     val lastMonthRevenue: Double = 0.0,
     val projectedRevenue: Double = 0.0,
     val totalStudents: Int = 0,
-    val totalStaff: Int = 0
+    val totalStaff: Int = 0,
+    val expiringIn7Days: Int = 0,
+    val expiringIn30Days: Int = 0,
+    val canonicalReceiptCount: Int = 0,
+    val snapshotAtMs: Long = 0L
 )
 
 data class InstituteCardData(
@@ -184,6 +197,22 @@ data class SubscriptionReceiptData(
     val endDateMs: Long
 )
 
+data class PlatformAuditEntry(
+    val id: String,
+    val action: String,
+    val actorUid: String,
+    val instituteId: String,
+    val createdAtMs: Long,
+    val summary: String
+)
+
+data class BulkImportReport(
+    val batchId: String = "",
+    val successfulRows: Set<Int> = emptySet(),
+    val failedRows: Map<Int, String> = emptyMap(),
+    val running: Boolean = false
+)
+
 class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
     private val _institutes = MutableStateFlow<List<InstituteCardData>>(emptyList())
     val institutes = _institutes.asStateFlow()
@@ -196,6 +225,12 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
 
     private val _isLoading = MutableStateFlow(true)
     val isLoading = _isLoading.asStateFlow()
+
+    private val _hasMoreInstitutes = MutableStateFlow(false)
+    val hasMoreInstitutes = _hasMoreInstitutes.asStateFlow()
+
+    private val _isLoadingMoreInstitutes = MutableStateFlow(false)
+    val isLoadingMoreInstitutes = _isLoadingMoreInstitutes.asStateFlow()
 
     private val _operationMsg = MutableStateFlow<String?>(null)
     val operationMsg = _operationMsg.asStateFlow()
@@ -218,9 +253,26 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
     private val _announcements = MutableStateFlow<List<AnnouncementData>>(emptyList())
     val announcements = _announcements.asStateFlow()
 
+    private val _platformAudit = MutableStateFlow<List<PlatformAuditEntry>>(emptyList())
+    val platformAudit = _platformAudit.asStateFlow()
+
+    private val _lastRecoveryLink = MutableStateFlow<String?>(null)
+    val lastRecoveryLink = _lastRecoveryLink.asStateFlow()
+
+    private val _bulkImportReport = MutableStateFlow(BulkImportReport())
+    val bulkImportReport = _bulkImportReport.asStateFlow()
+
     private val firestore = FirebaseFirestore.getInstance()
+    private val safeDeletionRepository = SafeDeletionRepository(db)
     private var didBackfillManagedUsers = false
     private var approvedRequestDocuments: List<Pair<String, Map<String, Any>>> = emptyList()
+    private var nextInstitutePageCursor: DocumentSnapshot? = null
+    private var totalInstituteCount: Int? = null
+    private var hasServerDashboard = false
+
+    private companion object {
+        const val INSTITUTE_PAGE_SIZE = 40L
+    }
 
     val projectedRevenue: Double
         get() = _stats.value.projectedRevenue
@@ -228,14 +280,19 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
     init {
         loadSubscriptionPlans()
         loadInstitutesRealtime()
+        loadInstituteTotalCount()
         loadPendingRequestsRealtime()
         loadManagedUsersRealtime()
         loadTrashedInstitutes()
+        viewModelScope.launch { safeDeletionRepository.replayAllPending() }
         loadApprovedReceiptsRealtime()
         loadAllAnnouncements()
+        refreshPlatformDashboard()
+        loadPlatformAudit()
     }
 
     fun clearOperationMsg() { _operationMsg.value = null }
+    fun clearRecoveryLink() { _lastRecoveryLink.value = null }
 
     private fun loadSubscriptionPlans() {
         viewModelScope.launch {
@@ -255,14 +312,14 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
         val activeCount = institutes.count { card ->
             val entity = card.entity
             val isExpired = entity.subscriptionStatus == "expired" || entity.subscriptionStatus == "blocked"
-            !isExpired && entity.trialEndDateMs > now
+            !isExpired && effectiveSubscriptionExpiryMs(entity) > now
         }
         val totalRevenue = institutes.sumOf { card ->
             val entity = card.entity
             if (entity.subscriptionStatus == "blocked" ||
                 entity.subscriptionStatus == "expired" ||
                 entity.subscriptionStatus == "trashed" ||
-                entity.trialEndDateMs <= now
+                effectiveSubscriptionExpiryMs(entity) <= now
             ) {
                 0.0
             } else {
@@ -282,7 +339,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
         val lastMonthStart = calendar.timeInMillis
         val receipts = _allReceipts.value
         _stats.value = SuperAdminStats(
-            totalInstitutes = institutes.size,
+            totalInstitutes = totalInstituteCount ?: institutes.size,
             activeSubscriptions = activeCount,
             lifetimeRevenue = receipts.sumOf { it.amountPaid },
             thisMonthRevenue = receipts
@@ -298,8 +355,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
     }
 
     private fun loadApprovedReceiptsRealtime() {
-        firestore.collection("subscriptionRequests")
-            .whereEqualTo("status", "approved")
+        firestore.collectionGroup("subscription_receipts")
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
                     FirebaseCrashlytics.getInstance().recordException(error)
@@ -319,7 +375,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
         _allReceipts.value = approvedRequestDocuments.map { (documentId, data) ->
             val instituteId = data["instituteId"] as? String ?: ""
             val institute = institutesById[instituteId]?.entity
-            val reviewedAt = (data["reviewedAt"] as? Number)?.toLong() ?: 0L
+            val reviewedAt = (data["approvedAt"] as? Number)?.toLong() ?: 0L
             val startDateMs = (data["startDateMs"] as? Number)?.toLong()
                 ?: reviewedAt.takeIf { it > 0L }
                 ?: (data["requestSentAt"] as? Number)?.toLong()
@@ -327,7 +383,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
             val durationMonths = (data["durationMonths"] as? Number)?.toInt() ?: 1
             val endDateMs = (data["endDateMs"] as? Number)?.toLong()
                 ?: (startDateMs + durationMonths * 30L * MILLIS_PER_DAY)
-            val requestedPlanId = data["requestedPlanId"] as? String ?: ""
+            val requestedPlanId = data["planId"] as? String ?: ""
             SubscriptionReceiptData(
                 receiptNumber = data["receiptNumber"] as? String
                     ?: "SUB-${reviewedAt.takeIf { it > 0L } ?: documentId}",
@@ -335,7 +391,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                     ?: institute?.name.orEmpty(),
                 ownerName = data["ownerName"] as? String
                     ?: institute?.ownerName.orEmpty(),
-                ownerPhone = data["institutePhone"] as? String
+                ownerPhone = data["ownerPhone"] as? String
                     ?: institute?.phone.orEmpty(),
                 ownerEmail = data["ownerEmail"] as? String
                     ?: institute?.email.orEmpty(),
@@ -372,76 +428,10 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
     fun approveRequest(request: SubscriptionRequest) {
         viewModelScope.launch {
             try {
-                val approvedAt = System.currentTimeMillis()
-                val startDateMs = approvedAt
-                val newEnd = approvedAt + request.durationMonths * 30L * MILLIS_PER_DAY
-                val receiptNumber = "SUB-$approvedAt"
-                val planName = planDisplayName(request.requestedPlanId, _subscriptionPlans.value)
-                val reviewerUserId = SessionManager.currentUserId.value
-                    ?: throw IllegalStateException("Super admin session expired.")
-                val instData = withContext(Dispatchers.IO) {
-                    val requestRef = firestore.collection("subscriptionRequests")
-                        .document(request.requestId)
-                    val instituteRef = firestore.collection("institutes")
-                        .document(request.instituteId)
-                    val instDoc = instituteRef.get().await()
-                    if (!instDoc.exists()) {
-                        throw IllegalStateException("Institute record no longer exists.")
-                    }
-                    val instituteData = instDoc.data ?: emptyMap()
-                    val receiptEntry = mapOf<String, Any>(
-                        "receiptNumber" to receiptNumber,
-                        "requestId" to request.requestId,
-                        "instituteId" to request.instituteId,
-                        "instituteName" to request.instituteName,
-                        "ownerName" to request.ownerName,
-                        "ownerPhone" to (request.institutePhone ?: ""),
-                        "ownerEmail" to (instituteData["email"] as? String ?: ""),
-                        "instituteCode" to (instituteData["instituteCode"] as? String ?: ""),
-                        "instituteAddress" to (instituteData["address"] as? String ?: ""),
-                        "planId" to request.requestedPlanId,
-                        "planName" to planName,
-                        "durationMonths" to request.durationMonths,
-                        "amountPaid" to request.amountPaid,
-                        "paymentMethod" to request.paymentMethod,
-                        "transactionLast4" to request.transactionLast4,
-                        "startDateMs" to startDateMs,
-                        "endDateMs" to newEnd,
-                        "approvedAt" to approvedAt
-                    )
-                    firestore.runBatch { batch ->
-                        batch.update(
-                            requestRef,
-                            mapOf(
-                                "status" to "approved",
-                                "reviewedBy" to reviewerUserId,
-                                "reviewedAt" to approvedAt,
-                                "receiptNumber" to receiptNumber,
-                                "planName" to planName,
-                                "ownerEmail" to (instituteData["email"] as? String ?: ""),
-                                "instituteCode" to (instituteData["instituteCode"] as? String ?: ""),
-                                "instituteAddress" to (instituteData["address"] as? String ?: ""),
-                                "startDateMs" to startDateMs,
-                                "endDateMs" to newEnd
-                            )
-                        )
-                        batch.update(
-                            instituteRef,
-                            mapOf(
-                                "currentPlanId" to request.requestedPlanId,
-                                "trialEndDate" to newEnd,
-                                "currentPeriodEndMs" to newEnd,
-                                "subscriptionStatus" to "active",
-                                "isActive" to true
-                            )
-                        )
-                        batch.set(
-                            instituteRef.collection("receipts").document(receiptNumber),
-                            receiptEntry
-                        )
-                    }.await()
-                    instituteData
-                }
+                val result = SubscriptionRepository(firestore).approveRequest(
+                    instituteId = request.instituteId,
+                    requestId = request.requestId
+                )
                 var roomFailed = false
                 try {
                     withContext(Dispatchers.IO) {
@@ -450,8 +440,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                                 current.copy(
                                     currentPlanId = request.requestedPlanId,
                                     subscriptionStatus = "active",
-                                    trialEndDateMs = newEnd,
-                                    currentPeriodEndMs = newEnd
+                                    currentPeriodEndMs = result.endDateMs
                                 )
                             )
                         }
@@ -467,28 +456,27 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                         entity = card.entity.copy(
                             currentPlanId = request.requestedPlanId,
                             subscriptionStatus = "active",
-                            trialEndDateMs = newEnd,
-                            currentPeriodEndMs = newEnd
+                            currentPeriodEndMs = result.endDateMs
                         )
                     )
                 }
                 rebuildReceiptHistory()
                 _operationMsg.value = if (roomFailed) "Approved ${request.instituteName} (local cache update failed)" else "Approved ${request.instituteName}"
                 _receiptData.value = SubscriptionReceiptData(
-                    receiptNumber = receiptNumber,
-                    instituteName = request.instituteName,
-                    ownerName = request.ownerName,
-                    ownerPhone = request.institutePhone ?: "",
-                    ownerEmail = instData["email"] as? String ?: "",
-                    instituteCode = instData["instituteCode"] as? String ?: "",
-                    instituteAddress = instData["address"] as? String ?: "",
-                    planName = planName,
-                    durationMonths = request.durationMonths,
-                    amountPaid = request.amountPaid,
-                    paymentMethod = request.paymentMethod,
-                    transactionLast4 = request.transactionLast4,
-                    startDateMs = startDateMs,
-                    endDateMs = newEnd
+                    receiptNumber = result.receiptNumber,
+                    instituteName = result.instituteName,
+                    ownerName = result.ownerName,
+                    ownerPhone = result.ownerPhone,
+                    ownerEmail = result.ownerEmail,
+                    instituteCode = result.instituteCode,
+                    instituteAddress = result.instituteAddress,
+                    planName = result.planName,
+                    durationMonths = result.durationMonths,
+                    amountPaid = result.amountPaid,
+                    paymentMethod = result.paymentMethod,
+                    transactionLast4 = result.transactionLast4,
+                    startDateMs = result.startDateMs,
+                    endDateMs = result.endDateMs
                 )
             } catch (e: Exception) {
                 _operationMsg.value = "Approve failed: ${e.message}"
@@ -503,10 +491,11 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
         viewModelScope.launch {
             try {
                 withContext(Dispatchers.IO) {
-                    val repo = com.batchfee.edu.data.repository.SubscriptionRepository(firestore)
-                    val reviewerUserId = SessionManager.currentUserId.value
-                        ?: throw IllegalStateException("Super admin session expired.")
-                    repo.rejectRequest(request.requestId, reviewerUserId, note)
+                    SubscriptionRepository(firestore).rejectRequest(
+                        instituteId = request.instituteId,
+                        requestId = request.requestId,
+                        note = note
+                    )
                 }
                 _pendingRequests.value = _pendingRequests.value.filterNot { it.requestId == request.requestId }
                 _operationMsg.value = "Rejected ${request.instituteName}"
@@ -518,123 +507,116 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
     }
 
     private fun loadInstitutesRealtime() {
-        firestore.collection("institutes")
-            .addSnapshotListener { snapshot, error ->
-                if (error != null || snapshot == null) {
-                    _isLoading.value = false
-                    return@addSnapshotListener
-                }
-
-                val list = mutableListOf<InstituteCardData>()
-                val activeMap = mutableMapOf<String, Long>()
-                var activeCount = 0
-                val now = System.currentTimeMillis()
-                val trialWindow = 15L * 24 * 60 * 60 * 1000
-
-                snapshot.documents.forEach { doc ->
-                    val data = doc.data ?: return@forEach
-                    val uid = doc.id
-
-                    val isActive = data["isActive"] as? Boolean ?: true
-                    val trialEnd = data["trialEndDate"] as? Long ?: now
-                    val createdAt = data["createdAt"] as? Long ?: now
-                    val lastActive = data["lastActiveAt"] as? Long
-                    val studentCount = (data["studentCount"] as? Long)?.toInt() ?: 0
-                    val staffCount = (data["staffCount"] as? Long)?.toInt() ?: 0
-                    val batchCount = (data["batchCount"] as? Long)?.toInt() ?: 0
-
-                    if (lastActive != null) activeMap[uid] = lastActive
-
-                    val currentPlanId = data["currentPlanId"] as? String ?: DEFAULT_TRIAL_PLAN_ID
-                    val storedStatus = data["subscriptionStatus"] as? String
-                    val status = when {
-                        !isActive -> "blocked"
-                        trialEnd < now -> "expired"
-                        storedStatus == "active" -> "active"
-                        storedStatus == "trial" -> "trial"
-                        currentPlanId == "plan_free_trial" && (now - createdAt) < trialWindow -> "trial"
-                        else -> "active"
-                    }
-
-                    if (isActive && trialEnd > now) activeCount++
-
-                    list.add(
-                        InstituteCardData(
-                            entity = InstituteEntity(
-                                id = uid,
-                                name = data["instituteName"] as? String ?: "Institute",
-                                currentPlanId = currentPlanId,
-                                subscriptionStatus = status,
-                                trialStartDateMs = createdAt,
-                                trialEndDateMs = trialEnd,
-                                currentPeriodEndMs = trialEnd,
-                                createdAtMs = createdAt,
-                                phone = data["phone"] as? String,
-                                whatsappNumber = data["whatsappNumber"] as? String,
-                                profilePhotoUri = data["profilePhotoUri"] as? String,
-                                ownerName = data["ownerName"] as? String,
-                                email = data["email"] as? String,
-                                instituteCode = data["instituteCode"] as? String,
-                                securityPin = data["securityPin"] as? String
-                            ),
-                            studentCount = studentCount,
-                            staffCount = staffCount,
-                            batchCount = batchCount
-                        )
-                    )
-                }
-
-                _institutes.value = list
-                _lastActiveMap.value = activeMap
-                rebuildReceiptHistory()
-                _isLoading.value = false
-                if (!didBackfillManagedUsers) {
-                    didBackfillManagedUsers = true
-                    viewModelScope.launch {
-                        backfillManagedUsersFromInstitutes(snapshot.documents.mapNotNull { doc ->
-                            val data = doc.data ?: return@mapNotNull null
-                            val role = data["role"] as? String ?: return@mapNotNull null
-                            val mappedRole = when (role) {
-                                "owner" -> "InstituteOwner"
-                                "admin", "InstituteAdmin", "instituteAdmin", "institute_admin" -> "InstituteAdmin"
-                                "SuperAdmin", "superAdmin", "super_admin" -> "SuperAdmin"
-                                else -> null
-                            } ?: return@mapNotNull null
-                            val email = data["email"] as? String ?: return@mapNotNull null
-                            ManagedUserRecord(
-                                id = doc.id,
-                                name = (data["ownerName"] as? String)
-                                    ?: (data["instituteName"] as? String)
-                                    ?: email.substringBefore("@"),
-                                email = email,
-                                role = mappedRole,
-                                instituteId = if (mappedRole == "SuperAdmin") null else (data["instituteId"] as? String ?: doc.id),
-                                createdAtMs = (data["createdAt"] as? Long) ?: System.currentTimeMillis(),
-                                status = if ((data["isActive"] as? Boolean) == false) "blocked" else "active"
-                            )
-                        })
-                    }
-                }
-            }
+        viewModelScope.launch { loadInstitutePage(reset = true) }
     }
 
-    private suspend fun backfillManagedUsersFromInstitutes(records: List<ManagedUserRecord>) {
-        records.forEach { record ->
+    private fun loadInstituteTotalCount() {
+        viewModelScope.launch {
             try {
-                AppUserSyncHelper.upsertManagedUser(record)
-                db.userDao().insertUser(
-                    UserEntity(
-                        id = record.id,
-                        instituteId = record.instituteId,
-                        name = record.name,
-                        email = record.email,
-                        passwordHash = "",
-                        role = record.role,
-                        createdAtMs = record.createdAtMs
-                    )
-                )
-            } catch (_: Exception) { }
+                val allCount = withContext(Dispatchers.IO) {
+                    firestore.collection("institutes").count().get(AggregateSource.SERVER).await().count
+                }
+                val archivedCount = withContext(Dispatchers.IO) {
+                    firestore.collection("institutes")
+                        .whereEqualTo("deletionState", "retained")
+                        .count()
+                        .get(AggregateSource.SERVER)
+                        .await()
+                        .count
+                }
+                totalInstituteCount = (allCount - archivedCount).coerceAtLeast(0L).toInt()
+                recalculateStats(_institutes.value)
+            } catch (error: Exception) {
+                FirebaseCrashlytics.getInstance().recordException(error)
+            }
         }
+    }
+
+    fun loadMoreInstitutes() {
+        if (_isLoadingMoreInstitutes.value || !_hasMoreInstitutes.value) return
+        viewModelScope.launch { loadInstitutePage(reset = false) }
+    }
+
+    private suspend fun loadInstitutePage(reset: Boolean) {
+        if (reset) {
+            _isLoading.value = true
+            nextInstitutePageCursor = null
+            _hasMoreInstitutes.value = false
+        } else {
+            _isLoadingMoreInstitutes.value = true
+        }
+        try {
+            val query = firestore.collection("institutes")
+                .orderBy("createdAt", Query.Direction.DESCENDING)
+                .limit(INSTITUTE_PAGE_SIZE)
+            val pagedQuery = nextInstitutePageCursor?.let { query.startAfter(it) } ?: query
+            val page = withContext(Dispatchers.IO) {
+                pagedQuery.get().await()
+            }
+            nextInstitutePageCursor = page.documents.lastOrNull()
+            _hasMoreInstitutes.value = page.documents.size == INSTITUTE_PAGE_SIZE.toInt()
+
+            val now = System.currentTimeMillis()
+            val loadedCards = page.documents.mapNotNull { document -> instituteCardFromDocument(document, now) }
+            val loadedActive = page.documents.mapNotNull { document ->
+                val lastActiveAt = (document.data?.get("lastActiveAt") as? Number)?.toLong()
+                lastActiveAt?.let { document.id to it }
+            }.toMap()
+            val mergedCards = if (reset) {
+                loadedCards
+            } else {
+                (_institutes.value.associateBy { it.entity.id } + loadedCards.associateBy { it.entity.id })
+                    .values
+                    .sortedByDescending { it.entity.createdAtMs }
+            }
+            _institutes.value = mergedCards
+            _lastActiveMap.value = if (reset) loadedActive else _lastActiveMap.value + loadedActive
+            recalculateStats(mergedCards)
+            rebuildReceiptHistory()
+        } catch (error: Exception) {
+            FirebaseCrashlytics.getInstance().recordException(error)
+            _operationMsg.value = "Failed to load institutes: ${error.message}"
+        } finally {
+            _isLoading.value = false
+            _isLoadingMoreInstitutes.value = false
+        }
+    }
+
+    private fun instituteCardFromDocument(document: DocumentSnapshot, now: Long): InstituteCardData? {
+        val data = document.data ?: return null
+        if (data["deletionState"] == "retained") return null
+        val trialEnd = (data["trialEndDate"] as? Number)?.toLong() ?: now
+        val periodEnd = (data["currentPeriodEndMs"] as? Number)?.toLong() ?: trialEnd
+        val currentPlanId = data["currentPlanId"] as? String ?: DEFAULT_TRIAL_PLAN_ID
+        val isActive = data["isActive"] as? Boolean ?: true
+        val status = when {
+            !isActive -> "blocked"
+            periodEnd <= now -> "expired"
+            currentPlanId == DEFAULT_TRIAL_PLAN_ID -> "trial"
+            else -> "active"
+        }
+        return InstituteCardData(
+            entity = InstituteEntity(
+                id = document.id,
+                name = data["instituteName"] as? String ?: "Institute",
+                currentPlanId = currentPlanId,
+                subscriptionStatus = status,
+                trialStartDateMs = (data["createdAt"] as? Number)?.toLong() ?: now,
+                trialEndDateMs = trialEnd,
+                currentPeriodEndMs = periodEnd,
+                createdAtMs = (data["createdAt"] as? Number)?.toLong() ?: now,
+                phone = data["phone"] as? String,
+                whatsappNumber = data["whatsappNumber"] as? String,
+                profilePhotoUri = data["profilePhotoUri"] as? String,
+                ownerName = data["ownerName"] as? String,
+                email = data["email"] as? String,
+                instituteCode = data["instituteCode"] as? String,
+                securityPin = data["securityPin"] as? String
+            ),
+            studentCount = (data["studentCount"] as? Number)?.toInt() ?: 0,
+            staffCount = (data["staffCount"] as? Number)?.toInt() ?: 0,
+            batchCount = (data["batchCount"] as? Number)?.toInt() ?: 0
+        )
     }
 
     private fun loadManagedUsersRealtime() {
@@ -666,52 +648,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
     ) {
         val cleanName = name.trim()
         val cleanEmail = email.trim().lowercase(Locale.getDefault())
-        val cleanPassword = password.trim()
-        val cleanInstituteId = instituteId?.trim()?.takeIf { it.isNotEmpty() }
-        when {
-            cleanName.isBlank() -> _operationMsg.value = "Name is required."
-            cleanEmail.isBlank() -> _operationMsg.value = "Email is required."
-            cleanPassword.length < 6 -> _operationMsg.value = "Password must be at least 6 characters."
-            role != "SuperAdmin" && cleanInstituteId == null -> _operationMsg.value = "Select an institute for this role."
-            else -> viewModelScope.launch {
-                try {
-                    val uid = FirebaseAuthApi.createUser(cleanEmail, cleanPassword)
-                    val now = System.currentTimeMillis()
-                    val record = ManagedUserRecord(
-                        id = uid,
-                        name = cleanName,
-                        email = cleanEmail,
-                        role = role,
-                        instituteId = cleanInstituteId,
-                        createdAtMs = now,
-                        status = "active"
-                    )
-                    AppUserSyncHelper.upsertManagedUser(record)
-                    db.userDao().insertUser(
-                        UserEntity(
-                            id = uid,
-                            instituteId = cleanInstituteId,
-                            name = cleanName,
-                            email = cleanEmail,
-                            passwordHash = PasswordHasher.hash(cleanPassword),
-                            role = role,
-                            createdAtMs = now
-                        )
-                    )
-                    if (role == "InstituteOwner" && cleanInstituteId != null) {
-                        firestore.collection("institutes").document(cleanInstituteId)
-                            .update(mapOf("ownerName" to cleanName, "email" to cleanEmail))
-                            .await()
-                    }
-                    _operationMsg.value = "$role account created for $cleanEmail"
-                } catch (e: FirebaseAuthApi.SignUpException) {
-                    _operationMsg.value = e.firebaseMessage
-                } catch (e: Exception) {
-                    FirebaseCrashlytics.getInstance().recordException(e)
-                    _operationMsg.value = "User create failed: ${e.message}"
-                }
-            }
-        }
+        _operationMsg.value = "Direct account creation is disabled. Use secure institute provisioning or platform role access."
     }
 
     fun updateManagedUser(
@@ -722,87 +659,32 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
         password: String
     ) {
         val cleanName = name.trim()
-        val cleanInstituteId = instituteId?.trim()?.takeIf { it.isNotEmpty() }
-        val requestedPassword = password.trim()
-        when {
-            cleanName.isBlank() -> _operationMsg.value = "Name is required."
-            role != "SuperAdmin" && cleanInstituteId == null -> _operationMsg.value = "Select an institute for this role."
-            else -> viewModelScope.launch {
-                try {
-                    val updated = ManagedUserRecord(
-                        id = existing.id,
-                        name = cleanName,
-                        email = existing.email,
-                        role = role,
-                        instituteId = cleanInstituteId,
-                        createdAtMs = existing.createdAtMs,
-                        status = existing.status
-                    )
-                    AppUserSyncHelper.upsertManagedUser(updated)
-                    val currentLocal = db.userDao().getUserById(existing.id)
-                    if (currentLocal == null) {
-                        db.userDao().insertUser(
-                            UserEntity(
-                                id = existing.id,
-                                instituteId = cleanInstituteId,
-                                name = cleanName,
-                                email = existing.email,
-                                passwordHash = "",
-                                role = role,
-                                createdAtMs = existing.createdAtMs
-                            )
-                        )
-                    } else {
-                        db.userDao().updateUser(
-                            currentLocal.copy(
-                                instituteId = cleanInstituteId,
-                                name = cleanName,
-                                role = role
-                            )
-                        )
-                    }
-                    if (role == "InstituteOwner" && cleanInstituteId != null) {
-                        firestore.collection("institutes").document(cleanInstituteId)
-                            .update(mapOf("ownerName" to cleanName, "email" to existing.email))
-                            .await()
-                    }
-                    if (requestedPassword.isNotBlank()) {
-                        FirebaseAuth.getInstance().sendPasswordResetEmail(existing.email).await()
-                        _operationMsg.value = "User updated. Password reset email sent to ${existing.email}"
-                    } else {
-                        _operationMsg.value = "User updated successfully."
-                    }
-                } catch (e: Exception) {
-                    FirebaseCrashlytics.getInstance().recordException(e)
-                    _operationMsg.value = "User update failed: ${e.message}"
-                }
-            }
-        }
+        _operationMsg.value = "Direct account editing is disabled. Use Owner Access or Platform Roles with an audit reason."
     }
 
-    fun extendSubscription(instituteId: String, daysToAdd: Int) {
+    fun extendSubscription(instituteId: String, daysToAdd: Int, reason: String) {
+        if (reason.trim().length < 3) {
+            _operationMsg.value = "Please record why access is being extended."
+            return
+        }
         viewModelScope.launch {
             try {
-                val updatedCard = withContext(Dispatchers.IO) {
-                    val docRef = firestore.collection("institutes").document(instituteId)
-                    val snapshot = docRef.get().await()
-                    val trialEnd = snapshot.getLong("trialEndDate") ?: System.currentTimeMillis()
-                    val periodEnd = snapshot.getLong("currentPeriodEndMs") ?: trialEnd
-                    val newTrialEnd = trialEnd + (daysToAdd * 24L * 60 * 60 * 1000)
-                    val newPeriodEnd = periodEnd + (daysToAdd * 24L * 60 * 60 * 1000)
-                    docRef.update(mapOf("trialEndDate" to newTrialEnd, "currentPeriodEndMs" to newPeriodEnd)).await()
+                val updated = SubscriptionRepository(firestore).extendSubscription(instituteId, daysToAdd, reason)
+                withContext(Dispatchers.IO) {
                     db.instituteDao().getInstitute(instituteId)?.let { current ->
                         db.instituteDao().insertInstitute(
-                            current.copy(trialEndDateMs = newTrialEnd, currentPeriodEndMs = newPeriodEnd)
+                            current.copy(
+                                subscriptionStatus = updated.subscriptionStatus,
+                                currentPeriodEndMs = updated.currentPeriodEndMs
+                            )
                         )
                     }
-                    Pair(newTrialEnd, newPeriodEnd)
                 }
                 _institutes.value = _institutes.value.map { card ->
                     if (card.entity.id != instituteId) return@map card
                     card.copy(entity = card.entity.copy(
-                        trialEndDateMs = updatedCard.first,
-                        currentPeriodEndMs = updatedCard.second
+                        subscriptionStatus = updated.subscriptionStatus,
+                        currentPeriodEndMs = updated.currentPeriodEndMs
                     ))
                 }
                 _operationMsg.value = "Subscription extended by $daysToAdd days"
@@ -816,19 +698,23 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
         viewModelScope.launch {
             try {
                 val newBlocked = !currentBlocked
-                val newStatus = if (newBlocked) "blocked" else "active"
+                val updated = SubscriptionRepository(firestore).setInstituteBlocked(instituteId, newBlocked)
                 withContext(Dispatchers.IO) {
-                    firestore.collection("institutes").document(instituteId)
-                        .update(mapOf("isActive" to !newBlocked, "subscriptionStatus" to newStatus)).await()
                     db.instituteDao().getInstitute(instituteId)?.let { current ->
                         db.instituteDao().insertInstitute(
-                            current.copy(subscriptionStatus = newStatus)
+                            current.copy(
+                                subscriptionStatus = updated.subscriptionStatus,
+                                currentPeriodEndMs = updated.currentPeriodEndMs
+                            )
                         )
                     }
                 }
                 _institutes.value = _institutes.value.map { card ->
                     if (card.entity.id != instituteId) return@map card
-                    card.copy(entity = card.entity.copy(subscriptionStatus = newStatus))
+                    card.copy(entity = card.entity.copy(
+                        subscriptionStatus = updated.subscriptionStatus,
+                        currentPeriodEndMs = updated.currentPeriodEndMs
+                    ))
                 }
                 _operationMsg.value = if (newBlocked) "Institute blocked" else "Institute unblocked"
             } catch (e: Exception) {
@@ -842,10 +728,13 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
     val trashedInstitutes = _trashedInstitutes.asStateFlow()
 
     private fun loadTrashedInstitutes() {
-        viewModelScope.launch {
-            try {
-                val docs = withContext(Dispatchers.IO) {
-                    firestore.collection("institutes_trash").get().await()
+        firestore.collection("institutes")
+            .whereEqualTo("deletionState", "retained")
+            .addSnapshotListener { docs, error ->
+                if (error != null || docs == null) {
+                    error?.let(FirebaseCrashlytics.getInstance()::recordException)
+                    _operationMsg.value = "Failed to load retained institutes."
+                    return@addSnapshotListener
                 }
                 _trashedInstitutes.value = docs.documents.mapNotNull { doc ->
                     val data = doc.data ?: return@mapNotNull null
@@ -854,11 +743,11 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                             id = doc.id,
                             name = data["instituteName"] as? String ?: "Institute",
                             currentPlanId = data["currentPlanId"] as? String ?: DEFAULT_TRIAL_PLAN_ID,
-                            subscriptionStatus = "trashed",
-                            trialStartDateMs = data["createdAt"] as? Long ?: 0L,
-                            trialEndDateMs = data["_trashedAt"] as? Long ?: 0L,
-                            currentPeriodEndMs = data["_trashExpiresAt"] as? Long ?: 0L,
-                            createdAtMs = data["createdAt"] as? Long ?: 0L,
+                            subscriptionStatus = "deletion_pending",
+                            trialStartDateMs = (data["createdAt"] as? Number)?.toLong() ?: 0L,
+                            trialEndDateMs = (data["archivedAtMs"] as? Number)?.toLong() ?: 0L,
+                            currentPeriodEndMs = (data["retentionUntilMs"] as? Number)?.toLong() ?: 0L,
+                            createdAtMs = (data["createdAt"] as? Number)?.toLong() ?: 0L,
                             phone = data["phone"] as? String,
                             ownerName = data["ownerName"] as? String,
                             email = data["email"] as? String
@@ -867,10 +756,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                         staffCount = 0
                     )
                 }
-            } catch (e: Exception) {
-                _operationMsg.value = "Failed to load trash: ${e.message}"
             }
-        }
     }
 
     fun removeInstitute(instituteId: String, superAdminPassword: String) {
@@ -889,39 +775,19 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                     return@launch
                 }
                 val card = _institutes.value.find { it.entity.id == instituteId } ?: return@launch
-                val trashedAt = System.currentTimeMillis()
-                val expiresAt = trashedAt + 10L * 24 * 60 * 60 * 1000 // 10 days
-                withContext(Dispatchers.IO) {
-                    // Mark institute as deleted in Firestore (move to trash subcollection)
-                    val instDoc = firestore.collection("institutes").document(instituteId).get().await()
-                    val instData = (instDoc.data ?: emptyMap()).toMutableMap()
-                    instData["_trashedAt"] = trashedAt
-                    instData["_trashExpiresAt"] = expiresAt
-                    instData["_trashedBy"] = FirebaseAuth.getInstance().currentUser?.uid
-                    instData["isActive"] = false
-                    instData["subscriptionStatus"] = "trashed"
-                    firestore.collection("institutes_trash").document(instituteId).set(instData).await()
-                    firestore.collection("institutes").document(instituteId).delete().await()
-                    // Move app_user to trash
-                    try {
-                        val appUserDoc = firestore.collection("app_users").document(instituteId).get().await()
-                        if (appUserDoc.exists()) {
-                            val userData = appUserDoc.data?.toMutableMap() ?: mutableMapOf()
-                            userData["_trashedAt"] = trashedAt
-                            firestore.collection("app_users_trash").document(instituteId).set(userData).await()
-                            firestore.collection("app_users").document(instituteId).delete().await()
-                        }
-                    } catch (_: Exception) { }
-                }
+                val result = safeDeletionRepository.archiveInstitute(
+                    instituteId,
+                    "Institute archived after SuperAdmin re-authentication"
+                )
                 _trashedInstitutes.value = _trashedInstitutes.value + listOf(card.copy(
                     entity = card.entity.copy(
-                        subscriptionStatus = "trashed",
-                        trialEndDateMs = trashedAt,
-                        currentPeriodEndMs = expiresAt
+                        subscriptionStatus = "deletion_pending",
+                        trialEndDateMs = result.archivedAtMs ?: System.currentTimeMillis(),
+                        currentPeriodEndMs = result.retentionUntilMs ?: 0L
                     )
                 ))
                 _institutes.value = _institutes.value.filter { it.entity.id != instituteId }
-                _operationMsg.value = "${card.entity.name} moved to trash. Auto-delete in 10 days."
+                _operationMsg.value = "${card.entity.name} archived. Data and ledger are retained for recovery."
             } catch (e: Exception) {
                 _operationMsg.value = "Failed: ${e.message}"
                 FirebaseCrashlytics.getInstance().recordException(e)
@@ -933,31 +799,14 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
         viewModelScope.launch {
             try {
                 val card = _trashedInstitutes.value.find { it.entity.id == instituteId } ?: return@launch
-                withContext(Dispatchers.IO) {
-                    val trashDoc = firestore.collection("institutes_trash").document(instituteId).get().await()
-                    val data = (trashDoc.data ?: emptyMap()).toMutableMap()
-                    data.remove("_trashedAt")
-                    data.remove("_trashExpiresAt")
-                    data.remove("_trashedBy")
-                    data["isActive"] = true
-                    data["subscriptionStatus"] = "active"
-                    firestore.collection("institutes").document(instituteId).set(data).await()
-                    firestore.collection("institutes_trash").document(instituteId).delete().await()
-                    // Restore app_user
-                    try {
-                        val trashUserDoc = firestore.collection("app_users_trash").document(instituteId).get().await()
-                        if (trashUserDoc.exists()) {
-                            val userData = trashUserDoc.data?.toMutableMap() ?: mutableMapOf()
-                            userData.remove("_trashedAt")
-                            firestore.collection("app_users").document(instituteId).set(userData).await()
-                            firestore.collection("app_users_trash").document(instituteId).delete().await()
-                        }
-                    } catch (_: Exception) { }
-                }
+                val result = safeDeletionRepository.restoreInstitute(
+                    instituteId,
+                    "Institute restored from retained deletion state"
+                )
                 _trashedInstitutes.value = _trashedInstitutes.value.filter { it.entity.id != instituteId }
                 _institutes.value = _institutes.value + listOf(card.copy(
                     entity = card.entity.copy(
-                        subscriptionStatus = "active",
+                        subscriptionStatus = result.subscriptionStatus ?: "active",
                         trialEndDateMs = card.entity.currentPeriodEndMs
                     )
                 ))
@@ -969,51 +818,6 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
         }
     }
 
-    fun permanentlyDelete(instituteId: String) {
-        viewModelScope.launch {
-            try {
-                withContext(Dispatchers.IO) {
-                    firestore.collection("institutes_trash").document(instituteId).delete().await()
-                    try { firestore.collection("app_users_trash").document(instituteId).delete().await() } catch (_: Exception) { }
-                    // Clean all orphan subcollections (parent doc was already moved to trash)
-                    val subCollections = listOf(
-                        "batches", "students", "fees", "payments", "receipts",
-                        "attendance", "exams", "staffs", "enquiries", "registrations"
-                    )
-                    for (col in subCollections) {
-                        try {
-                            val docs = firestore.collection("institutes").document(instituteId)
-                                .collection(col).get().await().documents
-                            for (doc in docs) {
-                                // Also clean nested subcollections for exams (results)
-                                if (col == "exams") {
-                                    try {
-                                        firestore.collection("institutes").document(instituteId)
-                                            .collection("exams").document(doc.id)
-                                            .collection("results").get().await()
-                                            .documents.forEach { it.reference.delete().await() }
-                                    } catch (_: Exception) { }
-                                }
-                                doc.reference.delete().await()
-                            }
-                        } catch (_: Exception) { }
-                    }
-                }
-                _trashedInstitutes.value = _trashedInstitutes.value.filter { it.entity.id != instituteId }
-                _operationMsg.value = "Institute permanently deleted."
-            } catch (e: Exception) {
-                _operationMsg.value = "Failed: ${e.message}"
-                FirebaseCrashlytics.getInstance().recordException(e)
-            }
-        }
-    }
-
-    fun clearExpiredTrash() {
-        val now = System.currentTimeMillis()
-        val expired = _trashedInstitutes.value.filter { it.entity.currentPeriodEndMs < now }
-        expired.forEach { permanentlyDelete(it.entity.id) }
-    }
-
     fun manageInstitute(
         instituteId: String,
         newExpiryMs: Long,
@@ -1023,27 +827,24 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
         isActive: Boolean,
         onDone: () -> Unit
     ) {
+        if (hasServerDashboard) return
         viewModelScope.launch {
             try {
-                val status = if (isActive) "active" else "blocked"
+                val updated = SubscriptionRepository(firestore).manageInstituteSubscription(
+                    instituteId = instituteId,
+                    newExpiryMs = newExpiryMs,
+                    studentLimit = studentLimit,
+                    staffLimit = staffLimit,
+                    planId = planId,
+                    isActive = isActive
+                )
                 withContext(Dispatchers.IO) {
-                    firestore.collection("institutes").document(instituteId).update(
-                        mapOf(
-                            "trialEndDate" to newExpiryMs,
-                            "currentPeriodEndMs" to newExpiryMs,
-                            "studentLimit" to studentLimit,
-                            "staffLimit" to staffLimit,
-                            "currentPlanId" to planId,
-                            "isActive" to isActive
-                        )
-                    ).await()
                     db.instituteDao().getInstitute(instituteId)?.let { current ->
                         db.instituteDao().insertInstitute(
                             current.copy(
-                                currentPlanId = planId,
-                                subscriptionStatus = status,
-                                trialEndDateMs = newExpiryMs,
-                                currentPeriodEndMs = newExpiryMs
+                                currentPlanId = updated.currentPlanId,
+                                subscriptionStatus = updated.subscriptionStatus,
+                                currentPeriodEndMs = updated.currentPeriodEndMs
                             )
                         )
                     }
@@ -1051,10 +852,9 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                 _institutes.value = _institutes.value.map { card ->
                     if (card.entity.id != instituteId) return@map card
                     card.copy(entity = card.entity.copy(
-                        currentPlanId = planId,
-                        subscriptionStatus = status,
-                        trialEndDateMs = newExpiryMs,
-                        currentPeriodEndMs = newExpiryMs
+                        currentPlanId = updated.currentPlanId,
+                        subscriptionStatus = updated.subscriptionStatus,
+                        currentPeriodEndMs = updated.currentPeriodEndMs
                     ))
                 }
                 _operationMsg.value = "Institute updated successfully"
@@ -1078,20 +878,12 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                     _operationMsg.value = "A plan with this name already exists."
                     return@launch
                 }
+                if (existingPlanId != null && existingPlanId != plan.id) {
+                    _operationMsg.value = "Plan ID cannot be changed after institutes use it. Create a new plan instead."
+                    return@launch
+                }
 
                 withContext(Dispatchers.IO) {
-                    if (existingPlanId != null && existingPlanId != plan.id) {
-                        val usingPlan = db.instituteDao().getAllInstitutes().first().filter { it.currentPlanId == existingPlanId }
-                        usingPlan.forEach { institute ->
-                            val updated = institute.copy(currentPlanId = plan.id)
-                            db.instituteDao().insertInstitute(updated)
-                            firestore.collection("institutes").document(institute.id)
-                                .update("currentPlanId", plan.id)
-                                .await()
-                        }
-                        SubscriptionPlanSyncHelper.deletePlan(existingPlanId)
-                        db.subscriptionPlanDao().deletePlanById(existingPlanId)
-                    }
                     db.subscriptionPlanDao().insertPlans(listOf(plan))
                     SubscriptionPlanSyncHelper.upsertPlans(listOf(plan))
                 }
@@ -1275,7 +1067,8 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
             try {
                 val data = withContext(Dispatchers.IO) {
                     firestore.collection("institutes").document(instituteId)
-                        .collection("receipts")
+                        .collection("subscription_receipts")
+                        .orderBy("approvedAt", com.google.firebase.firestore.Query.Direction.DESCENDING)
                         .get().await()
                 }
                 val plans = _subscriptionPlans.value
@@ -1318,17 +1111,20 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
         }
     }
 
-    fun sendPasswordReset(email: String?) {
-        if (email.isNullOrBlank()) {
-            _operationMsg.value = "No email on file for this institute."
+    fun sendOwnerRecovery(instituteId: String, reason: String) {
+        if (reason.trim().length < 3) {
+            _operationMsg.value = "Enter a reason before creating an owner recovery link."
             return
         }
         viewModelScope.launch {
             try {
-                com.google.android.gms.tasks.Tasks.await(
-                    FirebaseAuth.getInstance().sendPasswordResetEmail(email)
-                )
-                _operationMsg.value = "Password reset email sent to $email"
+                val result = PlatformAdminRepository().ownerRecovery(instituteId, reason)
+                _lastRecoveryLink.value = result.recoveryLink.takeIf { it.isNotBlank() }
+                _operationMsg.value = if (result.recoveryLink.isBlank()) {
+                    "Recovery audited, but no reset link was generated."
+                } else {
+                    "Recovery link generated once. Copy it from Owner Access."
+                }
             } catch (e: Exception) {
                 _operationMsg.value = "Failed: ${e.message}"
                 FirebaseCrashlytics.getInstance().recordException(e)
@@ -1336,6 +1132,121 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
         }
     }
 
+
+    fun refreshPlatformDashboard() {
+        viewModelScope.launch {
+            try {
+                val metrics = PlatformAdminRepository().dashboard()
+                hasServerDashboard = true
+                _stats.value = SuperAdminStats(
+                    totalInstitutes = metrics.totalInstitutes, activeSubscriptions = metrics.activeInstitutes,
+                    lifetimeRevenue = metrics.lifetimeRevenue, thisMonthRevenue = metrics.thisMonthRevenue,
+                    totalStudents = metrics.totalStudents, totalStaff = metrics.totalStaff,
+                    expiringIn7Days = metrics.expiringIn7Days, expiringIn30Days = metrics.expiringIn30Days,
+                    canonicalReceiptCount = metrics.canonicalReceiptCount, snapshotAtMs = metrics.snapshotAtMs
+                )
+            } catch (error: Exception) {
+                FirebaseCrashlytics.getInstance().recordException(error)
+                _operationMsg.value = "Live platform metrics unavailable: ${error.message}"
+            }
+        }
+    }
+
+    fun transferOwner(instituteId: String, ownerName: String, ownerEmail: String, reason: String) {
+        if (ownerName.isBlank() || ownerEmail.isBlank() || reason.trim().length < 3) {
+            _operationMsg.value = "Owner name, email, and transfer reason are required."
+            return
+        }
+        viewModelScope.launch {
+            try {
+                val result = PlatformAdminRepository().transferOwner(instituteId, ownerName, ownerEmail, reason)
+                _lastRecoveryLink.value = result.recoveryLink.takeIf { it.isNotBlank() }
+                _operationMsg.value = "Owner access transferred and audited. The previous owner is now an institute admin."
+                loadInstitutesRealtime()
+            } catch (error: Exception) { _operationMsg.value = "Owner transfer failed: ${error.message}" }
+        }
+    }
+
+    fun createInstitute(draft: PlatformInstituteDraft) {
+        viewModelScope.launch {
+            try {
+                val result = PlatformAdminRepository().createInstitute(draft)
+                _lastRecoveryLink.value = result.recoveryLink.takeIf { it.isNotBlank() }
+                _operationMsg.value = "${result.instituteName} was provisioned securely."
+                loadInstitutesRealtime(); refreshPlatformDashboard()
+            } catch (error: Exception) { _operationMsg.value = "Institute creation failed: ${error.message}" }
+        }
+    }
+
+    fun previewInstituteImport(rows: List<PlatformInstituteDraft>, onPreview: (List<com.batchfee.edu.data.repository.ImportPreviewRow>) -> Unit) {
+        viewModelScope.launch {
+            try { onPreview(PlatformAdminRepository().previewInstituteImport(rows)) }
+            catch (error: Exception) { _operationMsg.value = "CSV preview failed: ${error.message}"; onPreview(emptyList()) }
+        }
+    }
+
+    fun importInstitutes(rows: List<PlatformInstituteDraft>, validRows: Set<Int>, batchId: String) {
+        if (validRows.isEmpty()) { _operationMsg.value = "No valid rows are ready to import."; return }
+        viewModelScope.launch {
+            val succeeded = _bulkImportReport.value.successfulRows.toMutableSet()
+            val failures = _bulkImportReport.value.failedRows.toMutableMap()
+            _bulkImportReport.value = BulkImportReport(batchId, succeeded, failures, running = true)
+            validRows.sorted().forEach { index ->
+                if (index !in succeeded) try {
+                    PlatformAdminRepository().createInstitute(rows[index], "${batchId}_row_${index.toString().padStart(4, '0')}")
+                    succeeded += index; failures.remove(index)
+                } catch (error: Exception) { failures[index] = error.message ?: "Server rejected this row." }
+                _bulkImportReport.value = BulkImportReport(batchId, succeeded.toSet(), failures.toMap(), running = true)
+            }
+            _bulkImportReport.value = BulkImportReport(batchId, succeeded.toSet(), failures.toMap(), running = false)
+            _operationMsg.value = "Bulk import complete: ${succeeded.size} created, ${failures.size} failed."
+            loadInstitutesRealtime(); refreshPlatformDashboard()
+        }
+    }
+
+    fun provisionPlatformRole(name: String, email: String, role: String) {
+        viewModelScope.launch {
+            try {
+                val result = PlatformAdminRepository().provisionPlatformAdmin(name, email, role)
+                _lastRecoveryLink.value = result.recoveryLink.takeIf { it.isNotBlank() }
+                _operationMsg.value = "${role.replace('_', ' ')} access provisioned and audited."
+            } catch (error: Exception) { _operationMsg.value = "Platform role update failed: ${error.message}" }
+        }
+    }
+
+    private fun loadPlatformAudit() {
+        firestore.collection("platform_audit").addSnapshotListener { snapshot, error ->
+            if (error != null || snapshot == null) return@addSnapshotListener
+            _platformAudit.value = snapshot.documents.mapNotNull { document ->
+                val data = document.data ?: return@mapNotNull null
+                val details = data["details"] as? Map<*, *>
+                PlatformAuditEntry(document.id, data["action"] as? String ?: "platform_operation",
+                    data["actorUid"] as? String ?: "", data["instituteId"] as? String ?: "",
+                    (data["createdAtMs"] as? Number)?.toLong() ?: 0L,
+                    details?.entries?.joinToString(" · ") { "${it.key}: ${it.value}" }.orEmpty())
+            }.sortedByDescending { it.createdAtMs }.take(100)
+        }
+    }
+
+    fun loadInstituteAudit(instituteId: String, onResult: (List<PlatformAuditEntry>) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val snapshot = firestore.collection("institutes").document(instituteId).collection("subscription_audit").get().await()
+                onResult(snapshot.documents.mapNotNull { document ->
+                    val data = document.data ?: return@mapNotNull null
+                    PlatformAuditEntry(document.id, data["action"] as? String ?: "subscription_operation",
+                        data["actorUid"] as? String ?: "", instituteId,
+                        (data["createdAtMs"] as? Number)?.toLong() ?: 0L,
+                        (data["details"] as? Map<*, *>)?.entries?.joinToString(" · ") { "${it.key}: ${it.value}" }.orEmpty())
+                }.sortedByDescending { it.createdAtMs })
+            } catch (_: Exception) { onResult(emptyList()) }
+        }
+    }
+
+    // Kept only so legacy card state cannot send an unaudited Firebase Auth reset.
+    fun sendPasswordReset(email: String?) {
+        _operationMsg.value = "Use Owner Access in institute details to create an audited one-time recovery link."
+    }
 
     fun setSecurityPin(instituteId: String, pin: String) {
         if (pin.isBlank() || !pin.matches(Regex("^\\d{4,6}$"))) {
@@ -1375,9 +1286,13 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
     val pendingRequests by viewModel.pendingRequests.collectAsState()
     val managedUsers by viewModel.managedUsers.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
+    val hasMoreInstitutes by viewModel.hasMoreInstitutes.collectAsState()
+    val isLoadingMoreInstitutes by viewModel.isLoadingMoreInstitutes.collectAsState()
     val operationMsg by viewModel.operationMsg.collectAsState()
     val receiptData by viewModel.receiptData.collectAsState()
-    val projected = viewModel.projectedRevenue
+    val platformAudit by viewModel.platformAudit.collectAsState()
+    val recoveryLink by viewModel.lastRecoveryLink.collectAsState()
+    val importReport by viewModel.bulkImportReport.collectAsState()
 
     val snackbarHostState = remember { SnackbarHostState() }
     LaunchedEffect(operationMsg) {
@@ -1387,6 +1302,15 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
     var announceText by remember { mutableStateOf("") }
     var searchQuery by remember { mutableStateOf("") }
     var statusFilter by remember { mutableStateOf("all") }
+    var planFilter by remember { mutableStateOf("all") }
+    var expiryFilter by remember { mutableStateOf("all") }
+    var directoryLayout by remember { mutableStateOf("grid") }
+    var directorySort by remember { mutableStateOf("newest") }
+    var showCreateInstitute by remember { mutableStateOf(false) }
+    var showCsvImport by remember { mutableStateOf(false) }
+    var showPlatformRoles by remember { mutableStateOf(false) }
+    var showAuditHistory by remember { mutableStateOf(false) }
+    var selectedInstitute by remember { mutableStateOf<InstituteCardData?>(null) }
     var userSearchQuery by remember { mutableStateOf("") }
     var userRoleFilter by remember { mutableStateOf("all") }
     var showUserDialog by remember { mutableStateOf(false) }
@@ -1397,7 +1321,8 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
 
     val planNameById = remember(subscriptionPlans) { subscriptionPlans.associate { it.id to it.name } }
 
-    val filteredInstitutes = remember(institutes, searchQuery, statusFilter) {
+    val filteredInstitutes = remember(institutes, searchQuery, statusFilter, planFilter, expiryFilter, directorySort) {
+        val now = System.currentTimeMillis()
         institutes.filter { card ->
             val inst = card.entity
             val matchesSearch = searchQuery.isBlank() ||
@@ -1407,8 +1332,20 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
                 (inst.phone?.contains(searchQuery) ?: false) ||
                 (inst.email?.contains(searchQuery, ignoreCase = true) ?: false)
             val matchesFilter = statusFilter == "all" || inst.subscriptionStatus == statusFilter
-            matchesSearch && matchesFilter
-        }
+            val matchesPlan = planFilter == "all" || inst.currentPlanId == planFilter
+            val daysToExpiry = (effectiveSubscriptionExpiryMs(inst) - now) / MILLIS_PER_DAY
+            val matchesExpiry = when (expiryFilter) {
+                "expired" -> effectiveSubscriptionExpiryMs(inst) <= now
+                "7days" -> daysToExpiry in 0..7
+                "30days" -> daysToExpiry in 0..30
+                else -> true
+            }
+            matchesSearch && matchesFilter && matchesPlan && matchesExpiry
+        }.sortedWith(when (directorySort) {
+            "name" -> compareBy { it.entity.name.lowercase(Locale.getDefault()) }
+            "expiry" -> compareBy { effectiveSubscriptionExpiryMs(it.entity) }
+            else -> compareByDescending { it.entity.createdAtMs }
+        })
     }
     val instituteNameMap = remember(institutes) { institutes.associate { it.entity.id to it.entity.name } }
     val filteredUsers = remember(managedUsers, userSearchQuery, userRoleFilter, instituteNameMap) {
@@ -1430,7 +1367,7 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.size(34.dp).clip(RoundedCornerShape(10.dp))
-                            .background(Brush.horizontalGradient(listOf(AccentViolet, ElectricBlue))),
+                            .background(Brush.horizontalGradient(listOf(AccentCyan, ElectricBlue))),
                             contentAlignment = Alignment.Center
                         ) { Icon(Icons.Filled.Shield, null, tint = Color.White, modifier = Modifier.size(20.dp)) }
                         Spacer(Modifier.width(10.dp))
@@ -1461,12 +1398,12 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
                 Spacer(Modifier.height(8.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     StatCard("Registered\nInstitutes", if (isLoading) "..." else stats.totalInstitutes.toString(), AccentCyan, Icons.Filled.Business, Modifier.weight(1f))
-                    StatCard("Active\nSubscriptions", if (isLoading) "..." else stats.activeSubscriptions.toString(), AccentGreen, Icons.Filled.Verified, Modifier.weight(1f))
+                    StatCard("Active\nInstitutes", if (isLoading) "..." else stats.activeSubscriptions.toString(), AccentGreen, Icons.Filled.Verified, Modifier.weight(1f))
                 }
                 Spacer(Modifier.height(10.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    StatCard("Total\nStudents", if (isLoading) "..." else stats.totalStudents.toString(), AccentViolet, Icons.Filled.People, Modifier.weight(1f))
-                    StatCard("Total\nStaff", if (isLoading) "..." else stats.totalStaff.toString(), AccentPink, Icons.Filled.Badge, Modifier.weight(1f))
+                    StatCard("All\nStudents", if (isLoading) "..." else stats.totalStudents.toString(), AccentViolet, Icons.Filled.People, Modifier.weight(1f))
+                    StatCard("Expiring\nin 7 days", if (isLoading) "..." else stats.expiringIn7Days.toString(), AccentCyan, Icons.Filled.Schedule, Modifier.weight(1f))
                 }
             }
 
@@ -1478,23 +1415,17 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
                 }
             }
 
-            // ── Monthly Revenue Estimate ──
+            // ── Canonical subscription metrics ──
             item {
-                ProjectedRevenueCard(projected, stats.activeSubscriptions)
-            }
-
-            // ── Live trend bars ──
-            item {
-                val pulseAnim = rememberInfiniteTransition()
-                val bar1 by pulseAnim.animateFloat(0.6f, 1f, infiniteRepeatable(tween(1200), RepeatMode.Reverse))
-                val bar2 by pulseAnim.animateFloat(0.3f, 0.85f, infiniteRepeatable(tween(1000), RepeatMode.Reverse))
-                val bar3 by pulseAnim.animateFloat(0.5f, 0.95f, infiniteRepeatable(tween(1400), RepeatMode.Reverse))
-                val bar4 by pulseAnim.animateFloat(0.2f, 0.7f, infiniteRepeatable(tween(900), RepeatMode.Reverse))
                 Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = CardBg)) {
-                    Row(Modifier.fillMaxWidth().height(80.dp).padding(16.dp), verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        repeat(12) { i ->
-                            val f = listOf(bar1, bar2, bar3, bar4, bar1, bar2, bar3, bar4, bar1, bar2, bar3, bar4)[i]
-                            Box(Modifier.weight(1f).fillMaxHeight(f).clip(RoundedCornerShape(3.dp)).background(Brush.verticalGradient(listOf(AccentCyan, ElectricBlue))))
+                    Row(Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Column {
+                            Text("Expiring in 30 days", color = TextMuted, fontSize = 11.sp)
+                            Text(stats.expiringIn30Days.toString(), color = AccentCyan, fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                        }
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text("Canonical subscription receipts", color = TextMuted, fontSize = 11.sp)
+                            Text(stats.canonicalReceiptCount.toString(), color = AccentGreen, fontWeight = FontWeight.Bold, fontSize = 20.sp)
                         }
                     }
                 }
@@ -1592,11 +1523,32 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
             item {
                 Spacer(Modifier.height(4.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Text("All Institutes · ${filteredInstitutes.size}", color = TextMuted, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                    if (searchQuery.isNotBlank() || statusFilter != "all") {
-                        TextButton(onClick = { searchQuery = ""; statusFilter = "all" }) {
+                    Column {
+                        Text("Institute Directory", color = TextWhite, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                        Text("${filteredInstitutes.size} loaded of ${stats.totalInstitutes} registered", color = TextMuted, fontSize = 11.sp)
+                    }
+                    if (searchQuery.isNotBlank() || statusFilter != "all" || planFilter != "all" || expiryFilter != "all") {
+                        TextButton(onClick = { searchQuery = ""; statusFilter = "all"; planFilter = "all"; expiryFilter = "all" }) {
                             Text("Clear", color = AccentCyan, fontSize = 12.sp)
                         }
+                    }
+                }
+            }
+
+            item {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { showCreateInstitute = true }, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = AccentCyan)) {
+                        Icon(Icons.Filled.AddBusiness, null, modifier = Modifier.size(16.dp), tint = BgColor)
+                        Spacer(Modifier.width(4.dp)); Text("Create", color = BgColor, fontSize = 12.sp)
+                    }
+                    OutlinedButton(onClick = { showCsvImport = true }, modifier = Modifier.weight(1f), colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentCyan)) {
+                        Icon(Icons.Filled.UploadFile, null, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); Text("CSV", fontSize = 12.sp)
+                    }
+                    IconButton(onClick = { showPlatformRoles = true }, modifier = Modifier.clip(RoundedCornerShape(10.dp)).background(CardBg)) {
+                        Icon(Icons.Filled.AdminPanelSettings, "Platform roles", tint = AccentCyan)
+                    }
+                    IconButton(onClick = { showAuditHistory = true }, modifier = Modifier.clip(RoundedCornerShape(10.dp)).background(CardBg)) {
+                        Icon(Icons.Filled.History, "Audit history", tint = AccentCyan)
                     }
                 }
             }
@@ -1660,6 +1612,46 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
                 }
             }
 
+            item {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("all" to "Any expiry", "7days" to "≤ 7 days", "30days" to "≤ 30 days", "expired" to "Expired").forEach { (key, label) ->
+                        FilterChip(selected = expiryFilter == key, onClick = { expiryFilter = key }, label = { Text(label, fontSize = 10.sp) },
+                            colors = FilterChipDefaults.filterChipColors(containerColor = CardBg, selectedContainerColor = AccentCyan.copy(alpha = 0.14f)),
+                            border = FilterChipDefaults.filterChipBorder(borderColor = BorderSub, selectedBorderColor = AccentCyan.copy(alpha = 0.45f), enabled = true, selected = expiryFilter == key),
+                            shape = RoundedCornerShape(8.dp))
+                    }
+                }
+            }
+            item {
+                val planOptions = listOf("all") + subscriptionPlans.map { it.id }
+                OutlinedButton(
+                    onClick = {
+                        val current = planOptions.indexOf(planFilter).coerceAtLeast(0)
+                        planFilter = planOptions[(current + 1) % planOptions.size]
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentCyan)
+                ) {
+                    Icon(Icons.Filled.Tune, null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Plan: ${if (planFilter == "all") "All plans" else planDisplayName(planFilter, subscriptionPlans)}", fontSize = 12.sp)
+                }
+            }
+            item {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf("newest" to "Newest", "name" to "A–Z", "expiry" to "Expiry").forEach { (key, label) ->
+                            FilterChip(selected = directorySort == key, onClick = { directorySort = key }, label = { Text(label, fontSize = 10.sp) },
+                                colors = FilterChipDefaults.filterChipColors(containerColor = CardBg, selectedContainerColor = AccentCyan.copy(alpha = 0.14f)), shape = RoundedCornerShape(8.dp))
+                        }
+                    }
+                    Row {
+                        IconButton(onClick = { directoryLayout = "grid" }) { Icon(Icons.Filled.GridView, "Grid", tint = if (directoryLayout == "grid") AccentCyan else TextMuted) }
+                        IconButton(onClick = { directoryLayout = "table" }) { Icon(Icons.Filled.ViewList, "Table", tint = if (directoryLayout == "table") AccentCyan else TextMuted) }
+                    }
+                }
+            }
+
             if (filteredInstitutes.isEmpty()) {
                 item {
                     Box(Modifier.fillMaxWidth().padding(vertical = 24.dp), contentAlignment = Alignment.Center) {
@@ -1668,18 +1660,50 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
                     }
                 }
             } else {
-                items(filteredInstitutes, key = { it.entity.id }) { card ->
-                    InstituteCard(card, viewModel, subscriptionPlans)
+                if (directoryLayout == "grid") {
+                    items(filteredInstitutes.chunked(2), key = { row -> row.joinToString("_") { it.entity.id } }) { row ->
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            row.forEach { card -> InstituteGridCard(card, subscriptionPlans, Modifier.weight(1f)) { selectedInstitute = card } }
+                            if (row.size == 1) Spacer(Modifier.weight(1f))
+                        }
+                    }
+                } else {
+                    item { InstituteTableHeader() }
+                    items(filteredInstitutes, key = { it.entity.id }) { card ->
+                        InstituteTableRow(card, subscriptionPlans) { selectedInstitute = card }
+                    }
+                }
+                if (hasMoreInstitutes) {
+                    item {
+                        OutlinedButton(
+                            onClick = viewModel::loadMoreInstitutes,
+                            enabled = !isLoadingMoreInstitutes,
+                            modifier = Modifier.fillMaxWidth().height(42.dp),
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentCyan)
+                        ) {
+                            if (isLoadingMoreInstitutes) {
+                                CircularProgressIndicator(
+                                    color = AccentCyan,
+                                    modifier = Modifier.size(18.dp),
+                                    strokeWidth = 2.dp
+                                )
+                            } else {
+                                Icon(Icons.Filled.ExpandMore, null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Load more institutes", fontSize = 13.sp)
+                            }
+                        }
+                    }
                 }
             }
 
-            // ── Trash Section ──
+            // Retained deletion section. No automatic or client-side purge is allowed.
             if (trashedInstitutes.isNotEmpty()) {
                 item {
                     Spacer(Modifier.height(8.dp))
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        Text("Trash · ${trashedInstitutes.size}", color = AccentRed, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                        LaunchedEffect(Unit) { viewModel.clearExpiredTrash() }
+                        Text("Recovery Vault · ${trashedInstitutes.size}", color = AccentRed, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                     }
                     Spacer(Modifier.height(6.dp))
                 }
@@ -1700,7 +1724,7 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
                                 Spacer(Modifier.width(10.dp))
                                 Column(Modifier.weight(1f)) {
                                     Text(inst.name, color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                                    Text("Auto-delete: ${dateFormat.format(Date(inst.currentPeriodEndMs))}", color = AccentRed.copy(alpha = 0.7f), fontSize = 11.sp)
+                                    Text("Retention review: ${dateFormat.format(Date(inst.currentPeriodEndMs))}", color = AccentRed.copy(alpha = 0.7f), fontSize = 11.sp)
                                 }
                             }
                             Spacer(Modifier.height(8.dp))
@@ -1716,17 +1740,12 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
                                     Spacer(Modifier.width(4.dp))
                                     Text("Restore", fontSize = 12.sp)
                                 }
-                                OutlinedButton(
-                                    onClick = { viewModel.permanentlyDelete(inst.id) },
-                                    modifier = Modifier.weight(1f).height(36.dp),
-                                    shape = RoundedCornerShape(8.dp),
-                                    border = ButtonDefaults.outlinedButtonBorder,
-                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentRed)
-                                ) {
-                                    Icon(Icons.Filled.DeleteForever, null, modifier = Modifier.size(14.dp))
-                                    Spacer(Modifier.width(4.dp))
-                                    Text("Delete Forever", fontSize = 12.sp)
-                                }
+                                Text(
+                                    "Ledger and media retained; no automatic purge",
+                                    modifier = Modifier.weight(1f),
+                                    color = TextMuted,
+                                    fontSize = 11.sp
+                                )
                             }
                         }
                     }
@@ -1764,7 +1783,202 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
         )
     }
 
+    /* Legacy duplicate ViewModel methods are intentionally disabled.
+    fun refreshPlatformDashboard() {
+        viewModelScope.launch {
+            try {
+                val metrics = PlatformAdminRepository().dashboard()
+                hasServerDashboard = true
+                _stats.value = SuperAdminStats(
+                    totalInstitutes = metrics.totalInstitutes,
+                    activeSubscriptions = metrics.activeInstitutes,
+                    lifetimeRevenue = metrics.lifetimeRevenue,
+                    thisMonthRevenue = metrics.thisMonthRevenue,
+                    totalStudents = metrics.totalStudents,
+                    totalStaff = metrics.totalStaff,
+                    expiringIn7Days = metrics.expiringIn7Days,
+                    expiringIn30Days = metrics.expiringIn30Days,
+                    canonicalReceiptCount = metrics.canonicalReceiptCount,
+                    snapshotAtMs = metrics.snapshotAtMs
+                )
+            } catch (error: Exception) {
+                FirebaseCrashlytics.getInstance().recordException(error)
+                _operationMsg.value = "Live platform metrics unavailable: ${error.message}"
+            }
+        }
+    }
+
+    fun transferOwner(instituteId: String, ownerName: String, ownerEmail: String, reason: String) {
+        if (ownerName.isBlank() || ownerEmail.isBlank() || reason.trim().length < 3) {
+            _operationMsg.value = "Owner name, email, and transfer reason are required."
+            return
+        }
+        viewModelScope.launch {
+            try {
+                val result = PlatformAdminRepository().transferOwner(instituteId, ownerName, ownerEmail, reason)
+                _lastRecoveryLink.value = result.recoveryLink.takeIf { it.isNotBlank() }
+                _operationMsg.value = "Owner access transferred and audited. The previous owner is now an institute admin."
+            } catch (error: Exception) {
+                FirebaseCrashlytics.getInstance().recordException(error)
+                _operationMsg.value = "Owner transfer failed: ${error.message}"
+            }
+        }
+    }
+
+    fun createInstitute(draft: PlatformInstituteDraft) {
+        viewModelScope.launch {
+            try {
+                val result = PlatformAdminRepository().createInstitute(draft)
+                _lastRecoveryLink.value = result.recoveryLink.takeIf { it.isNotBlank() }
+                _operationMsg.value = "${result.instituteName} was provisioned securely."
+                loadInstitutesRealtime()
+                refreshPlatformDashboard()
+            } catch (error: Exception) {
+                FirebaseCrashlytics.getInstance().recordException(error)
+                _operationMsg.value = "Institute creation failed: ${error.message}"
+            }
+        }
+    }
+
+    fun previewInstituteImport(rows: List<PlatformInstituteDraft>, onPreview: (List<com.batchfee.edu.data.repository.ImportPreviewRow>) -> Unit) {
+        viewModelScope.launch {
+            try {
+                onPreview(PlatformAdminRepository().previewInstituteImport(rows))
+            } catch (error: Exception) {
+                FirebaseCrashlytics.getInstance().recordException(error)
+                _operationMsg.value = "CSV preview failed: ${error.message}"
+                onPreview(emptyList())
+            }
+        }
+    }
+
+    fun importInstitutes(
+        rows: List<PlatformInstituteDraft>,
+        validRows: Set<Int>,
+        batchId: String
+    ) {
+        if (validRows.isEmpty()) {
+            _operationMsg.value = "No valid rows are ready to import."
+            return
+        }
+        viewModelScope.launch {
+            val succeeded = _bulkImportReport.value.successfulRows.toMutableSet()
+            val failures = _bulkImportReport.value.failedRows.toMutableMap()
+            _bulkImportReport.value = BulkImportReport(batchId, succeeded, failures, running = true)
+            validRows.sorted().forEach { index ->
+                if (index in succeeded) return@forEach
+                try {
+                    // A stable operation id makes retry after an interrupted import idempotent.
+                    PlatformAdminRepository().createInstitute(rows[index], "${batchId}_row_${index.toString().padStart(4, '0')}")
+                    succeeded += index
+                    failures.remove(index)
+                } catch (error: Exception) {
+                    failures[index] = error.message ?: "Server rejected this row."
+                }
+                _bulkImportReport.value = BulkImportReport(batchId, succeeded.toSet(), failures.toMap(), running = true)
+            }
+            _bulkImportReport.value = BulkImportReport(batchId, succeeded.toSet(), failures.toMap(), running = false)
+            _operationMsg.value = "Bulk import complete: ${succeeded.size} created, ${failures.size} failed."
+            loadInstitutesRealtime()
+            refreshPlatformDashboard()
+        }
+    }
+
+    fun provisionPlatformRole(name: String, email: String, role: String) {
+        viewModelScope.launch {
+            try {
+                val result = PlatformAdminRepository().provisionPlatformAdmin(name, email, role)
+                _lastRecoveryLink.value = result.recoveryLink.takeIf { it.isNotBlank() }
+                _operationMsg.value = "${role.replace('_', ' ')} access provisioned and audited."
+            } catch (error: Exception) {
+                FirebaseCrashlytics.getInstance().recordException(error)
+                _operationMsg.value = "Platform role update failed: ${error.message}"
+            }
+        }
+    }
+
+    private fun loadPlatformAudit() {
+        firestore.collection("platform_audit").addSnapshotListener { snapshot, error ->
+            if (error != null || snapshot == null) {
+                error?.let(FirebaseCrashlytics.getInstance()::recordException)
+                return@addSnapshotListener
+            }
+            _platformAudit.value = snapshot.documents.mapNotNull { document ->
+                val data = document.data ?: return@mapNotNull null
+                val details = data["details"] as? Map<*, *>
+                PlatformAuditEntry(
+                    id = document.id,
+                    action = data["action"] as? String ?: "platform_operation",
+                    actorUid = data["actorUid"] as? String ?: "",
+                    instituteId = data["instituteId"] as? String ?: "",
+                    createdAtMs = (data["createdAtMs"] as? Number)?.toLong() ?: 0L,
+                    summary = details?.entries?.joinToString(" · ") { "${it.key}: ${it.value}" }.orEmpty()
+                )
+            }.sortedByDescending { it.createdAtMs }.take(100)
+        }
+    }
+
+    fun loadInstituteAudit(instituteId: String, onResult: (List<PlatformAuditEntry>) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val snapshot = firestore.collection("institutes").document(instituteId)
+                    .collection("subscription_audit").get().await()
+                onResult(snapshot.documents.mapNotNull { document ->
+                    val data = document.data ?: return@mapNotNull null
+                    PlatformAuditEntry(
+                        id = document.id,
+                        action = data["action"] as? String ?: "subscription_operation",
+                        actorUid = data["actorUid"] as? String ?: "",
+                        instituteId = instituteId,
+                        createdAtMs = (data["createdAtMs"] as? Number)?.toLong() ?: 0L,
+                        summary = (data["details"] as? Map<*, *>)?.entries?.joinToString(" · ") { "${it.key}: ${it.value}" }.orEmpty()
+                    )
+                }.sortedByDescending { it.createdAtMs })
+            } catch (error: Exception) {
+                FirebaseCrashlytics.getInstance().recordException(error)
+                onResult(emptyList())
+            }
+        }
+    }
+
     // ── Receipt Dialog ──
+    */
+    selectedInstitute?.let { card ->
+        InstituteDetailsTabsDialog(
+            card = card,
+            plans = subscriptionPlans,
+            viewModel = viewModel,
+            onDismiss = { selectedInstitute = null }
+        )
+    }
+    if (showCreateInstitute) {
+        CreateInstituteWizard(
+            plans = subscriptionPlans,
+            onDismiss = { showCreateInstitute = false },
+            onCreate = { draft -> viewModel.createInstitute(draft); showCreateInstitute = false }
+        )
+    }
+    if (showCsvImport) {
+        CsvInstituteImportDialog(
+            report = importReport,
+            onDismiss = { showCsvImport = false },
+            onPreview = viewModel::previewInstituteImport,
+            onImport = viewModel::importInstitutes
+        )
+    }
+    if (showPlatformRoles) {
+        PlatformRolesDialog(
+            managedUsers = managedUsers,
+            onDismiss = { showPlatformRoles = false },
+            onProvision = viewModel::provisionPlatformRole
+        )
+    }
+    if (showAuditHistory) {
+        PlatformAuditDialog(platformAudit, onDismiss = { showAuditHistory = false })
+    }
+    recoveryLink?.let { link ->
+        OneTimeRecoveryLinkDialog(link, onDismiss = viewModel::clearRecoveryLink)
+    }
     if (showReceiptDialog) {
         val context = LocalContext.current
         val data = receiptData
@@ -1864,6 +2078,252 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
             shape = RoundedCornerShape(16.dp)
         )
     }
+}
+
+@Composable
+private fun InstituteGridCard(
+    card: InstituteCardData,
+    plans: List<SubscriptionPlanEntity>,
+    modifier: Modifier = Modifier,
+    onOpen: () -> Unit
+) {
+    val inst = card.entity
+    val statusColor = when (inst.subscriptionStatus) {
+        "active" -> AccentGreen; "trial" -> AccentCyan; "expired", "blocked" -> AccentRed; else -> TextMuted
+    }
+    Card(modifier.clickable(onClick = onOpen), shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = CardBg), border = BorderStroke(1.dp, BorderSub)) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(34.dp).clip(RoundedCornerShape(10.dp)).background(AccentCyan.copy(alpha = .13f)), contentAlignment = Alignment.Center) {
+                    Text(inst.name.take(1).uppercase(), color = AccentCyan, fontWeight = FontWeight.Bold)
+                }
+                Spacer(Modifier.width(8.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(inst.name, color = TextWhite, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text(inst.instituteCode ?: "No institute code", color = TextMuted, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+            Text(planDisplayName(inst.currentPlanId, plans), color = AccentCyan, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(inst.subscriptionStatus.replaceFirstChar { it.uppercase() }, color = statusColor, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                Text(SimpleDateFormat("dd MMM yy", Locale.getDefault()).format(Date(effectiveSubscriptionExpiryMs(inst))), color = TextMuted, fontSize = 10.sp)
+            }
+            Text("${card.studentCount} students · ${card.staffCount} staff", color = TextMuted, fontSize = 10.sp)
+        }
+    }
+}
+
+@Composable
+private fun InstituteTableHeader() {
+    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(9.dp)).background(BorderSub.copy(alpha = .55f)).padding(horizontal = 11.dp, vertical = 8.dp)) {
+        Text("INSTITUTE", Modifier.weight(1.7f), color = TextMuted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+        Text("PLAN", Modifier.weight(1f), color = TextMuted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+        Text("EXPIRY", Modifier.weight(.8f), color = TextMuted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+private fun InstituteTableRow(card: InstituteCardData, plans: List<SubscriptionPlanEntity>, onOpen: () -> Unit) {
+    val inst = card.entity
+    Card(Modifier.fillMaxWidth().clickable(onClick = onOpen), shape = RoundedCornerShape(9.dp), colors = CardDefaults.cardColors(containerColor = CardBg)) {
+        Row(Modifier.fillMaxWidth().padding(11.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1.7f)) {
+                Text(inst.name, color = TextWhite, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(inst.ownerName ?: inst.email.orEmpty(), color = TextMuted, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Text(planDisplayName(inst.currentPlanId, plans), Modifier.weight(1f), color = AccentCyan, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Column(Modifier.weight(.8f)) {
+                Text(SimpleDateFormat("dd MMM yy", Locale.getDefault()).format(Date(effectiveSubscriptionExpiryMs(inst))), color = TextMuted, fontSize = 10.sp)
+                Text(inst.subscriptionStatus, color = if (inst.subscriptionStatus == "active") AccentGreen else AccentCyan, fontSize = 9.sp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun InstituteDetailsTabsDialog(
+    card: InstituteCardData,
+    plans: List<SubscriptionPlanEntity>,
+    viewModel: SuperAdminViewModel,
+    onDismiss: () -> Unit
+) {
+    val inst = card.entity
+    val tabs = listOf("Overview", "Subscription", "Usage", "Team", "Payments", "Support", "Audit")
+    var selectedTab by remember { mutableIntStateOf(0) }
+    var team by remember { mutableStateOf<List<InstituteStaffSummary>?>(null) }
+    var receipts by remember { mutableStateOf<List<SubscriptionReceiptData>?>(null) }
+    var audit by remember { mutableStateOf<List<PlatformAuditEntry>?>(null) }
+    var accessReason by remember { mutableStateOf("") }
+    var accessDays by remember { mutableStateOf("7") }
+    var showOwnerAccess by remember { mutableStateOf(false) }
+    LaunchedEffect(inst.id, selectedTab) {
+        when (tabs[selectedTab]) {
+            "Team" -> viewModel.loadInstituteStaff(inst.id) { team = it }
+            "Payments" -> viewModel.loadInstituteReceipts(inst.id) { receipts = it }
+            "Audit" -> viewModel.loadInstituteAudit(inst.id) { audit = it }
+        }
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Column { Text(inst.name, color = TextWhite, fontWeight = FontWeight.Bold); Text(inst.ownerName ?: inst.email.orEmpty(), color = TextMuted, fontSize = 11.sp) } },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                TabRow(selectedTabIndex = selectedTab, containerColor = CardBg, contentColor = AccentCyan, divider = {}) {
+                    tabs.forEachIndexed { index, name -> Tab(selected = selectedTab == index, onClick = { selectedTab = index }, text = { Text(name, fontSize = 9.sp, maxLines = 1) }) }
+                }
+                when (tabs[selectedTab]) {
+                    "Overview" -> DetailRows(listOf(
+                        "Institute code" to (inst.instituteCode ?: "Not set"), "Phone" to (inst.phone ?: "Not set"),
+                        "Email" to (inst.email ?: "Not set"), "Status" to inst.subscriptionStatus, "Created" to SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(inst.createdAtMs))
+                    ))
+                    "Subscription" -> {
+                        DetailRows(listOf("Plan" to planDisplayName(inst.currentPlanId, plans), "Paid / trial expiry" to SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(effectiveSubscriptionExpiryMs(inst)))))
+                        OutlinedTextField(accessDays, { if (it.all(Char::isDigit) && it.length <= 4) accessDays = it }, label = { Text("Grant access days") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true, modifier = Modifier.fillMaxWidth())
+                        OutlinedTextField(accessReason, { if (it.length <= 500) accessReason = it }, label = { Text("Reason (required for audit)") }, minLines = 2, modifier = Modifier.fillMaxWidth())
+                        Button(onClick = { accessDays.toIntOrNull()?.takeIf { it > 0 }?.let { viewModel.extendSubscription(inst.id, it, accessReason) } }, enabled = accessReason.trim().length >= 3, colors = ButtonDefaults.buttonColors(containerColor = AccentCyan)) { Text("Grant access", color = BgColor) }
+                    }
+                    "Usage" -> DetailRows(listOf("Students" to card.studentCount.toString(), "Staff" to card.staffCount.toString(), "Batches" to card.batchCount.toString(), "Student limit" to "Server-controlled plan limit"))
+                    "Team" -> if (team == null) LoadingDetail() else if (team!!.isEmpty()) EmptyDetail("No active team members") else team!!.take(12).forEach { member -> Text("${member.fullName} · ${member.roleTitle} · ${member.status}", color = TextMuted, fontSize = 11.sp) }
+                    "Payments" -> if (receipts == null) LoadingDetail() else if (receipts!!.isEmpty()) EmptyDetail("No canonical subscription receipts") else receipts!!.take(8).forEach { receipt -> Text("${receipt.receiptNumber} · BDT ${"%.0f".format(receipt.amountPaid)} · ${receipt.planName}", color = TextMuted, fontSize = 11.sp) }
+                    "Support" -> {
+                        Text("Owner transfer and recovery preserve the institute ID and are always audited.", color = TextMuted, fontSize = 11.sp)
+                        OutlinedButton(onClick = { showOwnerAccess = true }, colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentCyan)) { Icon(Icons.Filled.Key, null, modifier = Modifier.size(15.dp)); Spacer(Modifier.width(5.dp)); Text("Owner access / recovery") }
+                    }
+                    "Audit" -> if (audit == null) LoadingDetail() else if (audit!!.isEmpty()) EmptyDetail("No subscription audit records") else audit!!.take(12).forEach { entry -> Text("${entry.action.replace('_', ' ')} · ${SimpleDateFormat("dd MMM HH:mm", Locale.getDefault()).format(Date(entry.createdAtMs))}\n${entry.summary}", color = TextMuted, fontSize = 10.sp) }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close", color = AccentCyan) } },
+        containerColor = CardBg, shape = RoundedCornerShape(16.dp)
+    )
+    if (showOwnerAccess) OwnerAccessDialog(inst, onDismiss = { showOwnerAccess = false }, onRecovery = viewModel::sendOwnerRecovery, onTransfer = viewModel::transferOwner)
+}
+
+@Composable private fun DetailRows(rows: List<Pair<String, String>>) = Column(verticalArrangement = Arrangement.spacedBy(5.dp)) { rows.forEach { (label, value) -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(label, color = TextMuted, fontSize = 11.sp); Text(value, color = TextWhite, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) } } }
+@Composable private fun LoadingDetail() = Box(Modifier.fillMaxWidth().padding(18.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(20.dp), color = AccentCyan, strokeWidth = 2.dp) }
+@Composable private fun EmptyDetail(text: String) = Text(text, color = TextMuted, fontSize = 11.sp)
+
+@Composable
+private fun OwnerAccessDialog(inst: InstituteEntity, onDismiss: () -> Unit, onRecovery: (String, String) -> Unit, onTransfer: (String, String, String, String) -> Unit) {
+    var name by remember { mutableStateOf(inst.ownerName.orEmpty()) }; var email by remember { mutableStateOf(inst.email.orEmpty()) }; var reason by remember { mutableStateOf("") }
+    AlertDialog(onDismissRequest = onDismiss, title = { Text("Owner Access", color = TextWhite) }, text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Recovery generates a one-time reset link. Transfer changes the canonical owner without changing institute data.", color = TextMuted, fontSize = 11.sp)
+        OutlinedTextField(name, { name = it }, label = { Text("New owner name") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+        OutlinedTextField(email, { email = it }, label = { Text("New owner email") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+        OutlinedTextField(reason, { if (it.length <= 500) reason = it }, label = { Text("Reason") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
+    } }, confirmButton = { Row { TextButton(onClick = { onRecovery(inst.id, reason) }, enabled = reason.trim().length >= 3) { Text("Recovery link", color = AccentCyan) }; Button(onClick = { onTransfer(inst.id, name, email, reason); onDismiss() }, enabled = name.isNotBlank() && email.isNotBlank() && reason.trim().length >= 3, colors = ButtonDefaults.buttonColors(containerColor = AccentCyan)) { Text("Transfer", color = BgColor) } } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel", color = TextMuted) } }, containerColor = CardBg)
+}
+
+@Composable
+private fun CreateInstituteWizard(plans: List<SubscriptionPlanEntity>, onDismiss: () -> Unit, onCreate: (PlatformInstituteDraft) -> Unit) {
+    var step by remember { mutableIntStateOf(0) }
+    var instituteName by remember { mutableStateOf("") }; var ownerName by remember { mutableStateOf("") }; var ownerEmail by remember { mutableStateOf("") }
+    var phone by remember { mutableStateOf("") }; var address by remember { mutableStateOf("") }; var instituteCode by remember { mutableStateOf("") }
+    var planId by remember { mutableStateOf("plan_free_trial") }
+    val canContinue = instituteName.trim().isNotBlank() && ownerName.trim().isNotBlank() && ownerEmail.contains("@")
+    AlertDialog(onDismissRequest = onDismiss, title = { Column { Text("Create Institute", color = TextWhite, fontWeight = FontWeight.Bold); Text("Step ${step + 1} of 2 · secure server provisioning", color = TextMuted, fontSize = 11.sp) } }, text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (step == 0) {
+            OutlinedTextField(instituteName, { instituteName = it }, label = { Text("Institute name") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+            OutlinedTextField(ownerName, { ownerName = it }, label = { Text("Owner name") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+            OutlinedTextField(ownerEmail, { ownerEmail = it }, label = { Text("Owner email") }, modifier = Modifier.fillMaxWidth(), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email))
+            OutlinedTextField(phone, { phone = it }, label = { Text("Phone (optional)") }, modifier = Modifier.fillMaxWidth(), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone))
+        } else {
+            OutlinedTextField(instituteCode, { instituteCode = it.uppercase() }, label = { Text("Institute code (optional)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+            OutlinedTextField(address, { address = it }, label = { Text("Address (optional)") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
+            Text("Subscription plan", color = TextMuted, fontSize = 11.sp)
+            plans.forEach { plan -> FilterChip(selected = planId == plan.id, onClick = { planId = plan.id }, label = { Text("${plan.name} · BDT ${formatMoneyValue(plan.priceBdt)}", fontSize = 11.sp) }, colors = FilterChipDefaults.filterChipColors(containerColor = CardBg, selectedContainerColor = AccentCyan.copy(alpha = .15f))) }
+            Text("The owner receives a one-time reset link; no password is collected or stored here.", color = TextMuted, fontSize = 11.sp)
+        }
+    } }, confirmButton = { Button(onClick = { if (step == 0) step = 1 else onCreate(PlatformInstituteDraft(instituteName, ownerName, ownerEmail, phone, address, instituteCode, planId)) }, enabled = if (step == 0) canContinue else true, colors = ButtonDefaults.buttonColors(containerColor = AccentCyan)) { Text(if (step == 0) "Continue" else "Create institute", color = BgColor) } }, dismissButton = { Row { if (step > 0) TextButton(onClick = { step = 0 }) { Text("Back", color = TextMuted) }; TextButton(onClick = onDismiss) { Text("Cancel", color = TextMuted) } } }, containerColor = CardBg, shape = RoundedCornerShape(16.dp))
+}
+
+@Composable
+private fun CsvInstituteImportDialog(
+    report: BulkImportReport,
+    onDismiss: () -> Unit,
+    onPreview: (List<PlatformInstituteDraft>, (List<com.batchfee.edu.data.repository.ImportPreviewRow>) -> Unit) -> Unit,
+    onImport: (List<PlatformInstituteDraft>, Set<Int>, String) -> Unit
+) {
+    val context = LocalContext.current
+    var rows by remember { mutableStateOf<List<PlatformInstituteDraft>>(emptyList()) }
+    var preview by remember { mutableStateOf<List<com.batchfee.edu.data.repository.ImportPreviewRow>>(emptyList()) }
+    var parseError by remember { mutableStateOf<String?>(null) }
+    val batchId = remember { UUID.randomUUID().toString().replace("-", "") }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        try {
+            val text = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }.orEmpty()
+            if (text.length > 250_000) error("CSV is too large. Split it into files of up to 100 rows.")
+            rows = parseInstituteCsv(text)
+            preview = emptyList(); parseError = null
+        } catch (error: Exception) { parseError = error.message ?: "Could not read CSV."; rows = emptyList(); preview = emptyList() }
+    }
+    val validRows = preview.filter { it.valid }.map { it.row - 1 }.toSet()
+    AlertDialog(onDismissRequest = onDismiss, title = { Text("Bulk Institute Import", color = TextWhite) }, text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Columns: instituteName, ownerName, ownerEmail, phone, address, instituteCode, planId. Preview runs server duplicate/plan checks before any write.", color = TextMuted, fontSize = 11.sp)
+        OutlinedButton(onClick = { picker.launch("text/csv") }, colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentCyan)) { Icon(Icons.Filled.UploadFile, null, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(5.dp)); Text("Choose CSV") }
+        if (rows.isNotEmpty()) Text("${rows.size} parsed row(s)", color = TextWhite, fontSize = 12.sp)
+        parseError?.let { Text(it, color = AccentRed, fontSize = 11.sp) }
+        if (preview.isNotEmpty()) {
+            Text("Preview: ${validRows.size} valid · ${preview.size - validRows.size} need correction", color = AccentCyan, fontSize = 11.sp)
+            preview.filterNot { it.valid }.take(6).forEach { Text("Row ${it.row}: ${it.issues.joinToString()}", color = AccentRed, fontSize = 10.sp) }
+        }
+        if (report.batchId == batchId) {
+            Text("Created ${report.successfulRows.size}; failed ${report.failedRows.size}", color = if (report.failedRows.isEmpty()) AccentGreen else AccentRed, fontSize = 11.sp)
+            report.failedRows.entries.take(6).forEach { Text("Row ${it.key + 1}: ${it.value}", color = AccentRed, fontSize = 10.sp) }
+        }
+    } }, confirmButton = { Row { if (preview.isEmpty()) Button(onClick = { if (rows.isNotEmpty()) onPreview(rows) { preview = it } }, enabled = rows.isNotEmpty(), colors = ButtonDefaults.buttonColors(containerColor = AccentCyan)) { Text("Validate preview", color = BgColor) } else Button(onClick = { onImport(rows, validRows, batchId) }, enabled = validRows.isNotEmpty() && !report.running, colors = ButtonDefaults.buttonColors(containerColor = AccentCyan)) { Text(if (report.failedRows.isNotEmpty()) "Retry failed / import" else "Import valid rows", color = BgColor) } } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Close", color = TextMuted) } }, containerColor = CardBg, shape = RoundedCornerShape(16.dp))
+}
+
+@Composable
+private fun PlatformRolesDialog(managedUsers: List<ManagedUserSummary>, onDismiss: () -> Unit, onProvision: (String, String, String) -> Unit) {
+    var name by remember { mutableStateOf("") }; var email by remember { mutableStateOf("") }; var role by remember { mutableStateOf("billing") }
+    val roles = listOf("root" to "Root", "billing" to "Billing", "support" to "Support", "operations" to "Operations", "read_only" to "Read-only")
+    AlertDialog(onDismissRequest = onDismiss, title = { Text("Platform Roles", color = TextWhite) }, text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Root retains all privileges. Billing, Support, Operations, and Read-only roles are least-privilege server roles; direct Firestore privilege writes are blocked.", color = TextMuted, fontSize = 11.sp)
+        roles.forEach { (key, label) -> FilterChip(selected = role == key, onClick = { if (key != "root") role = key }, label = { Text(label, fontSize = 11.sp) }, enabled = key != "root", colors = FilterChipDefaults.filterChipColors(containerColor = CardBg, selectedContainerColor = AccentCyan.copy(alpha = .15f))) }
+        Text("Existing platform accounts: ${managedUsers.count { it.role == "PlatformAdmin" || it.role == "SuperAdmin" }}", color = TextMuted, fontSize = 11.sp)
+        OutlinedTextField(name, { name = it }, label = { Text("Name") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+        OutlinedTextField(email, { email = it }, label = { Text("Email") }, modifier = Modifier.fillMaxWidth(), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email))
+    } }, confirmButton = { Button(onClick = { onProvision(name, email, role) }, enabled = name.isNotBlank() && email.contains("@") && role != "root", colors = ButtonDefaults.buttonColors(containerColor = AccentCyan)) { Text("Grant ${role.replace('_', ' ')}", color = BgColor) } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Close", color = TextMuted) } }, containerColor = CardBg)
+}
+
+@Composable
+private fun PlatformAuditDialog(entries: List<PlatformAuditEntry>, onDismiss: () -> Unit) {
+    AlertDialog(onDismissRequest = onDismiss, title = { Text("Audit & Security History", color = TextWhite) }, text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (entries.isEmpty()) EmptyDetail("No platform audit entries yet.") else entries.take(25).forEach { entry ->
+            Text("${entry.action.replace('_', ' ')} · ${SimpleDateFormat("dd MMM HH:mm", Locale.getDefault()).format(Date(entry.createdAtMs))}", color = AccentCyan, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+            Text("${entry.summary.ifBlank { "Actor: ${entry.actorUid.take(10)}" }}", color = TextMuted, fontSize = 10.sp)
+        }
+    } }, confirmButton = { TextButton(onClick = onDismiss) { Text("Close", color = AccentCyan) } }, containerColor = CardBg)
+}
+
+@Composable
+private fun OneTimeRecoveryLinkDialog(link: String, onDismiss: () -> Unit) {
+    val clipboard = LocalClipboardManager.current; val context = LocalContext.current
+    AlertDialog(onDismissRequest = onDismiss, title = { Text("One-time owner recovery link", color = TextWhite) }, text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Copy or share this now. It is never persisted in Firestore or shown again after this dialog closes.", color = TextMuted, fontSize = 11.sp)
+        Text(link, color = AccentCyan, fontSize = 10.sp, maxLines = 4, overflow = TextOverflow.Ellipsis)
+    } }, confirmButton = { Row { TextButton(onClick = { clipboard.setText(AnnotatedString(link)) }) { Text("Copy", color = AccentCyan) }; Button(onClick = { context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_TEXT, link) }, "Share recovery link")) }, colors = ButtonDefaults.buttonColors(containerColor = AccentCyan)) { Text("Share", color = BgColor) } } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Done", color = TextMuted) } }, containerColor = CardBg)
+}
+
+private fun parseInstituteCsv(text: String): List<PlatformInstituteDraft> {
+    val lines = text.replace("\r\n", "\n").replace('\r', '\n').lines().filter { it.isNotBlank() }
+    require(lines.size in 2..101) { "CSV must have a header and 1 to 100 data rows." }
+    val header = parseCsvLine(lines.first()).map { it.trim().lowercase().replace("_", "") }
+    fun field(row: List<String>, name: String) = row.getOrNull(header.indexOf(name))?.trim().orEmpty()
+    require(listOf("institutename", "ownername", "owneremail").all { it in header }) { "CSV requires instituteName, ownerName, ownerEmail headers." }
+    return lines.drop(1).map { line ->
+        val row = parseCsvLine(line)
+        PlatformInstituteDraft(field(row, "institutename"), field(row, "ownername"), field(row, "owneremail"), field(row, "phone"), field(row, "address"), field(row, "institutecode"), field(row, "planid").ifBlank { "plan_free_trial" })
+    }
+}
+
+private fun parseCsvLine(line: String): List<String> {
+    val values = mutableListOf<String>(); val value = StringBuilder(); var quoted = false; var index = 0
+    while (index < line.length) { val char = line[index]; when { char == '"' && quoted && line.getOrNull(index + 1) == '"' -> { value.append(char); index += 1 }; char == '"' -> quoted = !quoted; char == ',' && !quoted -> { values += value.toString(); value.clear() }; else -> value.append(char) }; index += 1 }
+    require(!quoted) { "CSV has an unmatched quote." }; values += value.toString(); return values
 }
 
 @Composable
@@ -2190,8 +2650,8 @@ private fun ProjectedRevenueCard(amount: Double, activeCount: Int) {
                     Text("BDT ${NumberFormat.getNumberInstance(Locale.getDefault()).apply { maximumFractionDigits = 0 }.format(amount)}",
                         color = TextWhite, fontSize = 28.sp, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(4.dp))
-                    Text("Expected Next Month Revenue", color = TextMuted, fontSize = 13.sp)
-                    Text("Based on $activeCount active subscriptions × avg BDT ${NumberFormat.getNumberInstance(Locale.getDefault()).format(avgFee.toInt())}",
+                    Text("Loaded-directory revenue estimate", color = TextMuted, fontSize = 13.sp)
+                    Text("Based on $activeCount loaded active subscriptions × avg BDT ${NumberFormat.getNumberInstance(Locale.getDefault()).format(avgFee.toInt())}",
                         color = TextMuted.copy(alpha = 0.6f), fontSize = 11.sp)
                 }
                 Box(Modifier.size(48.dp).clip(RoundedCornerShape(14.dp)).background(AccentViolet.copy(alpha = 0.12f)), contentAlignment = Alignment.Center) {
@@ -2240,6 +2700,7 @@ private fun InstituteCard(
 
     var showExtendDialog by remember { mutableStateOf(false) }
     var extendDays by remember { mutableStateOf("30") }
+    var extendReason by remember { mutableStateOf("") }
     var showManageDialog by remember { mutableStateOf(false) }
     var showDetailSheet by remember { mutableStateOf(false) }
 
@@ -2325,7 +2786,7 @@ private fun InstituteCard(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Filled.CalendarMonth, null, tint = TextMuted.copy(alpha = 0.6f), modifier = Modifier.size(14.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text("Until ${dateFormat.format(Date(inst.trialEndDateMs))}", color = TextMuted, fontSize = 11.sp)
+                        Text("Until ${dateFormat.format(Date(effectiveSubscriptionExpiryMs(inst)))}", color = TextMuted, fontSize = 11.sp)
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Filled.AccessTime, null, tint = TextMuted.copy(alpha = 0.6f), modifier = Modifier.size(13.dp))
@@ -2418,7 +2879,7 @@ private fun InstituteCard(
                 ) {
                     Icon(Icons.Filled.Delete, null, modifier = Modifier.size(14.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("Remove", fontSize = 12.sp)
+                    Text("Archive", fontSize = 12.sp)
                 }
 
                 // Remove confirmation dialog
@@ -2431,7 +2892,7 @@ private fun InstituteCard(
                             title = { Text("Enter Super Admin Password", color = TextWhite, fontWeight = FontWeight.Bold) },
                             text = {
                                 Column {
-                                    Text("\"${inst.name}\" will be moved to trash. This action can be reversed within 10 days.", color = TextMuted, fontSize = 13.sp)
+                                    Text("\"${inst.name}\" will be archived in place. Auth access is reconciled while data, media and financial history stay retained for recovery.", color = TextMuted, fontSize = 13.sp)
                                     Spacer(Modifier.height(12.dp))
                                     Text("Enter your password to continue:", color = TextMuted, fontSize = 12.sp)
                                     Spacer(Modifier.height(8.dp))
@@ -2458,7 +2919,7 @@ private fun InstituteCard(
                                     },
                                     enabled = removePassword.isNotBlank(),
                                     colors = ButtonDefaults.buttonColors(containerColor = AccentRed)
-                                ) { Text("Move to Trash", color = Color.White, fontWeight = FontWeight.Bold) }
+                                ) { Text("Archive Safely", color = Color.White, fontWeight = FontWeight.Bold) }
                             },
                             dismissButton = {
                                 TextButton(onClick = { showRemovePassword = false; showRemoveConfirm = false }) {
@@ -2471,13 +2932,13 @@ private fun InstituteCard(
                     } else {
                         AlertDialog(
                             onDismissRequest = { showRemoveConfirm = false },
-                            title = { Text("Remove ${inst.name}?", color = TextWhite, fontWeight = FontWeight.Bold) },
+                            title = { Text("Archive ${inst.name}?", color = TextWhite, fontWeight = FontWeight.Bold) },
                             text = {
-                                Text("Are you sure you want to remove this institute?\n\nAll data will be moved to trash and become inaccessible. You can restore it within 10 days before permanent deletion.", color = TextMuted, fontSize = 13.sp)
+                                Text("Archive this institute?\n\nAccess will be blocked atomically and the original institute tree will remain intact. There is no automatic permanent deletion; recovery and audit records are retained.", color = TextMuted, fontSize = 13.sp)
                             },
                             confirmButton = {
                                 Button(onClick = { showRemovePassword = true }, colors = ButtonDefaults.buttonColors(containerColor = AccentRed)) {
-                                    Text("Yes, Remove", color = Color.White)
+                                    Text("Continue to Re-auth", color = Color.White)
                                 }
                             },
                             dismissButton = {
@@ -2664,7 +3125,7 @@ private fun InstituteCard(
                     DetailRow("Status", inst.subscriptionStatus.replaceFirstChar { it.uppercase() }, when (inst.subscriptionStatus) {
                         "active" -> AccentGreen; "trial" -> AccentCyan; "expired" -> AccentRed; "blocked" -> AccentAmber; else -> TextMuted
                     })
-                    DetailRow("Expiry", dateFormat.format(Date(inst.trialEndDateMs)))
+                    DetailRow("Expiry", dateFormat.format(Date(effectiveSubscriptionExpiryMs(inst))))
                     DetailRow("Joined", dateFormat.format(Date(inst.createdAtMs)))
                     DetailRow("Last Active", lastActive)
                     DetailRow("Institute ID", inst.id.take(12))
@@ -2741,7 +3202,7 @@ private fun InstituteCard(
                         }
                     }
 
-                    // ── Payment History (fetched from institute's receipts subcollection) ──
+                    // ── Subscription payment history (never mixed with student fee receipts) ──
                     var receiptList by remember { mutableStateOf<List<SubscriptionReceiptData>?>(null) }
                     LaunchedEffect(inst.id) { viewModel.loadInstituteReceipts(inst.id) { receiptList = it } }
 
@@ -2920,16 +3381,17 @@ private fun InstituteCard(
 
     // Extend Dialog
     if (showExtendDialog) {
-        val currentExpiryDate = remember(inst.trialEndDateMs) {
-            SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(inst.trialEndDateMs))
+        val currentExpiryMs = effectiveSubscriptionExpiryMs(inst)
+        val currentExpiryDate = remember(currentExpiryMs) {
+            SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(currentExpiryMs))
         }
         val days = extendDays.toIntOrNull()?.coerceAtLeast(0) ?: 0
-        val newExpiryMs = inst.trialEndDateMs + (days * 24L * 60 * 60 * 1000)
+        val newExpiryMs = maxOf(currentExpiryMs, System.currentTimeMillis()) + (days * MILLIS_PER_DAY)
         val newExpiryDate = remember(days) {
             SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(newExpiryMs))
         }
-        val daysRemaining = remember(inst.trialEndDateMs) {
-            ((inst.trialEndDateMs - System.currentTimeMillis()) / MILLIS_PER_DAY).coerceAtLeast(0).toInt()
+        val daysRemaining = remember(currentExpiryMs) {
+            ((currentExpiryMs - System.currentTimeMillis()) / MILLIS_PER_DAY).coerceAtLeast(0).toInt()
         }
 
         AlertDialog(
@@ -3035,6 +3497,21 @@ private fun InstituteCard(
                         )
                     }
 
+                    OutlinedTextField(
+                        value = extendReason,
+                        onValueChange = { if (it.length <= 500) extendReason = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Reason for access extension") },
+                        placeholder = { Text("e.g. Support-approved grace period", fontSize = 12.sp) },
+                        minLines = 2,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedContainerColor = CardBg, unfocusedContainerColor = CardBg,
+                            focusedBorderColor = AccentCyan, unfocusedBorderColor = BorderSub,
+                            focusedTextColor = TextWhite, unfocusedTextColor = TextWhite,
+                            cursorColor = AccentCyan, focusedLabelColor = AccentCyan, unfocusedLabelColor = TextMuted
+                        )
+                    )
+
                     // Preview
                     if (days > 0) {
                         Card(
@@ -3065,9 +3542,16 @@ private fun InstituteCard(
                 Button(
                     onClick = {
                         val d = extendDays.toIntOrNull() ?: 0
-                        if (d > 0) { viewModel.extendSubscription(inst.id, d); showExtendDialog = false; extendDays = "30" }
+                        if (d > 0) {
+                            viewModel.extendSubscription(inst.id, d, extendReason)
+                            if (extendReason.trim().length >= 3) {
+                                showExtendDialog = false
+                                extendDays = "30"
+                                extendReason = ""
+                            }
+                        }
                     },
-                    enabled = days > 0,
+                    enabled = days > 0 && extendReason.trim().length >= 3,
                     shape = RoundedCornerShape(10.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = AccentCyan,
@@ -3078,7 +3562,7 @@ private fun InstituteCard(
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showExtendDialog = false; extendDays = "30" }) { Text("Cancel", color = TextMuted) }
+                TextButton(onClick = { showExtendDialog = false; extendDays = "30"; extendReason = "" }) { Text("Cancel", color = TextMuted) }
             },
             containerColor = CardBg,
             shape = RoundedCornerShape(16.dp)
@@ -3088,7 +3572,7 @@ private fun InstituteCard(
     // Manage Dialog
     if (showManageDialog) {
         val cal = remember { Calendar.getInstance() }
-        if (inst.trialEndDateMs > 0) cal.timeInMillis = inst.trialEndDateMs
+        if (effectiveSubscriptionExpiryMs(inst) > 0) cal.timeInMillis = effectiveSubscriptionExpiryMs(inst)
         var editYear by remember { mutableIntStateOf(cal.get(Calendar.YEAR)) }
         var editMonth by remember { mutableIntStateOf(cal.get(Calendar.MONTH)) }
         var editDay by remember { mutableIntStateOf(cal.get(Calendar.DAY_OF_MONTH)) }
@@ -3159,7 +3643,7 @@ private fun InstituteCard(
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Column {
                                     Text("Expires", color = TextMuted.copy(alpha = 0.6f), fontSize = 10.sp)
-                                    Text(mgrDateFmt.format(Date(inst.trialEndDateMs)), color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                                    Text(mgrDateFmt.format(Date(effectiveSubscriptionExpiryMs(inst))), color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                                 }
                                 Column {
                                     Text("Status", color = TextMuted.copy(alpha = 0.6f), fontSize = 10.sp)

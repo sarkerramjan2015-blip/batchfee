@@ -416,14 +416,10 @@ fun BatchDetailScreen(
                                 showPaymentHistoryFor = swf.student.id
                                 scope.launch {
                                     val instId = SessionManager.currentInstituteId.value ?: return@launch
-                                    var done = false
-                                    db.feeDao().getFeesByStudent(instId, swf.student.id).collect { feeList ->
-                                        val feeIds = feeList.map { it.id }.toSet()
-                                        db.paymentDao().getRecentPayments(instId).collect { all ->
-                                            historyPayments = all.filter { p -> p.feeId in feeIds }
-                                            if (!done) { done = true; return@collect }
-                                        }
-                                    }
+                                    val allFees = db.feeDao().getAllFeesOnce(instId)
+                                    val feeIds = allFees.filter { it.studentId == swf.student.id }.map { it.id }.toSet()
+                                    historyPayments = db.paymentDao().getAllPaymentsOnce(instId)
+                                        .filter { p -> p.feeId in feeIds }
                                 }
                             }
                         )
@@ -493,18 +489,19 @@ fun BatchDetailScreen(
         )
     }
 
-    if (showDeleteDialog && batch != null) {
+    val currentBatch = batch
+    if (showDeleteDialog && currentBatch != null) {
         var isDeleting by remember { mutableStateOf(false) }
-        val batchEntity = batch!!
+        val batchEntity = currentBatch
         AlertDialog(
             onDismissRequest = { if (!isDeleting) showDeleteDialog = false },
             containerColor = CardBg,
             icon = { Icon(Icons.Filled.Warning, null, tint = AccentRed, modifier = Modifier.size(40.dp)) },
-            title = { Text("Delete Batch Permanently", color = AccentRed, fontSize = 17.sp, fontWeight = FontWeight.Bold) },
+            title = { Text("Archive Batch Safely", color = AccentRed, fontSize = 17.sp, fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        "Are you sure you want to delete this batch?",
+                        "Archive this batch and remove it from active operations?",
                         color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.Medium
                     )
                     Text(
@@ -513,14 +510,14 @@ fun BatchDetailScreen(
                     )
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        "All batch information will be permanently removed. No student records, fee records, or attendance data related to this batch will remain accessible.",
+                        "The batch will be hidden, but student enrolments, attendance, results and every financial ledger record remain retained for recovery and audit.",
                         color = TextMuted, fontSize = 12.sp
                     )
                     Spacer(Modifier.height(4.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Filled.Delete, null, tint = AccentRed.copy(alpha = 0.8f), modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("This action cannot be undone.", color = AccentRed.copy(alpha = 0.8f), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        Text("No hard deletion or media cleanup will run.", color = AccentRed.copy(alpha = 0.8f), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
             },
@@ -528,7 +525,7 @@ fun BatchDetailScreen(
                 Button(
                     onClick = {
                         isDeleting = true
-                        batchVM.deleteBatch(
+                        batchVM.archiveBatch(
                             batch = batchEntity,
                             onError = { msg ->
                                 isDeleting = false
@@ -538,7 +535,7 @@ fun BatchDetailScreen(
                             onSuccess = {
                                 isDeleting = false
                                 showDeleteDialog = false
-                                scope.launch { snackbarHostState.showSnackbar("Batch deleted successfully.") }
+                                scope.launch { snackbarHostState.showSnackbar("Batch archived with history retained.") }
                                 onBack()
                             }
                         )
@@ -548,7 +545,7 @@ fun BatchDetailScreen(
                     shape = RoundedCornerShape(10.dp)
                 ) {
                     if (isDeleting) CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
-                    else Text("Yes, Delete Permanently", color = Color.White, fontWeight = FontWeight.Bold)
+                    else Text("Archive Safely", color = Color.White, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
@@ -677,7 +674,7 @@ private fun BatchMenuDialog(
                 BatchMenuItem(Icons.Filled.Edit, "Edit batch", "You can edit batch here", onEdit)
                 BatchMenuItem(Icons.Filled.Close, "Close Batch", "You can mark batch status as you want Active or Close", onClose)
                 BatchMenuItem(Icons.Filled.Groups, "Shift Batch", "You can shift batch's students to another batch.", onShift)
-                BatchMenuItem(Icons.Filled.Delete, "Delete Batch", "You can delete batch forever.", onDelete)
+                BatchMenuItem(Icons.Filled.Delete, "Archive Batch", "Retain history and allow recovery.", onDelete)
                 BatchMenuItem(Icons.Filled.Groups, "Batch Assigned Students", "You can assign this batch to students.", onAssignedStudents, showDivider = false)
             }
         }

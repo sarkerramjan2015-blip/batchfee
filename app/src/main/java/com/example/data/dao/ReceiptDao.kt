@@ -6,7 +6,7 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface ReceiptDao {
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Upsert
     suspend fun insertReceipt(receipt: ReceiptEntity)
     
     @Query("SELECT * FROM receipts WHERE instituteId = :instituteId AND paymentId = :paymentId LIMIT 1")
@@ -15,12 +15,10 @@ interface ReceiptDao {
     @Query("SELECT * FROM receipts WHERE instituteId = :instituteId AND paymentId = :paymentId LIMIT 1")
     suspend fun getReceiptByPaymentIdOnce(instituteId: String, paymentId: String): ReceiptEntity?
 
-    @Query("DELETE FROM receipts WHERE instituteId = :instituteId AND feeId IN (:feeIds)")
-    suspend fun deleteReceiptsByFeeIds(instituteId: String, feeIds: List<String>)
+    @Query("SELECT * FROM receipts WHERE instituteId = :instituteId AND operationId = :operationId LIMIT 1")
+    suspend fun getReceiptByOperationId(instituteId: String, operationId: String): ReceiptEntity?
 
-    @Query("DELETE FROM receipts WHERE instituteId = :instituteId AND studentId = :studentId")
-    suspend fun deleteReceiptsForStudent(instituteId: String, studentId: String)
+    @Query("DELETE FROM receipts WHERE instituteId = :instituteId AND id = :receiptId")
+    suspend fun deleteReceiptById(instituteId: String, receiptId: String)
 
-    @Query("DELETE FROM receipts WHERE paymentId = :paymentId AND instituteId = :instituteId")
-    suspend fun deleteReceiptByPaymentId(paymentId: String, instituteId: String)
 }

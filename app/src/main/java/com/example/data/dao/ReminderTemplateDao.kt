@@ -14,4 +14,7 @@ interface ReminderTemplateDao {
 
     @Query("SELECT * FROM reminder_templates WHERE instituteId = :instituteId AND type = :type LIMIT 1")
     suspend fun getTemplateByTypeOnce(instituteId: String, type: String): ReminderTemplateEntity?
+
+    @Delete
+    suspend fun deleteTemplate(template: ReminderTemplateEntity)
 }

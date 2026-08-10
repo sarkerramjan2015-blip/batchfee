@@ -1,5 +1,7 @@
 package com.batchfee.edu.ui.students
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
@@ -29,11 +31,13 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
+import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.batchfee.edu.data.database.AppDatabase
@@ -47,6 +51,7 @@ import com.batchfee.edu.data.models.FeeEntity
 import com.batchfee.edu.data.models.PaymentEntity
 import com.batchfee.edu.data.models.StudentEntity
 import com.batchfee.edu.data.repository.FeeCollectionRepository
+import com.batchfee.edu.data.repository.FinancialOperationPendingException
 import com.batchfee.edu.data.repository.StudentDeletionRepository
 import com.batchfee.edu.domain.appendInstituteSignature
 import com.batchfee.edu.domain.loadInstituteSignature
@@ -91,9 +96,10 @@ fun StudentProfileScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val studentViewModel: StudentViewModel = viewModel(factory = StudentViewModelFactory(db))
     val instId = SessionManager.currentInstituteId.collectAsState().value
     val currentUserRole = SessionManager.currentUserRole.collectAsState().value
-    val canPermanentlyDeleteStudent = currentUserRole in setOf("InstituteOwner", "SuperAdmin")
+    val canArchiveStudent = currentUserRole in setOf("InstituteOwner", "SuperAdmin")
 
     var student by remember { mutableStateOf<StudentEntity?>(null) }
     var instituteSignature by remember { mutableStateOf("") }
@@ -103,6 +109,10 @@ fun StudentProfileScreen(
     var pendingConfirmAction by remember { mutableStateOf<StudentMenuConfirmAction?>(null) }
     var isDeletingStudent by remember { mutableStateOf(false) }
     var showStudentInsights by remember { mutableStateOf(false) }
+    var showSetStudentPasswordDialog by remember { mutableStateOf(false) }
+    // This value is deliberately not saveable. It exists only until the one-time
+    // password dialog closes and is never persisted with the student profile.
+    var oneTimeStudentPassword by remember { mutableStateOf<String?>(null) }
     var totalPaid by remember { mutableStateOf(0.0) }
     var totalDue by remember { mutableStateOf(0.0) }
     var batches by remember { mutableStateOf<List<BatchEntity>>(emptyList()) }
@@ -259,7 +269,15 @@ fun StudentProfileScreen(
                     instituteSignature = instituteSignature,
                     insightsVisible = showStudentInsights,
                     onToggleInsights = { showStudentInsights = !showStudentInsights },
-                    onAssignBatch = { showBatchDialog = true }
+                    onAssignBatch = { showBatchDialog = true },
+                    onSetOrResetPassword = { showSetStudentPasswordDialog = true },
+                    onShareLoginInfo = {
+                        shareStudentText(
+                            context,
+                            "Student Login",
+                            buildStudentLoginInfoText(s, instituteSignature)
+                        )
+                    }
                 )
 
                 if (false) {
@@ -690,7 +708,7 @@ fun StudentProfileScreen(
                                                             feeType = "monthly_fee",
                                                             dueDateMs = paymentDateMs,
                                                             baseAmount = base,
-                                                            discountAmount = discountAmt,
+                                                            discountAmount = kotlin.math.round(discountAmt * 100.0) / 100.0,
                                                             lateFeeAmount = 0.0,
                                                             collectedAmount = paid,
                                                             paymentMethod = "cash",
@@ -705,8 +723,12 @@ fun StudentProfileScreen(
                                                     collectAmount = ""
                                                     selectedFeeId = null
                                                     receiptImageUri = null
+                                                } catch (e: FinancialOperationPendingException) {
+                                                    feeErrorMessage = e.message ?: "Payment is pending reconciliation. Do not retry it."
                                                 } catch (e: IllegalArgumentException) {
                                                     feeErrorMessage = e.message ?: "Payment rejected."
+                                                } catch (e: Exception) {
+                                                    feeErrorMessage = "Payment failed before it could be queued."
                                                 }
                                             }
                                             return@clickable
@@ -1132,6 +1154,34 @@ fun StudentProfileScreen(
                 )
             }
 
+            if (showSetStudentPasswordDialog) {
+                StudentPasswordDialog(
+                    isReset = s.isAppAccessEnabled,
+                    onDismiss = { showSetStudentPasswordDialog = false },
+                    onSetPassword = { password, onSuccess, onError ->
+                        studentViewModel.setStudentAppPassword(
+                            studentId = s.id,
+                            password = password,
+                            onSuccess = onSuccess,
+                            onError = onError
+                        )
+                    },
+                    onPasswordSet = { password ->
+                        showSetStudentPasswordDialog = false
+                        oneTimeStudentPassword = password
+                    }
+                )
+            }
+
+            oneTimeStudentPassword?.let { password ->
+                OneTimeStudentPasswordDialog(
+                    student = s,
+                    password = password,
+                    instituteSignature = instituteSignature,
+                    onDismiss = { oneTimeStudentPassword = null }
+                )
+            }
+
             if (showStudentMenu) {
                 StudentBatchMenuDialog(
                     onDismiss = { showStudentMenu = false },
@@ -1156,10 +1206,7 @@ fun StudentProfileScreen(
                         shareStudentText(
                             context,
                             "Student Login",
-                            appendInstituteSignature(
-                                "Student: ${s.fullName}\nLogin ID: ${s.studentCode}\nPassword: Not set yet",
-                                instituteSignature
-                            )
+                            buildStudentLoginInfoText(s, instituteSignature)
                         )
                     },
                     onMessage = {
@@ -1170,7 +1217,7 @@ fun StudentProfileScreen(
                         showStudentMenu = false
                         pendingConfirmAction = StudentMenuConfirmAction.Delete
                     },
-                    canDeleteStudent = canPermanentlyDeleteStudent,
+                    canDeleteStudent = canArchiveStudent,
                     onGenerateReport = {
                         showStudentMenu = false
                         shareStudentText(context, "Student Report", buildStudentReportText(s, batches, totalPaid, computedTotalDue, instituteSignature))
@@ -1213,7 +1260,7 @@ fun StudentProfileScreen(
                     shape = RoundedCornerShape(14.dp),
                     title = {
                         Text(
-                            if (action == StudentMenuConfirmAction.Delete) "Delete student?" else "Close student?",
+                            if (action == StudentMenuConfirmAction.Delete) "Archive student safely?" else "Close student?",
                             color = TextWhite,
                             fontWeight = FontWeight.Bold
                         )
@@ -1221,7 +1268,7 @@ fun StudentProfileScreen(
                     text = {
                         Text(
                             if (action == StudentMenuConfirmAction.Delete)
-                                "This permanently deletes the student and all related fees, payments, receipts, batch enrolments, attendance and exam results. This cannot be undone."
+                                "The student account will be disabled and hidden, while fees, payments, receipts, enrolments, attendance, results and media remain retained for recovery and audit."
                             else
                                 "This will mark the student status as inactive.",
                             color = TextMuted
@@ -1235,13 +1282,13 @@ fun StudentProfileScreen(
                                     if (action == StudentMenuConfirmAction.Delete) {
                                         isDeletingStudent = true
                                         try {
-                                            studentDeletionRepository.permanentlyDelete(currentStudent)
+                                            studentDeletionRepository.archive(currentStudent)
                                             pendingConfirmAction = null
                                             onBack()
                                         } catch (_: Exception) {
                                             Toast.makeText(
                                                 context,
-                                                "Student could not be deleted. Check your connection and try again.",
+                                                "Student could not be archived safely. Check your connection and refresh; do not repeat a permanent-delete attempt.",
                                                 Toast.LENGTH_LONG
                                             ).show()
                                         } finally {
@@ -1267,7 +1314,7 @@ fun StudentProfileScreen(
                             enabled = !isDeletingStudent
                         ) {
                             Text(
-                                if (isDeletingStudent) "Deleting..." else if (action == StudentMenuConfirmAction.Delete) "Delete permanently" else "Close",
+                                if (isDeletingStudent) "Securing..." else if (action == StudentMenuConfirmAction.Delete) "Archive safely" else "Close",
                                 color = Color(0xFFEF4444)
                             )
                         }
@@ -1289,11 +1336,197 @@ private enum class StudentMenuConfirmAction {
     Delete
 }
 
+@Composable
+private fun StudentPasswordDialog(
+    isReset: Boolean,
+    onDismiss: () -> Unit,
+    onSetPassword: (String, () -> Unit, (String) -> Unit) -> Unit,
+    onPasswordSet: (String) -> Unit
+) {
+    var password by remember { mutableStateOf("") }
+    var confirmPassword by remember { mutableStateOf("") }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+    var isSaving by remember { mutableStateOf(false) }
+
+    val dismiss = {
+        if (!isSaving) {
+            password = ""
+            confirmPassword = ""
+            errorMessage = null
+            onDismiss()
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = dismiss,
+        containerColor = CardBg,
+        icon = { Icon(Icons.Filled.Key, contentDescription = null, tint = Cyan, modifier = Modifier.size(32.dp)) },
+        title = {
+            Text(
+                if (isReset) "Reset Student Password" else "Set Student Password",
+                color = TextWhite,
+                fontWeight = FontWeight.Bold
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "The password is stored only by the secure student account service. It will be shown once after it is set.",
+                    color = TextMuted,
+                    fontSize = 13.sp
+                )
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = {
+                        password = it
+                        errorMessage = null
+                    },
+                    label = { Text("New password") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    isError = errorMessage != null,
+                    colors = darkFieldColors(),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = confirmPassword,
+                    onValueChange = {
+                        confirmPassword = it
+                        errorMessage = null
+                    },
+                    label = { Text("Confirm new password") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    isError = errorMessage != null,
+                    colors = darkFieldColors(),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                errorMessage?.let { Text(it, color = DangerRed, fontSize = 12.sp) }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    when {
+                        password.length !in 6..128 ->
+                            errorMessage = "Password must contain 6 to 128 characters."
+                        password != confirmPassword ->
+                            errorMessage = "Passwords do not match."
+                        else -> {
+                            val passwordToRevealOnce = password
+                            isSaving = true
+                            onSetPassword(
+                                passwordToRevealOnce,
+                                {
+                                    isSaving = false
+                                    password = ""
+                                    confirmPassword = ""
+                                    errorMessage = null
+                                    onPasswordSet(passwordToRevealOnce)
+                                },
+                                { message ->
+                                    isSaving = false
+                                    errorMessage = message
+                                }
+                            )
+                        }
+                    }
+                },
+                enabled = !isSaving,
+                colors = ButtonDefaults.buttonColors(containerColor = ElectricBlue)
+            ) {
+                if (isSaving) {
+                    CircularProgressIndicator(
+                        color = Color.White,
+                        strokeWidth = 2.dp,
+                        modifier = Modifier.size(18.dp)
+                    )
+                } else {
+                    Text(if (isReset) "Reset Password" else "Set Password")
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = dismiss, enabled = !isSaving) {
+                Text("Cancel", color = TextMuted)
+            }
+        }
+    )
+}
+
+@Composable
+private fun OneTimeStudentPasswordDialog(
+    student: StudentEntity,
+    password: String,
+    instituteSignature: String,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = CardBg,
+        icon = { Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = Teal, modifier = Modifier.size(32.dp)) },
+        title = { Text("Password Set", color = TextWhite, fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "This new password is shown only now. Copy or share it before closing this dialog.",
+                    color = TextMuted,
+                    fontSize = 13.sp
+                )
+                Text("Student ID", color = TextMuted, fontSize = 12.sp)
+                Text(student.studentCode, color = TextWhite, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                Text("New password", color = TextMuted, fontSize = 12.sp)
+                Text(
+                    password,
+                    color = Cyan,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(DashboardSoft)
+                        .border(1.dp, DashboardLine, RoundedCornerShape(10.dp))
+                        .padding(12.dp)
+                )
+            }
+        },
+        confirmButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextButton(onClick = { copyTextToClipboard(context, "Student password", password) }) {
+                    Icon(Icons.Filled.ContentCopy, contentDescription = null, tint = Cyan, modifier = Modifier.size(17.dp))
+                    Spacer(Modifier.width(5.dp))
+                    Text("Copy", color = Cyan)
+                }
+                TextButton(
+                    onClick = {
+                        shareStudentText(
+                            context,
+                            "Student Login",
+                            buildStudentLoginInfoText(student, instituteSignature, password)
+                        )
+                    }
+                ) {
+                    Icon(Icons.Filled.Share, contentDescription = null, tint = Cyan, modifier = Modifier.size(17.dp))
+                    Spacer(Modifier.width(5.dp))
+                    Text("Share", color = Cyan)
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Done", color = TextMuted) }
+        }
+    )
+}
+
 private data class StudentBatchMenuItem(
     val title: String,
     val subtitle: String,
     val icon: androidx.compose.ui.graphics.vector.ImageVector,
-    val onClick: () -> Unit
+    val onClick: () -> Unit,
+    val isDestructive: Boolean = false
 )
 
 @Composable
@@ -1317,8 +1550,8 @@ private fun StudentBatchMenuDialog(
         StudentBatchMenuItem("Edit Student", "You can edit student details here", Icons.Filled.Edit, onEdit),
         StudentBatchMenuItem("Assign Batch", "You can assign new batch here", Icons.Filled.Groups, onAssignBatch),
         StudentBatchMenuItem("Shift Batch", "You can shift this student to another batch", Icons.Filled.SwapHoriz, onShiftBatch),
-        StudentBatchMenuItem("Close", "You can mark student status as inactive.", Icons.Filled.Close, onCloseStudent),
-        StudentBatchMenuItem("Share Login Id And Password", "Share login Id And Password", Icons.Filled.Share, onShareLogin),
+        StudentBatchMenuItem("Close", "You can mark student status as inactive.", Icons.Filled.Close, onCloseStudent, isDestructive = true),
+        StudentBatchMenuItem("Share Login Info", "Share student ID and app access status", Icons.Filled.Share, onShareLogin),
         StudentBatchMenuItem("Message", "Send a direct message", Icons.Filled.Email, onMessage),
         StudentBatchMenuItem("Generate Report", "You can generate student report here", Icons.Filled.Article, onGenerateReport),
         StudentBatchMenuItem("Registration Form", "You can generate student registration form here", Icons.Filled.Article, onRegistrationForm),
@@ -1326,7 +1559,7 @@ private fun StudentBatchMenuDialog(
         StudentBatchMenuItem("Generate ID card", "You can generate student ID card.", Icons.Filled.Badge, onGenerateIdCard)
         ))
         if (canDeleteStudent) {
-            add(StudentBatchMenuItem("Delete student", "Permanently remove all student data", Icons.Filled.Delete, onDeleteStudent))
+            add(StudentBatchMenuItem("Archive student", "Retain history with recovery and audit", Icons.Filled.Delete, onDeleteStudent, isDestructive = true))
         }
     }
 
@@ -1338,7 +1571,7 @@ private fun StudentBatchMenuDialog(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     "Student Batch Menu",
-                    color = AccentAmber,
+                    color = Cyan,
                     fontSize = 22.sp,
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.weight(1f)
@@ -1358,7 +1591,7 @@ private fun StudentBatchMenuDialog(
                 items.forEachIndexed { index, item ->
                     StudentBatchMenuRow(item)
                     if (index != items.lastIndex) {
-                        HorizontalDivider(color = BorderSub)
+                        HorizontalDivider(color = DashboardLine)
                     }
                 }
             }
@@ -1377,7 +1610,12 @@ private fun StudentBatchMenuRow(item: StudentBatchMenuItem) {
             .padding(horizontal = 4.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(item.icon, contentDescription = null, tint = AccentAmber, modifier = Modifier.size(30.dp))
+        Icon(
+            item.icon,
+            contentDescription = null,
+            tint = if (item.isDestructive) DangerRed else Cyan,
+            modifier = Modifier.size(30.dp)
+        )
         Spacer(Modifier.width(18.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(item.title, color = TextWhite, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
@@ -1450,6 +1688,36 @@ private fun shareStudentText(context: android.content.Context, title: String, te
     }
     context.startActivity(Intent.createChooser(intent, title))
 }
+
+private fun copyTextToClipboard(context: android.content.Context, label: String, value: String) {
+    val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? ClipboardManager
+    if (clipboard == null) {
+        Toast.makeText(context, "Could not access the clipboard.", Toast.LENGTH_SHORT).show()
+        return
+    }
+    clipboard.setPrimaryClip(ClipData.newPlainText(label, value))
+    Toast.makeText(context, "$label copied", Toast.LENGTH_SHORT).show()
+}
+
+private fun buildStudentLoginInfoText(
+    student: StudentEntity,
+    instituteSignature: String,
+    oneTimePassword: String? = null
+): String = appendInstituteSignature(
+    buildString {
+        appendLine("Student Login")
+        appendLine("Student: ${student.fullName}")
+        appendLine("Student ID: ${student.studentCode}")
+        appendLine("App Access: ${if (student.isAppAccessEnabled) "Enabled" else "Not enabled"}")
+        if (oneTimePassword != null) {
+            appendLine("New Password: $oneTimePassword")
+            append("Keep this password secure. It is shown only once in the app.")
+        } else {
+            append("For security, the current password is not shared. Reset it from Login Access if needed.")
+        }
+    },
+    instituteSignature
+)
 
 private fun printStudentText(context: android.content.Context, title: String, text: String) {
     val reportTitle = title.ifBlank { "Student Report" }
@@ -1550,7 +1818,9 @@ private fun StudentDashboardContent(
     instituteSignature: String,
     insightsVisible: Boolean,
     onToggleInsights: () -> Unit,
-    onAssignBatch: () -> Unit
+    onAssignBatch: () -> Unit,
+    onSetOrResetPassword: () -> Unit,
+    onShareLoginInfo: () -> Unit
 ) {
     val dateFormat = remember { SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()) }
     val primaryBatch = batches.firstOrNull()
@@ -1744,7 +2014,13 @@ private fun StudentDashboardContent(
         Column(modifier = Modifier.padding(18.dp)) {
             Text("Personal Info", color = TextWhite, fontSize = 19.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(14.dp))
-            TwoColumnInfo("Guardian name", student.guardianName ?: "N/A", "Student ID", student.studentCode)
+            TwoColumnInfo(
+                leftLabel = "Guardian name",
+                leftValue = student.guardianName ?: "N/A",
+                rightLabel = "Student ID",
+                rightValue = student.studentCode,
+                onRightCopy = { copyTextToClipboard(context, "Student ID", student.studentCode) }
+            )
             Spacer(Modifier.height(14.dp))
             TwoColumnInfo(
                 "Date of Birth",
@@ -1778,6 +2054,46 @@ private fun StudentDashboardContent(
             TwoColumnInfo("Class", student.className ?: "N/A", "Student ID", student.studentCode)
             Spacer(Modifier.height(14.dp))
             ProfileInfoBlock("Institute name", student.schoolName ?: "N/A")
+
+            Spacer(Modifier.height(22.dp))
+            Text("Login Access", color = TextWhite, fontSize = 19.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(14.dp))
+            LoginAccessStatusRow(isEnabled = student.isAppAccessEnabled)
+            HorizontalDivider(
+                modifier = Modifier.padding(vertical = 14.dp),
+                color = DashboardLine
+            )
+            CopyableProfileInfoBlock(
+                label = "Student ID",
+                value = student.studentCode,
+                onCopy = { copyTextToClipboard(context, "Student ID", student.studentCode) }
+            )
+            Spacer(Modifier.height(12.dp))
+            Button(
+                onClick = onSetOrResetPassword,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(10.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = ElectricBlue)
+            ) {
+                Icon(Icons.Filled.Key, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    if (student.isAppAccessEnabled) "Reset Password" else "Set New Password",
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = onShareLoginInfo,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(10.dp),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = Cyan),
+                border = BorderStroke(1.dp, DashboardLine)
+            ) {
+                Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Share Login Info", fontWeight = FontWeight.Bold)
+            }
         }
     }
 
@@ -2084,11 +2400,22 @@ private fun TwoColumnInfo(
     leftValue: String,
     rightLabel: String,
     rightValue: String,
-    singleLineValues: Boolean = false
+    singleLineValues: Boolean = false,
+    onRightCopy: (() -> Unit)? = null
 ) {
     Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
         ProfileInfoBlock(leftLabel, leftValue, Modifier.weight(1f), singleLineValue = singleLineValues)
-        ProfileInfoBlock(rightLabel, rightValue, Modifier.weight(1f), singleLineValue = singleLineValues)
+        if (onRightCopy == null) {
+            ProfileInfoBlock(rightLabel, rightValue, Modifier.weight(1f), singleLineValue = singleLineValues)
+        } else {
+            CopyableProfileInfoBlock(
+                label = rightLabel,
+                value = rightValue,
+                onCopy = onRightCopy,
+                modifier = Modifier.weight(1f),
+                singleLineValue = singleLineValues
+            )
+        }
     }
 }
 
@@ -2194,6 +2521,90 @@ private fun InfoRow(label: String, value: String) {
     ) {
         Text(label, color = TextMuted, fontSize = 12.sp)
         Text(value, color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.End)
+    }
+}
+
+@Composable
+private fun CopyableProfileInfoBlock(
+    label: String,
+    value: String,
+    onCopy: () -> Unit,
+    modifier: Modifier = Modifier,
+    singleLineValue: Boolean = false
+) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(CardBgAlt.copy(alpha = 0.72f))
+            .border(1.dp, BorderSub, RoundedCornerShape(12.dp))
+            .padding(
+                start = if (singleLineValue) 10.dp else 12.dp,
+                top = 8.dp,
+                end = 6.dp,
+                bottom = 8.dp
+            )
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(label, color = TextMuted, fontSize = 12.sp, maxLines = 1, modifier = Modifier.weight(1f))
+            IconButton(onClick = onCopy, modifier = Modifier.size(30.dp)) {
+                Icon(
+                    Icons.Filled.ContentCopy,
+                    contentDescription = "Copy $label",
+                    tint = Cyan,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+        }
+        Text(
+            value,
+            color = TextWhite,
+            fontSize = if (singleLineValue) 9.sp else 15.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = if (singleLineValue) 1 else Int.MAX_VALUE,
+            softWrap = !singleLineValue,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
+private fun LoginAccessStatusRow(isEnabled: Boolean) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column {
+            Text("App Access", color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            Text(
+                if (isEnabled) "Student can sign in to the app" else "No student sign-in is active",
+                color = TextMuted,
+                fontSize = 12.sp
+            )
+        }
+        val statusColor = if (isEnabled) Teal else TextMuted
+        Row(
+            modifier = Modifier
+                .clip(RoundedCornerShape(20.dp))
+                .background(statusColor.copy(alpha = 0.14f))
+                .border(1.dp, statusColor.copy(alpha = 0.45f), RoundedCornerShape(20.dp))
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                if (isEnabled) Icons.Filled.CheckCircle else Icons.Filled.Lock,
+                contentDescription = null,
+                tint = statusColor,
+                modifier = Modifier.size(15.dp)
+            )
+            Spacer(Modifier.width(5.dp))
+            Text(
+                if (isEnabled) "Enabled" else "Not enabled",
+                color = statusColor,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
     }
 }
 

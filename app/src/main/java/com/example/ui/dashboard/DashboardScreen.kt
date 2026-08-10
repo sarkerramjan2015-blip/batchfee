@@ -221,6 +221,11 @@ class DashboardViewModel(private val db: AppDatabase) : ViewModel() {
     private val _enquirySummary = MutableStateFlow(EnquirySummary())
     val enquirySummary = _enquirySummary.asStateFlow()
 
+    private val _homeWorkCount = MutableStateFlow(0)
+    val homeWorkCount = _homeWorkCount.asStateFlow()
+    private val _assignmentCount = MutableStateFlow(0)
+    val assignmentCount = _assignmentCount.asStateFlow()
+
     // Logged-in admin/owner user (for profile popup). Read-only; no schema change.
     private val _currentUser = MutableStateFlow<com.batchfee.edu.data.models.UserEntity?>(null)
     val currentUser = _currentUser.asStateFlow()
@@ -347,6 +352,12 @@ class DashboardViewModel(private val db: AppDatabase) : ViewModel() {
                 }
             }
             launch {
+                db.workDao().getActiveWorks(instId).collect { works ->
+                    _homeWorkCount.value = works.count { it.type == "HOMEWORK" }
+                    _assignmentCount.value = works.count { it.type == "ASSIGNMENT" }
+                }
+            }
+            launch {
                 kotlinx.coroutines.flow.combine(
                     db.paymentDao().getRecentPayments(instId),
                     db.expenseDao().getExpensesByInstitute(instId)
@@ -374,7 +385,10 @@ class DashboardViewModel(private val db: AppDatabase) : ViewModel() {
             }
             launch {
                 db.feeDao().getAllFees(instId).collect { allFees ->
-                    val fees = allFees.filter { it.dueAmount > 0.0 }
+                    val fees = allFees.filter {
+                        it.dueAmount > 0.0
+                        && (MonthlyDueCalculator.isMonthlyFeeType(it.feeType) || MonthlyDueCalculator.isPastMonth(it.feePeriod))
+                    }
                     val students = db.studentDao().getStudentsByInstituteOnce(instId).associateBy { it.id }
                     val activeStudentIds = mutableSetOf<String>()
                     val closedStudentIds = mutableSetOf<String>()
@@ -749,6 +763,8 @@ fun DashboardScreen(
     val examCount by viewModel.examCount.collectAsState()
     val birthdayCount by viewModel.birthdayCount.collectAsState()
     val enquirySummary by viewModel.enquirySummary.collectAsState()
+    val homeWorkCount by viewModel.homeWorkCount.collectAsState()
+    val assignmentCount by viewModel.assignmentCount.collectAsState()
     var showEnquiryForm by remember { mutableStateOf(false) }
     val currentRole by SessionManager.currentUserRole.collectAsState()
     val currentStaffPermissions by SessionManager.currentStaffPermissions.collectAsState()
@@ -1139,10 +1155,14 @@ fun DashboardScreen(
                 HomeEngagementSection(
                     examCount = examCount,
                     birthdayCount = birthdayCount,
+                    homeWorkCount = homeWorkCount,
+                    assignmentCount = assignmentCount,
                     enquirySummary = enquirySummary,
                     compactLayout = compactLayout,
                     onOpenExams = { safeNavigate("ExamsRoute") },
                     onOpenBirthdays = { safeNavigate("BirthdayReminderRoute") },
+                    onOpenHomeWorks = { safeNavigate("HomeworkListRoute") },
+                    onOpenAssignments = { safeNavigate("AssignmentListRoute") },
                     onOpenEnquiry = { safeNavigate("EnquiryListRoute") },
                     onComingSoon = showComingSoon
                 )
@@ -1823,7 +1843,8 @@ fun DashboardScreen(
                                     editProfilePhotoUri.toString() == inst.profilePhotoUri -> inst.profilePhotoUri
                                     else -> CloudinaryImageUploadHelper.uploadInstituteLogo(
                                         context,
-                                        editProfilePhotoUri!!
+                                        editProfilePhotoUri!!,
+                                        replacesReference = inst.profilePhotoUri
                                     )
                                 }
 
@@ -1833,17 +1854,23 @@ fun DashboardScreen(
                                     address = editAddress.trim().ifBlank { null },
                                     profilePhotoUri = profilePhotoUri
                                 )
+
+                                // Save locally FIRST — Firestore sync is best-effort after
                                 db.instituteDao().updateInstitute(updated)
                                 db.userDao().updateUser(owner.copy(name = editOwnerName.trim()))
                                 if (profilePhotoUri != inst.profilePhotoUri) {
                                     deleteLocalInstituteProfilePhoto(inst.profilePhotoUri)
                                 }
-                                
-                                // Sync to Firestore
-                                withContext(Dispatchers.IO) {
-                                    com.batchfee.edu.data.firestore.InstituteSyncHelper.syncInstituteToFirestore(updated)
+
+                                // Firestore sync in background — don't block UI
+                                try {
+                                    withContext(Dispatchers.IO) {
+                                        com.batchfee.edu.data.firestore.InstituteSyncHelper.syncInstituteToFirestore(updated)
+                                    }
+                                } catch (_: Exception) {
+                                    // Local is already saved — Firestore will sync on next refresh
                                 }
-                                
+
                                 showEditDialog = false
                                 snackbarHostState.showSnackbar("Institute information updated.")
                             } catch (e: Exception) {
@@ -2335,10 +2362,14 @@ private fun DueSummaryBlock(count: Int, amount: Double, label: String, modifier:
 private fun HomeEngagementSection(
     examCount: Int,
     birthdayCount: Int,
+    homeWorkCount: Int,
+    assignmentCount: Int,
     enquirySummary: EnquirySummary,
     compactLayout: Boolean,
     onOpenExams: () -> Unit,
     onOpenBirthdays: () -> Unit,
+    onOpenHomeWorks: () -> Unit,
+    onOpenAssignments: () -> Unit,
     onOpenEnquiry: () -> Unit,
     onComingSoon: (String) -> Unit
 ) {
@@ -2362,18 +2393,18 @@ private fun HomeEngagementSection(
                 onClick = onOpenBirthdays
             )
             HomeFeatureTile(
-                title = "Home works",
-                count = 0,
+                title = "Homework",
+                count = homeWorkCount,
                 icon = Icons.Filled.ListAlt,
                 modifier = Modifier.fillMaxWidth(),
-                onClick = { onComingSoon("Home works") }
+                onClick = onOpenHomeWorks
             )
             HomeFeatureTile(
-                title = "Class works",
-                count = 0,
+                title = "Assignments",
+                count = assignmentCount,
                 icon = Icons.Filled.ListAlt,
                 modifier = Modifier.fillMaxWidth(),
-                onClick = { onComingSoon("Class works") }
+                onClick = onOpenAssignments
             )
             EnquirySummaryCard(
                 summary = enquirySummary,
@@ -2410,18 +2441,18 @@ private fun HomeEngagementSection(
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 HomeFeatureTile(
-                    title = "Home works",
-                    count = 0,
+                    title = "Homework",
+                    count = homeWorkCount,
                     icon = Icons.Filled.ListAlt,
                     modifier = Modifier.weight(1f),
-                    onClick = { onComingSoon("Home works") }
+                    onClick = onOpenHomeWorks
                 )
                 HomeFeatureTile(
-                    title = "Class works",
-                    count = 0,
+                    title = "Assignments",
+                    count = assignmentCount,
                     icon = Icons.Filled.ListAlt,
                     modifier = Modifier.weight(1f),
-                    onClick = { onComingSoon("Class works") }
+                    onClick = onOpenAssignments
                 )
             }
 
@@ -3222,12 +3253,9 @@ fun MoreScreen(
             "Salary Management" to "SalaryRoute",
             "Expenses" to "ExpensesRoute",
             "Profit & Loss" to "ProfitLossRoute",
-            "Exams & Results" to "ExamsRoute",
             "ID Card Generator" to "IdCardGeneratorRoute",
-            "Birthday Reminders" to "BirthdayReminderRoute",
             "Take Attendance" to "AttendanceRoute",
             "Attendance Reports" to "AttendanceReportRoute",
-            "Institute Reports" to "ReportsRoute",
             "Settings" to "SettingsRoute",
             "Reminder Templates" to "ReminderTemplatesRoute"
         ).filter { AccessControl.canAccessRoute(it.second) }

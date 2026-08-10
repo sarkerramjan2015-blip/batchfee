@@ -18,9 +18,4 @@ interface ResultDao {
     @Query("SELECT * FROM results WHERE instituteId = :instituteId AND examId = :examId AND studentId = :studentId LIMIT 1")
     suspend fun getResultForStudentOnce(instituteId: String, examId: String, studentId: String): ResultEntity?
 
-    @Query("DELETE FROM results WHERE instituteId = :instituteId AND batchId = :batchId")
-    suspend fun deleteResultsForBatch(instituteId: String, batchId: String)
-
-    @Query("DELETE FROM results WHERE instituteId = :instituteId AND studentId = :studentId")
-    suspend fun deleteResultsForStudent(instituteId: String, studentId: String)
 }
