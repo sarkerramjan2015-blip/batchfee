@@ -796,19 +796,21 @@ private fun PlanCard(
             Spacer(Modifier.height(12.dp))
 
             // CTA Button
+            val hasProminentCta = plan.isPopular || plan.isPremium ||
+                plan.id == "basic" || plan.id == "standard"
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(48.dp)
                     .clip(RoundedCornerShape(10.dp))
                     .background(
-                        brush = if (plan.isPopular || plan.isPremium)
+                        brush = if (hasProminentCta)
                             Brush.horizontalGradient(listOf(ElectricBlue, Cyan))
                         else
                             Brush.horizontalGradient(listOf(CardBgAlt, CardBg))
                     )
                     .then(
-                        if (!plan.isPopular && !plan.isPremium)
+                        if (!hasProminentCta)
                             Modifier.border(1.dp, BorderSub, RoundedCornerShape(10.dp))
                         else Modifier
                     )
@@ -817,7 +819,7 @@ private fun PlanCard(
             ) {
                 Text(
                     "Choose Plan",
-                    color = if (plan.isPopular || plan.isPremium) Color.White else TextMuted,
+                    color = if (hasProminentCta) Color.White else TextMuted,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.SemiBold
                 )
