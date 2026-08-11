@@ -110,6 +110,8 @@ fun StudentProfileScreen(
     var isDeletingStudent by remember { mutableStateOf(false) }
     var showStudentInsights by remember { mutableStateOf(false) }
     var showSetStudentPasswordDialog by remember { mutableStateOf(false) }
+    var isGeneratingAdmissionForm by remember { mutableStateOf(false) }
+    var admissionFormFile by remember { mutableStateOf<File?>(null) }
     // This value is deliberately not saveable. It exists only until the one-time
     // password dialog closes and is never persisted with the student profile.
     var oneTimeStudentPassword by remember { mutableStateOf<String?>(null) }
@@ -1224,7 +1226,29 @@ fun StudentProfileScreen(
                     },
                     onRegistrationForm = {
                         showStudentMenu = false
-                        shareStudentText(context, "Student Registration Form", buildStudentRegistrationText(s, instituteSignature))
+                        if (instId == null) {
+                            Toast.makeText(context, "Institute information is unavailable.", Toast.LENGTH_SHORT).show()
+                        } else {
+                            scope.launch {
+                                isGeneratingAdmissionForm = true
+                                try {
+                                    val institute = withContext(Dispatchers.IO) {
+                                        db.instituteDao().getInstitute(instId)
+                                    }
+                                    if (institute == null) {
+                                        Toast.makeText(context, "Institute information is unavailable.", Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        admissionFormFile = withContext(Dispatchers.IO) {
+                                            generateStudentAdmissionFormPdf(context, institute, s)
+                                        }
+                                    }
+                                } catch (_: Exception) {
+                                    Toast.makeText(context, "Could not create the admission form.", Toast.LENGTH_SHORT).show()
+                                } finally {
+                                    isGeneratingAdmissionForm = false
+                                }
+                            }
+                        }
                     },
                     onFeeSummary = {
                         showStudentMenu = false
@@ -1233,6 +1257,38 @@ fun StudentProfileScreen(
                     onGenerateIdCard = {
                         showStudentMenu = false
                         onGenerateIdCard?.invoke()
+                    }
+                )
+            }
+
+            if (isGeneratingAdmissionForm) {
+                AlertDialog(
+                    onDismissRequest = {},
+                    containerColor = CardBg,
+                    title = { Text("Creating admission form", color = TextWhite, fontWeight = FontWeight.Bold) },
+                    text = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Cyan, strokeWidth = 2.dp)
+                            Spacer(Modifier.width(12.dp))
+                            Text("Preparing the print-ready PDF…", color = TextMuted)
+                        }
+                    },
+                    confirmButton = {}
+                )
+            }
+
+            admissionFormFile?.let { file ->
+                AdmissionFormReadyDialog(
+                    onDismiss = { admissionFormFile = null },
+                    onPrint = {
+                        if (!openStudentAdmissionFormPdf(context, file)) {
+                            Toast.makeText(context, "No PDF app available for printing.", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    onWhatsApp = {
+                        if (!shareStudentAdmissionFormToWhatsApp(context, file)) {
+                            Toast.makeText(context, "WhatsApp is not installed.", Toast.LENGTH_SHORT).show()
+                        }
                     }
                 )
             }
@@ -1623,6 +1679,64 @@ private fun StudentBatchMenuRow(item: StudentBatchMenuItem) {
             Text(item.subtitle, color = TextMuted.copy(alpha = 0.72f), fontSize = 13.sp, lineHeight = 17.sp)
         }
     }
+}
+
+@Composable
+private fun AdmissionFormReadyDialog(
+    onDismiss: () -> Unit,
+    onPrint: () -> Unit,
+    onWhatsApp: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = CardBg,
+        shape = RoundedCornerShape(16.dp),
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.PictureAsPdf, contentDescription = null, tint = Cyan, modifier = Modifier.size(26.dp))
+                Spacer(Modifier.width(10.dp))
+                Text("Admission Form Ready", color = TextWhite, fontWeight = FontWeight.Bold)
+            }
+        },
+        text = {
+            Text(
+                "A print-ready PDF admission form has been created with institute and student details.",
+                color = TextMuted,
+                fontSize = 13.sp,
+                lineHeight = 19.sp
+            )
+        },
+        confirmButton = {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedButton(
+                    onClick = onWhatsApp,
+                    modifier = Modifier.weight(1f).height(46.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, WAGreen),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = WAGreen)
+                ) {
+                    Icon(Icons.Filled.Whatsapp, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("WhatsApp", fontWeight = FontWeight.Bold)
+                }
+                Button(
+                    onClick = onPrint,
+                    modifier = Modifier.weight(1f).height(46.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Cyan, contentColor = Color(0xFF07111F))
+                ) {
+                    Icon(Icons.Filled.Print, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Print", fontWeight = FontWeight.Bold)
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
+                Text("Close", color = TextMuted)
+            }
+        }
+    )
 }
 
 @Composable
