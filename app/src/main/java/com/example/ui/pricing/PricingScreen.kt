@@ -47,6 +47,7 @@ import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
 import com.batchfee.edu.data.repository.SubscriptionRepository
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.math.BigDecimal
 import java.net.URLEncoder
 
 // ── BatchFee Plan Data ──────────────────────────────────────────
@@ -746,6 +747,26 @@ private fun PlanCard(
                 modifier = Modifier.fillMaxWidth(),
                 textAlign = TextAlign.Center
             )
+            Spacer(Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    Icons.Filled.Person,
+                    contentDescription = null,
+                    tint = Cyan,
+                    modifier = Modifier.size(14.dp)
+                )
+                Spacer(Modifier.width(4.dp))
+                Text(
+                    "Per student: BDT ${formatExactPerStudentPrice(price, plan.studentCount)} $durationLabel",
+                    color = Cyan,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
 
             Spacer(Modifier.height(10.dp))
 
@@ -795,10 +816,17 @@ private fun PlanCard(
 }
 
 private fun formatPrice(price: Double): String {
-    return if (price == price.toLong().toDouble()) {
-        price.toLong().toString()
-    } else {
-        "%.0f".format(price)
+    return BigDecimal.valueOf(price).stripTrailingZeros().toPlainString()
+}
+
+private fun formatExactPerStudentPrice(price: Double, studentCount: Int): String {
+    if (studentCount <= 0) return "0"
+    val amount = BigDecimal.valueOf(price).stripTrailingZeros()
+    val divisor = BigDecimal.valueOf(studentCount.toLong())
+    return try {
+        amount.divide(divisor).stripTrailingZeros().toPlainString()
+    } catch (_: ArithmeticException) {
+        "${amount.toPlainString()}/$studentCount"
     }
 }
 
