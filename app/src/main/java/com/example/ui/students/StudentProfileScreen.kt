@@ -1713,11 +1713,12 @@ private fun AdmissionFormReadyDialog(
                     modifier = Modifier.weight(1f).height(46.dp),
                     shape = RoundedCornerShape(12.dp),
                     border = BorderStroke(1.dp, WAGreen),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = WAGreen)
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = WAGreen),
+                    contentPadding = PaddingValues(horizontal = 8.dp)
                 ) {
                     Icon(Icons.Filled.Whatsapp, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("WhatsApp", fontWeight = FontWeight.Bold)
+                    Text("WhatsApp", fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1)
                 }
                 Button(
                     onClick = onPrint,
