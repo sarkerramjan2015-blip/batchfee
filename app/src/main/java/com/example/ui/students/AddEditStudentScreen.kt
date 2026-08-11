@@ -2,6 +2,7 @@
 
 import android.content.Intent
 import android.net.Uri
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -38,6 +39,8 @@ import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Whatsapp
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
@@ -86,9 +89,12 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.data.cloudinary.CloudinaryImageUploadHelper
+import com.batchfee.edu.domain.SessionManager
 import com.batchfee.edu.ui.components.COUNTRY_CODES
 import com.batchfee.edu.ui.components.buildWhatsAppUrl
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -143,6 +149,9 @@ fun AddEditStudentScreen(
     var showAdmissionDatePicker by remember { mutableStateOf(false) }
     var isSaving by remember { mutableStateOf(false) }
     var saveError by remember { mutableStateOf<String?>(null) }
+    var instituteName by remember { mutableStateOf("") }
+    var welcomeMessage by remember { mutableStateOf<String?>(null) }
+    var welcomeRecipient by remember { mutableStateOf("") }
     val saveScope = rememberCoroutineScope()
 
     var isAppAccessEnabled by remember { mutableStateOf(false) }
@@ -201,6 +210,13 @@ fun AddEditStudentScreen(
                 }
             }
             loaded = true
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        val instituteId = SessionManager.currentInstituteId.value ?: return@LaunchedEffect
+        instituteName = withContext(Dispatchers.IO) {
+            db.instituteDao().getInstitute(instituteId)?.name.orEmpty()
         }
     }
 
@@ -685,7 +701,13 @@ fun AddEditStudentScreen(
                                         appAccessPassword = accountPassword,
                                         onSuccess = {
                                             isSaving = false
-                                            onBack()
+                                            welcomeRecipient = whatsappNumber.trim().ifBlank { phone.trim() }
+                                            welcomeMessage = buildAdmissionWelcomeMessage(
+                                                instituteName = instituteName,
+                                                studentName = fullName.trim(),
+                                                studentCode = loginStudentCode,
+                                                className = className.trim()
+                                            )
                                         },
                                         onError = {
                                             saveError = it
@@ -712,6 +734,134 @@ fun AddEditStudentScreen(
             Spacer(Modifier.height(20.dp))
         }
     }
+
+    welcomeMessage?.let { message ->
+        AdmissionWelcomeDialog(
+            message = message,
+            onMessageChange = { welcomeMessage = it },
+            onDismiss = {
+                welcomeMessage = null
+                onBack()
+            },
+            onSendWhatsApp = {
+                if (welcomeRecipient.isBlank()) {
+                    Toast.makeText(context, "Student phone number is unavailable.", Toast.LENGTH_SHORT).show()
+                } else {
+                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(buildWhatsAppUrl(welcomeRecipient, message))))
+                    welcomeMessage = null
+                    onBack()
+                }
+            },
+            onSendSms = {
+                if (welcomeRecipient.isBlank()) {
+                    Toast.makeText(context, "Student phone number is unavailable.", Toast.LENGTH_SHORT).show()
+                } else {
+                    context.startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${Uri.encode(welcomeRecipient)}")).apply {
+                        putExtra("sms_body", message)
+                    })
+                    welcomeMessage = null
+                    onBack()
+                }
+            }
+        )
+    }
+}
+
+@Composable
+private fun AdmissionWelcomeDialog(
+    message: String,
+    onMessageChange: (String) -> Unit,
+    onDismiss: () -> Unit,
+    onSendWhatsApp: () -> Unit,
+    onSendSms: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = CardBg,
+        shape = RoundedCornerShape(18.dp),
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(CircleShape)
+                        .background(Cyan.copy(alpha = 0.16f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Filled.Check, contentDescription = null, tint = Cyan)
+                }
+                Spacer(Modifier.width(10.dp))
+                Column {
+                    Text("Admission Completed", color = TextWhite, fontWeight = FontWeight.Bold, fontSize = 19.sp)
+                    Text("Send a welcome message", color = TextMuted, fontSize = 12.sp)
+                }
+            }
+        },
+        text = {
+            Column {
+                Text("You can edit this message before sending it.", color = TextMuted, fontSize = 12.sp)
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = message,
+                    onValueChange = onMessageChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 4,
+                    maxLines = 7,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = CardBgAlt,
+                        unfocusedContainerColor = CardBgAlt,
+                        focusedTextColor = TextWhite,
+                        unfocusedTextColor = TextWhite,
+                        cursorColor = Cyan,
+                        focusedBorderColor = Cyan,
+                        unfocusedBorderColor = BorderSub
+                    )
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onSendWhatsApp,
+                modifier = Modifier.fillMaxWidth().height(46.dp),
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF25D366), contentColor = Color.White)
+            ) {
+                Icon(Icons.Filled.Whatsapp, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Send via WhatsApp", fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = onDismiss, modifier = Modifier.weight(1f)) {
+                    Text("Skip", color = TextMuted)
+                }
+                OutlinedButton(
+                    onClick = onSendSms,
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(10.dp),
+                    border = BorderStroke(1.dp, SkyBlue),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = SkyBlue)
+                ) {
+                    Text("Send SMS", fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    )
+}
+
+private fun buildAdmissionWelcomeMessage(
+    instituteName: String,
+    studentName: String,
+    studentCode: String,
+    className: String
+): String = buildString {
+    append("Congratulations, $studentName! Your admission to ")
+    append(instituteName.ifBlank { "our institute" })
+    append(" has been completed successfully.")
+    append("\n\nStudent ID: $studentCode")
+    if (className.isNotBlank()) append("\nClass: $className")
+    append("\n\nWelcome to our learning community. We are happy to have you with us!")
 }
 
 @Composable
