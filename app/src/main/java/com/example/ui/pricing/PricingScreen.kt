@@ -35,6 +35,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.firstOrNull
+import kotlinx.coroutines.Dispatchers
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -68,6 +69,13 @@ class PricingViewModel(private val db: AppDatabase) : ViewModel() {
     val selectedDuration = _selectedDuration.asStateFlow()
 
     init {
+        viewModelScope.launch(Dispatchers.IO) {
+            if (db.subscriptionPlanDao().getAllPlans().firstOrNull().isNullOrEmpty()) {
+                // A fresh/cleared emulator database has no remote cache yet.
+                // Seed the published catalog so renewal never opens as a blank screen.
+                AppDatabase.populateInitialPlans(db.subscriptionPlanDao())
+            }
+        }
         viewModelScope.launch {
             db.subscriptionPlanDao().getAllPlans().collectLatest { planCatalog ->
                 _plans.value = planCatalog
@@ -325,6 +333,18 @@ fun PricingScreen(
                         )
                     }
                 }
+            }
+
+            if (plans.isEmpty()) {
+                Text(
+                    text = "Loading available plans…",
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 28.dp),
+                    color = TextMuted,
+                    textAlign = TextAlign.Center,
+                    fontSize = 13.sp
+                )
             }
 
             Spacer(Modifier.height(18.dp))
