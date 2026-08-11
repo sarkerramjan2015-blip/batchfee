@@ -223,40 +223,6 @@ fun StudentLoginScreen(
                 ) {
                     Column(modifier = Modifier.padding(24.dp)) {
 
-                        // Institute code scopes the login lookup without exposing a global student mapping.
-                        OutlinedTextField(
-                            value = uiState.instituteCode,
-                            onValueChange = viewModel::updateInstituteCode,
-                            label = { Text("Institute Code", color = StuMuted) },
-                            placeholder = { Text("Code from your institute", color = StuMuted.copy(alpha = 0.5f)) },
-                            leadingIcon = { Icon(Icons.Filled.Business, null, tint = StuMuted) },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(12.dp),
-                            keyboardOptions = KeyboardOptions(
-                                imeAction = ImeAction.Next,
-                                keyboardType = KeyboardType.Text,
-                                autoCorrectEnabled = false
-                            ),
-                            keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) }),
-                            enabled = !uiState.isLoading,
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedContainerColor = StuCardAlt,
-                                unfocusedContainerColor = StuCardAlt,
-                                focusedBorderColor = StuGreen,
-                                unfocusedBorderColor = StuBorder,
-                                focusedTextColor = StuWhite,
-                                unfocusedTextColor = StuWhite,
-                                cursorColor = StuGreen,
-                                focusedLabelColor = StuGreen,
-                                unfocusedLabelColor = StuMuted,
-                                focusedLeadingIconColor = StuGreen,
-                                unfocusedLeadingIconColor = StuMuted
-                            )
-                        )
-
-                        Spacer(Modifier.height(12.dp))
-
                         // Student ID
                         OutlinedTextField(
                             value = uiState.studentId,
@@ -267,7 +233,11 @@ fun StudentLoginScreen(
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(12.dp),
-                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next, keyboardType = KeyboardType.Number),
+                            keyboardOptions = KeyboardOptions(
+                                imeAction = ImeAction.Next,
+                                keyboardType = KeyboardType.Text,
+                                autoCorrectEnabled = false
+                            ),
                             keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) }),
                             enabled = !uiState.isLoading,
                             colors = OutlinedTextFieldDefaults.colors(

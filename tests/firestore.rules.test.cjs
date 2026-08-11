@@ -43,7 +43,12 @@ function validNewInstitute(email, createdAt = Date.now()) {
     role: "owner",
     createdAt,
     isActive: true,
-    trialEndDate: createdAt + 1_296_000_000,
+    trialEndDate: createdAt + 2_592_000_000,
+    currentPeriodEndMs: createdAt + 2_592_000_000,
+    currentPlanId: "plan_free_trial",
+    subscriptionStatus: "trial",
+    studentLimit: 50,
+    staffLimit: 1,
     studentCount: 0,
     staffCount: 0,
     batchCount: 0,
@@ -61,8 +66,8 @@ async function seedBaseData() {
       role: "owner",
       createdAt: Date.now(),
       isActive: true,
-      trialEndDate: Date.now() + 1_296_000_000,
-      currentPeriodEndMs: Date.now() + 1_296_000_000,
+      trialEndDate: Date.now() + 2_592_000_000,
+      currentPeriodEndMs: Date.now() + 2_592_000_000,
       currentPlanId: "plan_growth",
       subscriptionStatus: "active",
       studentLimit: 500,
@@ -79,7 +84,8 @@ async function seedBaseData() {
       role: "owner",
       createdAt: Date.now(),
       isActive: true,
-      trialEndDate: Date.now() + 1_296_000_000,
+      trialEndDate: Date.now() + 2_592_000_000,
+      currentPeriodEndMs: Date.now() + 2_592_000_000,
       currentPlanId: "plan_pro",
       subscriptionStatus: "active",
       studentLimit: 1000,
@@ -92,6 +98,18 @@ async function seedBaseData() {
     await setDoc(instituteRef(db, "blocked-institute"), {
       instituteName: "Blocked Institute",
       isActive: false,
+    });
+    await setDoc(instituteRef(db, "expired-institute"), {
+      instituteName: "Expired Institute",
+      ownerName: "Expired Owner",
+      email: "expired-owner@example.test",
+      role: "owner",
+      isActive: true,
+      currentPlanId: "plan_free_trial",
+      subscriptionStatus: "expired",
+      currentPeriodEndMs: Date.now() - 60_000,
+      studentLimit: 50,
+      staffLimit: 1,
     });
 
     await setDoc(doc(db, "app_users", ADMIN), {
@@ -163,6 +181,11 @@ async function seedBaseData() {
       archivedAtMs: null,
       isAppAccessEnabled: true,
       firebaseUid: "student-uid-b1",
+    });
+    await setDoc(tenantDoc(db, "expired-institute", "students", "expired-student"), {
+      instituteId: "expired-institute",
+      fullName: "Expired Student",
+      status: "active",
     });
     await setDoc(tenantDoc(db, OWNER_A, "students", "legacy-credential-student"), {
       instituteId: OWNER_A,
@@ -363,12 +386,11 @@ describe("P0-01 tenant isolation", { concurrency: false }, () => {
 });
 
 describe("P0-02 owner and staff security boundary", { concurrency: false }, () => {
-  test("owner can update profile/counters but cannot alter protected entitlement fields", async () => {
+  test("owner can update profile but cannot alter server-owned counters or entitlement fields", async () => {
     const db = authDb(OWNER_A, "owner-a@example.test");
     await assertSucceeds(updateDoc(instituteRef(db, OWNER_A), {
       instituteName: "Institute A Updated",
       phone: "+8801711111111",
-      studentCount: 2,
       lastActiveAt: Date.now(),
     }));
 
@@ -380,6 +402,9 @@ describe("P0-02 owner and staff security boundary", { concurrency: false }, () =
       { currentPeriodEndMs: Date.now() + 31_536_000_000 },
       { studentLimit: 999999 },
       { staffLimit: 999999 },
+      { studentCount: 2 },
+      { staffCount: 2 },
+      { batchCount: 2 },
       { securityPin: "0000" },
       { role: "SuperAdmin" },
     ]) {
@@ -424,6 +449,19 @@ describe("P0-02 owner and staff security boundary", { concurrency: false }, () =
     await assertFails(getDoc(tenantDoc(fakeTokenDb, OWNER_A, "students", "student-a")));
   });
 
+  test("owners cannot bypass trusted quota creation with direct student, batch, or staff writes", async () => {
+    const db = authDb(OWNER_A);
+    await assertFails(setDoc(tenantDoc(db, OWNER_A, "students", "direct-student"), {
+      instituteId: OWNER_A, studentCode: "DIRECT-1", fullName: "Denied", status: "active",
+    }));
+    await assertFails(setDoc(tenantDoc(db, OWNER_A, "batches", "direct-batch"), {
+      instituteId: OWNER_A, batchCode: "DIRECT-1", name: "Denied", status: "active",
+    }));
+    await assertFails(setDoc(tenantDoc(db, OWNER_A, "staffs", "direct-staff"), {
+      instituteId: OWNER_A, staffCode: "DIRECT-1", fullName: "Denied", status: "active",
+    }));
+  });
+
   test("inactive, blocked, archived, and institute-blocked staff lose tenant access", async () => {
     for (const staffId of ["staff-inactive-a", "staff-blocked-a", "staff-archived-a"]) {
       const db = authDb(staffId);
@@ -434,6 +472,25 @@ describe("P0-02 owner and staff security boundary", { concurrency: false }, () =
 
     const blockedInstituteDb = authDb("staff-active-blocked-institute");
     await assertFails(getDoc(instituteRef(blockedInstituteDb, "blocked-institute")));
+  });
+
+  test("an expired subscription permits billing context only, not protected tenant data", async () => {
+    const ownerDb = authDb("expired-institute", "expired-owner@example.test");
+    await assertSucceeds(getDoc(instituteRef(ownerDb, "expired-institute")));
+    await assertFails(getDoc(tenantDoc(ownerDb, "expired-institute", "students", "expired-student")));
+    await assertFails(updateDoc(instituteRef(ownerDb, "expired-institute"), { phone: "+8801700000000" }));
+
+    const studentDb = authDb(
+      "expired-student-uid",
+      "expired-student@example.test",
+      {
+        student: true,
+        instituteId: "expired-institute",
+        studentId: "expired-student",
+        studentSessionExpiresAt: Date.now() + 3_600_000,
+      },
+    );
+    await assertFails(getDoc(tenantDoc(studentDb, "expired-institute", "students", "expired-student")));
   });
 
   test("staff may update activity only and cannot manipulate protected institute fields", async () => {

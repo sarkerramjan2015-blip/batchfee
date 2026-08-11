@@ -148,7 +148,7 @@ fun SubscriptionExpiredScreen(db: AppDatabase, onRenew: () -> Unit, onLogout: ()
                     HorizontalDivider(color = Color(0xFF2A2A3A))
                     Spacer(Modifier.height(12.dp))
                     Text(
-                        text = "Your subscription has ended. You can still log in, but access to all features is restricted. Contact us to reactivate your plan.",
+                        text = "Your subscription has ended. Access to all features is restricted until you renew your plan.",
                         color = TextMuted,
                         fontSize = 14.sp,
                         textAlign = TextAlign.Center,
@@ -158,6 +158,30 @@ fun SubscriptionExpiredScreen(db: AppDatabase, onRenew: () -> Unit, onLogout: ()
             }
 
             Spacer(Modifier.height(28.dp))
+
+            Button(
+                onClick = onRenew,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp),
+                shape = RoundedCornerShape(14.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent),
+                contentPadding = PaddingValues()
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Brush.horizontalGradient(listOf(ElectricBlue, AccentViolet))),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Filled.Autorenew, null, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(10.dp))
+                    Text("Renew Subscription", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                }
+            }
+
+            Spacer(Modifier.height(14.dp))
 
             // Contact Support button (WhatsApp)
             Button(

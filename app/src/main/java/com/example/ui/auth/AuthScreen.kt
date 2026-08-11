@@ -51,6 +51,7 @@ import com.batchfee.edu.data.models.UserEntity
 import com.batchfee.edu.domain.BiometricAuthManager
 import com.batchfee.edu.domain.DemoAuthRepository
 import com.batchfee.edu.domain.PasswordHasher
+import com.batchfee.edu.domain.SubscriptionPolicy
 import com.batchfee.edu.domain.SessionManager
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseAuthException
@@ -127,7 +128,7 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                     ?: throw IllegalStateException("Firebase Auth succeeded but returned null UID")
 
                 val now = System.currentTimeMillis()
-                val fifteenDaysMs = 15L * 24 * 60 * 60 * 1000
+                val trialDurationMs = SubscriptionPolicy.FREE_TRIAL_DURATION_MS
 
                 // Write to Firestore FIRST — fail early if network/rules issue
                 withContext(Dispatchers.IO) {
@@ -141,7 +142,12 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                             "role" to "owner",
                             "createdAt" to now,
                             "isActive" to true,
-                            "trialEndDate" to (now + fifteenDaysMs),
+                            "trialEndDate" to (now + trialDurationMs),
+                            "currentPeriodEndMs" to (now + trialDurationMs),
+                            "currentPlanId" to "plan_free_trial",
+                            "subscriptionStatus" to "trial",
+                            "studentLimit" to 50,
+                            "staffLimit" to 1,
                             "studentCount" to 0,
                             "staffCount" to 0,
                             "batchCount" to 0
@@ -184,7 +190,7 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                             "paymentMethod" to "free_trial",
                             "transactionLast4" to "",
                             "startDateMs" to now,
-                            "endDateMs" to (now + fifteenDaysMs),
+                            "endDateMs" to (now + trialDurationMs),
                             "approvedAt" to now,
                             "status" to "approved"
                         )).await()
@@ -196,8 +202,8 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                     currentPlanId = "plan_free_trial",
                     subscriptionStatus = "trial",
                     trialStartDateMs = now,
-                    trialEndDateMs = now + fifteenDaysMs,
-                    currentPeriodEndMs = now + fifteenDaysMs,
+                    trialEndDateMs = now + trialDurationMs,
+                    currentPeriodEndMs = now + trialDurationMs,
                     createdAtMs = now,
                     whatsappNumber = whatsappNumber.ifBlank { null }
                 )
@@ -381,9 +387,9 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                                     currentPlanId = currentPlanId,
                                     subscriptionStatus = subscriptionStatus,
                                     trialStartDateMs = data["createdAt"] as? Long ?: now,
-                                    trialEndDateMs = data["trialEndDate"] as? Long ?: (now + 15L * 24 * 60 * 60 * 1000),
+                                    trialEndDateMs = data["trialEndDate"] as? Long ?: (now + SubscriptionPolicy.FREE_TRIAL_DURATION_MS),
                                     currentPeriodEndMs = (data["currentPeriodEndMs"] as? Long)
-                                        ?: (data["trialEndDate"] as? Long ?: (now + 15L * 24 * 60 * 60 * 1000)),
+                                        ?: (data["trialEndDate"] as? Long ?: (now + SubscriptionPolicy.FREE_TRIAL_DURATION_MS)),
                                     createdAtMs = data["createdAt"] as? Long ?: now,
                                     phone = data["phone"] as? String,
                                     whatsappNumber = data["whatsappNumber"] as? String,
@@ -428,9 +434,9 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                                 currentPlanId = currentPlanId,
                                 subscriptionStatus = subscriptionStatus,
                                 trialStartDateMs = data["createdAt"] as? Long ?: now,
-                                trialEndDateMs = data["trialEndDate"] as? Long ?: (now + 15L * 24 * 60 * 60 * 1000),
+                                trialEndDateMs = data["trialEndDate"] as? Long ?: (now + SubscriptionPolicy.FREE_TRIAL_DURATION_MS),
                                 currentPeriodEndMs = (data["currentPeriodEndMs"] as? Long)
-                                    ?: (data["trialEndDate"] as? Long ?: (now + 15L * 24 * 60 * 60 * 1000)),
+                                    ?: (data["trialEndDate"] as? Long ?: (now + SubscriptionPolicy.FREE_TRIAL_DURATION_MS)),
                                 createdAtMs = data["createdAt"] as? Long ?: now,
                                 phone = data["phone"] as? String,
                                 whatsappNumber = data["whatsappNumber"] as? String,

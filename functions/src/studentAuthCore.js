@@ -11,7 +11,17 @@ function normalizeIdentifier(value) {
   return value.normalize("NFKC").trim().toLocaleLowerCase("en-US");
 }
 
-function studentLoginDocumentId(instituteCode, studentCode) {
+function studentLoginDocumentId(studentCode) {
+  const normalizedStudent = normalizeIdentifier(studentCode);
+  return crypto
+    .createHash("sha256")
+    .update(normalizedStudent)
+    .digest("hex");
+}
+
+// Kept only so a successful login can migrate accounts provisioned by older
+// app versions. New accounts never use an institute-scoped login key.
+function legacyStudentLoginDocumentId(instituteCode, studentCode) {
   const normalizedInstitute = normalizeIdentifier(instituteCode);
   const normalizedStudent = normalizeIdentifier(studentCode);
   return crypto
@@ -65,6 +75,7 @@ function hasPermission(permissionValue, requiredPermission) {
 module.exports = {
   hasPermission,
   hashPassword,
+  legacyStudentLoginDocumentId,
   normalizeIdentifier,
   studentLoginDocumentId,
   validatePassword,

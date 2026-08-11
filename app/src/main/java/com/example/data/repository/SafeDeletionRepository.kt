@@ -5,6 +5,7 @@ import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.data.models.BatchEntity
 import com.batchfee.edu.data.models.DeletionOutboxEntity
 import com.batchfee.edu.data.models.StudentEntity
+import com.batchfee.edu.data.models.StaffEntity
 import kotlinx.coroutines.flow.firstOrNull
 import java.util.UUID
 
@@ -23,6 +24,12 @@ class SafeDeletionRepository(
 
     suspend fun restoreBatch(instituteId: String, batchId: String, reason: String): SafeDeletionResult =
         submit("batch", instituteId, batchId, "restore", reason)
+
+    suspend fun archiveStaff(staff: StaffEntity, reason: String): SafeDeletionResult =
+        submit("staff", staff.instituteId, staff.id, "archive", reason)
+
+    suspend fun restoreStaff(instituteId: String, staffId: String, reason: String): SafeDeletionResult =
+        submit("staff", instituteId, staffId, "restore", reason)
 
     suspend fun archiveInstitute(instituteId: String, reason: String): SafeDeletionResult =
         submit("institute", instituteId, instituteId, "archive", reason)
@@ -144,6 +151,16 @@ class SafeDeletionRepository(
                     .firstOrNull() ?: return
                 db.batchDao().updateBatch(
                     batch.copy(
+                        status = if (result.action == "archive") "archived" else result.status,
+                        archivedAtMs = if (result.action == "archive") result.archivedAtMs else null,
+                        updatedAtMs = System.currentTimeMillis()
+                    )
+                )
+            }
+            "staff" -> {
+                val staff = db.staffDao().getStaffByIdOnce(result.entityId, result.instituteId) ?: return
+                db.staffDao().updateStaff(
+                    staff.copy(
                         status = if (result.action == "archive") "archived" else result.status,
                         archivedAtMs = if (result.action == "archive") result.archivedAtMs else null,
                         updatedAtMs = System.currentTimeMillis()

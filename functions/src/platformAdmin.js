@@ -5,6 +5,7 @@
 // institute owner directly through Firestore.
 const { createHash, randomUUID } = require("node:crypto");
 const { HttpsError } = require("firebase-functions/v2/https");
+const { FREE_TRIAL_DURATION_MS } = require("./subscriptionPolicy");
 
 const PLATFORM_ROLES = new Set(["root", "billing", "support", "operations", "read_only"]);
 const ACTIONS = new Set([
@@ -119,7 +120,7 @@ async function createInstitute({ db, adminAuth, request, operationId, requestHas
   const instituteRef = db.collection("institutes").doc(owner.user.uid);
   const operationRef = db.collection("platform_admin_operations").doc(operationId);
   const planRef = db.collection("subscription_plans").doc(requestedPlanId);
-  const trialEndDate = now + 15 * 24 * 60 * 60 * 1000;
+  const trialEndDate = now + FREE_TRIAL_DURATION_MS;
   const values = {
     instituteName,
     ownerName,

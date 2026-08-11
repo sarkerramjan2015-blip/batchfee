@@ -87,12 +87,28 @@ service cloud.firestore {
         && (!('isActive' in get(path).data) || get(path).data.isActive == true);
     }
 
+    // The period end is the source of truth for entitlement. A scheduled
+    // backend task updates the display status after this rule has already
+    // stopped operational access.
+    function hasActiveSubscription(instituteId) {
+      let path = institutePath(instituteId);
+      return exists(path)
+        && get(path).data.isActive == true
+        && get(path).data.currentPeriodEndMs is int
+        && get(path).data.currentPeriodEndMs > request.time.toMillis()
+        && get(path).data.subscriptionStatus in ['trial', 'active'];
+    }
+
+    function isActiveInstitutePrincipal(instituteId) {
+      return isInstitutePrincipal(instituteId) && hasActiveSubscription(instituteId);
+    }
+
     // A staff account is authorised only while both the institute and staff
     // records are active. Missing, inactive, blocked, or archived records fail closed.
     function isActiveStaff(instituteId) {
       let path = staffPath(instituteId);
       return isSignedIn()
-        && isInstituteEnabledForStaff(instituteId)
+        && hasActiveSubscription(instituteId)
         && exists(path)
         && get(path).data.status == 'active'
         && (!('archivedAtMs' in get(path).data) || get(path).data.archivedAtMs == null);
@@ -131,7 +147,7 @@ service cloud.firestore {
       let path = studentPath(instituteId, request.auth.token.studentId);
       return hasActiveStudentToken()
         && request.auth.token.instituteId == instituteId
-        && isInstituteEnabledForStaff(instituteId)
+        && hasActiveSubscription(instituteId)
         && exists(path)
         && get(path).data.firebaseUid == request.auth.uid
         && get(path).data.isAppAccessEnabled == true
@@ -251,7 +267,7 @@ service cloud.firestore {
       return isStudentRecordOwner(instituteId, studentId)
         || (!isStudentAuthRequest()
           && (isSuperAdmin()
-            || isInstitutePrincipal(instituteId)
+            || isActiveInstitutePrincipal(instituteId)
             || canReadFinanceData(instituteId)));
     }
 
@@ -272,9 +288,6 @@ service cloud.firestore {
         'whatsappNumber',
         'profilePhotoUri',
         'instituteCode',
-        'studentCount',
-        'staffCount',
-        'batchCount',
         'lastActiveAt'
       ]);
     }
@@ -304,23 +317,28 @@ service cloud.firestore {
         'isActive',
         'studentLimit',
         'staffLimit',
-        'currentPlanId'
+        'currentPlanId',
+        'subscriptionExpiredAtMs'
       ]);
     }
 
     function validOwnerInstituteCreate(instituteId) {
       let data = request.resource.data;
       let nowMs = request.time.toMillis();
-      let trialDurationMs = 1296000000;
+      let trialDurationMs = 2592000000;
       return isOwner(instituteId)
         && data.keys().hasAll([
           'instituteName', 'ownerName', 'email', 'role', 'createdAt',
-          'isActive', 'trialEndDate', 'studentCount', 'staffCount', 'batchCount'
+          'isActive', 'trialEndDate', 'currentPeriodEndMs', 'currentPlanId',
+          'subscriptionStatus', 'studentLimit', 'staffLimit',
+          'studentCount', 'staffCount', 'batchCount'
         ])
         && data.keys().hasOnly([
           'instituteName', 'ownerName', 'email', 'whatsappNumber', 'phone',
           'address', 'profilePhotoUri', 'instituteCode', 'role', 'createdAt',
-          'isActive', 'trialEndDate', 'studentCount', 'staffCount', 'batchCount'
+          'isActive', 'trialEndDate', 'currentPeriodEndMs', 'currentPlanId',
+          'subscriptionStatus', 'studentLimit', 'staffLimit',
+          'studentCount', 'staffCount', 'batchCount'
         ])
         && data.role == 'owner'
         && data.email == request.auth.token.email
@@ -329,6 +347,12 @@ service cloud.firestore {
         && data.createdAt <= nowMs + 60000
         && data.trialEndDate is int
         && data.trialEndDate == data.createdAt + trialDurationMs
+        && data.currentPeriodEndMs is int
+        && data.currentPeriodEndMs == data.trialEndDate
+        && data.currentPlanId == 'plan_free_trial'
+        && data.subscriptionStatus == 'trial'
+        && data.studentLimit == 50
+        && data.staffLimit == 1
         && data.isActive == true
         && data.studentCount == 0
         && data.staffCount == 0
@@ -379,7 +403,7 @@ service cloud.firestore {
 
       allow create: if isSuperAdmin() || validOwnerInstituteCreate(instituteId);
       allow update: if (isSuperAdmin() && superAdminClientUpdateAvoidsSubscriptionControls())
-        || (isInstitutePrincipal(instituteId)
+        || (isActiveInstitutePrincipal(instituteId)
           && ownerUpdateTouchesOnlySafeFields()
           && ownerUpdateHasValidCounters())
         || (isActiveStaff(instituteId)
@@ -392,6 +416,7 @@ service cloud.firestore {
     // and SuperAdmin. Staff access is granted collection-by-collection below.
     match /institutes/{instituteId}/{collection}/{document=**} {
       allow read, write: if collection != 'students'
+        && collection != 'staffs'
         && collection != 'fees'
         && collection != 'payments'
         && collection != 'receipts'
@@ -411,14 +436,19 @@ service cloud.firestore {
         && collection != 'subscription_receipts'
         && collection != 'subscription_audit'
         && collection != 'subscription_operations'
-        && (isSuperAdmin() || isInstitutePrincipal(instituteId));
+        && (isSuperAdmin() || isActiveInstitutePrincipal(instituteId));
     }
 
     match /institutes/{instituteId}/staffs/{staffId} {
       allow read: if (isActiveStaff(instituteId) && request.auth.uid == staffId)
+        || isSuperAdmin()
+        || isActiveInstitutePrincipal(instituteId)
         || hasStaffPermission(instituteId, 'manage_staff');
-      // Staff permissions/status are security-sensitive. Staff cannot create,
-      // update, or delete staff accounts from an untrusted client.
+      // Creation is quota-enforced by the trusted callable. Archival is also
+      // server-owned, so a client cannot free a seat without the audit flow.
+      allow create: if false;
+      allow update: if (isSuperAdmin() || isActiveInstitutePrincipal(instituteId))
+        && request.resource.data.archivedAtMs == resource.data.archivedAtMs;
     }
 
     match /institutes/{instituteId}/students/{studentId} {
@@ -429,16 +459,14 @@ service cloud.firestore {
         && (isStudentRecordOwner(instituteId, studentId)
           || (!isStudentAuthRequest()
             && (isSuperAdmin()
-              || isInstitutePrincipal(instituteId)
+              || isActiveInstitutePrincipal(instituteId)
               || canReadStudentData(instituteId))));
-      allow create: if (isSuperAdmin()
-          || isInstitutePrincipal(instituteId)
-          || hasStaffPermission(instituteId, 'manage_student'))
-        && studentCreateHasNoAuthFields();
+      allow create: if false;
       allow update: if ((isSuperAdmin()
-          || isInstitutePrincipal(instituteId)
+          || isActiveInstitutePrincipal(instituteId)
           || hasStaffPermission(instituteId, 'manage_student'))
-          && studentAuthFieldsAreUnchanged())
+          && studentAuthFieldsAreUnchanged()
+          && request.resource.data.archivedAtMs == resource.data.archivedAtMs)
         || (isStudentRecordOwner(instituteId, studentId)
           && request.resource.data.diff(resource.data).affectedKeys()
             .hasOnly(['phone', 'photoUri', 'address', 'updatedAtMs']));
@@ -447,29 +475,31 @@ service cloud.firestore {
     match /institutes/{instituteId}/batches/{batchId} {
       allow read: if (isStudentAuthRequest() && isStudentOf(instituteId))
         || (!isStudentAuthRequest() && canReadBatchData(instituteId));
-      allow create, update: if isSuperAdmin()
-        || isInstitutePrincipal(instituteId)
-        || hasStaffPermission(instituteId, 'manage_batch');
+      allow create: if false;
+      allow update: if (isSuperAdmin()
+        || isActiveInstitutePrincipal(instituteId)
+        || hasStaffPermission(instituteId, 'manage_batch'))
+        && request.resource.data.archivedAtMs == resource.data.archivedAtMs;
     }
 
     match /institutes/{instituteId}/batch_students/{enrollmentId} {
       allow read: if isStudentRecordOwner(instituteId, resource.data.studentId)
         || (!isStudentAuthRequest() && canReadBatchData(instituteId));
       allow create, update: if isSuperAdmin()
-        || isInstitutePrincipal(instituteId)
+        || isActiveInstitutePrincipal(instituteId)
         || hasStaffPermission(instituteId, 'manage_batch');
     }
 
     match /institutes/{instituteId}/deletion_operations/{operationId} {
-      allow read: if isSuperAdmin() || isInstitutePrincipal(instituteId);
+      allow read: if isSuperAdmin() || isActiveInstitutePrincipal(instituteId);
     }
 
     match /institutes/{instituteId}/deletion_states/{stateId} {
-      allow read: if isSuperAdmin() || isInstitutePrincipal(instituteId);
+      allow read: if isSuperAdmin() || isActiveInstitutePrincipal(instituteId);
     }
 
     match /institutes/{instituteId}/deletion_audit/{auditId} {
-      allow read: if isSuperAdmin() || isInstitutePrincipal(instituteId);
+      allow read: if isSuperAdmin() || isActiveInstitutePrincipal(instituteId);
     }
 
     // Cloudinary public IDs, ownership, delivery type and upload audit metadata are
@@ -649,7 +679,7 @@ service cloud.firestore {
 
     match /registrations/{instituteId}/pending/{requestId} {
       allow read, delete: if isSuperAdmin()
-        || isInstitutePrincipal(instituteId)
+        || isActiveInstitutePrincipal(instituteId)
         || hasStaffPermission(instituteId, 'manage_student');
       // Public registrations are written only by the rate-limited Cloud
       // Function. Client-side writes would make abuse prevention bypassable.
@@ -658,12 +688,12 @@ service cloud.firestore {
 
     match /registrations/{instituteId}/{collection}/{document=**} {
       allow read, write: if isSuperAdmin()
-        || isInstitutePrincipal(instituteId)
+        || isActiveInstitutePrincipal(instituteId)
         || hasStaffPermission(instituteId, 'manage_student');
     }
 
     match /registrations/{instituteId} {
-      allow read, write: if isSuperAdmin() || isInstitutePrincipal(instituteId);
+      allow read, write: if isSuperAdmin() || isActiveInstitutePrincipal(instituteId);
     }
 
     match /public_registration_profiles/{profileId} {

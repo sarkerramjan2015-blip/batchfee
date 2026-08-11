@@ -1,0 +1,13 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "institutes",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "subscriptionStatus", "order": "ASCENDING" },
+        { "fieldPath": "currentPeriodEndMs", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

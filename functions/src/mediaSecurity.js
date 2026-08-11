@@ -2,6 +2,7 @@
 
 const { HttpsError } = require("firebase-functions/v2/https");
 const { hasPermission } = require("./studentAuthCore");
+const { hasCurrentSubscription } = require("./subscriptionPolicy");
 const {
   MEDIA_RETENTION_MS,
   buildMediaReference,
@@ -46,6 +47,9 @@ async function principalFor(db, auth, instituteId) {
   const institute = instituteSnap.data();
   if (!institute || institute.isActive === false || institute.deletionState === "retained") {
     throw new HttpsError("failed-precondition", "Institute is inactive.");
+  }
+  if (!hasCurrentSubscription(institute)) {
+    throw new HttpsError("failed-precondition", "Subscription has expired. Renew the plan to continue.");
   }
   if (auth.uid === instituteId || managedAdmin(appUser, instituteId)) {
     return { kind: "principal", instituteRef, institute };

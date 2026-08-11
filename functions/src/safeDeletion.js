@@ -3,6 +3,7 @@
 const { FieldValue } = require("firebase-admin/firestore");
 const { HttpsError } = require("firebase-functions/v2/https");
 const { hasPermission } = require("./studentAuthCore");
+const { hasCurrentSubscription } = require("./subscriptionPolicy");
 const { parseMediaReference } = require("./mediaSecurityCore");
 const {
   canonicalDeletionRequest,
@@ -34,15 +35,20 @@ function assertAuthority({ auth, institute, appUser, staff, instituteId, entityT
   if (!institute || institute.isActive === false || institute.deletionState === "retained") {
     throw new HttpsError("failed-precondition", "Institute is unavailable.");
   }
+  if (!hasCurrentSubscription(institute)) {
+    throw new HttpsError("failed-precondition", "Subscription has expired. Renew the plan to continue.");
+  }
   if (auth.uid === instituteId || isManagedAdmin(appUser, instituteId)) return;
-  const permission = entityType === "student" ? "manage_student" : "manage_batch";
+  const permission = entityType === "student" ? "manage_student"
+    : entityType === "staff" ? "manage_staff" : "manage_batch";
   if (isActive(staff) && hasPermission(staff.permissions, permission)) return;
   throw new HttpsError("permission-denied", `${entityType} ${action} is not allowed.`);
 }
 
 function entityRef(instituteRef, entityType, entityId) {
   if (entityType === "institute") return instituteRef;
-  const collection = entityType === "student" ? "students" : "batches";
+  const collection = entityType === "student" ? "students"
+    : entityType === "staff" ? "staffs" : "batches";
   return instituteRef.collection(collection).doc(entityId);
 }
 
@@ -54,7 +60,7 @@ function previousState(entityType, entity, appUser) {
       isAppAccessEnabled: entity.isAppAccessEnabled === true,
     };
   }
-  if (entityType === "batch") {
+  if (entityType === "batch" || entityType === "staff") {
     return { status: entity.status || "active", archivedAtMs: entity.archivedAtMs || null };
   }
   return {
@@ -65,6 +71,32 @@ function previousState(entityType, entity, appUser) {
     appUserStatus: appUser && Object.prototype.hasOwnProperty.call(appUser, "status")
       ? appUser.status : null,
   };
+}
+
+function counterField(entityType) {
+  if (entityType === "student") return "studentCount";
+  if (entityType === "batch") return "batchCount";
+  if (entityType === "staff") return "staffCount";
+  return null;
+}
+
+function seatCollection(instituteRef, entityType) {
+  if (entityType === "student") return instituteRef.collection("students");
+  if (entityType === "batch") return instituteRef.collection("batches");
+  if (entityType === "staff") return instituteRef.collection("staffs");
+  return null;
+}
+
+function seatLimit(institute, plan, entityType) {
+  const stored = entityType === "student" ? institute.studentLimit
+    : entityType === "staff" ? institute.staffLimit : null;
+  if (Number.isSafeInteger(stored) && stored > 0) return stored;
+  const configured = entityType === "student" ? plan.maxStudents
+    : entityType === "staff" ? plan.maxUsers : plan.maxBatches;
+  if (!Number.isSafeInteger(configured) || configured < 1) {
+    throw new HttpsError("failed-precondition", "The subscription plan has no valid limit configuration.");
+  }
+  return configured;
 }
 
 function archivePatch(entityType, operationId, now, retentionUntilMs) {
@@ -96,7 +128,9 @@ function restorePatch(entityType, previous, now) {
   if (entityType === "student") {
     return { ...common, status: previous.status || "active", isAppAccessEnabled: false };
   }
-  if (entityType === "batch") return { ...common, status: previous.status || "active" };
+  if (entityType === "batch" || entityType === "staff") {
+    return { ...common, status: previous.status || "active" };
+  }
   return {
     ...common,
     isActive: previous.isActive !== false,
@@ -219,15 +253,18 @@ function createSafeDeletionHandler({ db, adminAuth }) {
     const stateRef = instituteRef.collection("deletion_states")
       .doc(deletionStateId(parsed.entityType, parsed.entityId));
     const targetRef = entityRef(instituteRef, parsed.entityType, parsed.entityId);
+    const seats = seatCollection(instituteRef, parsed.entityType);
+    const seatCountQuery = seats ? seats.where("archivedAtMs", "==", null).count() : null;
 
     const plan = await db.runTransaction(async (transaction) => {
       const actorAppUserRef = db.collection("app_users").doc(actorUid);
       const staffRef = instituteRef.collection("staffs").doc(actorUid);
-      const [instituteSnap, appUserSnap, staffSnap, operationSnap] = await Promise.all([
+      const [instituteSnap, appUserSnap, staffSnap, operationSnap, seatCountSnap] = await Promise.all([
         transaction.get(instituteRef),
         transaction.get(actorAppUserRef),
         transaction.get(staffRef),
         transaction.get(operationRef),
+        seatCountQuery ? transaction.get(seatCountQuery) : Promise.resolve(null),
       ]);
       if (!instituteSnap.exists) throw new HttpsError("not-found", "Institute not found.");
       const institute = instituteSnap.data();
@@ -324,6 +361,11 @@ function createSafeDeletionHandler({ db, adminAuth }) {
           now,
           retentionUntilMs,
         ));
+        const archiveCounter = counterField(parsed.entityType);
+        if (archiveCounter) {
+          const currentCount = Number.isSafeInteger(institute[archiveCounter]) ? institute[archiveCounter] : 0;
+          transaction.update(instituteRef, { [archiveCounter]: Math.max(0, currentCount - 1), updatedAtMs: now });
+        }
         if (mediaAssetRef && mediaAssetSnap && mediaAssetSnap.exists &&
             mediaAssetSnap.get("reference") === mediaUri) {
           transaction.update(mediaAssetRef, {
@@ -365,7 +407,25 @@ function createSafeDeletionHandler({ db, adminAuth }) {
         const previous = stateSnap.get("previous") || {};
         authUid = stateSnap.get("authUid") || authUid;
         restoreStudentAccess = stateSnap.get("restoreStudentAccess") === true;
+        if (seatCountSnap) {
+          const planSnap = await transaction.get(
+            db.collection("subscription_plans").doc(institute.currentPlanId || "plan_free_trial"),
+          );
+          if (!planSnap.exists) {
+            throw new HttpsError("failed-precondition", "Subscription plan is unavailable.");
+          }
+          const count = seatCountSnap.data().count;
+          const limit = seatLimit(institute, planSnap.data(), parsed.entityType);
+          if (count >= limit) {
+            throw new HttpsError("resource-exhausted", `Cannot restore: ${parsed.entityType} limit (${limit}) has been reached.`);
+          }
+        }
         transaction.update(targetRef, restorePatch(parsed.entityType, previous, now));
+        const restoreCounter = counterField(parsed.entityType);
+        if (restoreCounter) {
+          const currentCount = Number.isSafeInteger(institute[restoreCounter]) ? institute[restoreCounter] : 0;
+          transaction.update(instituteRef, { [restoreCounter]: currentCount + 1, updatedAtMs: now });
+        }
         if (mediaAssetRef && mediaAssetSnap && mediaAssetSnap.exists &&
             mediaAssetSnap.get("reference") === mediaUri &&
             mediaAssetSnap.get("deletionOperationId") === stateSnap.get("archiveOperationId")) {

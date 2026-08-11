@@ -21,6 +21,15 @@ const valid = {
 
 test("safe deletion accepts only archive and restore for scoped entity types", () => {
   assert.deepEqual(validateDeletionRequest(valid), valid);
+  assert.deepEqual(validateDeletionRequest({
+    ...valid,
+    entityType: "staff",
+    entityId: "staff-a",
+  }), {
+    ...valid,
+    entityType: "staff",
+    entityId: "staff-a",
+  });
   assert.throws(() => validateDeletionRequest({ ...valid, action: "purge" }), /Unsupported/);
   assert.throws(() => validateDeletionRequest({ ...valid, entityType: "payment" }), /Unsupported/);
   assert.throws(() => validateDeletionRequest({ ...valid, reason: "x" }), /reason/);

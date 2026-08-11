@@ -86,12 +86,9 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.data.cloudinary.CloudinaryImageUploadHelper
-import com.batchfee.edu.domain.SessionManager
 import com.batchfee.edu.ui.components.COUNTRY_CODES
 import com.batchfee.edu.ui.components.buildWhatsAppUrl
-import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.tasks.await
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -177,7 +174,7 @@ fun AddEditStudentScreen(
             val student = viewModel.loadStudent(studentId)
             student?.let { s ->
                 existingId = s.id
-                studentCode = s.studentCode.filter(Char::isDigit).ifBlank { viewModel.generateStudentCode() }
+                studentCode = s.studentCode.ifBlank { viewModel.generateStudentCode() }
                 fullName = s.fullName
                 guardianName = s.guardianName ?: ""
                 phone = s.phone ?: ""
@@ -551,18 +548,7 @@ fun AddEditStudentScreen(
                 Spacer(Modifier.height(10.dp))
                 val shareScope = rememberCoroutineScope()
                 val ctx = LocalContext.current
-                val numericCode = studentCode.filter(Char::isDigit)
-                var shareInstituteCode by remember { mutableStateOf("") }
-
-                LaunchedEffect(Unit) {
-                    shareInstituteCode = SessionManager.currentInstituteId.value?.let { iid ->
-                        try {
-                            FirebaseFirestore.getInstance()
-                                .collection("institutes").document(iid).get().await()
-                                .getString("instituteCode") ?: ""
-                        } catch (_: Exception) { "" }
-                    } ?: ""
-                }
+                val loginCode = studentCode
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -571,21 +557,9 @@ fun AddEditStudentScreen(
                     OutlinedButton(
                         onClick = {
                             shareScope.launch {
-                                if (shareInstituteCode.isEmpty()) {
-                                    shareInstituteCode = try {
-                                        SessionManager.currentInstituteId.value?.let { iid ->
-                                            FirebaseFirestore.getInstance()
-                                                .collection("institutes").document(iid).get().await()
-                                                .getString("instituteCode") ?: ""
-                                        } ?: ""
-                                    } catch (_: Exception) { "" }
-                                }
                                 val text = buildString {
                                     appendLine("Student: $fullName")
-                                    appendLine("Login ID: $numericCode")
-                                    if (shareInstituteCode.isNotEmpty()) {
-                                        appendLine("Institute Code: $shareInstituteCode")
-                                    }
+                                    appendLine("Login ID: $loginCode")
                                     appendLine("Password: $appAccessPassword")
                                 }
                                 val intent = Intent(Intent.ACTION_SEND).apply {
@@ -609,10 +583,7 @@ fun AddEditStudentScreen(
                         onClick = {
                             val text = buildString {
                                 appendLine("*Student:* $fullName")
-                                appendLine("*Login ID:* $numericCode")
-                                if (shareInstituteCode.isNotEmpty()) {
-                                    appendLine("*Institute Code:* $shareInstituteCode")
-                                }
+                                appendLine("*Login ID:* $loginCode")
                                 appendLine("*Password:* $appAccessPassword")
                             }
                             val waUrl = buildWhatsAppUrl(null, text)
@@ -664,14 +635,13 @@ fun AddEditStudentScreen(
                                         )
                                     }
                                 }
-                                val numericStudentCode = studentCode.filter(Char::isDigit)
-                                    .ifBlank { viewModel.generateStudentCode() }
+                                val loginStudentCode = studentCode.ifBlank { viewModel.generateStudentCode() }
                                 val accountPassword = appAccessPassword.takeIf { it.isNotEmpty() }
 
                                 if (isEdit) {
                                     viewModel.updateStudent(
                                         id = existingId,
-                                        studentCode = numericStudentCode,
+                                        studentCode = loginStudentCode,
                                         fullName = fullName.trim(),
                                         phone = phone.trim(),
                                         guardianName = guardianName.trim().takeIf { it.isNotEmpty() },
@@ -698,7 +668,7 @@ fun AddEditStudentScreen(
                                 } else {
                                     viewModel.addStudent(
                                         id = newStudentId,
-                                        studentCode = numericStudentCode,
+                                        studentCode = loginStudentCode,
                                         fullName = fullName.trim(),
                                         phone = phone.trim(),
                                         guardianName = guardianName.trim().takeIf { it.isNotEmpty() },

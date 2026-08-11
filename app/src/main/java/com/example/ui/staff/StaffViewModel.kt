@@ -16,6 +16,8 @@ import com.batchfee.edu.data.firebase.FirebaseAuthApi
 import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
 import com.batchfee.edu.data.firestore.InstituteSyncHelper
 import com.batchfee.edu.data.firestore.StaffSyncHelper
+import com.batchfee.edu.data.repository.EntitledCreationRepository
+import com.batchfee.edu.data.repository.SafeDeletionRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -27,6 +29,7 @@ import kotlinx.coroutines.tasks.await
 import java.util.UUID
 
 class StaffViewModel(private val db: AppDatabase) : ViewModel() {
+    private val entitledCreationRepository = EntitledCreationRepository()
     private val _staffList = MutableStateFlow<List<StaffEntity>>(emptyList())
     val staffList = _staffList.asStateFlow()
 
@@ -218,6 +221,12 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
                     updatedAtMs = now,
                     archivedAtMs = null
                 )
+                try {
+                    entitledCreationRepository.createStaff(staff)
+                } catch (error: Exception) {
+                    onError("Staff account could not be created: ${error.localizedMessage ?: "subscription limit or connection problem"}")
+                    return@launch
+                }
                 db.staffDao().insertStaff(staff)
                 db.userDao().insertUser(
                     UserEntity(
@@ -231,15 +240,6 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
                     )
                 )
                 // Sync to Firestore (non-blocking — best-effort)
-                launch { StaffSyncHelper.createStaff(staff) }
-                launch {
-                    try {
-                        val count = withContext(Dispatchers.IO) {
-                            db.staffDao().getStaffByInstituteAsList(instId).size
-                        }
-                        InstituteSyncHelper.updateStaffCount(instId, count)
-                    } catch (_: Exception) { }
-                }
                 onSuccess(firebaseUid, loginId, cleanPassword, staffEmail)
             }
         }
@@ -399,10 +399,11 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
         if (!SessionManager.isAdmin()) return
         viewModelScope.launch {
             val instId = SessionManager.currentInstituteId.value ?: return@launch
-            val archivedAt = System.currentTimeMillis()
-            db.staffDao().archiveStaff(instId, staffId, archivedAt)
-            launch { StaffSyncHelper.archiveStaff(instId, staffId) }
-            onSuccess()
+            val staff = db.staffDao().getStaffByIdOnce(staffId, instId) ?: return@launch
+            try {
+                SafeDeletionRepository(db).archiveStaff(staff, "Staff archived from staff management")
+                onSuccess()
+            } catch (_: Exception) { }
         }
     }
 
@@ -410,8 +411,10 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
         if (!SessionManager.isAdmin()) return
         viewModelScope.launch {
             val instId = SessionManager.currentInstituteId.value ?: return@launch
-            db.staffDao().restoreStaff(instId, staffId)
-            onSuccess()
+            try {
+                SafeDeletionRepository(db).restoreStaff(instId, staffId, "Staff restored from staff management")
+                onSuccess()
+            } catch (_: Exception) { }
         }
     }
 }

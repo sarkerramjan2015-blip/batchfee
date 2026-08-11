@@ -5,17 +5,19 @@ const test = require("node:test");
 const {
   hasPermission,
   hashPassword,
+  legacyStudentLoginDocumentId,
   normalizeIdentifier,
   studentLoginDocumentId,
   validatePassword,
   verifyPassword,
 } = require("../src/studentAuthCore");
 
-test("login keys are normalized, deterministic, and institute-scoped", () => {
-  const first = studentLoginDocumentId(" INST-A ", " Student-01 ");
-  assert.equal(first, studentLoginDocumentId("inst-a", "student-01"));
-  assert.notEqual(first, studentLoginDocumentId("inst-b", "student-01"));
+test("login keys are normalized, deterministic, and globally student-scoped", () => {
+  const first = studentLoginDocumentId(" Student-01 ");
+  assert.equal(first, studentLoginDocumentId("student-01"));
   assert.match(first, /^[a-f0-9]{64}$/);
+  assert.notEqual(first, studentLoginDocumentId("student-02"));
+  assert.notEqual(first, legacyStudentLoginDocumentId("inst-a", "student-01"));
   assert.equal(normalizeIdentifier("  ABC-12  "), "abc-12");
 });
 

@@ -10,10 +10,12 @@ import com.batchfee.edu.data.firestore.StudentSyncHelper
 import com.batchfee.edu.data.models.BatchEntity
 import com.batchfee.edu.data.models.StudentEntity
 import com.batchfee.edu.domain.SessionManager
+import com.batchfee.edu.domain.StudentIdGenerator
 import com.batchfee.edu.data.firestore.InstituteSyncHelper
 import com.batchfee.edu.data.firestore.BatchStudentSyncHelper
 import com.batchfee.edu.data.models.BatchStudentEntity
 import com.batchfee.edu.data.repository.StudentAccountRepository
+import com.batchfee.edu.data.repository.EntitledCreationRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -25,6 +27,7 @@ import java.util.*
 
 class StudentViewModel(private val db: AppDatabase) : ViewModel() {
     private val studentAccountRepository = StudentAccountRepository()
+    private val entitledCreationRepository = EntitledCreationRepository()
     private val _studentList = MutableStateFlow<List<StudentEntity>>(emptyList())
     val studentList = _studentList.asStateFlow()
 
@@ -65,8 +68,7 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
     }
 
     fun generateStudentCode(): String {
-        val digits = UUID.randomUUID().toString().filter(Char::isDigit) + System.currentTimeMillis().toString()
-        return digits.take(8).padEnd(8, '0')
+        return StudentIdGenerator.generate()
     }
 
     fun addStudent(
@@ -135,25 +137,16 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
         )
         viewModelScope.launch {
             try {
+                entitledCreationRepository.createStudent(student)
                 db.studentDao().insertStudent(student)
                 val savedStudent = if (isAppAccessEnabled) {
-                    StudentSyncHelper.upsertStudentOrThrow(student)
                     studentAccountRepository.provision(instId, student.id, appAccessPassword!!)
                     student.copy(isAppAccessEnabled = true)
                 } else {
-                    launch { StudentSyncHelper.upsertStudent(student) }
                     student
                 }
-                if (savedStudent !== student) db.studentDao().updateStudent(savedStudent)
+                if (savedStudent != student) db.studentDao().updateStudent(savedStudent)
                 onSuccess()
-                launch {
-                    try {
-                        val count = withContext(Dispatchers.IO) {
-                            db.studentDao().getStudentsByInstituteOnce(instId).size
-                        }
-                        InstituteSyncHelper.updateStudentCount(instId, count)
-                    } catch (_: Exception) { }
-                }
             } catch (error: Exception) {
                 onError(accountErrorMessage(error, "Student account could not be created."))
             }
@@ -373,7 +366,7 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
             message.contains("PERMISSION_DENIED", ignoreCase = true) ->
                 "You do not have permission to manage student app access."
             message.contains("ALREADY_EXISTS", ignoreCase = true) ->
-                "This institute code and student ID are already linked to another account."
+                "This Student ID is already linked to another account. Generate a new Student ID."
             message.contains("UNAVAILABLE", ignoreCase = true) ||
                 message.contains("DEADLINE_EXCEEDED", ignoreCase = true) ->
                 "Account service is temporarily unavailable. Check your connection and try again."

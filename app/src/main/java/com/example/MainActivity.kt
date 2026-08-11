@@ -184,7 +184,7 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
             }
         }
         while (true) {
-            delay(5 * 60 * 1000L)
+            delay(60 * 1000L)
             if (SessionManager.currentUserId.value != uid) break
             withContext(Dispatchers.IO) {
                 try {
@@ -196,11 +196,13 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
                     FirebaseCrashlytics.getInstance().recordException(e)
                 }
             }
-            // Periodically check if subscription has expired (institute owner only — staff are not subscription-gated)
-            if (role != "Staff" && SessionManager.currentUserId.value == uid) {
+            // Every tenant role is subscription-gated; billing remains available on expiry.
+            if (SessionManager.currentUserId.value == uid) {
                 val expired = checkSubscriptionExpired(instId, appDb)
                 if (expired) {
-                    SessionManager.expireSession()
+                    navController.navigate(SubscriptionExpiredRoute) {
+                        popUpTo(navController.graph.id) { inclusive = true }
+                    }
                     break
                 }
             }
@@ -772,6 +774,7 @@ private suspend fun checkSubscriptionExpired(instituteId: String, db: com.batchf
             .get().await()
         val isActive = doc.getBoolean("isActive") ?: true
         if (!isActive) return true
+        if (doc.getString("subscriptionStatus") in setOf("expired", "blocked")) return true
         val now = System.currentTimeMillis()
         // Prefer currentPeriodEndMs (paid plan) over trialEndDate (trial plan).
         // A paid subscriber may have a stale trialEndDate in the past — ignore it
@@ -787,7 +790,7 @@ private suspend fun checkSubscriptionExpired(instituteId: String, db: com.batchf
         if (local != null) {
             val now = System.currentTimeMillis()
             // Check status from local cache
-            if (local.subscriptionStatus == "blocked") return true
+            if (local.subscriptionStatus in setOf("expired", "blocked")) return true
             val endMs = local.currentPeriodEndMs.takeIf { it > 0L } ?: local.trialEndDateMs
             return now > endMs
         }

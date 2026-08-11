@@ -2,6 +2,7 @@
 
 const { createHash } = require("node:crypto");
 const { HttpsError } = require("firebase-functions/v2/https");
+const { hasCurrentSubscription } = require("./subscriptionPolicy");
 const { hasPermission } = require("./studentAuthCore");
 const {
   MONEY_EPSILON,
@@ -89,6 +90,9 @@ async function resolveFinanceAuthority(transaction, db, auth, instituteId) {
     (!Object.prototype.hasOwnProperty.call(appUser, "status") || appUser.status === "active");
   if (isSuperAdmin) return { instituteRef, canManagePaymentHistory: true };
 
+  if (!hasCurrentSubscription(instituteSnap.data())) {
+    throw new HttpsError("failed-precondition", "Subscription has expired. Renew the plan to continue.");
+  }
   if (instituteSnap.get("isActive") === false) {
     throw new HttpsError("failed-precondition", "Institute is inactive.");
   }

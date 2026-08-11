@@ -123,7 +123,6 @@ async function main() {
   assert.equal(linkedStatus.body.result.securelyLinked, true);
 
   const login = await callFunction("loginStudent", {
-    instituteCode: " int-01 ",
     studentCode: "stu-01",
     password: "secure-123",
   });
@@ -141,7 +140,6 @@ async function main() {
   assert.equal(refreshedClaims.studentSessionExpiresAt, claims.studentSessionExpiresAt);
 
   const wrongPassword = await callFunction("loginStudent", {
-    instituteCode: "INT-01",
     studentCode: "STU-01",
     password: "wrong-123",
   });
@@ -162,7 +160,6 @@ async function main() {
   assert.equal(disabledStatus.body.result.securelyLinked, false);
 
   const disabledLogin = await callFunction("loginStudent", {
-    instituteCode: "INT-01",
     studentCode: "STU-01",
     password: "secure-123",
   });

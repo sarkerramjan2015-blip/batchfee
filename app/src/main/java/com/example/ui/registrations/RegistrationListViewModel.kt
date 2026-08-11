@@ -4,9 +4,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.batchfee.edu.data.database.AppDatabase
-import com.batchfee.edu.data.firestore.InstituteSyncHelper
 import com.batchfee.edu.data.firestore.RegistrationRepository
 import com.batchfee.edu.data.firestore.StudentSyncHelper
+import com.batchfee.edu.data.repository.EntitledCreationRepository
 import com.batchfee.edu.data.models.PendingRegistration
 import com.batchfee.edu.data.models.StudentEntity
 import com.batchfee.edu.domain.SessionManager
@@ -17,6 +17,7 @@ import kotlinx.coroutines.launch
 import java.util.UUID
 
 class RegistrationListViewModel(private val db: AppDatabase) : ViewModel() {
+    private val entitledCreationRepository = EntitledCreationRepository()
     private val repository = RegistrationRepository()
 
     private val _pendingList = MutableStateFlow<List<PendingRegistration>>(emptyList())
@@ -105,10 +106,8 @@ class RegistrationListViewModel(private val db: AppDatabase) : ViewModel() {
                     archivedAtMs = null
                 )
 
-                StudentSyncHelper.upsertStudent(student)
+                entitledCreationRepository.createStudent(student)
                 db.studentDao().insertStudent(student)
-                val count = db.studentDao().getStudentsByInstituteOnce(instId).size
-                InstituteSyncHelper.updateStudentCount(instId, count)
                 repository.deletePendingRegistration(instId, registration.requestId)
                 _snackbarMessage.value = "${registration.fullName} approved and added to students."
             } catch (e: Exception) {
@@ -141,10 +140,7 @@ class RegistrationListViewModel(private val db: AppDatabase) : ViewModel() {
         _snackbarMessage.value = null
     }
 
-    private fun generateStudentCode(): String {
-        val digits = UUID.randomUUID().toString().filter(Char::isDigit) + System.currentTimeMillis().toString()
-        return digits.take(8).padEnd(8, '0')
-    }
+    private fun generateStudentCode(): String = com.batchfee.edu.domain.StudentIdGenerator.generate()
 }
 
 class RegistrationListViewModelFactory(private val db: AppDatabase) : ViewModelProvider.Factory {

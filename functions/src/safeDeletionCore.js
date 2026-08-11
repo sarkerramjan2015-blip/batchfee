@@ -4,7 +4,7 @@ const { requestHash } = require("./financialLedgerCore");
 
 const RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const ALLOWED_ACTIONS = new Set(["archive", "restore"]);
-const ALLOWED_ENTITY_TYPES = new Set(["student", "batch", "institute"]);
+const ALLOWED_ENTITY_TYPES = new Set(["student", "batch", "staff", "institute"]);
 
 function validateDeletionRequest(data) {
   const value = data && typeof data === "object" ? data : {};

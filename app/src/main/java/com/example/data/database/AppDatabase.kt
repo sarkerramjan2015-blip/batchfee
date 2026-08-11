@@ -17,6 +17,7 @@ import com.batchfee.edu.data.models.InstituteEntity
 import com.batchfee.edu.data.models.SubscriptionPlanEntity
 import com.batchfee.edu.data.models.UserEntity
 import com.batchfee.edu.domain.PasswordHasher
+import com.batchfee.edu.domain.SubscriptionPolicy
 import com.batchfee.edu.data.firebase.FirebaseAuthApi
 import com.google.firebase.crashlytics.FirebaseCrashlytics
 import kotlinx.coroutines.CoroutineScope
@@ -428,7 +429,7 @@ abstract class AppDatabase : RoomDatabase() {
                         "ownerName" to "Demo Owner",
                         "phone" to "+8801712345678",
                         "whatsappNumber" to "+8801712345678",
-                        "trialEndDate" to (System.currentTimeMillis() + 30L * 24 * 60 * 60 * 1000),
+                        "trialEndDate" to (System.currentTimeMillis() + SubscriptionPolicy.FREE_TRIAL_DURATION_MS),
                         "studentCount" to 0,
                         "staffCount" to 0,
                         "currentPlanId" to "plan_pro",
@@ -469,16 +470,22 @@ abstract class AppDatabase : RoomDatabase() {
             extraFields: Map<String, Any> = emptyMap()
         ) {
             val now = System.currentTimeMillis()
-            val fifteenDaysMs = 15L * 24 * 60 * 60 * 1000
+            val trialDurationMs = SubscriptionPolicy.FREE_TRIAL_DURATION_MS
             val baseFields = mutableMapOf<String, Any>(
                 "instituteName" to instituteName,
                 "role" to role,
                 "email" to email,
                 "createdAt" to now,
                 "isActive" to true,
-                "trialEndDate" to (now + fifteenDaysMs),
+                "trialEndDate" to (now + trialDurationMs),
+                "currentPeriodEndMs" to (now + trialDurationMs),
+                "currentPlanId" to "plan_free_trial",
+                "subscriptionStatus" to "trial",
+                "studentLimit" to 50,
+                "staffLimit" to 1,
                 "studentCount" to 0,
-                "staffCount" to 0
+                "staffCount" to 0,
+                "batchCount" to 0
             )
             baseFields.putAll(extraFields)
 
@@ -595,7 +602,7 @@ abstract class AppDatabase : RoomDatabase() {
             }
             
             val demoInstituteId = ownerUid
-            val thirtyDaysMs = 30L * 24 * 60 * 60 * 1000
+            val thirtyDaysMs = SubscriptionPolicy.FREE_TRIAL_DURATION_MS
             
             instituteDao.insertInstitute(
                 InstituteEntity(
@@ -1204,9 +1211,15 @@ abstract class AppDatabase : RoomDatabase() {
                         "role" to "owner",
                         "createdAt" to now,
                         "isActive" to true,
-                        "trialEndDate" to (now + 30L * 24 * 60 * 60 * 1000),
+                        "trialEndDate" to (now + SubscriptionPolicy.FREE_TRIAL_DURATION_MS),
+                        "currentPeriodEndMs" to (now + SubscriptionPolicy.FREE_TRIAL_DURATION_MS),
+                        "currentPlanId" to "plan_free_trial",
+                        "subscriptionStatus" to "trial",
+                        "studentLimit" to 50,
+                        "staffLimit" to 1,
                         "studentCount" to studentCount,
                         "staffCount" to staffCount,
+                        "batchCount" to 0,
                         "lastActiveAt" to now
                     ),
                     com.google.firebase.firestore.SetOptions.merge()

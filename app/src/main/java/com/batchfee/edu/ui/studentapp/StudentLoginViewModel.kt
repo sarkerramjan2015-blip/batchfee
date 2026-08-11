@@ -11,7 +11,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 data class StudentLoginUiState(
-    val instituteCode: String = "",
     val studentId: String = "",
     val password: String = "",
     val isLoading: Boolean = false,
@@ -28,10 +27,6 @@ class StudentLoginViewModel : ViewModel() {
     private val _loginSuccess = MutableStateFlow(false)
     val loginSuccess: StateFlow<Boolean> = _loginSuccess.asStateFlow()
 
-    fun updateInstituteCode(code: String) {
-        _uiState.value = _uiState.value.copy(instituteCode = code, errorMessage = null)
-    }
-
     fun updateStudentId(id: String) {
         _uiState.value = _uiState.value.copy(studentId = id, errorMessage = null)
     }
@@ -46,17 +41,15 @@ class StudentLoginViewModel : ViewModel() {
 
     fun login() {
         val state = _uiState.value
-        val instituteCode = state.instituteCode.trim()
         val id = state.studentId.trim()
         val pw = state.password
 
-        if (instituteCode.isEmpty()) { _uiState.value = state.copy(errorMessage = "Please enter your institute code."); return }
         if (id.isEmpty()) { _uiState.value = state.copy(errorMessage = "Please enter your student ID."); return }
         if (pw.isEmpty()) { _uiState.value = state.copy(errorMessage = "Please enter your password."); return }
 
         _uiState.value = state.copy(isLoading = true, errorMessage = null)
         viewModelScope.launch {
-            val result = authRepo.login(instituteCode, id, pw)
+            val result = authRepo.login(id, pw)
             if (result.success) {
                 val sessionStarted = StudentSessionManager.login(
                     firebaseUid = result.firebaseUid,

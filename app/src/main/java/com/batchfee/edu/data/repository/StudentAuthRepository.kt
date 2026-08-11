@@ -25,7 +25,6 @@ class StudentAuthRepository {
     private val functions = FirebaseFunctions.getInstance(StudentAccountRepository.FUNCTIONS_REGION)
 
     suspend fun login(
-        instituteCodeInput: String,
         studentCodeInput: String,
         password: String
     ): StudentLoginResult = withContext(Dispatchers.IO) {
@@ -33,7 +32,6 @@ class StudentAuthRepository {
             val callableResult = functions.getHttpsCallable("loginStudent")
                 .call(
                     mapOf(
-                        "instituteCode" to instituteCodeInput.trim(),
                         "studentCode" to studentCodeInput.trim(),
                         "password" to password
                     )
@@ -87,7 +85,7 @@ class StudentAuthRepository {
         return when (functionsError?.code) {
             FirebaseFunctionsException.Code.UNAUTHENTICATED,
             FirebaseFunctionsException.Code.NOT_FOUND ->
-                "Invalid institute code, student ID, or password."
+                "Invalid student ID or password."
             FirebaseFunctionsException.Code.RESOURCE_EXHAUSTED ->
                 "Too many login attempts. Try again later."
             FirebaseFunctionsException.Code.UNAVAILABLE,

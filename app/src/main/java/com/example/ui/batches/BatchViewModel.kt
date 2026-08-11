@@ -7,9 +7,9 @@ import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.data.firestore.BatchSyncHelper
 import com.batchfee.edu.data.firestore.CoreDataSyncCoordinator
 import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
-import com.batchfee.edu.data.firestore.InstituteSyncHelper
 import com.batchfee.edu.data.models.BatchEntity
 import com.batchfee.edu.data.repository.SafeDeletionRepository
+import com.batchfee.edu.data.repository.EntitledCreationRepository
 import com.batchfee.edu.domain.SessionManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -20,6 +20,7 @@ import kotlinx.coroutines.withContext
 import java.util.UUID
 
 class BatchViewModel(private val db: AppDatabase) : ViewModel() {
+    private val entitledCreationRepository = EntitledCreationRepository()
     private val _batchList = MutableStateFlow<List<BatchEntity>>(emptyList())
     val batchList = _batchList.asStateFlow()
 
@@ -75,14 +76,8 @@ class BatchViewModel(private val db: AppDatabase) : ViewModel() {
         )
         viewModelScope.launch {
             try {
-                BatchSyncHelper.upsertBatch(batch)
+                entitledCreationRepository.createBatch(batch)
                 db.batchDao().insertBatch(batch)
-                try {
-                    val count = withContext(Dispatchers.IO) {
-                        db.batchDao().getBatchesByInstituteOnce(instId).size
-                    }
-                    InstituteSyncHelper.updateBatchCount(instId, count)
-                } catch (_: Exception) { }
                 onSuccess()
             } catch (e: Exception) {
                 onError(e.message ?: "Failed to save batch.")
@@ -123,12 +118,6 @@ class BatchViewModel(private val db: AppDatabase) : ViewModel() {
                     batch,
                     reason = "Batch archived from batch management"
                 )
-                try {
-                    val count = withContext(Dispatchers.IO) {
-                        db.batchDao().getBatchesByInstituteOnce(instId).size
-                    }
-                    InstituteSyncHelper.updateBatchCount(instId, count)
-                } catch (_: Exception) { }
                 onSuccess()
             } catch (e: Exception) {
                 onError(e.message ?: "Failed to archive batch safely.")
