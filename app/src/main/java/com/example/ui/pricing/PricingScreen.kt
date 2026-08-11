@@ -48,7 +48,9 @@ import com.batchfee.edu.data.repository.SubscriptionRepository
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.math.BigDecimal
+import java.math.RoundingMode
 import java.net.URLEncoder
+import kotlin.math.roundToLong
 
 // ── BatchFee Plan Data ──────────────────────────────────────────
 data class BatchFeePlan(
@@ -151,6 +153,12 @@ class PricingViewModel(private val db: AppDatabase) : ViewModel() {
         1 -> "/6 months"
         2 -> "/year"
         else -> "/month"
+    }
+
+    fun billingMonths(): Int = when (_selectedDuration.value) {
+        1 -> 6
+        2 -> 12
+        else -> 1
     }
 
     fun discountLabel(): String? = when (_selectedDuration.value) {
@@ -354,6 +362,7 @@ fun PricingScreen(
                 items(plans.filter { !it.isEnterprise }) { plan ->
                     val price = remember(selectedDuration) { viewModel.priceFor(plan) }
                     val durationLabel = remember(selectedDuration) { viewModel.durationLabel() }
+                    val durationMonths = remember(selectedDuration) { viewModel.billingMonths() }
                     val billingLabel = remember(selectedDuration) { viewModel.billingLabel() }
                     Box(modifier = Modifier
                         .then(if (selectedPlanId == plan.id) Modifier.border(2.dp, Cyan, RoundedCornerShape(16.dp)) else Modifier)
@@ -362,6 +371,7 @@ fun PricingScreen(
                             plan = plan,
                             price = price,
                             durationLabel = durationLabel,
+                            durationMonths = durationMonths,
                             isSelected = selectedPlanId == plan.id,
                             onChoose = {
                                 selectedPlanId = plan.id
@@ -624,6 +634,7 @@ private fun PlanCard(
     plan: BatchFeePlan,
     price: Double,
     durationLabel: String,
+    durationMonths: Int,
     isSelected: Boolean = false,
     onChoose: () -> Unit
 ) {
@@ -761,7 +772,7 @@ private fun PlanCard(
                 )
                 Spacer(Modifier.width(4.dp))
                 Text(
-                    "Per student: BDT ${formatExactPerStudentPrice(price, plan.studentCount)} $durationLabel",
+                    "Per student: BDT ${formatMonthlyPerStudentPrice(price, plan.studentCount, durationMonths)} /month",
                     color = Cyan,
                     fontSize = 10.sp,
                     fontWeight = FontWeight.SemiBold
@@ -816,17 +827,19 @@ private fun PlanCard(
 }
 
 private fun formatPrice(price: Double): String {
-    return BigDecimal.valueOf(price).stripTrailingZeros().toPlainString()
+    return price.roundToLong().toString()
 }
 
-private fun formatExactPerStudentPrice(price: Double, studentCount: Int): String {
+private fun formatMonthlyPerStudentPrice(
+    price: Double,
+    studentCount: Int,
+    durationMonths: Int
+): String {
     if (studentCount <= 0) return "0"
     val amount = BigDecimal.valueOf(price).stripTrailingZeros()
-    val divisor = BigDecimal.valueOf(studentCount.toLong())
-    return try {
-        amount.divide(divisor).stripTrailingZeros().toPlainString()
-    } catch (_: ArithmeticException) {
-        "${amount.toPlainString()}/$studentCount"
-    }
+    val divisor = BigDecimal.valueOf(studentCount.toLong() * durationMonths.coerceAtLeast(1))
+    return amount.divide(divisor, 2, RoundingMode.HALF_UP)
+        .stripTrailingZeros()
+        .toPlainString()
 }
 
