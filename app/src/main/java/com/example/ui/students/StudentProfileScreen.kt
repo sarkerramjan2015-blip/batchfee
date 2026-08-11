@@ -84,6 +84,13 @@ private val DashboardLine = Color(0x5522D3EE)
 private val DashboardSoft = Color(0x1A22D3EE)
 private val DangerRed     = Color(0xFFEF4444)
 
+private data class StudentPdfExport(
+    val file: File,
+    val title: String,
+    val description: String,
+    val shareLabel: String
+)
+
 // ── Screen ──────────────────────────────────────────────────────
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -112,6 +119,8 @@ fun StudentProfileScreen(
     var showSetStudentPasswordDialog by remember { mutableStateOf(false) }
     var isGeneratingAdmissionForm by remember { mutableStateOf(false) }
     var admissionFormFile by remember { mutableStateOf<File?>(null) }
+    var isGeneratingStudentPdf by remember { mutableStateOf(false) }
+    var studentPdfExport by remember { mutableStateOf<StudentPdfExport?>(null) }
     // This value is deliberately not saveable. It exists only until the one-time
     // password dialog closes and is never persisted with the student profile.
     var oneTimeStudentPassword by remember { mutableStateOf<String?>(null) }
@@ -1222,7 +1231,36 @@ fun StudentProfileScreen(
                     canDeleteStudent = canArchiveStudent,
                     onGenerateReport = {
                         showStudentMenu = false
-                        shareStudentText(context, "Student Report", buildStudentReportText(s, batches, totalPaid, computedTotalDue, instituteSignature))
+                        if (instId == null) {
+                            Toast.makeText(context, "Institute information is unavailable.", Toast.LENGTH_SHORT).show()
+                        } else {
+                            scope.launch {
+                                isGeneratingStudentPdf = true
+                                try {
+                                    val institute = withContext(Dispatchers.IO) { db.instituteDao().getInstitute(instId) }
+                                    if (institute == null) {
+                                        Toast.makeText(context, "Institute information is unavailable.", Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        val file = withContext(Dispatchers.IO) {
+                                            generateStudentReportPdf(
+                                                context, institute, s, batches, monthAttendance, paymentHistory,
+                                                totalPaid, computedTotalDue
+                                            )
+                                        }
+                                        studentPdfExport = StudentPdfExport(
+                                            file = file,
+                                            title = "Student Report Ready",
+                                            description = "A polished, print-ready PDF report has been created with student, attendance, batch and payment details.",
+                                            shareLabel = "Student performance report"
+                                        )
+                                    }
+                                } catch (_: Exception) {
+                                    Toast.makeText(context, "Could not create the student report.", Toast.LENGTH_SHORT).show()
+                                } finally {
+                                    isGeneratingStudentPdf = false
+                                }
+                            }
+                        }
                     },
                     onRegistrationForm = {
                         showStudentMenu = false
@@ -1252,7 +1290,36 @@ fun StudentProfileScreen(
                     },
                     onFeeSummary = {
                         showStudentMenu = false
-                        shareStudentText(context, "Student Fee Summary", buildStudentFeeSummaryText(s, totalPaid, computedTotalDue, instituteSignature))
+                        if (instId == null) {
+                            Toast.makeText(context, "Institute information is unavailable.", Toast.LENGTH_SHORT).show()
+                        } else {
+                            scope.launch {
+                                isGeneratingStudentPdf = true
+                                try {
+                                    val institute = withContext(Dispatchers.IO) { db.instituteDao().getInstitute(instId) }
+                                    if (institute == null) {
+                                        Toast.makeText(context, "Institute information is unavailable.", Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        val file = withContext(Dispatchers.IO) {
+                                            generateStudentFeeSummaryPdf(
+                                                context, institute, s, batches, feeHistory, paymentHistory,
+                                                totalPaid, computedTotalDue
+                                            )
+                                        }
+                                        studentPdfExport = StudentPdfExport(
+                                            file = file,
+                                            title = "Fee Summary Ready",
+                                            description = "A polished, print-ready PDF fee summary has been created with the complete ledger, payments and pending due.",
+                                            shareLabel = "Student fee summary"
+                                        )
+                                    }
+                                } catch (_: Exception) {
+                                    Toast.makeText(context, "Could not create the fee summary.", Toast.LENGTH_SHORT).show()
+                                } finally {
+                                    isGeneratingStudentPdf = false
+                                }
+                            }
+                        }
                     },
                     onGenerateIdCard = {
                         showStudentMenu = false
@@ -1277,6 +1344,22 @@ fun StudentProfileScreen(
                 )
             }
 
+            if (isGeneratingStudentPdf) {
+                AlertDialog(
+                    onDismissRequest = {},
+                    containerColor = CardBg,
+                    title = { Text("Creating PDF", color = TextWhite, fontWeight = FontWeight.Bold) },
+                    text = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Cyan, strokeWidth = 2.dp)
+                            Spacer(Modifier.width(12.dp))
+                            Text("Preparing your professional PDF…", color = TextMuted)
+                        }
+                    },
+                    confirmButton = {}
+                )
+            }
+
             admissionFormFile?.let { file ->
                 AdmissionFormReadyDialog(
                     onDismiss = { admissionFormFile = null },
@@ -1287,6 +1370,24 @@ fun StudentProfileScreen(
                     },
                     onWhatsApp = {
                         if (!shareStudentAdmissionFormToWhatsApp(context, file)) {
+                            Toast.makeText(context, "WhatsApp is not installed.", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                )
+            }
+
+            studentPdfExport?.let { export ->
+                StudentPdfReadyDialog(
+                    title = export.title,
+                    description = export.description,
+                    onDismiss = { studentPdfExport = null },
+                    onPrint = {
+                        if (!openStudentPdf(context, export.file, export.shareLabel)) {
+                            Toast.makeText(context, "No PDF app available for printing.", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    onWhatsApp = {
+                        if (!shareStudentPdfToWhatsApp(context, export.file, export.shareLabel)) {
                             Toast.makeText(context, "WhatsApp is not installed.", Toast.LENGTH_SHORT).show()
                         }
                     }
@@ -1609,9 +1710,9 @@ private fun StudentBatchMenuDialog(
         StudentBatchMenuItem("Close", "You can mark student status as inactive.", Icons.Filled.Close, onCloseStudent, isDestructive = true),
         StudentBatchMenuItem("Share Login Info", "Share student ID and app access status", Icons.Filled.Share, onShareLogin),
         StudentBatchMenuItem("Message", "Send a direct message", Icons.Filled.Email, onMessage),
-        StudentBatchMenuItem("Generate Report", "You can generate student report here", Icons.Filled.Article, onGenerateReport),
+        StudentBatchMenuItem("Generate Report", "Create a professional PDF student report", Icons.Filled.Article, onGenerateReport),
         StudentBatchMenuItem("Registration Form", "You can generate student registration form here", Icons.Filled.Article, onRegistrationForm),
-        StudentBatchMenuItem("Fees Summary", "Generate complete fee summary with collected fees and pending dues", Icons.Filled.Article, onFeeSummary),
+        StudentBatchMenuItem("Fees Summary", "Create a professional PDF with fees, payments and pending due", Icons.Filled.Article, onFeeSummary),
         StudentBatchMenuItem("Generate ID card", "You can generate student ID card.", Icons.Filled.Badge, onGenerateIdCard)
         ))
         if (canDeleteStudent) {
@@ -1705,6 +1806,62 @@ private fun AdmissionFormReadyDialog(
                 fontSize = 13.sp,
                 lineHeight = 19.sp
             )
+        },
+        confirmButton = {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedButton(
+                    onClick = onWhatsApp,
+                    modifier = Modifier.weight(1f).height(46.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, WAGreen),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = WAGreen),
+                    contentPadding = PaddingValues(horizontal = 8.dp)
+                ) {
+                    Icon(Icons.Filled.Whatsapp, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("WhatsApp", fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                }
+                Button(
+                    onClick = onPrint,
+                    modifier = Modifier.weight(1f).height(46.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Cyan, contentColor = Color(0xFF07111F))
+                ) {
+                    Icon(Icons.Filled.Print, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Print", fontWeight = FontWeight.Bold)
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
+                Text("Close", color = TextMuted)
+            }
+        }
+    )
+}
+
+@Composable
+private fun StudentPdfReadyDialog(
+    title: String,
+    description: String,
+    onDismiss: () -> Unit,
+    onPrint: () -> Unit,
+    onWhatsApp: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = CardBg,
+        shape = RoundedCornerShape(16.dp),
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.PictureAsPdf, contentDescription = null, tint = Cyan, modifier = Modifier.size(26.dp))
+                Spacer(Modifier.width(10.dp))
+                Text(title, color = TextWhite, fontWeight = FontWeight.Bold)
+            }
+        },
+        text = {
+            Text(description, color = TextMuted, fontSize = 13.sp, lineHeight = 19.sp)
         },
         confirmButton = {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {

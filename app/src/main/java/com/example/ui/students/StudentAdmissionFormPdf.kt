@@ -148,23 +148,23 @@ internal fun generateStudentAdmissionFormPdf(
     return file
 }
 
-internal fun openStudentAdmissionFormPdf(context: Context, file: File): Boolean = try {
+internal fun openStudentPdf(context: Context, file: File, label: String): Boolean = try {
     val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
     context.startActivity(Intent(Intent.ACTION_VIEW).apply {
         setDataAndType(uri, "application/pdf")
-        clipData = ClipData.newRawUri("Student admission form", uri)
+        clipData = ClipData.newRawUri(label, uri)
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     })
     true
 } catch (_: Exception) { false }
 
-internal fun shareStudentAdmissionFormToWhatsApp(context: Context, file: File): Boolean = try {
+internal fun shareStudentPdfToWhatsApp(context: Context, file: File, label: String): Boolean = try {
     val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
     val intent = Intent(Intent.ACTION_SEND).apply {
         type = "application/pdf"
         putExtra(Intent.EXTRA_STREAM, uri)
-        putExtra(Intent.EXTRA_TEXT, "Student admission form")
-        clipData = ClipData.newRawUri("Student admission form", uri)
+        putExtra(Intent.EXTRA_TEXT, label)
+        clipData = ClipData.newRawUri(label, uri)
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
     val target = listOf("com.whatsapp", "com.whatsapp.w4b").firstOrNull { packageName ->
@@ -175,6 +175,12 @@ internal fun shareStudentAdmissionFormToWhatsApp(context: Context, file: File): 
     context.startActivity(intent)
     true
 } catch (_: Exception) { false }
+
+internal fun openStudentAdmissionFormPdf(context: Context, file: File): Boolean =
+    openStudentPdf(context, file, "Student admission form")
+
+internal fun shareStudentAdmissionFormToWhatsApp(context: Context, file: File): Boolean =
+    shareStudentPdfToWhatsApp(context, file, "Student admission form")
 
 private fun sectionHeading(canvas: Canvas, value: String, x: Float, y: Float, accent: Int) {
     val line = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = accent; strokeWidth = 3f }
@@ -221,7 +227,7 @@ private fun drawWrappedText(canvas: Canvas, value: String, x: Float, startY: Flo
     }.takeIf { it.isNotBlank() }?.let { canvas.drawText(it, x, y, paint) }
 }
 
-private fun drawLogo(canvas: Canvas, bitmap: Bitmap?, name: String, x: Float, y: Float, size: Float, navy: Int, cyan: Int) {
+internal fun drawLogo(canvas: Canvas, bitmap: Bitmap?, name: String, x: Float, y: Float, size: Float, navy: Int, cyan: Int) {
     val fill = Paint(Paint.ANTI_ALIAS_FLAG)
     if (bitmap != null) {
         canvas.drawBitmap(bitmap, null, RectF(x, y, x + size, y + size), fill)
@@ -234,7 +240,7 @@ private fun drawLogo(canvas: Canvas, bitmap: Bitmap?, name: String, x: Float, y:
     }
 }
 
-private fun drawPhoto(canvas: Canvas, bitmap: Bitmap?, name: String, x: Float, y: Float, width: Float, height: Float, navy: Int, border: Int) {
+internal fun drawPhoto(canvas: Canvas, bitmap: Bitmap?, name: String, x: Float, y: Float, width: Float, height: Float, navy: Int, border: Int) {
     val fill = Paint(Paint.ANTI_ALIAS_FLAG)
     fill.color = Color.rgb(248, 250, 252)
     canvas.drawRect(x, y, x + width, y + height, fill)
@@ -251,7 +257,7 @@ private fun drawPhoto(canvas: Canvas, bitmap: Bitmap?, name: String, x: Float, y
     canvas.drawRect(x, y, x + width, y + height, stroke)
 }
 
-private fun loadBitmap(context: Context, source: String?): Bitmap? {
+internal fun loadBitmap(context: Context, source: String?): Bitmap? {
     if (source.isNullOrBlank()) return null
     return try {
         when {
