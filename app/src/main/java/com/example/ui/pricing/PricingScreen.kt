@@ -70,9 +70,17 @@ class PricingViewModel(private val db: AppDatabase) : ViewModel() {
 
     init {
         viewModelScope.launch(Dispatchers.IO) {
-            if (db.subscriptionPlanDao().getAllPlans().firstOrNull().isNullOrEmpty()) {
-                // A fresh/cleared emulator database has no remote cache yet.
-                // Seed the published catalog so renewal never opens as a blank screen.
+            val cachedPlanIds = db.subscriptionPlanDao().getAllPlans().firstOrNull()
+                .orEmpty()
+                .map { it.id }
+                .toSet()
+            val requiredPaidPlanIds = setOf(
+                "plan_starter", "plan_growth", "plan_pro", "plan_institute"
+            )
+            if (!cachedPlanIds.containsAll(requiredPaidPlanIds)) {
+                // A fresh or partially synced emulator database may contain only
+                // the free-trial record. Restore the complete paid catalog so
+                // renewal never opens as a blank/incomplete screen.
                 AppDatabase.populateInitialPlans(db.subscriptionPlanDao())
             }
         }
