@@ -46,6 +46,7 @@ import androidx.compose.ui.platform.LocalContext
 import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
 import com.batchfee.edu.data.repository.SubscriptionRepository
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.net.URLEncoder
 
 // ── BatchFee Plan Data ──────────────────────────────────────────
@@ -60,6 +61,22 @@ data class BatchFeePlan(
     val isEnterprise: Boolean = false
 )
 
+// The published owner-facing catalogue. Room/Firestore may provide the same
+// records (and then can update their price/details), but an old partial cache
+// must never hide these plans from the pricing screen.
+private val publishedPricingPlans = listOf(
+    BatchFeePlan("basic", "Basic", 50, "50 Students", 199.0),
+    BatchFeePlan("standard", "Standard", 100, "100 Students", 299.0),
+    BatchFeePlan("spark", "Spark", 150, "150 Students", 399.0),
+    BatchFeePlan("grow", "Grow", 200, "200 Students", 499.0),
+    BatchFeePlan("pro", "Pro", 250, "250 Students", 599.0, isPopular = true),
+    BatchFeePlan("elite", "Elite", 300, "300 Students", 699.0),
+    BatchFeePlan("prime", "Prime", 350, "350 Students", 799.0),
+    BatchFeePlan("max", "Max", 400, "400 Students", 899.0),
+    BatchFeePlan("ultra", "Ultra", 450, "450 Students", 999.0),
+    BatchFeePlan("scale", "Scale", 500, "500 Students", 1099.0, isPremium = true)
+)
+
 // ── ViewModel ───────────────────────────────────────────────────
 class PricingViewModel(private val db: AppDatabase) : ViewModel() {
     private val _plans = MutableStateFlow<List<BatchFeePlan>>(emptyList())
@@ -68,16 +85,17 @@ class PricingViewModel(private val db: AppDatabase) : ViewModel() {
     private val _selectedDuration = MutableStateFlow(0) // 0=1M, 1=6M, 2=1Y
     val selectedDuration = _selectedDuration.asStateFlow()
 
+    private val publicPlanIds = setOf(
+        "basic", "standard", "spark", "grow", "pro", "elite", "prime", "max", "ultra", "scale"
+    )
+
     init {
         viewModelScope.launch(Dispatchers.IO) {
             val cachedPlanIds = db.subscriptionPlanDao().getAllPlans().firstOrNull()
                 .orEmpty()
                 .map { it.id }
                 .toSet()
-            val requiredPaidPlanIds = setOf(
-                "plan_starter", "plan_growth", "plan_pro", "plan_institute"
-            )
-            if (!cachedPlanIds.containsAll(requiredPaidPlanIds)) {
+            if (!cachedPlanIds.containsAll(publicPlanIds)) {
                 // A fresh or partially synced emulator database may contain only
                 // the free-trial record. Restore the complete paid catalog so
                 // renewal never opens as a blank/incomplete screen.
@@ -86,8 +104,8 @@ class PricingViewModel(private val db: AppDatabase) : ViewModel() {
         }
         viewModelScope.launch {
             db.subscriptionPlanDao().getAllPlans().collectLatest { planCatalog ->
-                _plans.value = planCatalog
-                    .filter { it.id != "plan_free_trial" && it.priceBdt > 0.0 }
+                val publicPlansFromCatalog = planCatalog
+                    .filter { it.id in publicPlanIds && it.priceBdt > 0.0 }
                     .sortedBy { it.tierLevel }
                     .map { plan ->
                         BatchFeePlan(
@@ -102,6 +120,18 @@ class PricingViewModel(private val db: AppDatabase) : ViewModel() {
                             isEnterprise = plan.maxStudents >= 1_000_000
                         )
                     }
+                if (publicPlansFromCatalog.size != publicPlanIds.size) {
+                    // CoreDataSyncCoordinator may replace the Room table with
+                    // an older remote cache after this screen opens. Reinsert
+                    // the published catalog and wait for its next Flow value
+                    // instead of briefly rendering an incomplete plan list.
+                    withContext(Dispatchers.IO) {
+                        AppDatabase.populateInitialPlans(db.subscriptionPlanDao())
+                    }
+                    _plans.value = publishedPricingPlans
+                    return@collectLatest
+                }
+                _plans.value = publicPlansFromCatalog
             }
         }
     }

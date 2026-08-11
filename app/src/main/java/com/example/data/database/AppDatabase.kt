@@ -555,8 +555,21 @@ abstract class AppDatabase : RoomDatabase() {
                      priceBdt = 4999.0, priceInr = 3999.0,
                      maxStudents = 5000, maxBatches = 300, maxUsers = 999, maxBranches = 5,
                      tag = "Advanced", tierLevel = 4
+                 ),
+                 // The public pricing catalogue. Legacy plan IDs above remain
+                 // supported for already-subscribed institutes, but are not
+                 // presented as new purchase options.
+                 SubscriptionPlanEntity("basic", "Basic", "Basic plan for small institutes", 199.0, 0.0, 50, 5, 1, 1, "", 1),
+                 SubscriptionPlanEntity("standard", "Standard", "Standard plan for growing institutes", 299.0, 0.0, 100, 10, 2, 1, "", 2),
+                 SubscriptionPlanEntity("spark", "Spark", "Spark plan for growing institutes", 399.0, 0.0, 150, 15, 3, 1, "", 3),
+                 SubscriptionPlanEntity("grow", "Grow", "Grow plan for coaching centres", 499.0, 0.0, 200, 20, 5, 1, "", 4),
+                 SubscriptionPlanEntity("pro", "Pro", "Popular professional plan", 599.0, 0.0, 250, 25, 8, 1, "Popular", 5),
+                 SubscriptionPlanEntity("elite", "Elite", "Elite institute plan", 699.0, 0.0, 300, 30, 10, 1, "", 6),
+                 SubscriptionPlanEntity("prime", "Prime", "Prime institute plan", 799.0, 0.0, 350, 35, 12, 1, "", 7),
+                 SubscriptionPlanEntity("max", "Max", "Max institute plan", 899.0, 0.0, 400, 40, 15, 1, "", 8),
+                 SubscriptionPlanEntity("ultra", "Ultra", "Ultra institute plan", 999.0, 0.0, 450, 45, 18, 1, "", 9),
+                 SubscriptionPlanEntity("scale", "Scale", "Recommended plan for larger institutes", 1099.0, 0.0, 500, 50, 20, 1, "Recommended", 10)
                  )
-             )
              dao.insertPlans(plans)
              try {
                  SubscriptionPlanSyncHelper.upsertPlans(plans)

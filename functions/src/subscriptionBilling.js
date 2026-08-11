@@ -11,6 +11,7 @@ const {
   subscriptionStatusFor,
   transactionReferenceHash,
 } = require("./subscriptionBillingCore");
+const { planFromSnapshot } = require("./defaultSubscriptionPlans");
 
 const ALLOWED_ACTIONS = new Set([
   "submit_request",
@@ -249,11 +250,11 @@ function createSubscriptionBillingHandler({ db, FieldValue }) {
           transaction.get(planRef),
           transaction.get(duplicateQuery),
         ]);
-        if (!planSnap.exists) throw new HttpsError("not-found", "Selected subscription plan is no longer available.");
+        const plan = planFromSnapshot(planSnap, requestedPlanId);
+        if (!plan) throw new HttpsError("not-found", "Selected subscription plan is no longer available.");
         if (!duplicateSnap.empty) {
           throw new HttpsError("already-exists", "This payment transaction was already submitted.");
         }
-        const plan = planSnap.data();
         let amountPaid;
         try {
           amountPaid = quoteForPlan(plan.priceBdt, durationMonths);
@@ -446,7 +447,9 @@ function createSubscriptionBillingHandler({ db, FieldValue }) {
       const isActive = requiredBoolean(data, "isActive");
       const planRef = db.collection("subscription_plans").doc(planId);
       const planSnap = await transaction.get(planRef);
-      if (!planSnap.exists) throw new HttpsError("not-found", "Selected subscription plan is no longer available.");
+      if (!planFromSnapshot(planSnap, planId)) {
+        throw new HttpsError("not-found", "Selected subscription plan is no longer available.");
+      }
       const effectiveStatus = canonicalSubscriptionStatus(planId, newExpiryMs, now);
       const after = isActive ? {
         currentPlanId: planId,

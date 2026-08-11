@@ -6,6 +6,7 @@
 const { createHash, randomUUID } = require("node:crypto");
 const { HttpsError } = require("firebase-functions/v2/https");
 const { FREE_TRIAL_DURATION_MS } = require("./subscriptionPolicy");
+const { planFromSnapshot } = require("./defaultSubscriptionPlans");
 
 const PLATFORM_ROLES = new Set(["root", "billing", "support", "operations", "read_only"]);
 const ACTIONS = new Set([
@@ -144,7 +145,8 @@ async function createInstitute({ db, adminAuth, request, operationId, requestHas
         transaction.get(instituteRef), transaction.get(planRef), transaction.get(db.collection("app_users").doc(owner.user.uid)),
       ]);
       if (existingInstitute.exists) throw new HttpsError("already-exists", "This owner already has an institute.");
-      if (!planSnap.exists) throw new HttpsError("not-found", "Selected subscription plan was not found.");
+      const plan = planFromSnapshot(planSnap, requestedPlanId);
+      if (!plan) throw new HttpsError("not-found", "Selected subscription plan was not found.");
       if (ownerRecord.exists && ownerRecord.get("instituteId") && ownerRecord.get("instituteId") !== owner.user.uid) {
         throw new HttpsError("failed-precondition", "This email is already assigned to another institute.");
       }
@@ -162,8 +164,8 @@ async function createInstitute({ db, adminAuth, request, operationId, requestHas
         trialEndDate,
         currentPeriodEndMs: trialEndDate,
         isActive: true,
-        studentLimit: Number.isSafeInteger(planSnap.get("maxStudents")) ? planSnap.get("maxStudents") : 0,
-        staffLimit: Number.isSafeInteger(planSnap.get("maxUsers")) ? planSnap.get("maxUsers") : 0,
+        studentLimit: Number.isSafeInteger(plan.maxStudents) ? plan.maxStudents : 0,
+        staffLimit: Number.isSafeInteger(plan.maxUsers) ? plan.maxUsers : 0,
         createdAt: now,
         createdAtMs: now,
       });
@@ -225,7 +227,9 @@ async function previewImport({ db, rows }) {
   const planIds = [...new Set(rows.map((row) => typeof row.planId === "string" && row.planId.trim()
     ? row.planId.trim() : "plan_free_trial"))];
   const planSnaps = await Promise.all(planIds.map((planId) => db.collection("subscription_plans").doc(planId).get()));
-  const existingPlans = new Set(planSnaps.filter((snap) => snap.exists).map((snap) => snap.id));
+  const existingPlans = new Set(planSnaps
+    .filter((snap) => planFromSnapshot(snap, snap.id))
+    .map((snap) => snap.id));
   return result.map((row, index) => {
     const requestedPlan = typeof rows[index]?.planId === "string" && rows[index].planId.trim()
       ? rows[index].planId.trim() : "plan_free_trial";

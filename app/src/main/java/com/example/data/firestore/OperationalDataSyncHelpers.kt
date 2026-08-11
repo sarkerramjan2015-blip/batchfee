@@ -902,7 +902,13 @@ object SubscriptionPlanSyncHelper {
                     tierLevel = (doc.get("tierLevel") as? Number).asLong()?.toInt() ?: 0
                 )
             }
-            db.subscriptionPlanDao().replaceAll(plans)
+            // Remote plan records can be an older, partial catalogue. Merge
+            // them into Room instead of clearing the published local plans;
+            // otherwise a background sync can make the owner pricing screen
+            // lose Basic–Scale immediately after it was seeded.
+            if (plans.isNotEmpty()) {
+                db.subscriptionPlanDao().insertPlans(plans)
+            }
         } catch (e: Exception) {
             recordException(e)
         }

@@ -24,6 +24,7 @@ const { createPublicRegistrationHandler } = require("./publicRegistration");
 const { createSubscriptionBillingHandler } = require("./subscriptionBilling");
 const { createPlatformAdminHandler } = require("./platformAdmin");
 const { FREE_TRIAL_DURATION_MS, hasCurrentSubscription } = require("./subscriptionPolicy");
+const { planFromSnapshot } = require("./defaultSubscriptionPlans");
 
 initializeApp();
 
@@ -188,7 +189,7 @@ async function repairSubscriptionEntitlementsHandler(request) {
       const planId = typeof institute.currentPlanId === "string" && institute.currentPlanId
         ? institute.currentPlanId : "plan_free_trial";
       const planSnap = await transaction.get(db.collection("subscription_plans").doc(planId));
-      const plan = planSnap.exists ? planSnap.data() : {};
+      const plan = planFromSnapshot(planSnap, planId) || {};
       const createdAt = Number(institute.createdAtMs || institute.createdAt || now);
       const endMs = Number.isSafeInteger(institute.currentPeriodEndMs)
         ? institute.currentPeriodEndMs
@@ -287,10 +288,11 @@ async function createEntitledStudentHandler(request) {
       throw new HttpsError("failed-precondition", "Subscription has expired. Renew the plan to continue.");
     }
     const planSnap = await transaction.get(db.collection("subscription_plans").doc(instituteSnap.get("currentPlanId") || "plan_free_trial"));
-    if (!planSnap.exists) throw new HttpsError("failed-precondition", "Subscription plan is unavailable.");
+    const plan = planFromSnapshot(planSnap, instituteSnap.get("currentPlanId") || "plan_free_trial");
+    if (!plan) throw new HttpsError("failed-precondition", "Subscription plan is unavailable.");
     if (existingSnap.exists) throw new HttpsError("already-exists", "Student already exists.");
     const count = studentCountSnap.data().count;
-    const limit = planLimit(instituteSnap.data(), planSnap.data(), "student");
+    const limit = planLimit(instituteSnap.data(), plan, "student");
     if (count >= limit) throw new HttpsError("resource-exhausted", `Student limit (${limit}) has been reached.`);
     const now = Date.now();
     transaction.create(studentRef, {
@@ -323,10 +325,11 @@ async function createEntitledBatchHandler(request) {
       throw new HttpsError("failed-precondition", "Subscription has expired. Renew the plan to continue.");
     }
     const planSnap = await transaction.get(db.collection("subscription_plans").doc(instituteSnap.get("currentPlanId") || "plan_free_trial"));
-    if (!planSnap.exists) throw new HttpsError("failed-precondition", "Subscription plan is unavailable.");
+    const plan = planFromSnapshot(planSnap, instituteSnap.get("currentPlanId") || "plan_free_trial");
+    if (!plan) throw new HttpsError("failed-precondition", "Subscription plan is unavailable.");
     if (existingSnap.exists) throw new HttpsError("already-exists", "Batch already exists.");
     const count = batchCountSnap.data().count;
-    const limit = planLimit(instituteSnap.data(), planSnap.data(), "batch");
+    const limit = planLimit(instituteSnap.data(), plan, "batch");
     if (count >= limit) throw new HttpsError("resource-exhausted", `Batch limit (${limit}) has been reached.`);
     const now = Date.now();
     transaction.create(batchRef, {
@@ -365,10 +368,11 @@ async function createEntitledStaffHandler(request) {
       throw new HttpsError("failed-precondition", "Subscription has expired. Renew the plan to continue.");
     }
     const planSnap = await transaction.get(db.collection("subscription_plans").doc(instituteSnap.get("currentPlanId") || "plan_free_trial"));
-    if (!planSnap.exists) throw new HttpsError("failed-precondition", "Subscription plan is unavailable.");
+    const plan = planFromSnapshot(planSnap, instituteSnap.get("currentPlanId") || "plan_free_trial");
+    if (!plan) throw new HttpsError("failed-precondition", "Subscription plan is unavailable.");
     if (existingSnap.exists) throw new HttpsError("already-exists", "Staff already exists.");
     const count = staffCountSnap.data().count;
-    const limit = planLimit(instituteSnap.data(), planSnap.data(), "staff");
+    const limit = planLimit(instituteSnap.data(), plan, "staff");
     if (count >= limit) throw new HttpsError("resource-exhausted", `Staff limit (${limit}) has been reached.`);
     const now = Date.now();
     transaction.create(staffRef, {
