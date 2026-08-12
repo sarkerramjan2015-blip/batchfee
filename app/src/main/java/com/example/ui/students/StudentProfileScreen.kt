@@ -1222,6 +1222,7 @@ fun StudentProfileScreen(
                     },
                     onMessage = {
                         showStudentMenu = false
+                        directMessage = ""
                         showMessageDialog = true
                     },
                     onDeleteStudent = {
@@ -1398,6 +1399,9 @@ fun StudentProfileScreen(
                 StudentMessageDialog(
                     message = directMessage,
                     onMessageChange = { directMessage = it },
+                    onUseAdmissionWelcome = {
+                        directMessage = buildStudentAdmissionWelcomeMessage(s)
+                    },
                     onDismiss = { showMessageDialog = false },
                     onSendSms = {
                         sendStudentMessage(context, s.phone, directMessage, instituteSignature, useWhatsApp = false)
@@ -1901,6 +1905,7 @@ private fun StudentPdfReadyDialog(
 private fun StudentMessageDialog(
     message: String,
     onMessageChange: (String) -> Unit,
+    onUseAdmissionWelcome: () -> Unit,
     onDismiss: () -> Unit,
     onSendSms: () -> Unit,
     onSendWhatsApp: () -> Unit
@@ -1918,15 +1923,41 @@ private fun StudentMessageDialog(
             }
         },
         text = {
-            OutlinedTextField(
-                value = message,
-                onValueChange = onMessageChange,
-                placeholder = { Text("Message", color = TextMuted.copy(alpha = 0.7f)) },
-                minLines = 3,
-                modifier = Modifier.fillMaxWidth(),
-                colors = darkFieldColors(),
-                shape = RoundedCornerShape(16.dp)
-            )
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Cyan.copy(alpha = 0.08f))
+                        .border(1.dp, Cyan.copy(alpha = 0.28f), RoundedCornerShape(14.dp))
+                        .padding(12.dp)
+                ) {
+                    Text("Quick message", color = Cyan, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(4.dp))
+                    Text("Send a ready-made admission welcome and congratulations message.", color = TextMuted, fontSize = 12.sp, lineHeight = 17.sp)
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedButton(
+                        onClick = onUseAdmissionWelcome,
+                        modifier = Modifier.fillMaxWidth().height(40.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        border = BorderStroke(1.dp, Cyan),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Cyan)
+                    ) {
+                        Icon(Icons.Filled.Celebration, contentDescription = null, modifier = Modifier.size(17.dp))
+                        Spacer(Modifier.width(7.dp))
+                        Text("Use Admission Welcome", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+                OutlinedTextField(
+                    value = message,
+                    onValueChange = onMessageChange,
+                    placeholder = { Text("Write a custom message", color = TextMuted.copy(alpha = 0.7f)) },
+                    minLines = 4,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = darkFieldColors(),
+                    shape = RoundedCornerShape(16.dp)
+                )
+            }
         },
         confirmButton = {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -2689,6 +2720,13 @@ private fun TwoColumnInfo(
             )
         }
     }
+}
+
+private fun buildStudentAdmissionWelcomeMessage(student: StudentEntity): String = buildString {
+    append("Congratulations, ${student.fullName}! Your admission has been completed successfully.")
+    append("\n\nStudent ID: ${student.studentCode.ifBlank { student.id }}")
+    student.className?.takeIf { it.isNotBlank() }?.let { append("\nClass: $it") }
+    append("\n\nWelcome to our learning community. We are happy to have you with us!")
 }
 
 @Composable
