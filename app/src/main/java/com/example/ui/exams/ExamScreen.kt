@@ -42,6 +42,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.data.models.ExamEntity
+import com.batchfee.edu.domain.SessionManager
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -171,6 +172,7 @@ fun AddEditExamScreen(db: AppDatabase, examId: String? = null, onBack: () -> Uni
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val isEditMode = examId != null
+    val instituteId = SessionManager.currentInstituteId.collectAsState().value
 
     var selectedBatchId by remember { mutableStateOf<String?>(null) }
     var examName by remember { mutableStateOf("") }
@@ -181,12 +183,23 @@ fun AddEditExamScreen(db: AppDatabase, examId: String? = null, onBack: () -> Uni
     var passingMarks by remember { mutableStateOf("40") }
     var selectedDateMs by remember { mutableStateOf(System.currentTimeMillis()) }
     var showDatePicker by remember { mutableStateOf(false) }
+    var teacherTemplates by remember { mutableStateOf<List<String>>(emptyList()) }
     val dateFormat = remember { SimpleDateFormat("dd MMM yyyy", Locale.getDefault()) }
     var formInitialized by remember(examId) { mutableStateOf(false) }
 
     LaunchedEffect(examId) {
         if (examId != null) {
             viewModel.loadExamDetails(examId)
+        }
+    }
+
+    LaunchedEffect(instituteId) {
+        if (instituteId == null) {
+            teacherTemplates = emptyList()
+        } else {
+            db.staffDao().getActiveStaff(instituteId).collect { staff ->
+                teacherTemplates = staff.map { it.fullName.trim() }.filter { it.isNotBlank() }.distinct()
+            }
         }
     }
 
@@ -254,6 +267,11 @@ fun AddEditExamScreen(db: AppDatabase, examId: String? = null, onBack: () -> Uni
 
             Spacer(Modifier.height(14.dp))
 
+            ExamTemplateRow(
+                label = "Quick exam templates",
+                options = listOf("Class Test", "Weekly Test", "Monthly Test", "Unit Test", "Midterm", "Final Exam", "Model Test")
+            ) { examName = it }
+            Spacer(Modifier.height(8.dp))
             OutlinedTextField(
                 value = examName, onValueChange = { examName = it },
                 label = { Text("Exam Name *") }, singleLine = true,
@@ -261,6 +279,11 @@ fun AddEditExamScreen(db: AppDatabase, examId: String? = null, onBack: () -> Uni
                 colors = fieldColors(), shape = RoundedCornerShape(12.dp)
             )
             Spacer(Modifier.height(10.dp))
+            ExamTemplateRow(
+                label = "Popular subjects",
+                options = listOf("Bangla", "English", "Mathematics", "Science", "Physics", "Chemistry", "Biology", "ICT", "Accounting")
+            ) { subject = it }
+            Spacer(Modifier.height(8.dp))
             OutlinedTextField(
                 value = subject, onValueChange = { subject = it },
                 label = { Text("Subject (optional)") }, singleLine = true,
@@ -268,6 +291,10 @@ fun AddEditExamScreen(db: AppDatabase, examId: String? = null, onBack: () -> Uni
                 colors = fieldColors(), shape = RoundedCornerShape(12.dp)
             )
             Spacer(Modifier.height(10.dp))
+            if (teacherTemplates.isNotEmpty()) {
+                ExamTemplateRow(label = "Select a teacher", options = teacherTemplates) { teacherName = it }
+                Spacer(Modifier.height(8.dp))
+            }
             OutlinedTextField(
                 value = teacherName, onValueChange = { teacherName = it },
                 label = { Text("Teacher Name (optional)") }, singleLine = true,
@@ -376,6 +403,31 @@ fun AddEditExamScreen(db: AppDatabase, examId: String? = null, onBack: () -> Uni
 // ═══════════════════════════════════════════════════════════
 //  ExamDetailScreen  (mark entry + merit list + share)
 // ═══════════════════════════════════════════════════════════
+@Composable
+private fun ExamTemplateRow(label: String, options: List<String>, onSelected: (String) -> Unit) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(label, color = TextMuted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(5.dp))
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            items(options, key = { it }) { option ->
+                SuggestionChip(
+                    onClick = { onSelected(option) },
+                    label = { Text(option, fontSize = 11.sp, maxLines = 1) },
+                    shape = RoundedCornerShape(9.dp),
+                    colors = SuggestionChipDefaults.suggestionChipColors(
+                        containerColor = CardBgAlt,
+                        labelColor = Cyan
+                    ),
+                    border = SuggestionChipDefaults.suggestionChipBorder(
+                        borderColor = BorderSub,
+                        enabled = true
+                    )
+                )
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ExamDetailScreen(db: AppDatabase, examId: String, onBack: () -> Unit, onEdit: () -> Unit) {

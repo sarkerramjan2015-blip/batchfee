@@ -5,6 +5,8 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -141,6 +143,14 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
 
             // ── Batch Name ──────────────────────────────────
             SectionLabel("Batch Name *")
+            BatchTemplateRow(
+                options = listOf(
+                    "Class 6", "Class 7", "Class 8", "Class 9", "Class 10",
+                    "SSC Science", "HSC Science", "HSC 2027", "HSC 2028"
+                ),
+                onSelected = { name = it; nameError = false }
+            )
+            Spacer(Modifier.height(8.dp))
             DarkTextField(
                 value = name,
                 onValueChange = { name = it; nameError = false },
@@ -319,6 +329,31 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
 }
 
 // ── Helpers ─────────────────────────────────────────────────────
+@Composable
+private fun BatchTemplateRow(options: List<String>, onSelected: (String) -> Unit) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text("Quick templates (optional)", color = TextMuted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(5.dp))
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            items(options, key = { it }) { option ->
+                SuggestionChip(
+                    onClick = { onSelected(option) },
+                    label = { Text(option, fontSize = 11.sp, maxLines = 1) },
+                    shape = RoundedCornerShape(9.dp),
+                    colors = SuggestionChipDefaults.suggestionChipColors(
+                        containerColor = CardBg,
+                        labelColor = Cyan
+                    ),
+                    border = SuggestionChipDefaults.suggestionChipBorder(
+                        borderColor = BorderSub,
+                        enabled = true
+                    )
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun SectionLabel(text: String) {
     Text(
