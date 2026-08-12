@@ -706,7 +706,8 @@ fun AddEditStudentScreen(
                                                 instituteName = instituteName,
                                                 studentName = fullName.trim(),
                                                 studentCode = loginStudentCode,
-                                                className = className.trim()
+                                                className = className.trim(),
+                                                temporaryPassword = accountPassword
                                             )
                                         },
                                         onError = {
@@ -854,13 +855,18 @@ private fun buildAdmissionWelcomeMessage(
     instituteName: String,
     studentName: String,
     studentCode: String,
-    className: String
+    className: String,
+    temporaryPassword: String?
 ): String = buildString {
     append("Congratulations, $studentName! Your admission to ")
     append(instituteName.ifBlank { "our institute" })
     append(" has been completed successfully.")
     append("\n\nStudent ID: $studentCode")
+    temporaryPassword?.takeIf { it.isNotBlank() }?.let {
+        append("\nPassword: $it")
+    }
     if (className.isNotBlank()) append("\nClass: $className")
+    if (!temporaryPassword.isNullOrBlank()) append("\n\nPlease keep these login details private.")
     append("\n\nWelcome to our learning community. We are happy to have you with us!")
 }
 
