@@ -6,6 +6,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -294,13 +295,12 @@ fun BatchDetailScreen(
         Column(
             modifier = Modifier.padding(padding).fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp, vertical = 10.dp)
+                .padding(horizontal = 16.dp, vertical = 4.dp)
         ) {
             // ── Batch Summary Card ────────────────────────
             val batchFeeIds = studentsWF.mapNotNull { it.fee?.id }.toSet()
             val batchPayments = recentPayments.filter { it.feeId in batchFeeIds }
             BatchDashboardSummary(
-                batchName = batch?.name ?: "Batch",
                 studentCount = totalEnrolled,
                 paidCount = paidCount,
                 dueCount = dueCount,
@@ -324,8 +324,8 @@ fun BatchDetailScreen(
             )
 
             Row(
-                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 outlinenedButton(
                     text = if (isSendingAll) "Sending..." else "Send All Due",
@@ -352,7 +352,7 @@ fun BatchDetailScreen(
                 onValueChange = { searchQuery = it },
                 placeholder = { Text("Search students...", color = TextMuted.copy(alpha = 0.5f), fontSize = 13.sp) },
                 leadingIcon = { Icon(Icons.Filled.Search, null, tint = TextMuted) },
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().height(50.dp),
                 singleLine = true,
                 colors = outlineFieldColors(),
                 shape = RoundedCornerShape(12.dp)
@@ -360,36 +360,35 @@ fun BatchDetailScreen(
             Spacer(Modifier.height(8.dp))
 
             // ── Filters + sort ────────────────────────────
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically) {
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    listOf("all" to "All", "paid" to "Paid", "due" to "Due", "partial" to "Partial").forEach { (f, label) ->
-                        FilterChip(
-                            selected = filterStatus == f,
-                            onClick = { filterStatus = f },
-                            label = { Text(label, fontSize = 11.sp) },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = ElectricBlue.copy(alpha = 0.2f),
-                                selectedLabelColor = Cyan
-                            )
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                listOf("all" to "All", "paid" to "Paid", "due" to "Due", "partial" to "Partial").forEach { (f, label) ->
+                    FilterChip(
+                        selected = filterStatus == f,
+                        onClick = { filterStatus = f },
+                        label = { Text(label, fontSize = 11.sp) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = ElectricBlue.copy(alpha = 0.2f),
+                            selectedLabelColor = Cyan
                         )
-                    }
+                    )
                 }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Sort:", color = TextMuted, fontSize = 11.sp)
-                    Spacer(Modifier.width(4.dp))
-                    listOf("name" to "Name", "due_amount" to "Due", "monthly_fee" to "Fee").forEach { (s, label) ->
-                        Text(
-                            label,
-                            color = if (sortBy == s) Cyan else TextMuted,
-                            fontSize = 11.sp,
-                            fontWeight = if (sortBy == s) FontWeight.Bold else FontWeight.Normal,
-                            modifier = Modifier.clickable { sortBy = s }.padding(horizontal = 4.dp)
-                        )
-                    }
+                Spacer(Modifier.width(4.dp))
+                Text("Sort", color = TextMuted, fontSize = 11.sp)
+                listOf("name" to "Name", "due_amount" to "Due", "monthly_fee" to "Fee").forEach { (s, label) ->
+                    Text(
+                        label,
+                        color = if (sortBy == s) Cyan else TextMuted,
+                        fontSize = 11.sp,
+                        fontWeight = if (sortBy == s) FontWeight.Bold else FontWeight.Normal,
+                        modifier = Modifier.clickable { sortBy = s }.padding(horizontal = 4.dp)
+                    )
                 }
             }
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(7.dp))
 
             // ── Student list ──────────────────────────────
             if (displayedStudents.isEmpty()) {
@@ -718,7 +717,6 @@ private fun BatchMenuItem(
 
 @Composable
 private fun BatchDashboardSummary(
-    batchName: String,
     studentCount: Int,
     paidCount: Int,
     dueCount: Int,
@@ -735,47 +733,12 @@ private fun BatchDashboardSummary(
     onNextMonth: () -> Unit,
     onReport: () -> Unit
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
         // ── Batch header card ────────────────────────
-        Card(
-            modifier = Modifier.fillMaxWidth()
-                .shadow(4.dp, RoundedCornerShape(14.dp), spotColor = Cyan.copy(alpha = 0.20f)),
-            shape = RoundedCornerShape(14.dp),
-            colors = CardDefaults.cardColors(containerColor = CardBg),
-            border = BorderStroke(1.dp, BorderSub)
-        ) {
-            Row(
-                modifier = Modifier.padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(44.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(Brush.linearGradient(listOf(ElectricBlue, Cyan))),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        batchName.take(1).uppercase(),
-                        color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold
-                    )
-                }
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        batchName,
-                        color = TextWhite, fontSize = 17.sp, fontWeight = FontWeight.Bold,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis
-                    )
-                    Text("$studentCount students", color = TextMuted, fontSize = 13.sp)
-                }
-            }
-        }
-
         // ── Key metrics row ──────────────────────────
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             MetricCard("Students", "$studentCount", "Enrolled", SkyBlue, Modifier.weight(1f))
             MetricCard("Paid", "$paidCount", "This month", WAGreen, Modifier.weight(1f))
@@ -789,7 +752,7 @@ private fun BatchDashboardSummary(
             colors = CardDefaults.cardColors(containerColor = CardBg),
             border = BorderStroke(1.dp, BorderSub)
         ) {
-            Column(modifier = Modifier.padding(14.dp)) {
+            Column(modifier = Modifier.padding(12.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -806,7 +769,7 @@ private fun BatchDashboardSummary(
                         }
                     }
                 }
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(8.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                     StatItem("Today", money(todayCollected), Cyan)
                     StatItem(monthLabel, money(monthCollected), WAGreen)
@@ -823,7 +786,7 @@ private fun BatchDashboardSummary(
                 colors = CardDefaults.cardColors(containerColor = CardBg),
                 border = BorderStroke(1.dp, BorderSub)
             ) {
-                Column(modifier = Modifier.padding(14.dp)) {
+                Column(modifier = Modifier.padding(12.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -832,21 +795,21 @@ private fun BatchDashboardSummary(
                         Text("Attendance", color = TextWhite, fontSize = 15.sp, fontWeight = FontWeight.Bold)
                         Text(monthLabel, color = Cyan, fontSize = 12.sp)
                     }
-                    Spacer(Modifier.height(12.dp))
+                    Spacer(Modifier.height(8.dp))
                     AttendanceMiniChart(attendance)
-                    Spacer(Modifier.height(10.dp))
+                    Spacer(Modifier.height(6.dp))
                     AttendanceLegend()
-                    Spacer(Modifier.height(10.dp))
+                    Spacer(Modifier.height(7.dp))
                     OutlinedButton(
                         onClick = onReport,
-                        modifier = Modifier.fillMaxWidth().height(42.dp),
+                        modifier = Modifier.fillMaxWidth().height(38.dp),
                         shape = RoundedCornerShape(12.dp),
                         border = BorderStroke(1.dp, Cyan),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = Cyan)
                     ) {
                         Icon(Icons.Filled.IosShare, null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("Share Report", fontSize = 13.sp)
+                        Text("Share Report", fontSize = 12.sp)
                     }
                 }
             }
@@ -860,7 +823,7 @@ private fun BatchDashboardSummary(
                 colors = CardDefaults.cardColors(containerColor = CardBg),
                 border = BorderStroke(1.dp, BorderSub)
             ) {
-                Column(modifier = Modifier.padding(14.dp)) {
+                Column(modifier = Modifier.padding(12.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -915,10 +878,10 @@ private fun MetricCard(
         border = BorderStroke(1.dp, BorderSub)
     ) {
         Column(
-            modifier = Modifier.padding(12.dp),
+            modifier = Modifier.padding(vertical = 9.dp, horizontal = 8.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text(value, color = accent, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            Text(value, color = accent, fontSize = 18.sp, fontWeight = FontWeight.Bold)
             Text(label, color = TextWhite, fontSize = 12.sp, fontWeight = FontWeight.Medium)
             Text(subtitle, color = TextMuted, fontSize = 10.sp)
         }
@@ -992,7 +955,7 @@ private fun AttendanceMiniChart(attendance: List<AttendanceEntity>) {
         }
     }
     Row(
-        modifier = Modifier.fillMaxWidth().height(150.dp),
+        modifier = Modifier.fillMaxWidth().height(112.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.Bottom
     ) {
@@ -1003,16 +966,16 @@ private fun AttendanceMiniChart(attendance: List<AttendanceEntity>) {
             val holiday = records.count { it.status.equals("holiday", ignoreCase = true) }
             val total = records.size.coerceAtLeast(1)
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.weight(1f)) {
-                Box(modifier = Modifier.fillMaxWidth().height(118.dp), contentAlignment = Alignment.BottomCenter) {
+                Box(modifier = Modifier.fillMaxWidth().height(88.dp), contentAlignment = Alignment.BottomCenter) {
                     Box(Modifier.width(1.dp).fillMaxHeight().background(BorderSub))
-                    Column(modifier = Modifier.width(10.dp).height(100.dp), verticalArrangement = Arrangement.Bottom) {
+                    Column(modifier = Modifier.width(9.dp).height(74.dp), verticalArrangement = Arrangement.Bottom) {
                         AttendanceSegment(holiday, total, SkyBlue)
                         AttendanceSegment(leave, total, AccentAmber)
                         AttendanceSegment(absent, total, AccentRed)
                         AttendanceSegment(present, total, WAGreen)
                     }
                 }
-                Text((index + 1).toString(), color = TextWhite, fontSize = 13.sp)
+                Text((index + 1).toString(), color = TextWhite, fontSize = 11.sp)
             }
         }
     }
@@ -1037,8 +1000,8 @@ private fun AttendanceLegend() {
 @Composable
 private fun LegendItem(label: String, color: Color) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(label, color = TextWhite, fontSize = 14.sp)
-        Box(Modifier.width(54.dp).height(5.dp).clip(RoundedCornerShape(8.dp)).background(color))
+        Text(label, color = TextWhite, fontSize = 11.sp)
+        Box(Modifier.width(42.dp).height(4.dp).clip(RoundedCornerShape(8.dp)).background(color))
     }
 }
 
@@ -1169,7 +1132,7 @@ private fun RowScope.outlinenedButton(
     OutlinedButton(
         onClick = onClick,
         enabled = enabled,
-        modifier = Modifier.weight(1f).height(44.dp),
+        modifier = Modifier.weight(1f).height(40.dp),
         shape = RoundedCornerShape(12.dp),
         border = BorderStroke(1.dp, color.copy(alpha = 0.5f)),
         colors = ButtonDefaults.outlinedButtonColors(contentColor = color)
