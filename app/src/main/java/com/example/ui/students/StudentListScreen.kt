@@ -167,18 +167,7 @@ fun StudentListScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
-                title = {
-                    Column {
-                        Text("Student", color = TextWhite, fontWeight = FontWeight.Bold, fontSize = 24.sp)
-                        Text(
-                            "${filteredStudents.size} Total Students found",
-                            color = TextMuted,
-                            fontSize = 18.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                },
+                title = { Text("Students", color = TextWhite, fontWeight = FontWeight.Bold, fontSize = 21.sp) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = TextWhite)
@@ -219,7 +208,7 @@ fun StudentListScreen(
             modifier = Modifier
                 .padding(padding)
                 .fillMaxSize()
-                .padding(horizontal = 20.dp, vertical = 8.dp)
+                .padding(horizontal = 16.dp, vertical = 4.dp)
         ) {
             // ── Search bar ───────────────────────────────────
             if (showSearch || searchQuery.isNotBlank()) {
@@ -235,7 +224,7 @@ fun StudentListScreen(
                             }
                         }
                     },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().height(52.dp),
                     singleLine = true,
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedTextColor = TextWhite,
@@ -249,12 +238,12 @@ fun StudentListScreen(
                     shape = RoundedCornerShape(12.dp)
                 )
 
-                Spacer(Modifier.height(4.dp))
+                Spacer(Modifier.height(2.dp))
             }
 
             // ── Student count ────────────────────────────────
             Row(
-                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {

@@ -261,8 +261,8 @@ fun DueFeeListScreen(db: AppDatabase, onBack: () -> Unit) {
             modifier = Modifier
                 .padding(padding)
                 .fillMaxSize(),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 28.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             if (searchVisible) {
                 item {
@@ -355,7 +355,7 @@ private fun DueSearchField(query: String, onQueryChange: (String) -> Unit, onCle
     OutlinedTextField(
         value = query,
         onValueChange = onQueryChange,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().height(54.dp),
         singleLine = true,
         leadingIcon = {
             Icon(Icons.Filled.Search, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(22.dp))
@@ -367,7 +367,7 @@ private fun DueSearchField(query: String, onQueryChange: (String) -> Unit, onCle
                 }
             }
         },
-        placeholder = { Text("Search name, phone, batch, month", color = TextMuted) },
+        placeholder = { Text("Search student, batch or month", color = TextMuted, maxLines = 1) },
         colors = dueTextFieldColors(),
         shape = RoundedCornerShape(14.dp)
     )
@@ -387,36 +387,37 @@ private fun DueFeeSummaryCard(
             .clip(RoundedCornerShape(18.dp))
             .background(Brush.linearGradient(listOf(Color(0xFF101B2F), CardBg)))
             .border(1.dp, SoftLine, RoundedCornerShape(18.dp))
-            .padding(16.dp)
+            .padding(12.dp)
     ) {
         Column {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     modifier = Modifier
-                        .size(44.dp)
-                        .clip(RoundedCornerShape(13.dp))
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(12.dp))
                         .background(SoftCyan),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Filled.ReceiptLong, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(24.dp))
+                    Icon(Icons.Filled.ReceiptLong, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(21.dp))
                 }
-                Spacer(Modifier.width(12.dp))
+                Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {
-                    Text("Due Report", color = TextWhite, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    Text("Due Report", color = TextWhite, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                     Text(
                         "${SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date())} / $selectedBatch",
                         color = TextMuted,
-                        fontSize = 12.sp,
+                        fontSize = 11.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
+                Column(horizontalAlignment = Alignment.End) {
+                    Text("TOTAL DUE", color = TextMuted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                    Text(formatCurrency(totalDue), color = AccentRed, fontSize = 23.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                }
             }
 
-            Spacer(Modifier.height(16.dp))
-            Text("Total Due", color = TextMuted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-            Text(formatCurrency(totalDue), color = AccentRed, fontSize = 30.sp, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(14.dp))
+            Spacer(Modifier.height(10.dp))
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 DueSummaryPill("Students", studentCount.toString(), Modifier.weight(1f))
@@ -434,10 +435,10 @@ private fun DueSummaryPill(label: String, value: String, modifier: Modifier = Mo
             .clip(RoundedCornerShape(12.dp))
             .background(CardBgAlt)
             .border(1.dp, BorderSub, RoundedCornerShape(12.dp))
-            .padding(horizontal = 10.dp, vertical = 10.dp)
+            .padding(horizontal = 9.dp, vertical = 7.dp)
     ) {
-        Text(value, color = TextWhite, fontSize = 17.sp, fontWeight = FontWeight.Bold)
-        Text(label, color = TextMuted, fontSize = 11.sp, maxLines = 1)
+        Text(value, color = TextWhite, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+        Text(label, color = TextMuted, fontSize = 10.sp, maxLines = 1)
     }
 }
 
