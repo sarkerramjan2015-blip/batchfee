@@ -17,6 +17,9 @@ interface BatchStudentDao {
     @Query("SELECT b.* FROM batches b INNER JOIN batch_students bs ON b.id = bs.batchId WHERE bs.studentId = :studentId AND bs.instituteId = :instituteId AND bs.status = 'active' AND b.archivedAtMs IS NULL ORDER BY b.name ASC")
     fun getBatchesForStudent(studentId: String, instituteId: String): Flow<List<BatchEntity>>
 
+    @Query("SELECT * FROM batch_students WHERE instituteId = :instituteId AND status = 'active'")
+    fun getActiveEnrollmentsForInstitute(instituteId: String): Flow<List<BatchStudentEntity>>
+
     @Query("SELECT COUNT(*) FROM batch_students WHERE batchId = :batchId AND studentId = :studentId AND instituteId = :instituteId AND status = 'active'")
     suspend fun isStudentInBatch(batchId: String, studentId: String, instituteId: String): Int
 

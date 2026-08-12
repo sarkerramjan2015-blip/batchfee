@@ -85,6 +85,17 @@ fun StudentListScreen(
     var selectedStatus by remember { mutableStateOf("active") }
     var sortBy by remember { mutableStateOf("name") }
     var batchStudentIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var activeBatchEnrollments by remember { mutableStateOf(emptyList<com.batchfee.edu.data.models.BatchStudentEntity>()) }
+
+    LaunchedEffect(instId) {
+        if (instId == null) {
+            activeBatchEnrollments = emptyList()
+        } else {
+            db.batchStudentDao().getActiveEnrollmentsForInstitute(instId).collect { enrollments ->
+                activeBatchEnrollments = enrollments
+            }
+        }
+    }
 
     LaunchedEffect(selectedBatchId) {
         val batchId = selectedBatchId
@@ -116,6 +127,15 @@ fun StudentListScreen(
                 }
             }
             .toList()
+    }
+
+    val batchNamesByStudent = remember(activeBatchEnrollments, batches) {
+        val batchNames = batches.associate { it.id to it.name }
+        activeBatchEnrollments
+            .groupBy { it.studentId }
+            .mapValues { (_, enrollments) ->
+                enrollments.mapNotNull { batchNames[it.batchId] }.distinct().sorted()
+            }
     }
 
     fun sendMessage(useWhatsApp: Boolean) {
@@ -295,6 +315,7 @@ fun StudentListScreen(
                     items(filteredStudents, key = { it.id }) { student ->
                         StudentCard(
                             student = student,
+                            batchNames = batchNamesByStudent[student.id].orEmpty(),
                             onClick = { onNavigateToProfile(student.id) }
                         )
                     }
@@ -580,7 +601,7 @@ private fun StudentMenuRow(
 }
 
 @Composable
-private fun StudentCard(student: StudentEntity, onClick: () -> Unit) {
+private fun StudentCard(student: StudentEntity, batchNames: List<String>, onClick: () -> Unit) {
     val statusColor = when (student.status.lowercase()) {
         "active" -> WAGreen
         "inactive" -> Color(0xFFF59E0B)
@@ -653,6 +674,29 @@ private fun StudentCard(student: StudentEntity, onClick: () -> Unit) {
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Bold
                         )
+                    }
+                    if (batchNames.isNotEmpty()) {
+                        Spacer(Modifier.width(6.dp))
+                        Box(
+                            modifier = Modifier
+                                .widthIn(max = 90.dp)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(SkyBlue.copy(alpha = 0.14f))
+                                .border(1.dp, SkyBlue.copy(alpha = 0.26f), RoundedCornerShape(6.dp))
+                                .padding(horizontal = 7.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = buildString {
+                                    append(batchNames.first())
+                                    if (batchNames.size > 1) append(" +${batchNames.size - 1}")
+                                },
+                                color = SkyBlue,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
                 }
 
