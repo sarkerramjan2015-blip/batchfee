@@ -73,6 +73,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import com.batchfee.edu.data.media.FirebaseStorageImageUploadHelper
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -2838,9 +2839,27 @@ private fun generateReceiptPdf(context: Context, institute: InstituteInfo, stude
     canvas.drawColor(AndroidColor.WHITE)
 
     // ── Load logo image ──
-    val logoBitmap: Bitmap? = institute.logoUri?.let { uri ->
-        try { context.contentResolver.openInputStream(Uri.parse(uri))?.use { BitmapFactory.decodeStream(it) } }
-        catch (_: Exception) { null }
+    val logoBitmap: Bitmap? = FirebaseStorageImageUploadHelper.displaySource(context, institute.logoUri)?.let { source ->
+        try {
+            val uri = Uri.parse(source)
+            when (uri.scheme?.lowercase()) {
+                "http", "https" -> {
+                    val connection = (java.net.URL(source).openConnection() as java.net.HttpURLConnection).apply {
+                        doInput = true
+                        connectTimeout = 5_000
+                        readTimeout = 5_000
+                    }
+                    try {
+                        connection.inputStream.use(BitmapFactory::decodeStream)
+                    } finally {
+                        connection.disconnect()
+                    }
+                }
+                else -> context.contentResolver.openInputStream(uri)?.use(BitmapFactory::decodeStream)
+            }
+        } catch (_: Exception) {
+            null
+        }
     }
 
     // ── Watermark (logo image or text, center, very faded) ──

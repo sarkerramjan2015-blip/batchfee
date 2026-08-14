@@ -25,6 +25,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -33,11 +34,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.media.FirebaseStorageImageUploadHelper
 import com.batchfee.edu.data.models.StudentEntity
 import com.batchfee.edu.domain.appendInstituteSignature
 import com.batchfee.edu.domain.loadInstituteSignature
 import com.batchfee.edu.domain.SessionManager
 import kotlinx.coroutines.launch
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
 
 // ── Colors (matching PricingScreen premium theme) ───────────────
 private val BgColor      = Color(0xFF07111F)
@@ -591,6 +595,7 @@ private fun StudentMenuRow(
 
 @Composable
 private fun StudentCard(student: StudentEntity, batchNames: List<String>, onClick: () -> Unit) {
+    val context = LocalContext.current
     val statusColor = when (student.status.lowercase()) {
         "active" -> WAGreen
         "inactive" -> Color(0xFFF59E0B)
@@ -614,7 +619,8 @@ private fun StudentCard(student: StudentEntity, batchNames: List<String>, onClic
                 .padding(14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Avatar circle with initials
+            // The initial remains beneath the image as a dependable fallback while a
+            // private student photo is being fetched or when no photo was added.
             Box(
                 modifier = Modifier
                     .size(48.dp)
@@ -630,6 +636,19 @@ private fun StudentCard(student: StudentEntity, batchNames: List<String>, onClic
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold
                 )
+                student.photoUri
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { reference ->
+                        AsyncImage(
+                            model = ImageRequest.Builder(context)
+                                .data(FirebaseStorageImageUploadHelper.displaySource(context, reference))
+                                .crossfade(true)
+                                .build(),
+                            contentDescription = "${student.fullName}'s photo",
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
             }
 
             Spacer(Modifier.width(14.dp))

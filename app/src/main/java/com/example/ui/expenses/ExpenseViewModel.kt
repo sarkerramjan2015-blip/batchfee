@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.audit.StaffActivityLogger
 import com.batchfee.edu.data.firestore.ExpenseSyncHelper
 import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
 import com.batchfee.edu.data.models.ExpenseEntity
@@ -92,6 +93,9 @@ class ExpenseViewModel(private val db: AppDatabase) : ViewModel() {
                     ExpenseSyncHelper.upsertExpense(expense)
                     db.expenseDao().insertExpense(expense)
                 }
+                StaffActivityLogger.logCompletedAction(
+                    db, "expense_created", "expenses", "Recorded expense ${expense.title} · BDT ${amount.toLong()}"
+                )
                 onSuccess()
             } catch (e: Exception) {
                 onError("Failed to save: ${e.message}")

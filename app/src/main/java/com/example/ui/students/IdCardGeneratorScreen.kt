@@ -52,6 +52,7 @@ import coil.request.ImageRequest
 import com.batchfee.edu.R
 import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
+import com.batchfee.edu.data.media.FirebaseStorageImageUploadHelper
 import com.batchfee.edu.data.models.InstituteEntity
 import com.batchfee.edu.data.models.StudentEntity
 import com.batchfee.edu.domain.SessionManager
@@ -80,6 +81,7 @@ private val TextMuted = Color(0xFF94A3B8)
 fun IdCardGeneratorScreen(db: AppDatabase, onBack: () -> Unit, onNavigateToPreview: (String, String) -> Unit, onNavigateToPricing: () -> Unit) {
     val viewModel: StudentViewModel = viewModel(factory = StudentViewModelFactory(db))
     val students by viewModel.studentList.collectAsState()
+    val context = LocalContext.current
     var searchQuery by remember { mutableStateOf("") }
     val filtered = remember(students, searchQuery) {
         if (searchQuery.isBlank()) students
@@ -115,7 +117,12 @@ fun IdCardGeneratorScreen(db: AppDatabase, onBack: () -> Unit, onNavigateToPrevi
                         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                             Box(Modifier.size(44.dp).clip(CircleShape).background(ElectricBlue.copy(alpha = 0.2f)), contentAlignment = Alignment.Center) {
                                 if (!student.photoUri.isNullOrBlank()) {
-                                    AsyncImage(model = Uri.parse(student.photoUri), contentDescription = null, modifier = Modifier.fillMaxSize().clip(CircleShape), contentScale = ContentScale.Crop)
+                                    AsyncImage(
+                                        model = FirebaseStorageImageUploadHelper.displaySource(context, student.photoUri),
+                                        contentDescription = null,
+                                        modifier = Modifier.fillMaxSize().clip(CircleShape),
+                                        contentScale = ContentScale.Crop
+                                    )
                                 } else {
                                     Icon(Icons.Filled.Person, null, tint = Cyan, modifier = Modifier.size(24.dp))
                                 }
@@ -247,7 +254,10 @@ private fun PremiumStudentIdCard(
     val ink = Color(0xFF10233F)
     val softInk = Color(0xFF64748B)
     val photoRequest = remember(student.photoUri) {
-        ImageRequest.Builder(context).data(student.photoUri).crossfade(true).build()
+        ImageRequest.Builder(context)
+            .data(FirebaseStorageImageUploadHelper.displaySource(context, student.photoUri))
+            .crossfade(true)
+            .build()
     }
 
     Box(
@@ -318,7 +328,7 @@ private fun PremiumStudentIdCard(
                         ) {
                             if (!logoUri.isNullOrBlank()) {
                                 AsyncImage(
-                                    model = logoUri,
+                                    model = FirebaseStorageImageUploadHelper.displaySource(context, logoUri),
                                     contentDescription = "Institute logo",
                                     modifier = Modifier.fillMaxSize().padding(3.dp),
                                     contentScale = ContentScale.Fit,
@@ -493,7 +503,7 @@ private fun openPdf(context: Context, file: File) {
 // ═══════════════════════════════════════
 //  PROFESSIONAL PDF — shapes & patterns
 // ═══════════════════════════════════════
-private fun generateProfessionalIdCardPdf(
+private suspend fun generateProfessionalIdCardPdf(
     context: Context,
     student: StudentEntity,
     institute: InstituteEntity?,
@@ -654,13 +664,14 @@ private fun fitPdfText(value: String, paint: Paint, maxWidth: Float): String {
     return value.take(end) + suffix
 }
 
-private fun loadIdCardBitmap(context: Context, source: String?): android.graphics.Bitmap? {
+private suspend fun loadIdCardBitmap(context: Context, source: String?): android.graphics.Bitmap? {
     if (source.isNullOrBlank()) return null
+    val resolvedSource = FirebaseStorageImageUploadHelper.resolveForDirectRead(context, source) ?: return null
     return try {
-        val uri = Uri.parse(source)
+        val uri = Uri.parse(resolvedSource)
         when (uri.scheme?.lowercase()) {
             "http", "https" -> {
-                val connection = URL(source).openConnection() as HttpURLConnection
+                val connection = URL(resolvedSource).openConnection() as HttpURLConnection
                 try {
                     connection.doInput = true
                     connection.connectTimeout = 5_000
@@ -671,7 +682,7 @@ private fun loadIdCardBitmap(context: Context, source: String?): android.graphic
                 }
             }
             "content", "file" -> context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) }
-            else -> BitmapFactory.decodeFile(source)
+            else -> BitmapFactory.decodeFile(resolvedSource)
         }
     } catch (_: Exception) {
         null
@@ -694,7 +705,7 @@ private fun drawCenterCroppedBitmap(canvas: android.graphics.Canvas, bitmap: and
     canvas.drawBitmap(bitmap, source, target, Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
 }
 
-private fun generateLegacyIdCardPdf(context: Context, student: StudentEntity, institute: InstituteEntity?, issuedDate: String, expiryDate: String): File {
+private suspend fun generateLegacyIdCardPdf(context: Context, student: StudentEntity, institute: InstituteEntity?, issuedDate: String, expiryDate: String): File {
     val document = PdfDocument()
     val page = document.startPage(PdfDocument.PageInfo.Builder(340, 544, 1).create())
     val canvas = page.canvas; val w = 340f; val h = 544f
@@ -727,11 +738,11 @@ private fun generateLegacyIdCardPdf(context: Context, student: StudentEntity, in
 
     // Institute logo
     val logoUri = institute?.profilePhotoUri; var textStartX = 20f
-    if (!logoUri.isNullOrBlank()) { try {
-        val conn = (URL(logoUri).openConnection() as HttpURLConnection).apply { doInput = true; connectTimeout = 5000; readTimeout = 5000; connect() }
-        val bmp = BitmapFactory.decodeStream(conn.inputStream); conn.inputStream.close(); conn.disconnect()
-        if (bmp != null) { canvas.drawBitmap(android.graphics.Bitmap.createScaledBitmap(bmp, 48, 48, true), 16f, 22f, null); bmp.recycle(); textStartX = 76f }
-    } catch (_: Exception) {} }
+    loadIdCardBitmap(context, logoUri)?.let { bmp ->
+        canvas.drawBitmap(android.graphics.Bitmap.createScaledBitmap(bmp, 48, 48, true), 16f, 22f, null)
+        bmp.recycle()
+        textStartX = 76f
+    }
 
     val hdr = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = white; isFakeBoldText = true }
     hdr.textSize = 17f; canvas.drawText((institute?.name ?: "BatchFee").uppercase(), textStartX, 48f, hdr)

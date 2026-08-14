@@ -804,12 +804,26 @@ fun DashboardScreen(
     }
     val cameraLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.TakePicture()
-    ) { success -> if (success) editProfilePhotoUri = tempPhotoUri }
+    ) { success -> if (success) editProfilePhotoUri = Uri.fromFile(tempPhotoFile) }
 
     // Gallery picker launcher
     val galleryLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
-    ) { uri -> if (uri != null) editProfilePhotoUri = uri }
+    ) { uri ->
+        if (uri != null) {
+            snappbarcoroutineScope.launch {
+                try {
+                    editProfilePhotoUri = withContext(Dispatchers.IO) {
+                        FirebaseStorageImageUploadHelper.cacheSelectedImage(context, uri, "institute_logo")
+                    }
+                } catch (error: Exception) {
+                    snackbarHostState.showSnackbar(
+                        error.message ?: "Could not read this image. Please choose it again."
+                    )
+                }
+            }
+        }
+    }
 
     // ── Attendance state (shared with dialog) ──────────────
     val attVM: AttendanceViewModel = viewModel(factory = AttendanceViewModelFactory(db))
@@ -948,38 +962,28 @@ fun DashboardScreen(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                // Staff Logs Card
-                Card(
-                    modifier = Modifier.fillMaxWidth().premiumClickable { safeNavigate("StaffAttendanceRoute") },
-                    colors = CardDefaults.cardColors(containerColor = DashboardCard),
-                    border = borderStroke()
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp).fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(
-                                modifier = Modifier
-                                    .size(36.dp)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(AccentBlue.copy(alpha = 0.14f)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(Icons.Filled.History, contentDescription = null, tint = AccentBlue, modifier = Modifier.size(20.dp))
-                            }
-                            Spacer(Modifier.width(12.dp))
-                            Column {
-                                Text("Staff Logs", color = TextPrimary, style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold))
-                                Text("Attendance and salary activity", color = TextSecondary, fontSize = 11.sp)
-                            }
-                        }
-                        Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(20.dp))
+                // Owner-only quick actions. Staff attendance remains in its own screen.
+                if (SessionManager.isAdmin()) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        DashboardQuickActionCard(
+                            title = "Staff Activity",
+                            subtitle = "Login & work logs",
+                            icon = Icons.Filled.History,
+                            accent = AccentBlue,
+                            modifier = Modifier.weight(1f),
+                            onClick = { safeNavigate("StaffActivityRoute") }
+                        )
+                        DashboardQuickActionCard(
+                            title = "Create Routine",
+                            subtitle = "Batch schedule PDF",
+                            icon = Icons.Filled.CalendarMonth,
+                            accent = AccentCyan,
+                            modifier = Modifier.weight(1f),
+                            onClick = { safeNavigate("RoutineRoute") }
+                        )
                     }
+                    Spacer(modifier = Modifier.height(14.dp))
                 }
-
-                Spacer(modifier = Modifier.height(14.dp))
 
                 // ── Live Attendance Summary ────────────────────
 
@@ -3074,6 +3078,40 @@ private fun formatDashboardAmount(amount: Double): String =
     java.text.NumberFormat.getNumberInstance(Locale.getDefault()).apply {
         maximumFractionDigits = 0
     }.format(amount)
+
+@Composable
+private fun DashboardQuickActionCard(
+    title: String,
+    subtitle: String,
+    icon: ImageVector,
+    accent: Color,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Card(
+        modifier = modifier
+            .height(86.dp)
+            .premiumClickable(onClick = onClick),
+        colors = CardDefaults.cardColors(containerColor = DashboardCard),
+        shape = RoundedCornerShape(15.dp),
+        border = borderStroke()
+    ) {
+        Column(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 11.dp)) {
+            Box(
+                modifier = Modifier
+                    .size(30.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(accent.copy(alpha = 0.15f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(icon, contentDescription = null, tint = accent, modifier = Modifier.size(17.dp))
+            }
+            Spacer(Modifier.height(7.dp))
+            Text(title, color = TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(subtitle, color = TextSecondary, fontSize = 9.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
 
 @Composable
 private fun OverviewRow(

@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.audit.StaffActivityLogger
 import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
 import com.batchfee.edu.data.firestore.SalarySyncHelper
 import com.batchfee.edu.data.models.SalaryEntity
@@ -81,6 +82,9 @@ class SalaryViewModel(private val db: AppDatabase) : ViewModel() {
             )
             db.salaryDao().insertSalary(entity)
             try { SalarySyncHelper.upsertSalary(entity) } catch (_: Exception) {}
+            StaffActivityLogger.logCompletedAction(
+                db, "salary_generated", "salary", "Generated salary for $salaryMonth"
+            )
             onSuccess()
         }
     }
@@ -92,6 +96,9 @@ class SalaryViewModel(private val db: AppDatabase) : ViewModel() {
             val updated = salary.copy(cancelledAtMs = System.currentTimeMillis(), updatedAtMs = System.currentTimeMillis())
             db.salaryDao().updateSalary(updated)
             try { SalarySyncHelper.upsertSalary(updated) } catch (_: Exception) {}
+            StaffActivityLogger.logCompletedAction(
+                db, "salary_cancelled", "salary", "Cancelled a salary record"
+            )
         }
     }
 
@@ -108,6 +115,9 @@ class SalaryViewModel(private val db: AppDatabase) : ViewModel() {
                 )
                 SalarySyncHelper.upsertSalary(updated)
                 db.salaryDao().updateSalary(updated)
+                StaffActivityLogger.logCompletedAction(
+                    db, "salary_paid", "salary", "Marked a salary as paid by $paymentMethod"
+                )
             }
         }
     }

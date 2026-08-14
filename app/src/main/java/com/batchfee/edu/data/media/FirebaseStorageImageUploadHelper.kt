@@ -13,6 +13,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
+import java.io.File
+import java.security.MessageDigest
 import java.util.UUID
 
 /**
@@ -47,6 +49,65 @@ object FirebaseStorageImageUploadHelper {
     fun isManagedReference(value: String?): Boolean =
         value?.startsWith(MANAGED_REFERENCE_PREFIX) == true
 
+    /**
+     * Returns an on-device copy when available. Media is still stored in Firebase,
+     * but the local copy keeps newly saved photos visible in cards and PDFs while
+     * the device is temporarily offline.
+     */
+    fun displaySource(context: Context, reference: String?): String? {
+        if (reference.isNullOrBlank()) return null
+        val cachedPath = context.getSharedPreferences("secure_media_cache", Context.MODE_PRIVATE)
+            .getString(cacheKey(reference), null)
+        if (!cachedPath.isNullOrBlank()) {
+            val file = File(cachedPath)
+            if (file.isFile && file.length() > 0L) return Uri.fromFile(file).toString()
+        }
+        // Earlier app versions kept the newly chosen institute logo only in cache.
+        // Adopt that most recent copy once so existing installations can render
+        // their current logo in PDFs even before the next logo change.
+        if (reference.startsWith("https://") || reference.startsWith("http://")) {
+            recoverRecentInstituteLogo(context, reference)?.let { return it }
+        }
+        return reference
+    }
+
+    /**
+     * Resolves a source for direct bitmap/PDF rendering. Coil already resolves managed
+     * references through its interceptor, but PDF generators do not use Coil. This keeps
+     * student photos available in admission forms, reports and ID cards after local cache
+     * has been cleared or on another signed-in device.
+     */
+    suspend fun resolveForDirectRead(context: Context, reference: String?): String? {
+        val source = displaySource(context, reference) ?: return null
+        if (!isManagedReference(source)) return source
+        return runCatching {
+            val response = functions.getHttpsCallable("getSecureMediaUrl")
+                .call(mapOf("reference" to source))
+                .await()
+            val data = response.data as? Map<*, *>
+                ?: error("Secure media service returned an invalid response.")
+            (data["url"] as? String)?.takeIf { it.startsWith("https://") }
+                ?: error("Secure media service did not return an HTTPS URL.")
+        }.getOrNull()
+    }
+
+    /**
+     * Copies a gallery result into the app cache while its temporary picker permission is valid.
+     * This makes the image safe to upload later, including after the picker has closed.
+     */
+    fun cacheSelectedImage(context: Context, sourceUri: Uri, prefix: String): Uri {
+        val target = File(
+            context.cacheDir,
+            "${prefix}_${UUID.randomUUID()}.img"
+        ).apply { parentFile?.mkdirs() }
+        context.contentResolver.openInputStream(sourceUri)?.use { input ->
+            target.outputStream().use { output -> input.copyTo(output) }
+        } ?: throw IllegalArgumentException("Could not read this image. Please choose it again.")
+        // This file belongs to our own app. A direct file URI avoids relying on a
+        // FileProvider read grant again during the later Save action.
+        return Uri.fromFile(target)
+    }
+
     private fun isExistingCloudReference(value: String): Boolean =
         isManagedReference(value) || value.startsWith("https://") || value.startsWith("http://")
 
@@ -79,16 +140,58 @@ object FirebaseStorageImageUploadHelper {
         val response = functions.getHttpsCallable("uploadSecureMedia").call(request).await()
         val data = response.data as? Map<*, *>
             ?: throw IllegalStateException("Secure media service returned an invalid response.")
-        return (data["reference"] as? String)?.takeIf { it.isNotBlank() }
+        val reference = (data["reference"] as? String)?.takeIf { it.isNotBlank() }
             ?: throw IllegalStateException("Secure media service did not return a reference.")
+        cacheForLocalDisplay(context, reference, imageBytes)
+        return reference
     }
+
+    private fun cacheForLocalDisplay(context: Context, reference: String, bytes: ByteArray) {
+        runCatching {
+            val directory = File(context.filesDir, "secure_media").apply { mkdirs() }
+            val target = File(directory, "${cacheKey(reference)}.jpg")
+            target.outputStream().use { it.write(bytes) }
+            context.getSharedPreferences("secure_media_cache", Context.MODE_PRIVATE)
+                .edit()
+                .putString(cacheKey(reference), target.absolutePath)
+                .apply()
+        }
+    }
+
+    private fun recoverRecentInstituteLogo(context: Context, reference: String): String? = runCatching {
+        val candidate = context.cacheDir.listFiles()
+            ?.asSequence()
+            ?.filter { it.isFile && it.length() > 0L && it.name.startsWith("institute_logo_") }
+            ?.maxByOrNull(File::lastModified)
+            ?: return null
+        val directory = File(context.filesDir, "secure_media").apply { mkdirs() }
+        val target = File(directory, "${cacheKey(reference)}.jpg")
+        candidate.inputStream().use { input -> target.outputStream().use { input.copyTo(it) } }
+        context.getSharedPreferences("secure_media_cache", Context.MODE_PRIVATE)
+            .edit()
+            .putString(cacheKey(reference), target.absolutePath)
+            .apply()
+        Uri.fromFile(target).toString()
+    }.getOrNull()
+
+    private fun cacheKey(reference: String): String = MessageDigest.getInstance("SHA-256")
+        .digest(reference.toByteArray(Charsets.UTF_8))
+        .joinToString("") { "%02x".format(it) }
 
     /** Converts every selected image into a small JPEG before it leaves the device. */
     private fun optimizeToJpeg(context: Context, sourceUri: Uri, policy: ImagePolicy): ByteArray {
         val resolver = context.contentResolver
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        resolver.openInputStream(sourceUri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
-            ?: throw IllegalArgumentException("Unable to read the selected image.")
+        // With inJustDecodeBounds Android correctly returns null from decodeStream;
+        // only the bounds fields are populated. Treating that expected null as a
+        // read failure blocked every valid PNG/JPEG before upload could begin.
+        val sourceWasOpened = resolver.openInputStream(sourceUri)?.use {
+            BitmapFactory.decodeStream(it, null, bounds)
+            true
+        } ?: false
+        if (!sourceWasOpened) {
+            throw IllegalArgumentException("Unable to read the selected image.")
+        }
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
             throw IllegalArgumentException("Choose a valid image file.")
         }

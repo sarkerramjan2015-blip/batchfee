@@ -79,7 +79,7 @@ fun PhoneInputField(
     var localNumber by remember(value) { mutableStateOf(parsed.second) }
 
     fun emit() {
-        val clean = localNumber.trim().replace(Regex("[^0-9]"), "")
+        val clean = normalizeLocalNumber(selectedCode, localNumber)
         onValueChange(if (clean.isEmpty()) "" else "$selectedCode$clean")
     }
 
@@ -182,14 +182,29 @@ fun PhoneInputField(
 
 private fun parsePhoneNumber(full: String): Pair<String, String> {
     if (full.isBlank()) return Pair("+880", "")
-    val trimmed = full.trim()
-    val match = Regex("^(\\+\\d{1,4})(.*)$").find(trimmed)
-    return if (match != null) {
-        Pair(match.groupValues[1], match.groupValues[2].trim())
+    val compact = full.trim().replace(Regex("[\\s()-]"), "")
+    val matchedCountryCode = COUNTRY_CODES
+        .map { it.code }
+        .sortedByDescending { it.length }
+        .firstOrNull { compact.startsWith(it) }
+
+    return if (matchedCountryCode != null) {
+        Pair(matchedCountryCode, normalizeLocalNumber(matchedCountryCode, compact.removePrefix(matchedCountryCode)))
     } else {
-        // Backward compat: treat existing numbers without + as Bangladesh
-        Pair("+880", trimmed)
+        // Backward compatibility: older local numbers are Bangladesh numbers.
+        Pair("+880", normalizeLocalNumber("+880", compact))
     }
+}
+
+private fun normalizeLocalNumber(countryCode: String, rawNumber: String): String {
+    var digits = rawNumber.filter(Char::isDigit)
+    if (countryCode == "+880") {
+        // Bangladesh local numbers are often entered as 01XXXXXXXXX, while
+        // the country code already supplies the leading 0 internationally.
+        if (digits.startsWith("880")) digits = digits.removePrefix("880")
+        if (digits.startsWith("0")) digits = digits.removePrefix("0")
+    }
+    return digits
 }
 
 fun formatPhoneForDisplay(raw: String?): String {
@@ -200,8 +215,21 @@ fun formatPhoneForDisplay(raw: String?): String {
 
 fun buildWhatsAppUrl(phone: String?, message: String): String {
     val encoded = java.net.URLEncoder.encode(message, "UTF-8")
-    val cleanNumber = phone?.replace("+", "")?.replace(" ", "")?.replace("-", "")?.takeIf { it.isNotBlank() }
+    val cleanNumber = normalizeWhatsAppNumber(phone)
     return if (cleanNumber != null) "https://wa.me/$cleanNumber?text=$encoded"
            else "https://wa.me/?text=$encoded"
+}
+
+/** Returns digits in the international format required by WhatsApp's wa.me links. */
+fun normalizeWhatsAppNumber(phone: String?): String? {
+    val digits = phone?.filter(Char::isDigit).orEmpty()
+    if (digits.isBlank()) return null
+    return when {
+        digits.startsWith("00") -> digits.removePrefix("00")
+        digits.startsWith("880") -> digits
+        digits.startsWith("0") -> "880${digits.removePrefix("0")}" // Bangladesh local format
+        digits.matches(Regex("1[3-9][0-9]{8}")) -> "880$digits" // Bangladesh local format without 0
+        else -> digits
+    }
 }
 

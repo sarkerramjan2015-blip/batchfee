@@ -65,7 +65,9 @@ object AccessControl {
         "SettingsRoute",
         "BillingRoute",
         "PricingRoute",
-        "BackupRestoreRoute"
+        "BackupRestoreRoute",
+        "StaffActivityRoute",
+        "RoutineRoute"
     )
 
     private val routePermissions = mapOf(

@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.audit.StaffActivityLogger
 import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
 import com.batchfee.edu.data.firestore.ReminderTemplateSyncHelper
 import com.batchfee.edu.data.models.ReminderTemplateEntity
@@ -42,6 +43,9 @@ class ReminderTemplateViewModel(private val db: AppDatabase) : ViewModel() {
             )
             db.reminderTemplateDao().insertTemplate(template)
             try { ReminderTemplateSyncHelper.upsertTemplate(template) } catch (_: Exception) {}
+            StaffActivityLogger.logCompletedAction(
+                db, "reminder_created", "reminders", "Saved reminder template $title"
+            )
         }
     }
 
@@ -54,6 +58,9 @@ class ReminderTemplateViewModel(private val db: AppDatabase) : ViewModel() {
                     .collection("reminder_templates").document(template.id)
                     .delete().await()
             } catch (_: Exception) {}
+            StaffActivityLogger.logCompletedAction(
+                db, "reminder_deleted", "reminders", "Deleted reminder template ${template.title}"
+            )
         }
     }
 }

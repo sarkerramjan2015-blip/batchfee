@@ -692,10 +692,20 @@ service cloud.firestore {
       allow create: if false;
     }
 
-    match /registrations/{instituteId}/{collection}/{document=**} {
-      allow read, write: if isSuperAdmin()
+    // These server-owned markers make approving a public registration idempotent.
+    // A second request with the same ID cannot create another student record.
+    match /registrations/{instituteId}/approval_operations/{requestId} {
+      allow read: if isSuperAdmin()
         || isActiveInstitutePrincipal(instituteId)
         || hasStaffPermission(instituteId, 'manage_student');
+      allow write: if false;
+    }
+
+    match /registrations/{instituteId}/{collection}/{document=**} {
+      allow read, write: if collection != 'approval_operations'
+        && (isSuperAdmin()
+        || isActiveInstitutePrincipal(instituteId)
+        || hasStaffPermission(instituteId, 'manage_student'));
     }
 
     match /registrations/{instituteId} {

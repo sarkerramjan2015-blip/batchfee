@@ -22,6 +22,10 @@ const { createMediaSecurityHandlers } = require("./mediaSecurity");
 const { createSafeDeletionHandler } = require("./safeDeletion");
 const { createPermanentStudentPurgeHandler } = require("./permanentStudentPurge");
 const { createPublicRegistrationHandler } = require("./publicRegistration");
+const {
+  cleanupPendingRegistrationPhoto,
+  materializeRegistrationStudentPhoto,
+} = require("./registrationPhoto");
 const { createSubscriptionBillingHandler } = require("./subscriptionBilling");
 const { createPlatformAdminHandler } = require("./platformAdmin");
 const {
@@ -72,6 +76,7 @@ const mediaSecurityHandlers = createMediaSecurityHandlers({
 });
 const publicRegistrationHandler = createPublicRegistrationHandler({
   db,
+  bucket: mediaStorageBucket,
   rateLimitSecret: registrationRateLimitSecret,
 });
 
@@ -126,13 +131,17 @@ async function assertCanManageStudent(authContext, instituteId) {
   if (institute.isActive === false || institute.deletionState === "retained") {
     throw new HttpsError("failed-precondition", "Institute is inactive.");
   }
-  if (authContext.uid === instituteId) {
+  // Institute documents created before the managed-owner flow can use an
+  // arbitrary document ID. Their actual owner is stored in ownerUid, so both
+  // forms must have the same account-management authority.
+  if (authContext.uid === instituteId || authContext.uid === institute.ownerUid) {
     assertActiveSubscription(institute);
     return instituteSnap;
   }
 
   const isManagedAdmin = appUser && appUser.instituteId === instituteId &&
-    ["InstituteAdmin", "admin", "instituteAdmin", "institute_admin"].includes(appUser.role) &&
+    ["InstituteOwner", "owner", "instituteOwner", "institute_owner",
+      "InstituteAdmin", "admin", "instituteAdmin", "institute_admin"].includes(appUser.role) &&
     (!Object.prototype.hasOwnProperty.call(appUser, "status") || appUser.status === "active");
   if (isManagedAdmin) {
     assertActiveSubscription(institute);
@@ -264,6 +273,19 @@ function optionalNumber(value, min = 0, max = 1000000000) {
   return value;
 }
 
+function optionalDocumentId(data, field) {
+  const value = data && data[field];
+  if (value == null) return null;
+  if (typeof value !== "string") {
+    throw new HttpsError("invalid-argument", `Invalid ${field}.`);
+  }
+  const id = value.trim();
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(id)) {
+    throw new HttpsError("invalid-argument", `Invalid ${field}.`);
+  }
+  return id;
+}
+
 function planLimit(institute, plan, kind) {
   const stored = kind === "student" ? institute.studentLimit : kind === "staff" ? institute.staffLimit : null;
   if (Number.isSafeInteger(stored) && stored > 0) return stored;
@@ -285,21 +307,64 @@ function copyFields(source, fields) {
 async function createEntitledStudentHandler(request) {
   const instituteId = requireString(request.data, "instituteId");
   const studentId = requireString(request.data, "studentId", 128);
+  const registrationRequestId = optionalDocumentId(request.data, "registrationRequestId");
   const entity = requireEntity(request.data, "student");
   await assertCanManageTenantResource(request.auth, instituteId, "manage_student");
   const instituteRef = db.collection("institutes").doc(instituteId);
   const students = instituteRef.collection("students");
   const studentRef = students.doc(studentId);
   const studentCountQuery = students.where("status", "==", "active").count();
+  const pendingRegistrationRef = registrationRequestId
+    ? db.collection("registrations").doc(instituteId).collection("pending").doc(registrationRequestId)
+    : null;
+  const approvalOperationRef = registrationRequestId
+    ? db.collection("registrations").doc(instituteId).collection("approval_operations").doc(registrationRequestId)
+    : null;
   const allowed = ["studentCode", "fullName", "photoUri", "gender", "dateOfBirthMs", "phone", "email", "address", "schoolName", "className", "guardianName", "guardianPhone", "guardianEmail", "emergencyContact", "bloodGroup", "admissionDateMs", "notes"];
   const studentCode = requireString(entity, "studentCode", 64);
   const fullName = requireString(entity, "fullName", 160);
   optionalString(entity.phone, 32); optionalString(entity.email, 160); optionalString(entity.photoUri, 2048);
   optionalNumber(entity.admissionDateMs, 0, 4102444800000);
-  return db.runTransaction(async (transaction) => {
-    const [instituteSnap, existingSnap, studentCountSnap] = await Promise.all([
-      transaction.get(instituteRef), transaction.get(studentRef), transaction.get(studentCountQuery),
-    ]);
+  let registrationPhoto = null;
+  if (registrationRequestId && pendingRegistrationRef) {
+    const pendingSnap = await pendingRegistrationRef.get();
+    if (pendingSnap.exists && pendingSnap.get("status") === "pending" && pendingSnap.get("photoUpload") != null) {
+      try {
+        registrationPhoto = await materializeRegistrationStudentPhoto({
+          bucket: mediaStorageBucket,
+          instituteId,
+          requestId: registrationRequestId,
+          studentId,
+          pendingPhoto: pendingSnap.get("photoUpload"),
+        });
+      } catch (error) {
+        logger.error("Registration student photo could not be prepared", {
+          instituteId,
+          registrationRequestId,
+          reason: error instanceof Error ? error.message : "Unknown error",
+        });
+        throw new HttpsError("unavailable", "Student photo could not be saved. Please try approving again.");
+      }
+    }
+  }
+  const result = await db.runTransaction(async (transaction) => {
+    const reads = [
+      transaction.get(instituteRef),
+      transaction.get(studentRef),
+      transaction.get(studentCountQuery),
+    ];
+    if (pendingRegistrationRef && approvalOperationRef) {
+      reads.push(transaction.get(pendingRegistrationRef), transaction.get(approvalOperationRef));
+    }
+    const mediaAssetRef = registrationPhoto
+      ? instituteRef.collection("media_assets").doc(registrationPhoto.assetId) : null;
+    if (mediaAssetRef) reads.push(transaction.get(mediaAssetRef));
+    const snapshots = await Promise.all(reads);
+    const [instituteSnap, existingSnap, studentCountSnap] = snapshots;
+    let nextSnapshot = 3;
+    const pendingRegistrationSnap = registrationRequestId ? snapshots[nextSnapshot++] : null;
+    const approvalOperationSnap = registrationRequestId ? snapshots[nextSnapshot++] : null;
+    const mediaAssetSnap = mediaAssetRef ? snapshots[nextSnapshot++] : null;
     if (!instituteSnap.exists || !hasActiveSubscription(instituteSnap.data())) {
       throw new HttpsError("failed-precondition", "Subscription has expired. Renew the plan to continue.");
     }
@@ -314,8 +379,68 @@ async function createEntitledStudentHandler(request) {
       throw new HttpsError("resource-exhausted", `Student limit (${limit}) has been reached.`);
     }
     const now = Date.now();
+    if (registrationRequestId) {
+      if (approvalOperationSnap.exists) {
+        throw new HttpsError("already-exists", "This registration has already been approved.");
+      }
+      if (!pendingRegistrationSnap.exists || pendingRegistrationSnap.get("status") !== "pending") {
+        throw new HttpsError("failed-precondition", "This registration is no longer pending.");
+      }
+      if (registrationPhoto) {
+        const pendingPhoto = pendingRegistrationSnap.get("photoUpload");
+        if (!pendingPhoto || pendingPhoto.sha256 !== registrationPhoto.sha256 ||
+            pendingPhoto.storageObjectPath !== registrationPhoto.temporaryObjectPath) {
+          throw new HttpsError("failed-precondition", "This registration photo changed. Please try approving again.");
+        }
+      }
+      transaction.create(approvalOperationRef, {
+        instituteId,
+        requestId: registrationRequestId,
+        studentId,
+        approvedBy: request.auth.uid,
+        approvedAtMs: now,
+      });
+      transaction.delete(pendingRegistrationRef);
+    }
+    if (registrationPhoto && mediaAssetRef) {
+      if (mediaAssetSnap.exists && mediaAssetSnap.get("operationId") !== registrationPhoto.operationId) {
+        throw new HttpsError("already-exists", "Registration photo asset collision detected.");
+      }
+      transaction.set(mediaAssetRef, {
+        instituteId,
+        assetId: registrationPhoto.assetId,
+        operationId: registrationPhoto.operationId,
+        purpose: "student_photo",
+        subjectId: studentId,
+        uploadedByUid: request.auth.uid,
+        reference: registrationPhoto.reference,
+        deliveryType: "firebase_storage_signed_url",
+        storageBucket: mediaStorageBucket.name,
+        storageObjectPath: registrationPhoto.storageObjectPath,
+        storageGeneration: registrationPhoto.storageGeneration,
+        format: "jpg",
+        bytes: registrationPhoto.byteLength,
+        sha256: registrationPhoto.sha256,
+        status: "active",
+        cleanupState: "retained",
+        createdAtMs: mediaAssetSnap.exists ? mediaAssetSnap.get("createdAtMs") || now : now,
+        updatedAtMs: now,
+      });
+      transaction.set(instituteRef.collection("media_audit").doc(registrationPhoto.operationId), {
+        instituteId,
+        operationId: registrationPhoto.operationId,
+        assetId: registrationPhoto.assetId,
+        action: "registration_approval_upload",
+        purpose: "student_photo",
+        subjectId: studentId,
+        actorUid: request.auth.uid,
+        occurredAtMs: now,
+      });
+    }
+    const studentFields = copyFields(entity, allowed);
+    if (registrationPhoto) studentFields.photoUri = registrationPhoto.reference;
     transaction.create(studentRef, {
-      ...copyFields(entity, allowed), instituteId, studentCode, fullName,
+      ...studentFields, instituteId, studentCode, fullName,
       status: "active", archivedAtMs: null, createdAtMs: now, updatedAtMs: now,
     });
     transaction.update(instituteRef, { studentCount: count + 1, updatedAtMs: now });
@@ -326,6 +451,14 @@ async function createEntitledStudentHandler(request) {
       unlimitedTrialStudents,
     };
   });
+  if (registrationPhoto && registrationRequestId) {
+    await cleanupPendingRegistrationPhoto({
+      bucket: mediaStorageBucket,
+      instituteId,
+      requestId: registrationRequestId,
+    });
+  }
+  return result;
 }
 
 async function createEntitledBatchHandler(request) {
@@ -406,6 +539,56 @@ async function createEntitledStaffHandler(request) {
     transaction.update(instituteRef, { staffCount: count + 1, updatedAtMs: now });
     return { staffId, staffCount: count + 1, staffLimit: limit };
   });
+}
+
+/**
+ * Updates only owner-managed student profile fields. This deliberately runs in
+ * the trusted backend so records awaiting legacy credential cleanup can still
+ * receive safe profile changes (especially a replacement photo) without
+ * exposing or letting clients alter credential fields.
+ */
+async function updateStudentProfileHandler(request) {
+  const instituteId = requireString(request.data, "instituteId");
+  const studentId = requireString(request.data, "studentId", 128);
+  const entity = requireEntity(request.data, "student");
+  await assertCanManageStudent(request.auth, instituteId);
+
+  const studentCode = requireString(entity, "studentCode", 64);
+  const fullName = requireString(entity, "fullName", 160);
+  const phone = requireString(entity, "phone", 32);
+  const allowed = [
+    "studentCode", "fullName", "photoUri", "gender", "dateOfBirthMs", "phone",
+    "email", "address", "schoolName", "className", "guardianName", "guardianPhone",
+    "guardianEmail", "emergencyContact", "bloodGroup", "admissionDateMs", "notes",
+  ];
+  optionalString(entity.photoUri, 2048);
+  optionalString(entity.gender, 32);
+  optionalString(entity.email, 160);
+  optionalString(entity.address, 500);
+  optionalString(entity.schoolName, 160);
+  optionalString(entity.className, 160);
+  optionalString(entity.guardianName, 160);
+  optionalString(entity.guardianPhone, 32);
+  optionalString(entity.guardianEmail, 160);
+  optionalString(entity.emergencyContact, 160);
+  optionalString(entity.bloodGroup, 32);
+  optionalString(entity.notes, 2000);
+  optionalNumber(entity.dateOfBirthMs, 0, 4102444800000);
+  optionalNumber(entity.admissionDateMs, 0, 4102444800000);
+
+  const studentRef = db.collection("institutes").doc(instituteId).collection("students").doc(studentId);
+  await db.runTransaction(async (transaction) => {
+    const studentSnap = await transaction.get(studentRef);
+    if (!studentSnap.exists) throw new HttpsError("not-found", "Student not found.");
+    transaction.update(studentRef, {
+      ...copyFields(entity, allowed),
+      studentCode,
+      fullName,
+      phone,
+      updatedAtMs: Date.now(),
+    });
+  });
+  return { studentId };
 }
 
 function assertActiveStudent(student) {
@@ -810,8 +993,9 @@ function guarded(handler) {
     } catch (error) {
       if (error instanceof HttpsError) throw error;
       logger.error("Trusted backend operation failed", {
-        code: error && error.code,
-        message: error && error.message,
+        errorCode: error && error.code,
+        errorName: error && error.name,
+        errorMessage: error && error.message,
       });
       throw new HttpsError("internal", "Trusted service is temporarily unavailable.");
     }
@@ -834,6 +1018,10 @@ exports.createEntitledBatch = onCall(
 exports.createEntitledStaff = onCall(
   { ...callableOptions, timeoutSeconds: 60 },
   guarded(createEntitledStaffHandler),
+);
+exports.updateStudentProfile = onCall(
+  callableOptions,
+  guarded(updateStudentProfileHandler),
 );
 exports.repairSubscriptionEntitlements = onCall(
   { ...callableOptions, timeoutSeconds: 540 },

@@ -10,9 +10,20 @@ import kotlinx.coroutines.tasks.await
 class EntitledCreationRepository {
     private val functions = FirebaseFunctions.getInstance(StudentAccountRepository.FUNCTIONS_REGION)
 
-    suspend fun createStudent(student: StudentEntity) {
+    suspend fun createStudent(
+        student: StudentEntity,
+        registrationRequestId: String? = null
+    ) {
+        val payload = mutableMapOf<String, Any?>(
+            "instituteId" to student.instituteId,
+            "studentId" to student.id,
+            "student" to studentPayload(student)
+        )
+        registrationRequestId?.trim()?.takeIf { it.isNotEmpty() }?.let {
+            payload["registrationRequestId"] = it
+        }
         functions.getHttpsCallable("createEntitledStudent").call(
-            mapOf("instituteId" to student.instituteId, "studentId" to student.id, "student" to studentPayload(student))
+            payload
         ).await()
     }
 

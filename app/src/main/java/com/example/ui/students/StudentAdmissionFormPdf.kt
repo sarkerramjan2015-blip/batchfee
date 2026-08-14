@@ -12,6 +12,7 @@ import android.graphics.RectF
 import android.graphics.pdf.PdfDocument
 import android.net.Uri
 import androidx.core.content.FileProvider
+import com.batchfee.edu.data.media.FirebaseStorageImageUploadHelper
 import com.batchfee.edu.data.models.InstituteEntity
 import com.batchfee.edu.data.models.StudentEntity
 import java.io.File
@@ -24,7 +25,7 @@ private const val ADMISSION_FORM_WIDTH = 595
 private const val ADMISSION_FORM_HEIGHT = 842
 
 /** A print-ready A4 admission form kept in app cache for secure sharing. */
-internal fun generateStudentAdmissionFormPdf(
+internal suspend fun generateStudentAdmissionFormPdf(
     context: Context,
     institute: InstituteEntity,
     student: StudentEntity
@@ -257,15 +258,16 @@ internal fun drawPhoto(canvas: Canvas, bitmap: Bitmap?, name: String, x: Float, 
     canvas.drawRect(x, y, x + width, y + height, stroke)
 }
 
-internal fun loadBitmap(context: Context, source: String?): Bitmap? {
+internal suspend fun loadBitmap(context: Context, source: String?): Bitmap? {
     if (source.isNullOrBlank()) return null
+    val resolvedSource = FirebaseStorageImageUploadHelper.resolveForDirectRead(context, source) ?: return null
     return try {
         when {
-            source.startsWith("http://") || source.startsWith("https://") -> URL(source).openConnection().apply {
+            resolvedSource.startsWith("http://") || resolvedSource.startsWith("https://") -> URL(resolvedSource).openConnection().apply {
                 connectTimeout = 4_000; readTimeout = 4_000
             }.getInputStream().use(BitmapFactory::decodeStream)
-            source.startsWith("content://") || source.startsWith("file://") -> context.contentResolver.openInputStream(Uri.parse(source))?.use(BitmapFactory::decodeStream)
-            else -> BitmapFactory.decodeFile(source)
+            resolvedSource.startsWith("content://") || resolvedSource.startsWith("file://") -> context.contentResolver.openInputStream(Uri.parse(resolvedSource))?.use(BitmapFactory::decodeStream)
+            else -> BitmapFactory.decodeFile(resolvedSource)
         }
     } catch (_: Exception) { null }
 }

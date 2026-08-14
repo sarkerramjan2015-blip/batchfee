@@ -4,10 +4,12 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.audit.StaffActivityLogger
 import com.batchfee.edu.data.firestore.ExamSyncHelper
 import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
 import com.batchfee.edu.data.models.BatchEntity
 import com.batchfee.edu.data.models.ExamEntity
+import com.batchfee.edu.data.models.InstituteEntity
 import com.batchfee.edu.data.models.ResultEntity
 import com.batchfee.edu.data.models.StudentEntity
 import com.batchfee.edu.domain.SessionManager
@@ -35,6 +37,9 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
 
     private val _instituteName = MutableStateFlow("")
 
+    private val _institute = MutableStateFlow<InstituteEntity?>(null)
+    val institute = _institute.asStateFlow()
+
     private val _selectedExam = MutableStateFlow<ExamEntity?>(null)
     val selectedExam = _selectedExam.asStateFlow()
 
@@ -60,6 +65,7 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
         }
         viewModelScope.launch {
             db.instituteDao().getInstituteFlow(instId).collect { institute ->
+                _institute.value = institute
                 _instituteName.value = institute?.name?.trim().orEmpty()
             }
         }
@@ -139,6 +145,9 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
         viewModelScope.launch {
             ExamSyncHelper.upsertExam(exam)
             db.examDao().insertExam(exam)
+            StaffActivityLogger.logCompletedAction(
+                db, "exam_created", "exams", "Created exam ${exam.examName}"
+            )
             onSuccess()
         }
     }
@@ -180,6 +189,9 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
             )
             ExamSyncHelper.upsertExam(updated)
             db.examDao().updateExam(updated)
+            StaffActivityLogger.logCompletedAction(
+                db, "exam_updated", "exams", "Updated exam ${updated.examName}"
+            )
             onSuccess()
         }
     }
@@ -193,6 +205,9 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
                     ExamSyncHelper.upsertExam(it)
                 }
                 db.examDao().archiveExam(instId, examId, now)
+                StaffActivityLogger.logCompletedAction(
+                    db, "exam_archived", "exams", "Archived an exam"
+                )
                 onSuccess()
             } catch (e: Exception) {
                 onError(e.message ?: "Failed to delete exam")
@@ -235,6 +250,9 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
                     db.examDao().updateExam(completedExam)
                 }
                 loadExamDetails(examId)
+                StaffActivityLogger.logCompletedAction(
+                    db, "exam_results_saved", "exams", "Saved results for ${marksList.size} students"
+                )
                 onSuccess()
             } catch (e: Exception) {
                 onError(e.message ?: "Failed to save results")
@@ -255,6 +273,9 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
                     }
                 }
                 loadExamDetails(examId)
+                StaffActivityLogger.logCompletedAction(
+                    db, "exam_results_published", "exams", "Published exam results"
+                )
                 onSuccess()
             } catch (e: Exception) {
                 onError(e.message ?: "Failed to publish")
@@ -288,6 +309,9 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
                     db.resultDao().insertOrUpdateResult(updated)
                 }
                 loadExamDetails(examId)
+                StaffActivityLogger.logCompletedAction(
+                    db, "exam_result_updated", "exams", "Updated one student result"
+                )
                 onSuccess()
             } catch (e: Exception) {
                 onError(e.message ?: "Failed to update result")

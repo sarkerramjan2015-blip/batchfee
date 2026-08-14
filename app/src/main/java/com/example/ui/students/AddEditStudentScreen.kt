@@ -169,13 +169,23 @@ fun AddEditStudentScreen(
     val cameraLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.TakePicture()
     ) { success ->
-        if (success) photoUri = tempPhotoUri
+        if (success) photoUri = Uri.fromFile(tempPhotoFile)
     }
 
     val galleryLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri ->
-        if (uri != null) photoUri = uri
+        if (uri != null) {
+            saveScope.launch {
+                try {
+                    photoUri = withContext(Dispatchers.IO) {
+                        FirebaseStorageImageUploadHelper.cacheSelectedImage(context, uri, "student_photo")
+                    }
+                } catch (error: Exception) {
+                    saveError = error.message ?: "Could not read this image. Please choose it again."
+                }
+            }
+        }
     }
 
     LaunchedEffect(studentId) {
@@ -559,64 +569,6 @@ fun AddEditStudentScreen(
                 }
             }
 
-            // ── Share Credentials button (visible when app access enabled) ──
-            if (showPasswordField && appAccessPassword.isNotEmpty()) {
-                Spacer(Modifier.height(10.dp))
-                val shareScope = rememberCoroutineScope()
-                val ctx = LocalContext.current
-                val loginCode = studentCode
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    OutlinedButton(
-                        onClick = {
-                            shareScope.launch {
-                                val text = buildString {
-                                    appendLine("Student: $fullName")
-                                    appendLine("Login ID: $loginCode")
-                                    appendLine("Password: $appAccessPassword")
-                                }
-                                val intent = Intent(Intent.ACTION_SEND).apply {
-                                    type = "text/plain"
-                                    putExtra(Intent.EXTRA_SUBJECT, "Student Login Credentials")
-                                    putExtra(Intent.EXTRA_TEXT, text)
-                                }
-                                ctx.startActivity(Intent.createChooser(intent, "Share Credentials"))
-                            }
-                        },
-                        modifier = Modifier.weight(1f).height(42.dp),
-                        shape = RoundedCornerShape(10.dp),
-                        border = BorderStroke(1.dp, Cyan.copy(alpha = 0.5f)),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Cyan)
-                    ) {
-                        Icon(Icons.Filled.Share, null, Modifier.size(16.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("Share Credentials", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    }
-                    OutlinedButton(
-                        onClick = {
-                            val text = buildString {
-                                appendLine("*Student:* $fullName")
-                                appendLine("*Login ID:* $loginCode")
-                                appendLine("*Password:* $appAccessPassword")
-                            }
-                            val waUrl = buildWhatsAppUrl(null, text)
-                            ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(waUrl)))
-                        },
-                        modifier = Modifier.weight(1f).height(42.dp),
-                        shape = RoundedCornerShape(10.dp),
-                        border = BorderStroke(1.dp, Color(0xFF25D366).copy(alpha = 0.5f)),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF25D366))
-                    ) {
-                        Icon(Icons.Filled.Whatsapp, null, Modifier.size(16.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("WhatsApp", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    }
-                }
-            }
-
             Spacer(Modifier.height(20.dp))
 
             saveError?.let { message ->
@@ -676,6 +628,11 @@ fun AddEditStudentScreen(
                                             isSaving = false
                                             onBack()
                                         },
+                                        onPartialSuccess = { message ->
+                                            isSaving = false
+                                            Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                                            onBack()
+                                        },
                                         onError = {
                                             saveError = it
                                             isSaving = false
@@ -710,6 +667,11 @@ fun AddEditStudentScreen(
                                                 temporaryPassword = accountPassword
                                             )
                                         },
+                                        onPartialSuccess = { message ->
+                                            isSaving = false
+                                            Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                                            onBack()
+                                        },
                                         onError = {
                                             saveError = it
                                             isSaving = false
@@ -725,7 +687,7 @@ fun AddEditStudentScreen(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                if (isSaving) "Optimizing photo..." else if (isEdit) "Update" else "Save",
+                if (isSaving) "Saving..." else if (isEdit) "Update" else "Save",
                     color = Color.White,
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold

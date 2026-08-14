@@ -58,6 +58,8 @@ object BillingRoute
 @Serializable object AddStaffRoute
 @Serializable data class EditStaffRoute(val staffId: String)
 @Serializable data class StaffProfileRoute(val staffId: String)
+@Serializable object StaffActivityRoute
+@Serializable object RoutineRoute
 @Serializable object StaffAttendanceRoute
 @Serializable object StaffAttendanceReportRoute
 @Serializable object SalaryRoute

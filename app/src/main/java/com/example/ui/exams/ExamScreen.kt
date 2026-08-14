@@ -2,6 +2,7 @@ package com.batchfee.edu.ui.exams
 
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
@@ -40,6 +41,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -49,8 +51,10 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.media.FirebaseStorageImageUploadHelper
 import com.batchfee.edu.data.models.ExamEntity
 import com.batchfee.edu.domain.SessionManager
+import coil.compose.AsyncImage
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -450,6 +454,7 @@ fun ExamDetailScreen(db: AppDatabase, examId: String, onBack: () -> Unit, onEdit
     val batchStudents by viewModel.batchStudents.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val batches by viewModel.batches.collectAsState()
+    val institute by viewModel.institute.collectAsState()
 
     var marksMap by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var showMeritDialog by remember { mutableStateOf(false) }
@@ -470,6 +475,8 @@ fun ExamDetailScreen(db: AppDatabase, examId: String, onBack: () -> Unit, onEdit
     val batchName = batches.find { it.id == selectedExam?.batchId }?.name ?: "Batch"
     val hasResults = studentResults.any { it.result != null }
     val canPublish = hasResults && selectedExam?.status == "completed"
+    val instituteName = institute?.name?.trim().takeUnless { it.isNullOrBlank() } ?: "BatchFee"
+    val instituteLogoSource = FirebaseStorageImageUploadHelper.displaySource(context, institute?.profilePhotoUri)
 
     Scaffold(
         containerColor = BgColor, snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -690,142 +697,146 @@ fun ExamDetailScreen(db: AppDatabase, examId: String, onBack: () -> Unit, onEdit
         Dialog(onDismissRequest = { showStudentMessageDialog = null }) {
             Card(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
-                shape = RoundedCornerShape(20.dp),
+                shape = RoundedCornerShape(22.dp),
                 colors = CardDefaults.cardColors(containerColor = CardBg),
                 border = BorderStroke(1.dp, BorderSub)
             ) {
                 Column {
-                    // Header
+                    // Exam header
                     Box(
                         modifier = Modifier.fillMaxWidth()
-                            .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
+                            .clip(RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp))
                             .background(Brush.linearGradient(listOf(ElectricBlue, AccentViolet)))
-                            .padding(20.dp)
+                            .padding(horizontal = 20.dp, vertical = 16.dp)
                     ) {
-                        Column(modifier = Modifier.fillMaxWidth()) {
-                            Text("RESULT CARD", color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-                            Spacer(Modifier.height(4.dp))
-                            Text(exam.examName, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            if (exam.subject != null) Text(exam.subject, color = Color.White.copy(alpha = 0.8f), fontSize = 13.sp)
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text(batchName, color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
-                                Text(SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(exam.examDateMs)), color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
+                        Row(verticalAlignment = Alignment.Top) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("EXAM RESULT", color = Color.White.copy(alpha = 0.72f), fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.7.sp)
+                                Spacer(Modifier.height(5.dp))
+                                Text(exam.examName, color = Color.White, fontSize = 21.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                if (!exam.subject.isNullOrBlank()) {
+                                    Spacer(Modifier.height(2.dp))
+                                    Text(exam.subject, color = Color.White.copy(alpha = 0.86f), fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                                Spacer(Modifier.height(10.dp))
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                    Text(batchName, modifier = Modifier.weight(1f), color = Color.White.copy(alpha = 0.78f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Spacer(Modifier.width(12.dp))
+                                    Text(SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(exam.examDateMs)), color = Color.White.copy(alpha = 0.78f), fontSize = 12.sp)
+                                }
                             }
+                            Spacer(Modifier.width(12.dp))
+                            ResultCardInstituteLogo(instituteLogoSource, instituteName)
                         }
                     }
 
                     // Student info
-                    Column(modifier = Modifier.padding(20.dp)) {
+                    Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Box(
-                                modifier = Modifier.size(48.dp).clip(CircleShape)
+                                modifier = Modifier.size(46.dp).clip(CircleShape)
                                     .background(Brush.linearGradient(listOf(Cyan.copy(0.3f), AccentViolet.copy(0.2f)))),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text(item.student.fullName.firstOrNull()?.uppercase() ?: "?", color = Cyan, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                                Text(item.student.fullName.firstOrNull()?.uppercase() ?: "?", color = Cyan, fontSize = 19.sp, fontWeight = FontWeight.Bold)
                             }
-                            Spacer(Modifier.width(14.dp))
-                            Column {
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
                                 Text(item.student.fullName, color = TextWhite, fontSize = 17.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(item.student.studentCode.ifBlank { "No ID" }, color = TextMuted, fontSize = 13.sp)
+                                Spacer(Modifier.height(1.dp))
+                                Text("Student ID  ·  ${item.student.studentCode.ifBlank { "Not assigned" }}", color = TextMuted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
-                        }
-
-                        Spacer(Modifier.height(16.dp))
-                        HorizontalDivider(color = BorderSub)
-                        Spacer(Modifier.height(16.dp))
-
-                        // Marks + Grade row
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                            StatCard("Marks", "${item.result?.marksObtained?.let { formatNum(it) } ?: "-"} / ${formatNum(exam.totalMarks)}", Cyan)
-                            StatCard("Grade", item.result?.grade ?: "-", gradeColor)
-                            StatCard("Position", "#${item.position}", AccentViolet)
                         }
 
                         Spacer(Modifier.height(14.dp))
+                        HorizontalDivider(color = BorderSub)
+                        Spacer(Modifier.height(14.dp))
+
+                        // Marks + Grade row
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            StatCard(
+                                label = "Marks",
+                                value = "${item.result?.marksObtained?.let { formatNum(it) } ?: "-"} / ${formatNum(exam.totalMarks)}",
+                                color = Cyan,
+                                modifier = Modifier.weight(1f)
+                            )
+                            StatCard("Grade", item.result?.grade ?: "-", gradeColor, Modifier.weight(1f))
+                            StatCard("Position", "#${item.position}", AccentViolet, Modifier.weight(1f))
+                        }
+
+                        Spacer(Modifier.height(12.dp))
 
                         // Pass/Fail badge
                         Box(
                             modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
                                 .background(passColor.copy(alpha = 0.12f)).border(1.dp, passColor.copy(alpha = 0.3f), RoundedCornerShape(12.dp))
-                                .padding(vertical = 10.dp),
+                                .padding(vertical = 9.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(if (passFail == "PASSED") Icons.Filled.CheckCircle else Icons.Filled.Cancel, null, tint = passColor, modifier = Modifier.size(18.dp))
+                                Icon(if (passFail == "PASSED") Icons.Filled.CheckCircle else Icons.Filled.Cancel, null, tint = passColor, modifier = Modifier.size(17.dp))
                                 Spacer(Modifier.width(6.dp))
-                                Text(passFail, color = passColor, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                Text(passFail, color = passColor, fontSize = 15.sp, fontWeight = FontWeight.Bold)
                             }
                         }
-
-                        Spacer(Modifier.height(6.dp))
 
                         // Progress bar
                         val pct = if (exam.totalMarks > 0) ((item.result?.marksObtained ?: 0.0) / exam.totalMarks).coerceIn(0.0, 1.0) else 0.0
+                        Spacer(Modifier.height(10.dp))
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("Score percentage", color = TextMuted, fontSize = 11.sp)
+                            Text("${"%.0f".format(pct * 100)}%", color = gradeColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                        Spacer(Modifier.height(6.dp))
                         LinearProgressIndicator(
                             progress = { pct.toFloat() },
-                            modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
+                            modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(3.dp)),
                             color = gradeColor,
                             trackColor = CardBgAlt,
                         )
-                        Spacer(Modifier.height(4.dp))
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text("0", color = TextMuted, fontSize = 10.sp)
-                            Text("${"%.0f".format(pct * 100)}%", color = gradeColor, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-                            Text(formatNum(exam.totalMarks), color = TextMuted, fontSize = 10.sp)
-                        }
 
-                        Spacer(Modifier.height(16.dp))
+                        Spacer(Modifier.height(14.dp))
                         HorizontalDivider(color = BorderSub)
-                        Spacer(Modifier.height(12.dp))
+                        Spacer(Modifier.height(10.dp))
 
                         // Actions
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(
+                            ResultActionButton(
+                                label = "Share",
+                                icon = Icons.Filled.Share,
+                                color = Cyan,
                                 onClick = {
                                     showStudentMessageDialog = null
-                                    shareResultImage(context, item, exam, batchName, gradeColor, passColor, passFail)
+                                    shareResultImage(context, item, exam, batchName, gradeColor, passColor, passFail, instituteName, institute?.profilePhotoUri)
                                 },
-                                modifier = Modifier.weight(1f).height(44.dp),
-                                shape = RoundedCornerShape(12.dp),
-                                border = BorderStroke(1.dp, Cyan.copy(alpha = 0.5f))
-                            ) {
-                                Icon(Icons.Filled.Share, null, tint = Cyan, modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.width(6.dp))
-                                Text("Share", color = Cyan, fontSize = 13.sp)
-                            }
-                            OutlinedButton(
+                                modifier = Modifier.weight(1f)
+                            )
+                            ResultActionButton(
+                                label = "Print",
+                                icon = Icons.Filled.Print,
+                                color = ElectricBlue,
                                 onClick = {
                                     showStudentMessageDialog = null
-                                    printResultCard(context, item, exam, batchName, gradeColor, passColor, passFail)
+                                    printResultCard(context, item, exam, batchName, gradeColor, passColor, passFail, instituteName, institute?.profilePhotoUri)
                                 },
-                                modifier = Modifier.weight(1f).height(44.dp),
-                                shape = RoundedCornerShape(12.dp),
-                                border = BorderStroke(1.dp, ElectricBlue.copy(alpha = 0.55f))
-                            ) {
-                                Icon(Icons.Filled.Print, null, tint = ElectricBlue, modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.width(5.dp))
-                                Text("Print", color = ElectricBlue, fontSize = 12.sp)
-                            }
-                            OutlinedButton(
+                                modifier = Modifier.weight(1f)
+                            )
+                            ResultActionButton(
+                                label = "WhatsApp",
+                                icon = Icons.Filled.Chat,
+                                color = WAGreen,
                                 onClick = {
                                     showStudentMessageDialog = null
                                     val msg = viewModel.buildStudentMessage(item, exam)
                                     sendWhatsApp(context, item.student.phone, msg)
                                 },
-                                modifier = Modifier.weight(1f).height(44.dp),
-                                shape = RoundedCornerShape(12.dp),
-                                border = BorderStroke(1.dp, WAGreen)
-                            ) {
-                                Icon(Icons.Filled.Chat, null, tint = WAGreen, modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.width(6.dp))
-                                Text("WhatsApp", color = WAGreen, fontSize = 13.sp)
-                            }
+                                modifier = Modifier.weight(1f)
+                            )
                         }
-                        Spacer(Modifier.height(8.dp))
+                        Spacer(Modifier.height(4.dp))
                         TextButton(
                             onClick = { showStudentMessageDialog = null },
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier.fillMaxWidth().height(36.dp)
                         ) { Text("Close", color = TextMuted, fontSize = 13.sp) }
                     }
                 }
@@ -933,16 +944,71 @@ private fun StatLabel(label: String, value: String, color: Color) {
 }
 
 @Composable
-private fun StatCard(label: String, value: String, color: Color) {
+private fun StatCard(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
     Card(
+        modifier = modifier,
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = CardBgAlt),
         border = BorderStroke(1.dp, BorderSub)
     ) {
-        Column(modifier = Modifier.padding(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(value, color = color, fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Spacer(Modifier.height(2.dp))
-            Text(label, color = TextMuted, fontSize = 11.sp)
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 10.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(value, color = color, fontSize = 17.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Spacer(Modifier.height(3.dp))
+            Text(label, color = TextMuted, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@Composable
+private fun ResultActionButton(
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    color: Color,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    OutlinedButton(
+        onClick = onClick,
+        modifier = modifier.height(58.dp),
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(1.dp, color.copy(alpha = 0.6f)),
+        contentPadding = PaddingValues(horizontal = 2.dp, vertical = 5.dp),
+        colors = ButtonDefaults.outlinedButtonColors(contentColor = color)
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(icon, contentDescription = label, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.height(3.dp))
+            Text(label, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@Composable
+private fun ResultCardInstituteLogo(logoSource: String?, instituteName: String) {
+    Box(
+        modifier = Modifier.size(48.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color.White.copy(alpha = 0.16f))
+            .border(1.dp, Color.White.copy(alpha = 0.38f), RoundedCornerShape(14.dp)),
+        contentAlignment = Alignment.Center
+    ) {
+        if (!logoSource.isNullOrBlank()) {
+            AsyncImage(
+                model = logoSource,
+                contentDescription = "$instituteName logo",
+                modifier = Modifier.fillMaxSize().padding(3.dp).clip(RoundedCornerShape(11.dp)),
+                contentScale = ContentScale.Fit
+            )
+        } else {
+            Text(
+                instituteName.trim().take(2).uppercase().ifBlank { "IN" },
+                color = Color.White,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold
+            )
         }
     }
 }
@@ -1004,12 +1070,15 @@ private fun sendSMS(context: android.content.Context, phone: String?, msg: Strin
 }
 
 private fun createResultCardBitmap(
+    context: android.content.Context,
     item: StudentResultItem,
     exam: com.batchfee.edu.data.models.ExamEntity,
     batchName: String,
     gradeColor: androidx.compose.ui.graphics.Color,
     passColor: androidx.compose.ui.graphics.Color,
     passFail: String,
+    instituteName: String,
+    instituteLogoUri: String?,
 ): Bitmap {
     val width = 1080
     val height = 1350
@@ -1047,14 +1116,26 @@ private fun createResultCardBitmap(
     canvas.drawCircle(900f, 75f, 185f, fill)
     canvas.drawCircle(1000f, 240f, 120f, fill)
 
-    val brandPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = white; textSize = 24f; isFakeBoldText = true; textAlign = Paint.Align.CENTER }
-    fill.color = cyan
-    canvas.drawCircle(82f, 82f, 30f, fill)
-    canvas.drawText("BF", 82f, 90f, brandPaint)
+    val safeInstituteName = instituteName.trim().takeIf { it.isNotBlank() } ?: "BatchFee"
+    val logoRect = RectF(52f, 52f, 112f, 112f)
+    val logoPath = android.graphics.Path().apply { addCircle(82f, 82f, 30f, android.graphics.Path.Direction.CW) }
+    val logoBitmap = loadResultCardLogo(context, instituteLogoUri)
+    canvas.save()
+    canvas.clipPath(logoPath)
+    fill.color = if (logoBitmap == null) cyan else white
+    canvas.drawRect(logoRect, fill)
+    if (logoBitmap != null) {
+        canvas.drawBitmap(logoBitmap, null, logoRect, Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
+    } else {
+        val brandPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = navy; textSize = 20f; isFakeBoldText = true; textAlign = Paint.Align.CENTER }
+        canvas.drawText(safeInstituteName.take(2).uppercase(), 82f, 89f, brandPaint)
+    }
+    canvas.restore()
+    logoBitmap?.recycle()
     val badgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = white; textSize = 18f; isFakeBoldText = true; letterSpacing = 0.10f }
     canvas.drawText("RESULT STATEMENT", 130f, 70f, badgePaint)
     val headerSmall = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.argb(185, 255, 255, 255); textSize = 18f }
-    canvas.drawText("BatchFee Academic Record", 130f, 101f, headerSmall)
+    canvas.drawText(fitResultCardText(safeInstituteName, headerSmall, 500f), 130f, 101f, headerSmall)
     val examPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = white; textSize = 34f; isFakeBoldText = true }
     canvas.drawText(fitResultCardText(exam.examName, examPaint, 780f), 66f, 173f, examPaint)
     val examMeta = listOf(batchName, SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(exam.examDateMs))).filter { it.isNotBlank() }.joinToString("  |  ")
@@ -1144,8 +1225,10 @@ private fun shareResultImage(
     gradeColor: androidx.compose.ui.graphics.Color,
     passColor: androidx.compose.ui.graphics.Color,
     passFail: String,
+    instituteName: String,
+    instituteLogoUri: String?,
 ) {
-    val bitmap = createResultCardBitmap(item, exam, batchName, gradeColor, passColor, passFail)
+    val bitmap = createResultCardBitmap(context, item, exam, batchName, gradeColor, passColor, passFail, instituteName, instituteLogoUri)
     try {
         val file = java.io.File(context.cacheDir, "result_${item.student.id}.jpg")
         FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.JPEG, 96, it) }
@@ -1168,8 +1251,10 @@ private fun printResultCard(
     gradeColor: androidx.compose.ui.graphics.Color,
     passColor: androidx.compose.ui.graphics.Color,
     passFail: String,
+    instituteName: String,
+    instituteLogoUri: String?,
 ) {
-    val bitmap = createResultCardBitmap(item, exam, batchName, gradeColor, passColor, passFail)
+    val bitmap = createResultCardBitmap(context, item, exam, batchName, gradeColor, passColor, passFail, instituteName, instituteLogoUri)
     val printManager = context.getSystemService(android.content.Context.PRINT_SERVICE) as? PrintManager
     if (printManager == null) {
         bitmap.recycle()
@@ -1257,6 +1342,27 @@ private fun fitResultCardText(value: String, paint: Paint, maxWidth: Float): Str
     var end = value.length
     while (end > 0 && paint.measureText(value.take(end) + suffix) > maxWidth) end -= 1
     return value.take(end) + suffix
+}
+
+private fun loadResultCardLogo(context: android.content.Context, source: String?): Bitmap? {
+    val resolvedSource = FirebaseStorageImageUploadHelper.displaySource(context, source) ?: return null
+    return try {
+        val uri = Uri.parse(resolvedSource)
+        when (uri.scheme?.lowercase()) {
+            "http", "https" -> {
+                val connection = (java.net.URL(resolvedSource).openConnection() as java.net.HttpURLConnection).apply {
+                    connectTimeout = 5_000
+                    readTimeout = 5_000
+                    doInput = true
+                }
+                connection.inputStream.use { BitmapFactory.decodeStream(it) }.also { connection.disconnect() }
+            }
+            "file", "content" -> context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) }
+            else -> java.io.File(resolvedSource).inputStream().use { BitmapFactory.decodeStream(it) }
+        }
+    } catch (_: Exception) {
+        null
+    }
 }
 
 private fun shareLegacyResultImage(

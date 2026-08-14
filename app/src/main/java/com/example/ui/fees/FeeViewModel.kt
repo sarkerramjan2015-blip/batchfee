@@ -7,6 +7,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.audit.StaffActivityLogger
 import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
 import com.batchfee.edu.data.models.FeeEntity
 import com.batchfee.edu.data.repository.FeeCollectionRepository
@@ -245,6 +246,9 @@ class FeeViewModel(private val db: AppDatabase) : ViewModel() {
                     discountAmount = discount,
                     lateFeeAmount = lateFee
                 )
+                StaffActivityLogger.logCompletedAction(
+                    db, "fee_created", "fees", "Created a fee record for $feePeriod"
+                )
                 onSuccess()
             } catch (_: IllegalArgumentException) {
                 onError("Unable to create fee. Please check the values and try again.")
@@ -283,6 +287,9 @@ class FeeViewModel(private val db: AppDatabase) : ViewModel() {
                     amount = amount,
                     paymentMethod = paymentMethod,
                     note = note
+                )
+                StaffActivityLogger.logCompletedAction(
+                    db, "payment_collected", "fees", "Collected BDT ${amount.toLong()} by $paymentMethod"
                 )
                 onSuccess(result.paymentId)
             } catch (e: FinancialOperationPendingException) {
@@ -330,6 +337,9 @@ class FeeViewModel(private val db: AppDatabase) : ViewModel() {
                     paymentMethod = paymentMethod,
                     feePeriod = feePeriod,
                     note = note
+                )
+                StaffActivityLogger.logCompletedAction(
+                    db, "payment_collected", "fees", "Updated a fee and collected BDT ${collectedAmount.toLong()} by $paymentMethod"
                 )
                 onSuccess(result.paymentId)
             } catch (e: FinancialOperationPendingException) {

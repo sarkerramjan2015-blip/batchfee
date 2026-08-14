@@ -30,6 +30,7 @@ private val AccentGreen = Color(0xFF22C55E)
 @Composable
 fun RegistrationDetailSheet(
     registration: PendingRegistration,
+    isProcessing: Boolean,
     onDismiss: () -> Unit,
     onApprove: () -> Unit,
     onReject: () -> Unit
@@ -83,6 +84,7 @@ fun RegistrationDetailSheet(
             ) {
                 OutlinedButton(
                     onClick = onReject,
+                    enabled = !isProcessing,
                     modifier = Modifier.weight(1f).height(48.dp),
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.outlinedButtonColors(
@@ -97,6 +99,7 @@ fun RegistrationDetailSheet(
 
                 Button(
                     onClick = onApprove,
+                    enabled = !isProcessing,
                     modifier = Modifier.weight(1f).height(48.dp),
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(
@@ -104,9 +107,19 @@ fun RegistrationDetailSheet(
                         contentColor = Color.White
                     )
                 ) {
-                    Icon(Icons.Filled.Check, null, tint = Color.White, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("Approve", fontWeight = FontWeight.Bold)
+                    if (isProcessing) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            color = Color.White,
+                            strokeWidth = 2.dp
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text("Saving...", fontWeight = FontWeight.Bold)
+                    } else {
+                        Icon(Icons.Filled.Check, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Approve", fontWeight = FontWeight.Bold)
+                    }
                 }
             }
         }

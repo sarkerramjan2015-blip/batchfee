@@ -2,6 +2,11 @@
 
 const { randomUUID } = require("node:crypto");
 const { canonicalRegistrationPayload, stableHash } = require("./publicRegistrationCore");
+const {
+  canonicalRegistrationPhoto,
+  uploadPendingRegistrationPhoto,
+  cleanupPendingRegistrationPhoto,
+} = require("./registrationPhoto");
 
 const RATE_WINDOW_MS = 60 * 60 * 1000;
 const MAX_SUBMISSIONS_PER_IP = 4;
@@ -26,7 +31,7 @@ function configuredSecret(secretParameter) {
   return value;
 }
 
-function createPublicRegistrationHandler({ db, rateLimitSecret }) {
+function createPublicRegistrationHandler({ db, bucket, rateLimitSecret }) {
   return async (request, response) => {
     if (request.method !== "POST") {
       sendJson(response, 405, { error: "method_not_allowed" });
@@ -50,9 +55,14 @@ function createPublicRegistrationHandler({ db, rateLimitSecret }) {
     }
 
     let registration;
+    let studentPhoto;
     try {
       registration = canonicalRegistrationPayload(body);
+      studentPhoto = canonicalRegistrationPhoto(body.studentPhoto);
     } catch (error) {
+      console.warn("Public registration validation failed", {
+        reason: error instanceof Error ? error.message : "Unknown validation error",
+      });
       sendJson(response, 400, { error: "validation_failed", message: error.message });
       return;
     }
@@ -60,7 +70,10 @@ function createPublicRegistrationHandler({ db, rateLimitSecret }) {
     let secret;
     try {
       secret = configuredSecret(rateLimitSecret);
-    } catch (_) {
+    } catch (error) {
+      console.error("Public registration submission failed", {
+        reason: error instanceof Error ? error.message : "Unknown error",
+      });
       sendJson(response, 503, { error: "temporarily_unavailable" });
       return;
     }
@@ -73,6 +86,35 @@ function createPublicRegistrationHandler({ db, rateLimitSecret }) {
     );
     const duplicateRef = db.collection("public_registration_dedup").doc(phoneKey);
     const requestId = `reg_${randomUUID().replaceAll("-", "")}`;
+    let temporaryPhoto = null;
+    let photoInstituteId = null;
+    let accepted = false;
+
+    // An image is stored privately before the Firestore transaction. This keeps
+    // registration records small and lets us return an error without consuming a
+    // student's one allowed submission when Storage is unavailable.
+    if (studentPhoto) {
+      try {
+        const profileSnap = await profileRef.get();
+        const profile = profileSnap.exists ? profileSnap.data() : null;
+        const instituteId = profile && profile.slug === registration.slug &&
+          typeof profile.instituteId === "string" ? profile.instituteId : "";
+        if (!instituteId || instituteId.length > 128) {
+          sendJson(response, 404, { error: "registration_link_not_found" });
+          return;
+        }
+        photoInstituteId = instituteId;
+        temporaryPhoto = await uploadPendingRegistrationPhoto({
+          bucket, instituteId, requestId, photo: studentPhoto,
+        });
+      } catch (error) {
+        console.error("Public registration photo upload failed", {
+          reason: error instanceof Error ? error.message : "Unknown error",
+        });
+        sendJson(response, 503, { error: "temporarily_unavailable" });
+        return;
+      }
+    }
 
     try {
       const result = await db.runTransaction(async (transaction) => {
@@ -88,6 +130,9 @@ function createPublicRegistrationHandler({ db, rateLimitSecret }) {
         const profile = profileSnap.data();
         const instituteId = typeof profile.instituteId === "string" ? profile.instituteId : "";
         if (!instituteId || instituteId.length > 128) return { kind: "not_found" };
+        if (temporaryPhoto && (temporaryPhoto.storageBucket !== bucket.name || photoInstituteId !== instituteId)) {
+          return { kind: "not_found" };
+        }
 
         const updatedRate = (snapshot, max) => {
           const current = snapshot.exists ? snapshot.data() : {};
@@ -122,6 +167,7 @@ function createPublicRegistrationHandler({ db, rateLimitSecret }) {
           status: "pending",
           source: "public_web",
           publicProfileSlug: registration.slug,
+          ...(temporaryPhoto ? { photoUpload: temporaryPhoto } : {}),
         });
         transaction.set(ipRateRef, { ...ipRate, updatedAtMs: now });
         transaction.set(profileRateRef, { ...profileRate, updatedAtMs: now });
@@ -133,6 +179,7 @@ function createPublicRegistrationHandler({ db, rateLimitSecret }) {
         return { kind: "accepted", requestId };
       });
       if (result.kind === "accepted") {
+        accepted = true;
         sendJson(response, 201, { status: "accepted", requestId: result.requestId });
       } else if (result.kind === "not_found") {
         sendJson(response, 404, { error: "registration_link_not_found" });
@@ -143,6 +190,16 @@ function createPublicRegistrationHandler({ db, rateLimitSecret }) {
       }
     } catch (_) {
       sendJson(response, 503, { error: "temporarily_unavailable" });
+    } finally {
+      // A rejected submission must not leave a private image behind. Accepted
+      // submissions keep it until the institute approves the student.
+      if (temporaryPhoto && photoInstituteId && !accepted) {
+        await cleanupPendingRegistrationPhoto({
+          bucket,
+          instituteId: photoInstituteId,
+          requestId,
+        });
+      }
     }
   };
 }

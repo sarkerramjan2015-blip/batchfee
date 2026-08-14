@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.audit.StaffActivityLogger
 import com.batchfee.edu.data.firestore.BatchSyncHelper
 import com.batchfee.edu.data.firestore.CoreDataSyncCoordinator
 import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
@@ -88,6 +89,9 @@ class BatchViewModel(private val db: AppDatabase) : ViewModel() {
             try {
                 entitledCreationRepository.createBatch(batch)
                 db.batchDao().insertBatch(batch)
+                StaffActivityLogger.logCompletedAction(
+                    db, "batch_created", "batches", "Created batch ${batch.name}"
+                )
                 onSuccess()
             } catch (e: Exception) {
                 onError(e.message ?: "Failed to save batch.")
@@ -109,6 +113,9 @@ class BatchViewModel(private val db: AppDatabase) : ViewModel() {
                 val updated = batch.copy(updatedAtMs = System.currentTimeMillis())
                 BatchSyncHelper.upsertBatch(updated)
                 db.batchDao().updateBatch(updated)
+                StaffActivityLogger.logCompletedAction(
+                    db, "batch_updated", "batches", "Updated batch ${updated.name}"
+                )
                 onSuccess()
             } catch (e: Exception) {
                 onError(e.message ?: "Failed to update batch.")
@@ -127,6 +134,9 @@ class BatchViewModel(private val db: AppDatabase) : ViewModel() {
                 SafeDeletionRepository(db).archiveBatch(
                     batch,
                     reason = "Batch archived from batch management"
+                )
+                StaffActivityLogger.logCompletedAction(
+                    db, "batch_archived", "batches", "Archived batch ${batch.name}"
                 )
                 onSuccess()
             } catch (e: Exception) {
@@ -175,6 +185,12 @@ class BatchViewModel(private val db: AppDatabase) : ViewModel() {
                         db.batchStudentDao().enrollStudent(enrollment)
                     }
                 }
+                StaffActivityLogger.logCompletedAction(
+                    db,
+                    "batch_students_shifted",
+                    "batches",
+                    "Moved ${students.size} students from ${fromBatch.name} to ${toBatch.name}"
+                )
                 onSuccess()
             } catch (e: Exception) {
                 onError(e.message ?: "Failed to shift students.")

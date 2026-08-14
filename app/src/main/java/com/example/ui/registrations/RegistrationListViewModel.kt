@@ -10,6 +10,7 @@ import com.batchfee.edu.data.repository.EntitledCreationRepository
 import com.batchfee.edu.data.models.PendingRegistration
 import com.batchfee.edu.data.models.StudentEntity
 import com.batchfee.edu.domain.SessionManager
+import com.google.firebase.functions.FirebaseFunctionsException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -25,6 +26,9 @@ class RegistrationListViewModel(private val db: AppDatabase) : ViewModel() {
 
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
+
+    private val _processingRequestIds = MutableStateFlow<Set<String>>(emptySet())
+    val processingRequestIds: StateFlow<Set<String>> = _processingRequestIds.asStateFlow()
 
     private val _snackbarMessage = MutableStateFlow<String?>(null)
     val snackbarMessage: StateFlow<String?> = _snackbarMessage.asStateFlow()
@@ -67,7 +71,7 @@ class RegistrationListViewModel(private val db: AppDatabase) : ViewModel() {
     }
 
     fun approveRegistration(registration: PendingRegistration) {
-        if (registration.requestId.isEmpty()) return
+        if (!startProcessing(registration.requestId)) return
         viewModelScope.launch {
             _isLoading.value = true
             try {
@@ -106,20 +110,23 @@ class RegistrationListViewModel(private val db: AppDatabase) : ViewModel() {
                     archivedAtMs = null
                 )
 
-                entitledCreationRepository.createStudent(student)
+                // The request ID is an idempotency key on the trusted backend. It atomically
+                // creates this student and consumes the pending registration, so a second tap
+                // cannot create a duplicate even if it reaches the server.
+                entitledCreationRepository.createStudent(student, registration.requestId)
                 db.studentDao().insertStudent(student)
-                repository.deletePendingRegistration(instId, registration.requestId)
                 _snackbarMessage.value = "${registration.fullName} approved and added to students."
             } catch (e: Exception) {
-                _snackbarMessage.value = "Failed to approve: ${e.message}"
+                _snackbarMessage.value = approvalErrorMessage(e)
             } finally {
+                finishProcessing(registration.requestId)
                 _isLoading.value = false
             }
         }
     }
 
     fun rejectRegistration(registration: PendingRegistration) {
-        if (registration.requestId.isEmpty()) return
+        if (!startProcessing(registration.requestId)) return
         viewModelScope.launch {
             _isLoading.value = true
             try {
@@ -131,6 +138,7 @@ class RegistrationListViewModel(private val db: AppDatabase) : ViewModel() {
             } catch (e: Exception) {
                 _snackbarMessage.value = "Failed to reject: ${e.message}"
             } finally {
+                finishProcessing(registration.requestId)
                 _isLoading.value = false
             }
         }
@@ -141,6 +149,25 @@ class RegistrationListViewModel(private val db: AppDatabase) : ViewModel() {
     }
 
     private fun generateStudentCode(): String = com.batchfee.edu.domain.StudentIdGenerator.generate()
+
+    private fun startProcessing(requestId: String): Boolean {
+        if (requestId.isEmpty() || requestId in _processingRequestIds.value) return false
+        _processingRequestIds.value = _processingRequestIds.value + requestId
+        return true
+    }
+
+    private fun finishProcessing(requestId: String) {
+        _processingRequestIds.value = _processingRequestIds.value - requestId
+    }
+
+    private fun approvalErrorMessage(error: Exception): String = when (
+        (error as? FirebaseFunctionsException)?.code
+    ) {
+        FirebaseFunctionsException.Code.ALREADY_EXISTS,
+        FirebaseFunctionsException.Code.FAILED_PRECONDITION ->
+            "This registration was already handled. Refresh the list."
+        else -> "Failed to approve: ${error.message}"
+    }
 }
 
 class RegistrationListViewModelFactory(private val db: AppDatabase) : ViewModelProvider.Factory {

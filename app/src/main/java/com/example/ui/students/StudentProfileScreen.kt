@@ -45,6 +45,7 @@ import com.batchfee.edu.data.firestore.BatchStudentSyncHelper
 import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
 import com.batchfee.edu.data.firestore.InstituteSyncHelper
 import com.batchfee.edu.data.firestore.StudentSyncHelper
+import com.batchfee.edu.data.media.FirebaseStorageImageUploadHelper
 import com.batchfee.edu.data.models.BatchEntity
 import com.batchfee.edu.data.models.BatchStudentEntity
 import com.batchfee.edu.data.models.FeeEntity
@@ -308,7 +309,7 @@ fun StudentProfileScreen(
                         if (!s.photoUri.isNullOrBlank()) {
                             AsyncImage(
                                 model = ImageRequest.Builder(context)
-                                    .data(Uri.parse(s.photoUri))
+                                    .data(FirebaseStorageImageUploadHelper.displaySource(context, s.photoUri))
                                     .crossfade(true)
                                     .build(),
                                 contentDescription = "Student photo",
@@ -2138,27 +2139,27 @@ private fun StudentDashboardContent(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(58.dp)
-            .clip(RoundedCornerShape(16.dp))
+            .height(56.dp)
+            .clip(RoundedCornerShape(15.dp))
             .background(Brush.horizontalGradient(listOf(CardBgAlt, Color(0xFF102235))))
-            .border(1.dp, DashboardLine, RoundedCornerShape(16.dp))
+            .border(1.dp, DashboardLine, RoundedCornerShape(15.dp))
             .clickable(onClick = onAssignBatch)
-            .padding(horizontal = 16.dp),
+            .padding(horizontal = 14.dp),
         contentAlignment = Alignment.CenterStart
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Box(
                 modifier = Modifier
-                    .size(38.dp)
+                    .size(36.dp)
                     .clip(RoundedCornerShape(12.dp))
                     .background(Cyan.copy(alpha = 0.14f)),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(Icons.Filled.Groups, contentDescription = null, tint = Cyan, modifier = Modifier.size(21.dp))
             }
-            Spacer(Modifier.width(12.dp))
+            Spacer(Modifier.width(10.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text("Assign Batch", color = TextWhite, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Text("Assign Batch", color = TextWhite, fontSize = 15.sp, fontWeight = FontWeight.Bold)
                 Text(
                     if (batches.isEmpty()) "No batch selected" else "${batches.size} batch${if (batches.size == 1) "" else "es"} enrolled",
                     color = TextMuted,
@@ -2167,7 +2168,7 @@ private fun StudentDashboardContent(
             }
             Box(
                 modifier = Modifier
-                    .size(34.dp)
+                    .size(32.dp)
                     .clip(CircleShape)
                     .background(Brush.linearGradient(listOf(ElectricBlue, Cyan))),
                 contentAlignment = Alignment.Center
@@ -2182,15 +2183,15 @@ private fun StudentDashboardContent(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(18.dp))
+            .clip(RoundedCornerShape(16.dp))
             .background(Brush.linearGradient(listOf(Color(0xFF101B2F), CardBg)))
-            .border(1.dp, DashboardLine, RoundedCornerShape(18.dp))
+            .border(1.dp, DashboardLine, RoundedCornerShape(16.dp))
     ) {
-        Column(modifier = Modifier.padding(18.dp)) {
+        Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     modifier = Modifier
-                        .size(72.dp)
+                        .size(58.dp)
                         .clip(CircleShape)
                         .background(Brush.linearGradient(listOf(ElectricBlue, Cyan)))
                         .border(2.dp, SkyBlue.copy(alpha = 0.55f), CircleShape),
@@ -2198,72 +2199,75 @@ private fun StudentDashboardContent(
                 ) {
                     if (!student.photoUri.isNullOrBlank()) {
                         AsyncImage(
-                            model = ImageRequest.Builder(context).data(Uri.parse(student.photoUri)).crossfade(true).build(),
+                            model = ImageRequest.Builder(context)
+                                .data(FirebaseStorageImageUploadHelper.displaySource(context, student.photoUri))
+                                .crossfade(true)
+                                .build(),
                             contentDescription = "Student photo",
                             modifier = Modifier.fillMaxSize().clip(CircleShape),
                             contentScale = ContentScale.Crop
                         )
                     } else {
-                        Icon(Icons.Filled.School, contentDescription = null, tint = Color.White, modifier = Modifier.size(36.dp))
+                        Icon(Icons.Filled.School, contentDescription = null, tint = Color.White, modifier = Modifier.size(30.dp))
                     }
                 }
-                Spacer(Modifier.width(14.dp))
+                Spacer(Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            student.studentCode,
-                            color = Cyan,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(Cyan.copy(alpha = 0.12f))
-                                .padding(horizontal = 8.dp, vertical = 3.dp)
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text(
                             student.status.replaceFirstChar { it.uppercase() },
                             color = WAGreen,
-                            fontSize = 12.sp,
+                            fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
+                                .clip(RoundedCornerShape(7.dp))
                                 .background(WAGreen.copy(alpha = 0.12f))
-                                .padding(horizontal = 8.dp, vertical = 3.dp)
+                                .padding(horizontal = 7.dp, vertical = 3.dp)
                         )
                     }
-                    Spacer(Modifier.height(7.dp))
-                    Text(primaryBatch?.name ?: "No Batch Assigned", color = TextWhite, fontSize = 19.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(5.dp))
                     Text(
-                        if (primaryBatch != null) "Batch Fee • Monthly • ${primaryBatch.monthlyFeeAmount.toLong()}" else "Assign a batch to see fee details",
+                        primaryBatch?.name ?: "No Batch Assigned",
+                        color = TextWhite,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        if (primaryBatch != null) "Monthly fee · BDT ${primaryBatch.monthlyFeeAmount.toLong()}" else "Assign a batch to see fee details",
                         color = TextMuted,
-                        fontSize = 13.sp
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }
 
-            Spacer(Modifier.height(18.dp))
+            Spacer(Modifier.height(14.dp))
+            HorizontalDivider(color = DashboardLine)
+            Spacer(Modifier.height(12.dp))
 
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                ProfileMetric(Icons.Filled.CalendarMonth, "Join Date", dateFormat.format(Date(student.admissionDateMs)), Modifier.weight(1f))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                ProfileMetric(Icons.Filled.CalendarMonth, "Joined", dateFormat.format(Date(student.admissionDateMs)), Modifier.weight(1f))
                 ProfileMetric(
                     Icons.Filled.CalendarMonth,
-                    "Finish Date",
+                    "Ends",
                     primaryBatch?.endDateMs?.let { dateFormat.format(Date(it)) } ?: "Running",
                     Modifier.weight(1f)
                 )
             }
-            Spacer(Modifier.height(10.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                ProfileMetric(Icons.Filled.Savings, "Collected Fees", totalPaid.toLong().toString(), Modifier.weight(1f))
-                ProfileMetric(Icons.Filled.Paid, "Due Fees", totalDue.toLong().toString(), Modifier.weight(1f))
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                ProfileMetric(Icons.Filled.Savings, "Collected", "BDT ${totalPaid.toLong()}", Modifier.weight(1f))
+                ProfileMetric(Icons.Filled.Paid, "Due", "BDT ${totalDue.toLong()}", Modifier.weight(1f))
             }
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(14.dp))
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(46.dp)
-                    .clip(RoundedCornerShape(14.dp))
+                    .height(44.dp)
+                    .clip(RoundedCornerShape(12.dp))
                     .background(Brush.horizontalGradient(listOf(ElectricBlue, Cyan)))
                     .clickable(onClick = onToggleInsights),
                 contentAlignment = Alignment.Center
@@ -2301,80 +2305,100 @@ private fun StudentDashboardContent(
 
     Spacer(Modifier.height(14.dp))
 
-    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-        SmallDashboardTile("Exam (0)", Modifier.weight(1f))
-        SmallDashboardTile("HomeWork (0)", Modifier.weight(1f))
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+        SmallDashboardTile("Exams (0)", Modifier.weight(1f))
+        SmallDashboardTile("Homework (0)", Modifier.weight(1f))
     }
 
-    Spacer(Modifier.height(16.dp))
+    Spacer(Modifier.height(14.dp))
 
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = Color(0xFF0B1426)),
         border = BorderStroke(1.dp, DashboardLine)
     ) {
-        Column(modifier = Modifier.padding(18.dp)) {
-            Text("Personal Info", color = TextWhite, fontSize = 19.sp, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(14.dp))
+        Column(modifier = Modifier.padding(16.dp)) {
+            ProfileSectionTitle("Personal details")
+            Spacer(Modifier.height(10.dp))
             TwoColumnInfo(
-                leftLabel = "Guardian name",
+                leftLabel = "Guardian",
                 leftValue = student.guardianName ?: "N/A",
-                rightLabel = "Student ID",
-                rightValue = student.studentCode,
-                onRightCopy = { copyTextToClipboard(context, "Student ID", student.studentCode) }
+                rightLabel = "Date of birth",
+                rightValue = student.dateOfBirthMs?.let { dateFormat.format(Date(it)) } ?: "N/A"
             )
-            Spacer(Modifier.height(14.dp))
+            Spacer(Modifier.height(8.dp))
             TwoColumnInfo(
-                "Date of Birth",
-                student.dateOfBirthMs?.let { dateFormat.format(Date(it)) } ?: "N/A",
                 "Gender",
-                student.gender ?: "N/A"
+                student.gender ?: "N/A",
+                "Blood group",
+                student.bloodGroup ?: "N/A"
             )
 
-            Spacer(Modifier.height(22.dp))
+            HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp), color = DashboardLine)
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Contact Information", color = TextWhite, fontSize = 19.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                ProfileSectionTitle("Contact", Modifier.weight(1f))
                 IconButton(onClick = {
                     student.phone?.takeIf { it.isNotBlank() }?.let { context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$it"))) }
-                }) { Icon(Icons.Filled.Phone, contentDescription = null, tint = Cyan) }
+                }, modifier = Modifier.size(36.dp)) { Icon(Icons.Filled.Phone, contentDescription = "Call student", tint = Cyan, modifier = Modifier.size(19.dp)) }
                 IconButton(onClick = {
                     val email = student.email.orEmpty()
                     if (email.isNotBlank()) context.startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:$email")))
-                }) { Icon(Icons.Filled.Email, contentDescription = null, tint = Cyan) }
+                }, modifier = Modifier.size(36.dp)) { Icon(Icons.Filled.Email, contentDescription = "Email student", tint = Cyan, modifier = Modifier.size(19.dp)) }
                 IconButton(onClick = {
                     if (whatsappNumber.isNotBlank()) context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(buildWhatsAppUrl(whatsappNumber, ""))))
-                }) { Icon(Icons.Filled.Whatsapp, contentDescription = null, tint = WAGreen) }
+                }, modifier = Modifier.size(36.dp)) { Icon(Icons.Filled.Whatsapp, contentDescription = "Message on WhatsApp", tint = WAGreen, modifier = Modifier.size(19.dp)) }
             }
-            Spacer(Modifier.height(14.dp))
-            CompactContactInfoRow("Phone number", student.phone ?: "N/A", "WhatsApp", whatsappNumber.ifBlank { "N/A" })
-            Spacer(Modifier.height(14.dp))
-            ProfileInfoBlock("Address", student.address ?: "N/A")
+            Spacer(Modifier.height(10.dp))
+            CompactContactInfoRow("Phone", student.phone ?: "N/A", "WhatsApp", whatsappNumber.ifBlank { "N/A" })
+            student.email?.takeIf { it.isNotBlank() }?.let { email ->
+                Spacer(Modifier.height(8.dp))
+                ProfileInfoBlock("Email", email, Modifier.fillMaxWidth(), singleLineValue = true)
+            }
+            Spacer(Modifier.height(8.dp))
+            ProfileInfoBlock("Address", student.address ?: "N/A", Modifier.fillMaxWidth())
 
-            Spacer(Modifier.height(22.dp))
-            Text("Academic Info", color = TextWhite, fontSize = 19.sp, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(14.dp))
-            TwoColumnInfo("Class", student.className ?: "N/A", "Student ID", student.studentCode)
-            Spacer(Modifier.height(14.dp))
-            ProfileInfoBlock("Institute name", student.schoolName ?: "N/A")
+            HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp), color = DashboardLine)
+            ProfileSectionTitle("Academic")
+            Spacer(Modifier.height(10.dp))
+            TwoColumnInfo(
+                "Class",
+                student.className ?: "N/A",
+                "Admission",
+                dateFormat.format(Date(student.admissionDateMs))
+            )
+            Spacer(Modifier.height(8.dp))
+            ProfileInfoBlock("Institute", student.schoolName ?: "N/A", Modifier.fillMaxWidth())
+        }
+    }
 
-            Spacer(Modifier.height(22.dp))
-            Text("Login Access", color = TextWhite, fontSize = 19.sp, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(14.dp))
+    Spacer(Modifier.height(14.dp))
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF0B1426)),
+        border = BorderStroke(1.dp, DashboardLine)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            ProfileSectionTitle("Login access")
+            Spacer(Modifier.height(10.dp))
             LoginAccessStatusRow(isEnabled = student.isAppAccessEnabled)
             HorizontalDivider(
-                modifier = Modifier.padding(vertical = 14.dp),
+                modifier = Modifier.padding(vertical = 12.dp),
                 color = DashboardLine
             )
             CopyableProfileInfoBlock(
                 label = "Student ID",
                 value = student.studentCode,
-                onCopy = { copyTextToClipboard(context, "Student ID", student.studentCode) }
+                onCopy = { copyTextToClipboard(context, "Student ID", student.studentCode) },
+                modifier = Modifier.fillMaxWidth(),
+                singleLineValue = true
             )
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(10.dp))
             Button(
                 onClick = onSetOrResetPassword,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().height(44.dp),
                 shape = RoundedCornerShape(10.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = ElectricBlue)
             ) {
@@ -2388,7 +2412,7 @@ private fun StudentDashboardContent(
             Spacer(Modifier.height(8.dp))
             OutlinedButton(
                 onClick = onShareLoginInfo,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().height(44.dp),
                 shape = RoundedCornerShape(10.dp),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = Cyan),
                 border = BorderStroke(1.dp, DashboardLine)
@@ -2655,17 +2679,17 @@ private fun ProfileMetric(
     Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
         Box(
             modifier = Modifier
-                .size(34.dp)
-                .clip(RoundedCornerShape(10.dp))
+                .size(30.dp)
+                .clip(RoundedCornerShape(9.dp))
                 .background(Cyan.copy(alpha = 0.12f)),
             contentAlignment = Alignment.Center
         ) {
-            Icon(icon, contentDescription = null, tint = Cyan, modifier = Modifier.size(19.dp))
+            Icon(icon, contentDescription = null, tint = Cyan, modifier = Modifier.size(17.dp))
         }
-        Spacer(Modifier.width(8.dp))
+        Spacer(Modifier.width(7.dp))
         Column {
-            Text(label, color = TextMuted, fontSize = 11.sp, maxLines = 1)
-            Text(value, color = TextWhite, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+            Text(label, color = TextMuted, fontSize = 10.sp, maxLines = 1)
+            Text(value, color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1)
         }
     }
 }
@@ -2674,27 +2698,38 @@ private fun ProfileMetric(
 private fun SmallDashboardTile(title: String, modifier: Modifier = Modifier) {
     Box(
         modifier = modifier
-            .height(60.dp)
-            .clip(RoundedCornerShape(14.dp))
+            .height(54.dp)
+            .clip(RoundedCornerShape(13.dp))
             .background(Brush.linearGradient(listOf(CardBgAlt, Color(0xFF0C2032))))
-            .border(1.dp, DashboardLine, RoundedCornerShape(14.dp))
-            .padding(horizontal = 12.dp),
+            .border(1.dp, DashboardLine, RoundedCornerShape(13.dp))
+            .padding(horizontal = 10.dp),
         contentAlignment = Alignment.CenterStart
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
                 modifier = Modifier
-                    .size(36.dp)
+                    .size(32.dp)
                     .clip(RoundedCornerShape(10.dp))
                     .background(Cyan.copy(alpha = 0.12f)),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(Icons.Filled.MenuBook, contentDescription = null, tint = Cyan, modifier = Modifier.size(21.dp))
+                Icon(Icons.Filled.MenuBook, contentDescription = null, tint = Cyan, modifier = Modifier.size(19.dp))
             }
-            Spacer(Modifier.width(9.dp))
-            Text(title, color = TextWhite, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+            Spacer(Modifier.width(8.dp))
+            Text(title, color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1)
         }
     }
+}
+
+@Composable
+private fun ProfileSectionTitle(title: String, modifier: Modifier = Modifier) {
+    Text(
+        title,
+        color = TextWhite,
+        fontSize = 17.sp,
+        fontWeight = FontWeight.Bold,
+        modifier = modifier
+    )
 }
 
 @Composable
@@ -2749,14 +2784,14 @@ private fun CompactContactBlock(label: String, value: String, modifier: Modifier
             .clip(RoundedCornerShape(10.dp))
             .background(CardBgAlt.copy(alpha = 0.72f))
             .border(1.dp, BorderSub, RoundedCornerShape(10.dp))
-            .padding(horizontal = 6.dp, vertical = 10.dp)
+            .padding(horizontal = 10.dp, vertical = 9.dp)
     ) {
         Text(label, color = TextMuted, fontSize = 10.sp, maxLines = 1)
-        Spacer(Modifier.height(4.dp))
+        Spacer(Modifier.height(3.dp))
         Text(
             value,
             color = TextWhite,
-            fontSize = 12.sp,
+            fontSize = 13.sp,
             fontWeight = FontWeight.Medium,
             maxLines = 1,
             softWrap = false,
@@ -2779,15 +2814,15 @@ private fun ProfileInfoBlock(
             .border(1.dp, BorderSub, RoundedCornerShape(12.dp))
             .padding(
                 horizontal = if (singleLineValue) 10.dp else 12.dp,
-                vertical = 12.dp
+                vertical = 9.dp
             )
     ) {
-        Text(label, color = TextMuted, fontSize = 12.sp, maxLines = 1)
-        Spacer(Modifier.height(5.dp))
+        Text(label, color = TextMuted, fontSize = 11.sp, maxLines = 1)
+        Spacer(Modifier.height(3.dp))
         Text(
             value,
             color = TextWhite,
-            fontSize = if (singleLineValue) 9.sp else 15.sp,
+            fontSize = if (singleLineValue) 10.sp else 14.sp,
             fontWeight = FontWeight.Bold,
             maxLines = if (singleLineValue) 1 else Int.MAX_VALUE,
             softWrap = !singleLineValue,

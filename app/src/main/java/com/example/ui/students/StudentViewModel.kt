@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.audit.StaffActivityLogger
 import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
 import com.batchfee.edu.data.firestore.InstituteRefreshScope
 import com.batchfee.edu.data.firestore.StudentSyncHelper
@@ -89,6 +90,7 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
         isAppAccessEnabled: Boolean = false,
         appAccessPassword: String? = null,
         onSuccess: () -> Unit,
+        onPartialSuccess: (String) -> Unit = {},
         onError: (String) -> Unit = {}
     ) {
         if (fullName.isBlank()) { onError("Student name is required."); return }
@@ -140,12 +142,25 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
                 entitledCreationRepository.createStudent(student)
                 db.studentDao().insertStudent(student)
                 val savedStudent = if (isAppAccessEnabled) {
-                    studentAccountRepository.provision(instId, student.id, appAccessPassword!!)
-                    student.copy(isAppAccessEnabled = true)
+                    try {
+                        studentAccountRepository.provision(instId, student.id, appAccessPassword!!)
+                        student.copy(isAppAccessEnabled = true)
+                    } catch (error: Exception) {
+                        // The profile is already safely created. Do not leave the owner on the
+                        // form where a retry would look like another student registration.
+                        onPartialSuccess(
+                            "Student was saved, but app login could not be enabled. " +
+                                "Open this student's profile and set a password again."
+                        )
+                        return@launch
+                    }
                 } else {
                     student
                 }
                 if (savedStudent != student) db.studentDao().updateStudent(savedStudent)
+                StaffActivityLogger.logCompletedAction(
+                    db, "student_created", "students", "Added student ${savedStudent.fullName}"
+                )
                 onSuccess()
             } catch (error: Exception) {
                 onError(accountErrorMessage(error, "Student account could not be created."))
@@ -202,6 +217,9 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
                         updatedAtMs = System.currentTimeMillis()
                     )
                 )
+                StaffActivityLogger.logCompletedAction(
+                    db, "student_app_access_changed", "students", "Set student app login for ${existing.fullName}"
+                )
                 onSuccess()
             } catch (error: Exception) {
                 onError(accountErrorMessage(error, "Student password could not be set."))
@@ -227,6 +245,7 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
         isAppAccessEnabled: Boolean = false,
         appAccessPassword: String? = null,
         onSuccess: () -> Unit,
+        onPartialSuccess: (String) -> Unit = {},
         onError: (String) -> Unit = {}
     ) {
         viewModelScope.launch {
@@ -243,18 +262,10 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
                 onError("Student app password must contain 6 to 128 characters.")
                 return@launch
             }
-            if (isAppAccessEnabled && existing.isAppAccessEnabled && appAccessPassword.isNullOrEmpty()) {
-                val securelyLinked = try {
-                    studentAccountRepository.isSecurelyLinked(instId, id)
-                } catch (error: Exception) {
-                    onError(accountErrorMessage(error, "Could not verify the existing student account."))
-                    return@launch
-                }
-                if (!securelyLinked) {
-                    onError("This legacy student account needs a one-time password reset before app access can continue.")
-                    return@launch
-                }
-            }
+            // A legacy app-login record must be reset before that student can log in again,
+            // but it must never block ordinary profile work such as replacing a photo. A
+            // non-empty password below explicitly performs the reset; otherwise only the
+            // student profile is saved.
             if (isAppAccessEnabled && existing.isAppAccessEnabled &&
                 existing.studentCode != studentCode && appAccessPassword.isNullOrEmpty()) {
                 onError("Re-enter the app password after changing the student ID.")
@@ -283,21 +294,37 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
                 isAppAccessEnabled = existing.isAppAccessEnabled
             )
             try {
+                // An ordinary profile update must reach Firestore before the screen reports
+                // success. The previous best-effort path could look saved on this device while
+                // leaving the cloud record (and every other device) unchanged.
+                StudentSyncHelper.upsertStudentOrThrow(updated)
                 val requiresAccountChange = appAccessPassword != null ||
                     isAppAccessEnabled != existing.isAppAccessEnabled
                 val finalStudent = if (requiresAccountChange) {
-                    StudentSyncHelper.upsertStudentOrThrow(updated)
-                    if (isAppAccessEnabled) {
-                        studentAccountRepository.provision(instId, id, appAccessPassword!!)
-                    } else {
-                        studentAccountRepository.disable(instId, id)
+                    try {
+                        if (isAppAccessEnabled) {
+                            studentAccountRepository.provision(instId, id, appAccessPassword!!)
+                        } else {
+                            studentAccountRepository.disable(instId, id)
+                        }
+                        updated.copy(isAppAccessEnabled = isAppAccessEnabled)
+                    } catch (error: Exception) {
+                        // Profile fields did save successfully. Keep Room consistent with the
+                        // cloud and make the remaining account action explicit to the owner.
+                        db.studentDao().updateStudent(updated)
+                        onPartialSuccess(
+                            "Student details were saved, but app login could not be updated. " +
+                                "Try setting the password again from the student profile."
+                        )
+                        return@launch
                     }
-                    updated.copy(isAppAccessEnabled = isAppAccessEnabled)
                 } else {
-                    launch { StudentSyncHelper.upsertStudent(updated) }
                     updated
                 }
                 db.studentDao().updateStudent(finalStudent)
+                StaffActivityLogger.logCompletedAction(
+                    db, "student_updated", "students", "Updated student ${finalStudent.fullName}"
+                )
                 onSuccess()
             } catch (error: Exception) {
                 onError(accountErrorMessage(error, "Student account could not be updated."))
@@ -343,6 +370,10 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
                 withContext(Dispatchers.IO) {
                     db.batchStudentDao().enrollStudent(enrollment)
                 }
+
+                StaffActivityLogger.logCompletedAction(
+                    db, "student_batch_changed", "batches", "Moved a student to another batch"
+                )
 
                 onSuccess()
 

@@ -303,6 +303,8 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
                             "ReminderTemplatesRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.ReminderTemplatesRoute)
                             "StaffRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.StaffRoute)
                             "AddStaffRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.AddStaffRoute)
+                            "StaffActivityRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.StaffActivityRoute)
+                            "RoutineRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.RoutineRoute)
                             "StaffAttendanceRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.StaffAttendanceRoute)
                             "SalaryRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.SalaryRoute)
                             "ExpensesRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.ExpensesRoute)
@@ -533,6 +535,20 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
                 staffId = route.staffId,
                 onBack = { navController.popBackStack() },
                 onEdit = { navController.navigate(EditStaffRoute(route.staffId)) }
+            )
+        }
+
+        composable<StaffActivityRoute> {
+            com.batchfee.edu.ui.staff.StaffActivityScreen(
+                db = appDb,
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        composable<RoutineRoute> {
+            com.batchfee.edu.ui.batches.RoutineScreen(
+                db = appDb,
+                onBack = { navController.popBackStack() }
             )
         }
 

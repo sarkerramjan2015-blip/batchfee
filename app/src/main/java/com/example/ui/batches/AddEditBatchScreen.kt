@@ -43,7 +43,6 @@ private val CardBgAlt     = Color(0xFF111827)
 private val BorderSub     = Color(0xFF1E293B)
 private val Cyan          = Color(0xFF22D3EE)
 private val ElectricBlue  = Color(0xFF3B82F6)
-private val SkyBlue       = Color(0xFF38BDF8)
 private val TextWhite     = Color(0xFFF8FAFC)
 private val TextMuted     = Color(0xFF94A3B8)
 
@@ -84,7 +83,6 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
     var name by remember { mutableStateOf("") }
     var feeString by remember { mutableStateOf("") }
     var admissionFeeString by remember { mutableStateOf("") }
-    var description by remember { mutableStateOf("") }
     var selectedScheduleFrequency by remember { mutableStateOf<ScheduleFrequencyOption?>(null) }
     var selectedScheduleDays by remember { mutableStateOf<Set<String>>(emptySet()) }
     var startTime by remember { mutableStateOf<String?>(null) }
@@ -119,7 +117,6 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
                             batch.admissionFeeAmount.toString()
                         }
                     } else ""
-                    description = batch.description.orEmpty()
                     val restoredDays = batch.scheduleDays
                         ?.split(",")
                         ?.map { it.trim() }
@@ -160,13 +157,13 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
             modifier = Modifier
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp, vertical = 16.dp)
+                .padding(horizontal = 16.dp, vertical = 10.dp)
         ) {
             // ── Header ──────────────────────────────────────
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     modifier = Modifier
-                        .size(44.dp)
+                        .size(40.dp)
                         .clip(RoundedCornerShape(12.dp))
                         .background(
                             brush = Brush.horizontalGradient(listOf(ElectricBlue, Cyan))
@@ -175,11 +172,11 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
                 ) {
                     Icon(Icons.Filled.Groups, contentDescription = null, tint = Color.White, modifier = Modifier.size(22.dp))
                 }
-                Spacer(Modifier.width(14.dp))
+                Spacer(Modifier.width(12.dp))
                 Column {
-                    Text(if (isEditMode) "Edit Batch Details" else "Create New Batch", color = TextWhite, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    Text(if (isEditMode) "Edit Batch Details" else "Create New Batch", color = TextWhite, fontSize = 17.sp, fontWeight = FontWeight.Bold)
                     Text(
-                        if (isEditMode) "Update the batch name, fee, and note"
+                        if (isEditMode) "Update the batch name, fee, and schedule"
                         else "Set up a class batch with its monthly fee",
                         color = TextMuted,
                         fontSize = 12.sp
@@ -187,7 +184,7 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
                 }
             }
 
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(16.dp))
 
             // ── Batch Name ──────────────────────────────────
             SectionLabel("Batch Name *")
@@ -209,7 +206,7 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
                 placeholder = "e.g. Class 10 Science"
             )
 
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(12.dp))
 
             // ── Monthly Fee ─────────────────────────────────
             SectionLabel("Monthly Fee (BDT) *")
@@ -237,7 +234,7 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
                 }
             }
 
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(12.dp))
 
             // ── Admission Fee (one-time) ───────────────────
             SectionLabel("Admission Fee / One-Time Fee (BDT) *")
@@ -265,7 +262,7 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
                 }
             }
 
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(12.dp))
 
             // ── Description ─────────────────────────────────
             BatchScheduleSection(
@@ -314,38 +311,8 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
 
             Spacer(Modifier.height(16.dp))
 
-            SectionLabel("Description (optional)")
-            DarkTextField(
-                value = description,
-                onValueChange = { description = it },
-                modifier = Modifier.fillMaxWidth(),
-                maxLines = 3,
-                placeholder = "e.g. Evening batch, Monday through Friday"
-            )
-
-            Spacer(Modifier.height(28.dp))
-
             // ── Info card ───────────────────────────────────
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(14.dp),
-                colors = CardDefaults.cardColors(containerColor = CardBg),
-                border = BorderStroke(1.dp, BorderSub)
-            ) {
-                Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Filled.Info, contentDescription = null, tint = SkyBlue, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(10.dp))
-                    Text(
-                        if (isEditMode) "Changes apply to this batch profile and future collection screens."
-                        else "Batch ID will be auto-generated.\nStart date set to today. You can edit details later.",
-                        color = TextMuted,
-                        fontSize = 12.sp,
-                        lineHeight = 16.sp
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(18.dp))
 
             // ── Save Button ─────────────────────────────────
             Box(
@@ -383,7 +350,6 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
                             .takeIf { scheduleConfigured && it.isNotBlank() }
 
                         if (!nameError && !feeError && !admissionFeeError && scheduleError == null && fee != null) {
-                            val cleanDescription = description.trim().takeIf { it.isNotEmpty() }
                             val existing = editingBatch
                             if (isEditMode) {
                                 if (existing == null) {
@@ -397,7 +363,9 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
                                             scheduleDays = savedScheduleDays,
                                             startTime = if (scheduleConfigured) startTime else null,
                                             endTime = if (scheduleConfigured) endTime else null,
-                                            description = cleanDescription
+                                            // Keep any existing note from older batches; this simple form
+                                            // intentionally has no description field.
+                                            description = existing.description
                                         ),
                                         onError = { message ->
                                             scope.launch { snackbarHostState.showSnackbar(message) }
@@ -418,7 +386,6 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
                                     scheduleDays = savedScheduleDays,
                                     startTime = if (scheduleConfigured) startTime else null,
                                     endTime = if (scheduleConfigured) endTime else null,
-                                    description = cleanDescription,
                                     onError = { message ->
                                         scope.launch { snackbarHostState.showSnackbar(message) }
                                     },
@@ -441,7 +408,7 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
                 }
             }
 
-            Spacer(Modifier.height(32.dp))
+            Spacer(Modifier.height(20.dp))
         }
     }
 }
@@ -489,14 +456,6 @@ private fun BatchScheduleSection(
     val durationLabel = scheduleDurationLabel(startTime, endTime)
 
     Column(modifier = Modifier.fillMaxWidth()) {
-        SectionLabel("Class Schedule (optional)")
-        Text(
-            "Choose the weekly class days and time. You can update it later.",
-            color = TextMuted,
-            fontSize = 11.sp
-        )
-        Spacer(Modifier.height(10.dp))
-
         Text("Classes per week", color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(8.dp))
         LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
@@ -509,7 +468,7 @@ private fun BatchScheduleSection(
             }
         }
 
-        Spacer(Modifier.height(14.dp))
+        Spacer(Modifier.height(10.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Select class days", color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.width(8.dp))
@@ -549,7 +508,7 @@ private fun BatchScheduleSection(
             }
         }
 
-        Spacer(Modifier.height(14.dp))
+        Spacer(Modifier.height(10.dp))
         Text("Class time", color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -601,12 +560,12 @@ private fun ScheduleChoiceChip(
     val shape = RoundedCornerShape(10.dp)
     Box(
         modifier = modifier
-            .height(38.dp)
+            .height(36.dp)
             .clip(shape)
             .background(
                 when {
-                    selected -> ElectricBlue.copy(alpha = 0.22f)
-                    enabled -> CardBgAlt
+                    selected -> Color(0xFF0E7490).copy(alpha = 0.42f)
+                    enabled -> Color(0xFF111C2F)
                     else -> CardBgAlt.copy(alpha = 0.5f)
                 }
             )
@@ -614,7 +573,7 @@ private fun ScheduleChoiceChip(
                 1.dp,
                 when {
                     selected -> Cyan.copy(alpha = 0.75f)
-                    enabled -> BorderSub
+                    enabled -> Color(0xFF22344D)
                     else -> BorderSub.copy(alpha = 0.45f)
                 },
                 shape
@@ -626,7 +585,7 @@ private fun ScheduleChoiceChip(
             label,
             color = when {
                 selected -> Cyan
-                enabled -> TextWhite
+                enabled -> Color(0xFFCBD5E1)
                 else -> TextMuted.copy(alpha = 0.5f)
             },
             fontSize = 11.sp,
@@ -646,7 +605,7 @@ private fun ScheduleTimeField(
     val shape = RoundedCornerShape(12.dp)
     Row(
         modifier = modifier
-            .height(54.dp)
+            .height(50.dp)
             .clip(shape)
             .background(CardBgAlt)
             .border(1.dp, BorderSub, shape)

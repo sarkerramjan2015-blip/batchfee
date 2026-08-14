@@ -42,6 +42,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.audit.StaffActivityLogger
 import com.batchfee.edu.data.firestore.AttendanceSyncHelper
 import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
 import com.batchfee.edu.data.models.StaffAttendanceEntity
@@ -143,6 +144,9 @@ class StaffAttendanceViewModel(private val db: AppDatabase) : ViewModel() {
                 )
             AttendanceSyncHelper.upsertStaffAttendance(record)
             db.staffAttendanceDao().insertOrUpdateAttendance(record)
+            StaffActivityLogger.logCompletedAction(
+                db, "staff_attendance_marked", "staff", "Marked staff attendance as ${status.replaceFirstChar { it.uppercase() }}"
+            )
             _lastOperation.value = staffId
         }
     }
@@ -151,6 +155,9 @@ class StaffAttendanceViewModel(private val db: AppDatabase) : ViewModel() {
         viewModelScope.launch {
             val existing = _records.value[staffId] ?: return@launch
             db.staffAttendanceDao().deleteAttendance(existing.id)
+            StaffActivityLogger.logCompletedAction(
+                db, "staff_attendance_removed", "staff", "Removed a staff attendance mark"
+            )
             _lastOperation.value = null
         }
     }

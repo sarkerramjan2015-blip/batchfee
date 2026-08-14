@@ -16,6 +16,10 @@ interface StaffDao {
     @Query("SELECT * FROM staff WHERE instituteId = :instituteId AND archivedAtMs IS NOT NULL ORDER BY fullName ASC")
     fun getArchivedStaffByInstitute(instituteId: String): Flow<List<StaffEntity>>
 
+    /** Includes archived staff so historic activity always keeps the staff name. */
+    @Query("SELECT * FROM staff WHERE instituteId = :instituteId ORDER BY fullName ASC")
+    fun getAllStaffByInstitute(instituteId: String): Flow<List<StaffEntity>>
+
     @Query("SELECT * FROM staff WHERE instituteId = :instituteId AND archivedAtMs IS NULL ORDER BY fullName ASC")
     suspend fun getStaffByInstituteAsList(instituteId: String): List<StaffEntity>
 

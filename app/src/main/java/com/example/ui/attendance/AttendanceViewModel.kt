@@ -7,6 +7,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.audit.StaffActivityLogger
 import com.batchfee.edu.data.firestore.AttendanceSyncHelper
 import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
 import com.batchfee.edu.data.firestore.ReminderTemplateSyncHelper
@@ -296,6 +297,9 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
                 )
             AttendanceSyncHelper.upsertAttendance(record)
             db.attendanceDao().insertOrUpdateAttendance(record)
+            StaffActivityLogger.logCompletedAction(
+                db, "student_attendance_marked", "attendance", "Marked one student ${status.replaceFirstChar { it.uppercase() }}"
+            )
         }
     }
 
@@ -317,6 +321,12 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
                 AttendanceSyncHelper.upsertAttendance(record)
                 db.attendanceDao().insertOrUpdateAttendance(record)
             }
+            StaffActivityLogger.logCompletedAction(
+                db,
+                "student_attendance_marked",
+                "attendance",
+                "Marked ${_students.value.size} students ${status.replaceFirstChar { it.uppercase() }}"
+            )
         }
     }
 
@@ -338,6 +348,12 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
                 AttendanceSyncHelper.upsertAttendance(record)
                 db.attendanceDao().insertOrUpdateAttendance(record)
             }
+            StaffActivityLogger.logCompletedAction(
+                db,
+                "student_attendance_marked",
+                "attendance",
+                "Marked ${studentIds.size} students ${status.replaceFirstChar { it.uppercase() }}"
+            )
         }
     }
 
@@ -347,6 +363,9 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
             val day = startOfDay(dateMs)
             AttendanceSyncHelper.deleteAttendance(instId, studentId, batchId, day)
             db.attendanceDao().deleteAttendance(instId, studentId, batchId, day)
+            StaffActivityLogger.logCompletedAction(
+                db, "student_attendance_removed", "attendance", "Removed one student attendance mark"
+            )
         }
     }
 

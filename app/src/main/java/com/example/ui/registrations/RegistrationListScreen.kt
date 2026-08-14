@@ -54,6 +54,7 @@ fun RegistrationListScreen(
     )
     val pendingList by viewModel.pendingList.collectAsStateWithLifecycle()
     val isLoading by viewModel.isLoading.collectAsStateWithLifecycle()
+    val processingRequestIds by viewModel.processingRequestIds.collectAsStateWithLifecycle()
     val snackbarMessage by viewModel.snackbarMessage.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
@@ -202,6 +203,7 @@ fun RegistrationListScreen(
                     items(pendingList, key = { it.requestId }) { registration ->
                         RegistrationCard(
                             registration = registration,
+                            isProcessing = registration.requestId in processingRequestIds,
                             onDetailsClick = { selectedRegistration = registration },
                             onApproveClick = { viewModel.approveRegistration(registration) },
                             onRejectClick = { showConfirmReject = registration }
@@ -216,6 +218,7 @@ fun RegistrationListScreen(
     selectedRegistration?.let { reg ->
         RegistrationDetailSheet(
             registration = reg,
+            isProcessing = reg.requestId in processingRequestIds,
             onDismiss = { selectedRegistration = null },
             onApprove = {
                 viewModel.approveRegistration(reg)
@@ -262,6 +265,7 @@ fun RegistrationListScreen(
 @Composable
 private fun RegistrationCard(
     registration: PendingRegistration,
+    isProcessing: Boolean,
     onDetailsClick: () -> Unit,
     onApproveClick: () -> Unit,
     onRejectClick: () -> Unit
@@ -324,6 +328,7 @@ private fun RegistrationCard(
             ) {
                 OutlinedButton(
                     onClick = onDetailsClick,
+                    enabled = !isProcessing,
                     modifier = Modifier.weight(1f).height(38.dp),
                     shape = RoundedCornerShape(10.dp),
                     colors = ButtonDefaults.outlinedButtonColors(
@@ -340,6 +345,7 @@ private fun RegistrationCard(
 
                 Button(
                     onClick = onApproveClick,
+                    enabled = !isProcessing,
                     modifier = Modifier.weight(1f).height(38.dp),
                     shape = RoundedCornerShape(10.dp),
                     colors = ButtonDefaults.buttonColors(
@@ -348,13 +354,24 @@ private fun RegistrationCard(
                     ),
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
                 ) {
-                    Icon(Icons.Filled.Check, null, tint = Color.White, modifier = Modifier.size(15.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("Approve", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    if (isProcessing) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(15.dp),
+                            color = Color.White,
+                            strokeWidth = 2.dp
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text("Saving...", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    } else {
+                        Icon(Icons.Filled.Check, null, tint = Color.White, modifier = Modifier.size(15.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Approve", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
                 }
 
                 IconButton(
                     onClick = onRejectClick,
+                    enabled = !isProcessing,
                     modifier = Modifier.size(38.dp)
                 ) {
                     Icon(Icons.Filled.Delete, "Reject", tint = AccentRed.copy(alpha = 0.7f), modifier = Modifier.size(20.dp))

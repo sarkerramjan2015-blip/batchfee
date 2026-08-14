@@ -48,6 +48,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.media.FirebaseStorageImageUploadHelper
 import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
 import com.batchfee.edu.data.models.BatchEntity
 import com.batchfee.edu.data.models.FeeEntity
@@ -307,9 +308,10 @@ private fun shareReceiptImageAny(context: Context, bitmap: Bitmap) {
 private fun loadBitmapFromUri(context: Context, uriString: String?): Bitmap? {
     if (uriString.isNullOrBlank()) return null
     return try {
-        val uri = Uri.parse(uriString)
+        val resolvedSource = FirebaseStorageImageUploadHelper.displaySource(context, uriString) ?: return null
+        val uri = Uri.parse(resolvedSource)
         if (uri.scheme == "http" || uri.scheme == "https") {
-            val connection = java.net.URL(uriString).openConnection() as java.net.HttpURLConnection
+            val connection = java.net.URL(resolvedSource).openConnection() as java.net.HttpURLConnection
             connection.doInput = true
             connection.connectTimeout = 5000
             connection.readTimeout = 5000

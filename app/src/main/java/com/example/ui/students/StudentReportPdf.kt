@@ -19,7 +19,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-internal fun generateStudentReportPdf(
+internal suspend fun generateStudentReportPdf(
     context: Context,
     institute: InstituteEntity,
     student: StudentEntity,
@@ -33,7 +33,7 @@ internal fun generateStudentReportPdf(
     batches, attendance, payments, emptyList(), totalPaid, totalDue, isFeeSummary = false
 )
 
-internal fun generateStudentFeeSummaryPdf(
+internal suspend fun generateStudentFeeSummaryPdf(
     context: Context,
     institute: InstituteEntity,
     student: StudentEntity,
@@ -47,7 +47,7 @@ internal fun generateStudentFeeSummaryPdf(
     batches, emptyList(), payments, fees, totalPaid, totalDue, isFeeSummary = true
 )
 
-private fun generateStudentDocumentPdf(
+private suspend fun generateStudentDocumentPdf(
     context: Context,
     institute: InstituteEntity,
     student: StudentEntity,

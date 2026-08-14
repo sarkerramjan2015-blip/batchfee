@@ -26,8 +26,10 @@
     .required { color: #f87171; }
     input, select, textarea { width: 100%; min-height: 46px; border: 1px solid #334155; border-radius: 10px; padding: 11px 12px; color: #f8fafc; background: #07111f; font: inherit; }
     textarea { min-height: 84px; resize: vertical; }
+    input[type="file"] { min-height: auto; padding: 9px; color: #cbd5e1; cursor: pointer; }
+    input[type="file"]::file-selector-button { margin-right: 10px; border: 0; border-radius: 7px; padding: 7px 10px; color: #e0f2fe; background: #164e63; font: inherit; font-size: .8rem; font-weight: 700; cursor: pointer; }
     input:focus, select:focus, textarea:focus { outline: 2px solid rgb(34 211 238 / 35%); outline-offset: 1px; border-color: #22d3ee; }
-    input[aria-invalid="true"], select[aria-invalid="true"] { border-color: #f87171; }
+    input[aria-invalid="true"], select[aria-invalid="true"], textarea[aria-invalid="true"] { border-color: #f87171; }
     .error { display: none; margin: 6px 0 0; color: #fca5a5; font-size: .8rem; line-height: 1.35; }
     .error.visible { display: block; }
     button { width: 100%; min-height: 48px; margin-top: 8px; border: 0; border-radius: 11px; color: #fff; background: linear-gradient(135deg, #2563eb, #06b6d4); font: inherit; font-weight: 750; cursor: pointer; }
@@ -36,6 +38,12 @@
     .status[hidden] { display: none; }
     .status.error-state { color: #fecaca; border-color: rgb(248 113 113 / 65%); background: rgb(127 29 29 / 22%); }
     .status.success-state { color: #bbf7d0; border-color: rgb(74 222 128 / 55%); background: rgb(20 83 45 / 28%); }
+    .hint { margin: 6px 0 0; color: #64748b; font-size: .76rem; line-height: 1.4; }
+    .photo-preview { display: flex; align-items: center; gap: 11px; margin-top: 10px; padding: 9px; border: 1px solid #334155; border-radius: 10px; background: #0b1527; }
+    .photo-preview[hidden] { display: none; }
+    .photo-preview img { width: 54px; height: 54px; flex: 0 0 auto; border: 1px solid #22d3ee; border-radius: 50%; object-fit: cover; background: #111827; }
+    .photo-preview-copy { min-width: 0; flex: 1; color: #cbd5e1; font-size: .8rem; line-height: 1.35; }
+    .photo-remove { width: auto; min-height: 36px; margin: 0; padding: 7px 10px; border: 1px solid #475569; border-radius: 8px; color: #cbd5e1; background: transparent; font-size: .78rem; font-weight: 700; }
     .honeypot { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0, 0, 0, 0) !important; white-space: nowrap !important; border: 0 !important; }
     footer { margin-top: 18px; color: #64748b; text-align: center; font-size: .76rem; }
   </style>
@@ -89,6 +97,17 @@
           <p id="dateOfBirthError" class="error"></p>
         </div>
         <div class="field">
+          <label for="studentPhoto">Student photo</label>
+          <input id="studentPhoto" name="studentPhoto" type="file" accept="image/jpeg,image/png,image/webp" capture="user">
+          <p class="hint">Optional. A clear face photo is best. It will be added after the institute approves this registration.</p>
+          <div id="studentPhotoPreview" class="photo-preview" hidden>
+            <img id="studentPhotoPreviewImage" alt="Selected student photo preview">
+            <div class="photo-preview-copy">Photo ready to submit</div>
+            <button id="removeStudentPhoto" class="photo-remove" type="button">Remove</button>
+          </div>
+          <p id="studentPhotoError" class="error"></p>
+        </div>
+        <div class="field">
           <label for="schoolName">School / institute name</label>
           <input id="schoolName" name="schoolName" maxlength="160">
           <p id="schoolNameError" class="error"></p>
@@ -131,8 +150,13 @@
       const form = document.getElementById("registrationForm");
       const status = document.getElementById("pageStatus");
       const button = document.getElementById("submitButton");
+      const studentPhotoInput = document.getElementById("studentPhoto");
+      const studentPhotoPreview = document.getElementById("studentPhotoPreview");
+      const studentPhotoPreviewImage = document.getElementById("studentPhotoPreviewImage");
       let activeProfile = null;
       let formStartedAtMs = 0;
+      let studentPhotoData = null;
+      let studentPhotoPreparation = null;
 
       function showStatus(message, kind = "") {
         status.textContent = message;
@@ -150,6 +174,43 @@
         const error = document.getElementById(`${name}Error`);
         if (element) element.setAttribute("aria-invalid", "true");
         if (error) { error.textContent = message; error.classList.add("visible"); }
+      }
+      function validOptionalText(value, maxLength, pattern = null) {
+        if (!value) return true;
+        return value.length <= maxLength && !/[\u0000-\u001F\u007F<>]/.test(value) && (!pattern || pattern.test(value));
+      }
+      function validBirthDate(value) {
+        if (!value) return true;
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+        const [year, month, day] = value.split("-").map(Number);
+        const date = new Date(Date.UTC(year, month - 1, day));
+        const now = new Date();
+        const latest = Date.UTC(now.getUTCFullYear() - 3, now.getUTCMonth(), now.getUTCDate());
+        return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 &&
+          date.getUTCDate() === day && year >= 1900 && date.getTime() <= latest;
+      }
+      function serverValidationField(message) {
+        const reason = typeof message === "string" ? message.toLowerCase() : "";
+        if (reason.includes("student photo")) return ["studentPhoto", "Choose a clear JPEG, PNG, or WebP photo under 10 MB."];
+        if (reason.includes("student name")) return ["fullName", "Enter the student's full name."];
+        if (reason.includes("phone number")) return ["phone", "Enter a valid Bangladesh mobile number."];
+        if (reason.includes("whatsapp number")) return ["whatsappNumber", "Enter a valid Bangladesh mobile number."];
+        if (reason.includes("guardian name")) return ["guardianName", "Enter a valid guardian name."];
+        if (reason.includes("date of birth")) return ["dateOfBirth", "Enter a valid date of birth."];
+        if (reason.includes("school name")) return ["schoolName", "Enter a valid school or institute name."];
+        if (reason.includes("class")) return ["className", "Enter a valid class."];
+        if (reason.includes("address")) return ["address", "Enter a valid address."];
+        return null;
+      }
+      function highlightServerValidation(message) {
+        clearErrors();
+        const issue = serverValidationField(message);
+        if (!issue) return false;
+        showFieldError(issue[0], issue[1]);
+        const field = document.getElementById(issue[0]);
+        field?.scrollIntoView({ behavior: "smooth", block: "center" });
+        field?.focus({ preventScroll: true });
+        return true;
       }
       function slugFromPath() {
         const match = location.pathname.match(/^\/register\/([a-z0-9]+(?:-[a-z0-9]+)*)\/?$/);
@@ -227,18 +288,111 @@
       function clientValidate(payload) {
         clearErrors();
         let valid = true;
-        if (payload.fullName.length < 2) { showFieldError("fullName", "Enter the student's full name."); valid = false; }
+        const namePattern = /^[\p{L}\p{M}][\p{L}\p{M}\p{N} .,'\u2019-]*$/u;
+        if (payload.fullName.length < 2 || !validOptionalText(payload.fullName, 120, namePattern)) { showFieldError("fullName", "Enter the student's full name."); valid = false; }
         const compactPhone = payload.phone.replace(/[\s()-]/g, "").replace(/^\+?880/, "").replace(/^0/, "");
         if (!/^1[3-9][0-9]{8}$/.test(compactPhone)) { showFieldError("phone", "Enter a valid Bangladesh mobile number."); valid = false; }
         if (payload.whatsappNumber) {
           const compactWhatsapp = payload.whatsappNumber.replace(/[\s()-]/g, "").replace(/^\+?880/, "").replace(/^0/, "");
           if (!/^1[3-9][0-9]{8}$/.test(compactWhatsapp)) { showFieldError("whatsappNumber", "Enter a valid Bangladesh mobile number."); valid = false; }
         }
+        if (!validOptionalText(payload.guardianName, 120, namePattern)) { showFieldError("guardianName", "Enter a valid guardian name."); valid = false; }
+        if (!validBirthDate(payload.dateOfBirth)) { showFieldError("dateOfBirth", "Enter a valid date of birth."); valid = false; }
+        if (!validOptionalText(payload.schoolName, 160)) { showFieldError("schoolName", "Remove unsupported characters from the school name."); valid = false; }
+        if (!validOptionalText(payload.className, 80)) { showFieldError("className", "Remove unsupported characters from the class."); valid = false; }
+        if (!validOptionalText(payload.address, 300)) { showFieldError("address", "Remove unsupported characters from the address."); valid = false; }
         return valid;
       }
+      function showStudentPhotoPreview(dataUrl) {
+        studentPhotoPreviewImage.src = dataUrl;
+        studentPhotoPreview.hidden = false;
+      }
+      function clearStudentPhoto() {
+        studentPhotoData = null;
+        studentPhotoPreparation = null;
+        studentPhotoInput.value = "";
+        studentPhotoPreviewImage.removeAttribute("src");
+        studentPhotoPreview.hidden = true;
+      }
+      function fileDataUrl(file) {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result);
+          reader.onerror = () => reject(new Error("The selected photo could not be read."));
+          reader.readAsDataURL(file);
+        });
+      }
+      function loadImage(dataUrl) {
+        return new Promise((resolve, reject) => {
+          const image = new Image();
+          image.onload = () => resolve(image);
+          image.onerror = () => reject(new Error("Choose a valid JPEG, PNG, or WebP photo."));
+          image.src = dataUrl;
+        });
+      }
+      function dataUrlByteLength(dataUrl) {
+        const comma = dataUrl.indexOf(",");
+        const base64 = comma >= 0 ? dataUrl.slice(comma + 1) : "";
+        const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
+        return Math.floor(base64.length * 3 / 4) - padding;
+      }
+      async function compressStudentPhoto(file) {
+        if (!file) return null;
+        if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+          throw new Error("Choose a JPEG, PNG, or WebP photo.");
+        }
+        if (file.size > 10 * 1024 * 1024) throw new Error("Choose a photo smaller than 10 MB.");
+        const image = await loadImage(await fileDataUrl(file));
+        const sourceWidth = image.naturalWidth || image.width;
+        const sourceHeight = image.naturalHeight || image.height;
+        if (!sourceWidth || !sourceHeight) throw new Error("Choose a valid photo.");
+        let scale = Math.min(1, 720 / Math.max(sourceWidth, sourceHeight));
+        let quality = 0.84;
+        for (let attempt = 0; attempt < 5; attempt += 1) {
+          const width = Math.max(1, Math.round(sourceWidth * scale));
+          const height = Math.max(1, Math.round(sourceHeight * scale));
+          const canvas = document.createElement("canvas");
+          canvas.width = width;
+          canvas.height = height;
+          const context = canvas.getContext("2d");
+          context.drawImage(image, 0, 0, width, height);
+          const result = canvas.toDataURL("image/jpeg", quality);
+          if (dataUrlByteLength(result) <= 360 * 1024) return result;
+          scale *= 0.72;
+          quality = Math.max(0.58, quality - 0.07);
+        }
+        throw new Error("This photo is too detailed. Please choose another clear photo.");
+      }
+      studentPhotoInput.addEventListener("change", () => {
+        const file = studentPhotoInput.files && studentPhotoInput.files[0];
+        clearErrors();
+        if (!file) { clearStudentPhoto(); return; }
+        studentPhotoData = null;
+        studentPhotoPreview.hidden = true;
+        const preparation = compressStudentPhoto(file)
+          .then((dataUrl) => {
+            if (studentPhotoPreparation === preparation) {
+              studentPhotoData = dataUrl;
+              showStudentPhotoPreview(dataUrl);
+            }
+          })
+          .catch((error) => {
+            if (studentPhotoPreparation === preparation) {
+              clearStudentPhoto();
+              showFieldError("studentPhoto", error instanceof Error ? error.message : "The selected photo could not be prepared.");
+            }
+          });
+        studentPhotoPreparation = preparation;
+      });
+      document.getElementById("removeStudentPhoto").addEventListener("click", clearStudentPhoto);
       form.addEventListener("submit", async (event) => {
         event.preventDefault();
         if (!activeProfile) return;
+        if (studentPhotoPreparation) await studentPhotoPreparation;
+        if (studentPhotoInput.files && studentPhotoInput.files.length && !studentPhotoData) {
+          showFieldError("studentPhoto", "Choose a clear JPEG, PNG, or WebP photo.");
+          return;
+        }
         const payload = {
           slug: activeProfile.slug,
           fullName: formValue("fullName"),
@@ -250,6 +404,7 @@
           schoolName: formValue("schoolName"),
           className: formValue("className"),
           address: formValue("address"),
+          studentPhoto: studentPhotoData,
           website: document.getElementById("website").value,
           startedAtMs: formStartedAtMs
         };
@@ -266,12 +421,18 @@
           const result = await response.json().catch(() => ({}));
           if (response.ok && result.status === "accepted") {
             form.reset();
+            clearStudentPhoto();
             form.hidden = true;
             showStatus("Registration submitted successfully. The institute will review your information and contact you if needed.", "success-state");
             return;
           }
+          if (result.error === "validation_failed" && highlightServerValidation(result.message)) {
+            showStatus("Please fix the highlighted field and submit again.", "error-state");
+            return;
+          }
           const messages = {
             validation_failed: "Please review the highlighted information and try again.",
+            invalid_submission: "Please wait a moment and submit the form again.",
             already_submitted: "A registration with this mobile number was already submitted recently.",
             try_again_later: "Too many attempts from this connection. Please wait and try again later.",
             registration_link_not_found: "This registration link is no longer available.",

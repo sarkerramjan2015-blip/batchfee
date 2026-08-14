@@ -4,7 +4,7 @@ import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.data.models.StudentEntity
 import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.google.firebase.firestore.FirebaseFirestore
-import com.google.firebase.firestore.SetOptions
+import com.google.firebase.functions.FirebaseFunctions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
@@ -12,6 +12,7 @@ import kotlinx.coroutines.withContext
 object StudentSyncHelper {
 
     private val firestore = FirebaseFirestore.getInstance()
+    private val functions = FirebaseFunctions.getInstance("asia-south1")
 
     private fun studentsCollection(instituteId: String) =
         firestore.collection("institutes").document(instituteId).collection("students")
@@ -27,12 +28,21 @@ object StudentSyncHelper {
         }
     }
 
-    /** Required before provisioning a student Auth identity; failures must not be hidden. */
+    /**
+     * Profile writes run through the trusted backend. This keeps legacy
+     * credential fields private while still letting an owner update a student
+     * record or photo.
+     */
     suspend fun upsertStudentOrThrow(student: StudentEntity) {
         withContext(Dispatchers.IO) {
-            studentsCollection(student.instituteId)
-                .document(student.id)
-                .set(student.toFirestore(), SetOptions.merge())
+            functions.getHttpsCallable("updateStudentProfile")
+                .call(
+                    mapOf(
+                        "instituteId" to student.instituteId,
+                        "studentId" to student.id,
+                        "student" to student.toProfilePayload()
+                    )
+                )
                 .await()
         }
     }
@@ -50,8 +60,7 @@ object StudentSyncHelper {
         }
     }
 
-    private fun StudentEntity.toFirestore(): Map<String, Any?> = mapOf(
-        "instituteId" to instituteId,
+    private fun StudentEntity.toProfilePayload(): Map<String, Any?> = mapOf(
         "studentCode" to studentCode,
         "fullName" to fullName,
         "photoUri" to photoUri,
@@ -69,10 +78,7 @@ object StudentSyncHelper {
         "bloodGroup" to bloodGroup,
         "admissionDateMs" to admissionDateMs,
         "status" to status,
-        "notes" to notes,
-        "createdAtMs" to createdAtMs,
-        "updatedAtMs" to updatedAtMs,
-        "archivedAtMs" to archivedAtMs
+        "notes" to notes
     )
 
     private fun com.google.firebase.firestore.DocumentSnapshot.toStudentEntity(
