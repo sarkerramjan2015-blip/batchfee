@@ -71,9 +71,9 @@ object FirebaseStorageImageUploadHelper {
             "imageBase64" to Base64.encodeToString(imageBytes, Base64.NO_WRAP)
         )
         subjectId?.takeIf { it.isNotBlank() }?.let { request["subjectId"] = it }
-        // Local URIs are not remote assets and are deliberately omitted. HTTPS,
-        // including pre-cutover Cloudinary values, and managed references remain
-        // auditable replacement metadata at the trusted backend.
+        // Local URIs are not remote assets and are deliberately omitted. Existing HTTPS
+        // references and managed references remain auditable replacement metadata at the
+        // trusted backend.
         replacesReference?.takeIf(::isExistingCloudReference)
             ?.let { request["replacesReference"] = it }
         val response = functions.getHttpsCallable("uploadSecureMedia").call(request).await()

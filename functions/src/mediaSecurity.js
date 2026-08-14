@@ -101,14 +101,6 @@ function safeStorageError(error, fallback) {
   return new HttpsError("unavailable", fallback);
 }
 
-function legacyCloudinaryError(error, fallback) {
-  const code = Number(error && (error.http_code || error.statusCode) || 0);
-  if (code === 401 || code === 403) {
-    return new HttpsError("failed-precondition", "Legacy media migration is not configured.");
-  }
-  return new HttpsError("unavailable", fallback);
-}
-
 function publicDownloadUrl(bucketName, objectPath, downloadToken) {
   return "https://firebasestorage.googleapis.com/v0/b/" +
     `${encodeURIComponent(bucketName)}/o/${encodeURIComponent(objectPath)}` +
@@ -166,7 +158,7 @@ async function uploadOrRecover(bucket, parsed, objectPath, downloadToken) {
   return { file, metadata: objectMetadata, custom };
 }
 
-function createMediaSecurityHandlers({ db, bucket, getLegacyCloudinary = null }) {
+function createMediaSecurityHandlers({ db, bucket }) {
   if (!bucket || typeof bucket.file !== "function") {
     throw new Error("A Firebase Storage bucket is required for media handlers.");
   }
@@ -315,13 +307,8 @@ function createMediaSecurityHandlers({ db, bucket, getLegacyCloudinary = null })
     const asset = assetSnap.data();
     const isFirebaseStorageAsset = asset.deliveryType === "firebase_storage_signed_url" &&
       typeof asset.storageObjectPath === "string" && asset.storageBucket === bucket.name;
-    // Existing private Cloudinary references remain readable during the deliberate
-    // data cutover. New writes never use this path; remove it only after the
-    // audited legacy-media migration reports zero remaining assets.
-    const isLegacyCloudinaryAsset = asset.deliveryType === "authenticated" &&
-      typeof asset.cloudinaryPublicId === "string" && typeof getLegacyCloudinary === "function";
     if (asset.instituteId !== parsed.instituteId || asset.reference !== reference ||
-        asset.status === "deleted" || (!isFirebaseStorageAsset && !isLegacyCloudinaryAsset)) {
+        asset.status === "deleted" || !isFirebaseStorageAsset) {
       throw new HttpsError("permission-denied", "Media asset is unavailable.");
     }
 
@@ -356,26 +343,6 @@ function createMediaSecurityHandlers({ db, bucket, getLegacyCloudinary = null })
     }
 
     const expiresAtMs = Date.now() + SIGNED_URL_TTL_MS;
-    if (isLegacyCloudinaryAsset) {
-      try {
-        const url = getLegacyCloudinary().utils.private_download_url(
-          asset.cloudinaryPublicId,
-          asset.format || "jpg",
-          {
-            resource_type: "image",
-            type: "authenticated",
-            attachment: false,
-            expires_at: Math.floor(expiresAtMs / 1000),
-          },
-        );
-        if (typeof url !== "string" || !url.startsWith("https://")) {
-          throw new Error("Legacy media service returned an invalid signed URL.");
-        }
-        return { url, expiresAtMs };
-      } catch (error) {
-        throw legacyCloudinaryError(error, "Legacy secure media is temporarily unavailable.");
-      }
-    }
     try {
       const [url] = await bucket.file(asset.storageObjectPath).getSignedUrl({
         version: "v4",

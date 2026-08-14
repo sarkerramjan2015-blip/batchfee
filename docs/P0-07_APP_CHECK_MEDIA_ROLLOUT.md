@@ -1,4 +1,4 @@
-# P0-07 Firebase Storage media rollout and legacy-media migration
+# P0-07 Firebase Storage media rollout
 
 This repository is ready to use the active Firebase Storage bucket
 `batchfee-477b8.firebasestorage.app`. This checklist intentionally does not deploy
@@ -31,22 +31,15 @@ functions/rules or modify production media.
    cross-institute denial, staff permissions, student self-photo access, and purge deletion.
 5. Deploy the Android app after the Functions/rules rollout. Monitor upload and signed-URL errors,
    App Check rejections, Storage permission errors, object count, and egress cost.
-6. The deployed Functions retain `CLOUDINARY_URL` only for temporary signed read/purge support of
-   pre-cutover private assets. Only after all legacy references are migrated and sampled
-   successfully, remove that compatibility code/secret, revoke the Cloudinary credentials/preset,
-   and remove legacy assets according to retention policy.
+6. The production media path is Firebase Storage only. `uploadSecureMedia`,
+   `getSecureMediaUrl`, and permanent student purge do not use a third-party media service or a
+   related secret. A non-Storage managed-media record is denied rather than being silently routed
+   to another provider.
 
-## Legacy Cloudinary cutover
+## Historical media
 
-Do not switch off Cloudinary while documents still contain legacy values:
-
-- HTTPS Cloudinary URLs remain displayable until they are explicitly migrated.
-- Old `batchfee-media://v1/...` references whose asset documents have Cloudinary delivery metadata
-  retain signed-read compatibility in this Functions version. New uploads never create them.
-- Take a Firestore/Auth backup, inventory references, migrate a small sample to Firebase Storage,
-  verify authorised display and rollback, retain legacy source assets for at least 30 days, then
-  migrate the remainder. Physical legacy deletion is a separate reviewed operation.
-
-The application deliberately does not auto-download or rewrite historical production media during
+The application deliberately does not auto-download, rewrite, or delete historical media during
 normal user actions. That avoids an unreviewed bulk data mutation and prevents a failed migration
-from losing an original image.
+from losing an original image. Any old private managed-media record that is not backed by the
+configured Firebase Storage bucket is unavailable after this rollout and must be handled through
+a separately reviewed migration or retention process.

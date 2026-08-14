@@ -36,7 +36,7 @@ async function deleteQuery(db, query) {
  * Irreversible server-side student data purge. Only an archived student can be purged;
  * the caller must be the institute owner or a Super Admin and must type the exact name.
  */
-function createPermanentStudentPurgeHandler({ db, adminAuth, bucket, getLegacyCloudinary = null }) {
+function createPermanentStudentPurgeHandler({ db, adminAuth, bucket }) {
   return async (request) => {
     if (!request.auth?.uid) throw new HttpsError("unauthenticated", "Sign in is required.");
     const instituteId = requireString(request.data, "instituteId", 128);
@@ -78,15 +78,6 @@ function createPermanentStudentPurgeHandler({ db, adminAuth, bucket, getLegacyCl
           typeof assetSnap.get("storageObjectPath") === "string") {
         const asset = assetSnap.data();
         await bucket.file(asset.storageObjectPath).delete({ ignoreNotFound: true });
-      } else if (assetSnap.exists && assetSnap.get("deliveryType") === "authenticated" &&
-          typeof assetSnap.get("cloudinaryPublicId") === "string" &&
-          typeof getLegacyCloudinary === "function") {
-        const asset = assetSnap.data();
-        await getLegacyCloudinary().uploader.destroy(asset.cloudinaryPublicId, {
-          resource_type: "image",
-          type: "authenticated",
-          invalidate: true,
-        });
       }
       await assetRef.delete().catch(() => {});
     }

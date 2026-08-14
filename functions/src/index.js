@@ -9,7 +9,6 @@ const { logger } = require("firebase-functions");
 const { defineSecret } = require("firebase-functions/params");
 const { HttpsError, onCall, onRequest } = require("firebase-functions/v2/https");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
-const cloudinary = require("cloudinary").v2;
 const {
   hasPermission,
   hashPassword,
@@ -48,9 +47,6 @@ const callableOptions = {
   enforceAppCheck: true,
 };
 const registrationRateLimitSecret = defineSecret("REGISTRATION_RATE_LIMIT_SECRET");
-// This secret is used only to serve/delete historical Cloudinary private assets
-// while they are migrated. New uploads exclusively use Firebase Storage.
-const legacyCloudinaryUrl = defineSecret("CLOUDINARY_URL");
 
 const db = getFirestore();
 const adminAuth = getAuth();
@@ -69,19 +65,9 @@ function configuredMediaStorageBucketName() {
 }
 
 const mediaStorageBucket = getStorage().bucket(configuredMediaStorageBucketName());
-function getConfiguredLegacyCloudinary() {
-  cloudinary.config(true);
-  const config = cloudinary.config();
-  if (!config.cloud_name || !config.api_key || !config.api_secret) {
-    throw new HttpsError("failed-precondition", "Legacy media migration is not configured.");
-  }
-  return cloudinary;
-}
-
 const mediaSecurityHandlers = createMediaSecurityHandlers({
   db,
   bucket: mediaStorageBucket,
-  getLegacyCloudinary: getConfiguredLegacyCloudinary,
 });
 const publicRegistrationHandler = createPublicRegistrationHandler({
   db,
@@ -890,9 +876,9 @@ exports.commitSafeDeletion = onCall(
   guarded(createSafeDeletionHandler({ db, adminAuth })),
 );
 exports.permanentlyPurgeStudent = onCall(
-  { ...callableOptions, timeoutSeconds: 120, memory: "512MiB", secrets: [legacyCloudinaryUrl] },
+  { ...callableOptions, timeoutSeconds: 120, memory: "512MiB" },
   guarded(createPermanentStudentPurgeHandler({
-    db, adminAuth, bucket: mediaStorageBucket, getLegacyCloudinary: getConfiguredLegacyCloudinary,
+    db, adminAuth, bucket: mediaStorageBucket,
   })),
 );
 exports.uploadSecureMedia = onCall(
@@ -900,7 +886,7 @@ exports.uploadSecureMedia = onCall(
   guarded(mediaSecurityHandlers.uploadSecureMedia),
 );
 exports.getSecureMediaUrl = onCall(
-  { ...callableOptions, secrets: [legacyCloudinaryUrl] },
+  callableOptions,
   guarded(mediaSecurityHandlers.getSecureMediaUrl),
 );
 exports.submitPublicRegistration = onRequest(

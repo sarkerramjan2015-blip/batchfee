@@ -67,18 +67,9 @@ class FakeStorageBucket {
 }
 
 const bucket = new FakeStorageBucket();
-const legacyCloudinary = {
-  utils: {
-    private_download_url: (publicId, format, options) => {
-      assert.equal(options.type, "authenticated");
-      return `https://api.cloudinary.test/download/${publicId}.${format}?expires_at=${options.expires_at}`;
-    },
-  },
-};
 const handlers = createMediaSecurityHandlers({
   db,
   bucket,
-  getLegacyCloudinary: () => legacyCloudinary,
 });
 const jpegBase64 = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 0xff, 0xd9]).toString("base64");
 const instituteA = "media-owner-a";
@@ -159,26 +150,24 @@ async function main() {
   assert.match(delivery.url, /^https:\/\/storage\.googleapis\.test\//);
   assert.ok(delivery.expiresAtMs > Date.now());
 
-  const legacyAssetId = "b".repeat(32);
-  const legacyReference = `batchfee-media://v1/${instituteA}/${legacyAssetId}`;
-  await db.collection("institutes").doc(instituteA).collection("media_assets").doc(legacyAssetId).set({
+  const unsupportedAssetId = "b".repeat(32);
+  const unsupportedReference = `batchfee-media://v1/${instituteA}/${unsupportedAssetId}`;
+  await db.collection("institutes").doc(instituteA).collection("media_assets").doc(unsupportedAssetId).set({
     instituteId: instituteA,
-    assetId: legacyAssetId,
-    reference: legacyReference,
-    deliveryType: "authenticated",
-    cloudinaryPublicId: "batchfee/private/legacy/student",
+    assetId: unsupportedAssetId,
+    reference: unsupportedReference,
+    deliveryType: "unsupported_legacy_private",
     format: "jpg",
     purpose: "student_photo",
     subjectId: studentA,
     status: "active",
   });
   await db.collection("institutes").doc(instituteA).collection("students").doc(studentA)
-    .update({ photoUri: legacyReference });
-  const legacyDelivery = await handlers.getSecureMediaUrl({
+    .update({ photoUri: unsupportedReference });
+  await expectCode("permission-denied", () => handlers.getSecureMediaUrl({
     auth: studentAuth,
-    data: { reference: legacyReference },
-  });
-  assert.match(legacyDelivery.url, /^https:\/\/api\.cloudinary\.test\/download\//);
+    data: { reference: unsupportedReference },
+  }));
   await db.collection("institutes").doc(instituteA).collection("students").doc(studentA)
     .update({ photoUri: first.reference });
 
