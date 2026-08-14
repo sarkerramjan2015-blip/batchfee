@@ -100,8 +100,8 @@ object InstituteSyncHelper {
                         "phone" to institute.phone,
                         "address" to institute.address,
                         "whatsappNumber" to institute.whatsappNumber,
-                        // Cloudinary returns a public HTTPS URL, so this value is safe to sync
-                        // and can be displayed by every authorised app user on any device.
+                        // The media callable returns a Firebase Storage download URL for the
+                        // public institute logo, so it remains display-compatible across devices.
                         "profilePhotoUri" to institute.profilePhotoUri?.takeUnless { it.startsWith("file:") },
                         "ownerName" to institute.ownerName,
                         "email" to institute.email,

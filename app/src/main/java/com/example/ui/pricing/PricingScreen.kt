@@ -197,6 +197,7 @@ private val TextMuted     = Color(0xFF94A3B8)
 private val WAGreen       = Color(0xFF25D366)
 private val Teal          = Color(0xFF14B8A6)
 private val AccentRed     = Color(0xFFF87171)
+private val WarningAmber  = Color(0xFFFBBF24)
 private val Green         = Color(0xFF22C55E)
 
 // ── Feature list for all plans ──────────────────────────────────
@@ -227,6 +228,7 @@ fun PricingScreen(
     var instituteId by remember { mutableStateOf<String?>(null) }
     var institutePhone by remember { mutableStateOf<String?>(null) }
     var ownerName by remember { mutableStateOf("") }
+    var subscriptionStatus by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(Unit) {
         val instId = SessionManager.currentInstituteId.value
         if (instId != null) {
@@ -237,8 +239,13 @@ fun PricingScreen(
                 instituteName = it.name
                 institutePhone = it.phone ?: it.whatsappNumber
                 ownerName = it.ownerName ?: ""
+                subscriptionStatus = it.subscriptionStatus
             }
         }
+    }
+    val activeStudentCount by produceState(initialValue = 0, key1 = instituteId) {
+        val activeInstituteId = instituteId ?: return@produceState
+        db.studentDao().countStudents(activeInstituteId).collect { value = it }
     }
 
     // Payment submission state
@@ -292,6 +299,45 @@ fun PricingScreen(
                     fontSize = 13.sp,
                     textAlign = TextAlign.Center
                 )
+            }
+
+            if (instituteId != null) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 18.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Cyan.copy(alpha = 0.10f))
+                        .border(1.dp, Cyan.copy(alpha = 0.32f), RoundedCornerShape(10.dp))
+                        .padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Filled.Group,
+                        contentDescription = null,
+                        tint = Cyan,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Column {
+                        Text(
+                            "$activeStudentCount active students",
+                            color = TextWhite,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            if (subscriptionStatus == "trial") {
+                                "Your trial has unlimited students. Choose a plan that supports all of them."
+                            } else {
+                                "Only plans that support your current student count can be selected."
+                            },
+                            color = TextMuted,
+                            fontSize = 11.sp
+                        )
+                    }
+                }
+                Spacer(Modifier.height(14.dp))
             }
 
             // ── Billing Duration Selector ───────────────────────
@@ -360,10 +406,10 @@ fun PricingScreen(
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 items(plans.filter { !it.isEnterprise }) { plan ->
+                    val isEligible = plan.studentCount >= activeStudentCount
                     val price = remember(selectedDuration) { viewModel.priceFor(plan) }
                     val durationLabel = remember(selectedDuration) { viewModel.durationLabel() }
                     val durationMonths = remember(selectedDuration) { viewModel.billingMonths() }
-                    val billingLabel = remember(selectedDuration) { viewModel.billingLabel() }
                     Box(modifier = Modifier
                         .then(if (selectedPlanId == plan.id) Modifier.border(2.dp, Cyan, RoundedCornerShape(16.dp)) else Modifier)
                     ) {
@@ -373,6 +419,7 @@ fun PricingScreen(
                             durationLabel = durationLabel,
                             durationMonths = durationMonths,
                             isSelected = selectedPlanId == plan.id,
+                            isEligible = isEligible,
                             onChoose = {
                                 selectedPlanId = plan.id
                                 submitSuccess = false
@@ -393,6 +440,17 @@ fun PricingScreen(
                     color = TextMuted,
                     textAlign = TextAlign.Center,
                     fontSize = 13.sp
+                )
+            }
+
+            val largestSelfServePlan = plans.filter { !it.isEnterprise }.maxOfOrNull { it.studentCount }
+            if (largestSelfServePlan != null && activeStudentCount > largestSelfServePlan) {
+                Text(
+                    text = "Your institute has more than $largestSelfServePlan active students. Contact support for a plan that fits your institute.",
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                    color = WarningAmber,
+                    fontSize = 12.sp,
+                    textAlign = TextAlign.Center
                 )
             }
 
@@ -636,6 +694,7 @@ private fun PlanCard(
     durationLabel: String,
     durationMonths: Int,
     isSelected: Boolean = false,
+    isEligible: Boolean,
     onChoose: () -> Unit
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "planGlow")
@@ -804,22 +863,22 @@ private fun PlanCard(
                     .height(48.dp)
                     .clip(RoundedCornerShape(10.dp))
                     .background(
-                        brush = if (hasProminentCta)
+                        brush = if (hasProminentCta && isEligible)
                             Brush.horizontalGradient(listOf(ElectricBlue, Cyan))
                         else
                             Brush.horizontalGradient(listOf(CardBgAlt, CardBg))
                     )
                     .then(
-                        if (!hasProminentCta)
+                        if (!hasProminentCta || !isEligible)
                             Modifier.border(1.dp, BorderSub, RoundedCornerShape(10.dp))
                         else Modifier
                     )
-                    .clickable { onChoose() },
+                    .then(if (isEligible) Modifier.clickable { onChoose() } else Modifier),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    "Choose Plan",
-                    color = if (hasProminentCta) Color.White else TextMuted,
+                    if (isEligible) "Choose Plan" else "Not eligible",
+                    color = if (hasProminentCta && isEligible) Color.White else TextMuted,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.SemiBold
                 )

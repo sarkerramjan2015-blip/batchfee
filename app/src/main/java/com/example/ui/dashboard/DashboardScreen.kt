@@ -40,7 +40,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.batchfee.edu.data.database.AppDatabase
-import com.batchfee.edu.data.cloudinary.CloudinaryImageUploadHelper
+import com.batchfee.edu.data.media.FirebaseStorageImageUploadHelper
 import com.batchfee.edu.data.firestore.EnquirySyncHelper
 import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
 import com.batchfee.edu.data.firestore.InstituteRefreshScope
@@ -1483,7 +1483,12 @@ fun DashboardScreen(
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Icon(Icons.Filled.Group, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(14.dp))
                                     Spacer(Modifier.width(6.dp))
-                                    Text("$studentCount of ${currentPlan?.maxStudents ?: 100} Students", color = TextSecondary, fontSize = 12.sp)
+                                    Text(
+                                        if (isTrial) "$studentCount Students \u2022 Unlimited during trial"
+                                        else "$studentCount of ${currentPlan?.maxStudents ?: 100} Students",
+                                        color = TextSecondary,
+                                        fontSize = 12.sp
+                                    )
                                 }
                                 Spacer(Modifier.height(6.dp))
                                 HorizontalDivider(color = Color(0xFF1E2A45))
@@ -1841,7 +1846,7 @@ fun DashboardScreen(
                                         null
                                     }
                                     editProfilePhotoUri.toString() == inst.profilePhotoUri -> inst.profilePhotoUri
-                                    else -> CloudinaryImageUploadHelper.uploadInstituteLogo(
+                                    else -> FirebaseStorageImageUploadHelper.uploadInstituteLogo(
                                         context,
                                         editProfilePhotoUri!!,
                                         replacesReference = inst.profilePhotoUri

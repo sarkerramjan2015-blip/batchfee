@@ -519,7 +519,7 @@ abstract class AppDatabase : RoomDatabase() {
                  SubscriptionPlanEntity(
                      id = "plan_free_trial",
                      name = "Free Trial",
-                     description = "30-day full access free trial",
+                     description = "30-day full access trial with unlimited students",
                      priceBdt = 0.0, priceInr = 0.0,
                      maxStudents = 50, maxBatches = 5, maxUsers = 1, maxBranches = 1,
                      tag = "Trial", tierLevel = 0

@@ -1,4 +1,4 @@
-package com.batchfee.edu.data.cloudinary
+package com.batchfee.edu.data.media
 
 import android.net.Uri
 import coil.intercept.Interceptor
@@ -7,7 +7,7 @@ import com.google.firebase.functions.FirebaseFunctions
 import kotlinx.coroutines.tasks.await
 import java.util.concurrent.ConcurrentHashMap
 
-/** Transparently exchanges private media references for short-lived, authorized URLs. */
+/** Transparently exchanges a private Firebase Storage media reference for a short-lived URL. */
 class SecureMediaInterceptor(
     private val functions: FirebaseFunctions = FirebaseFunctions.getInstance("asia-south1")
 ) : Interceptor {
@@ -21,7 +21,7 @@ class SecureMediaInterceptor(
             is String -> data
             else -> null
         }
-        if (!CloudinaryImageUploadHelper.isManagedReference(reference)) {
+        if (!FirebaseStorageImageUploadHelper.isManagedReference(reference)) {
             return chain.proceed(chain.request)
         }
         val resolvedUrl = resolve(reference!!)

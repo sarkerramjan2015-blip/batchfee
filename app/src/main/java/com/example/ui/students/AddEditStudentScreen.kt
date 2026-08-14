@@ -88,7 +88,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.batchfee.edu.data.database.AppDatabase
-import com.batchfee.edu.data.cloudinary.CloudinaryImageUploadHelper
+import com.batchfee.edu.data.media.FirebaseStorageImageUploadHelper
 import com.batchfee.edu.domain.SessionManager
 import com.batchfee.edu.ui.components.COUNTRY_CODES
 import com.batchfee.edu.ui.components.buildWhatsAppUrl
@@ -643,7 +643,7 @@ fun AddEditStudentScreen(
                                     if (selectedUri.scheme == "https" || selectedUri.scheme == "http") {
                                         selectedUri.toString()
                                     } else {
-                                        CloudinaryImageUploadHelper.uploadStudentPhoto(
+                                        FirebaseStorageImageUploadHelper.uploadStudentPhoto(
                                             context = context,
                                             sourceUri = selectedUri,
                                             subjectId = if (isEdit) existingId else newStudentId,

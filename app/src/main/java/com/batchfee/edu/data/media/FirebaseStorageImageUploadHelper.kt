@@ -1,4 +1,4 @@
-package com.batchfee.edu.data.cloudinary
+package com.batchfee.edu.data.media
 
 import android.content.Context
 import android.graphics.Bitmap
@@ -16,11 +16,11 @@ import java.io.ByteArrayOutputStream
 import java.util.UUID
 
 /**
- * Optimizes images locally, then sends them through an App Check and Firebase Auth
- * protected callable. Cloudinary credentials, upload signatures and private asset
- * identifiers never ship in the Android application.
+ * Optimizes images locally, then sends them to an Auth + App Check protected
+ * callable. The function writes Firebase Storage through the Admin SDK; clients
+ * never receive Storage write access, object paths, or service credentials.
  */
-object CloudinaryImageUploadHelper {
+object FirebaseStorageImageUploadHelper {
     private const val MANAGED_REFERENCE_PREFIX = "batchfee-media://v1/"
     private val functions = FirebaseFunctions.getInstance("asia-south1")
 
@@ -71,9 +71,9 @@ object CloudinaryImageUploadHelper {
             "imageBase64" to Base64.encodeToString(imageBytes, Base64.NO_WRAP)
         )
         subjectId?.takeIf { it.isNotBlank() }?.let { request["subjectId"] = it }
-        // Legacy local file URIs were never Cloudinary assets and are deliberately rejected by
-        // the trusted backend. Omit them as replacement metadata so a new secure upload can
-        // replace a stale local-only logo; HTTPS and managed references remain auditable there.
+        // Local URIs are not remote assets and are deliberately omitted. HTTPS,
+        // including pre-cutover Cloudinary values, and managed references remain
+        // auditable replacement metadata at the trusted backend.
         replacesReference?.takeIf(::isExistingCloudReference)
             ?.let { request["replacesReference"] = it }
         val response = functions.getHttpsCallable("uploadSecureMedia").call(request).await()
@@ -128,8 +128,6 @@ object CloudinaryImageUploadHelper {
             }
             if (compressed.size <= policy.targetBytes) return compressed
 
-            // A detailed image can still exceed its target at lower quality. Keep reducing its
-            // dimensions until it is within the target or it reaches a sensible minimum size.
             repeat(3) {
                 if (working.width <= 320 && working.height <= 320) return compressed
                 val reduced = Bitmap.createScaledBitmap(

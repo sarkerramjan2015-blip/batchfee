@@ -48,7 +48,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
-import com.batchfee.edu.data.cloudinary.CloudinaryImageUploadHelper
+import com.batchfee.edu.data.media.FirebaseStorageImageUploadHelper
 import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.domain.SessionManager
 import com.batchfee.edu.domain.StaffPermissions
@@ -343,7 +343,7 @@ fun AddEditStaffScreen(
                                     if (selectedUri.scheme == "https" || selectedUri.scheme == "http") {
                                         selectedUri.toString()
                                     } else {
-                                        CloudinaryImageUploadHelper.uploadStaffPhoto(
+                                        FirebaseStorageImageUploadHelper.uploadStaffPhoto(
                                             context = context,
                                             sourceUri = selectedUri,
                                             subjectId = staffId,

@@ -4,7 +4,7 @@ import android.app.Application
 import coil.ImageLoader
 import coil.ImageLoaderFactory
 import com.batchfee.edu.data.database.AppDatabase
-import com.batchfee.edu.data.cloudinary.SecureMediaInterceptor
+import com.batchfee.edu.data.media.SecureMediaInterceptor
 import com.batchfee.edu.domain.ThemePreferences
 import com.batchfee.edu.domain.SessionManager
 import com.batchfee.edu.domain.StudentSessionManager
