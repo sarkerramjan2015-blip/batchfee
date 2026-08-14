@@ -20,6 +20,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.batchfee.edu.domain.StudentSessionManager
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.firestore.ListenerRegistration
 import java.text.SimpleDateFormat
 import java.util.*
@@ -35,44 +36,137 @@ private val RsWhite  = Color(0xFFF8FAFC)
 private val RsMuted  = Color(0xFF94A3B8)
 private val RsDim    = Color(0xFF64748B)
 
-data class ResultCardInfo(val id: String, val examName: String, val examDateMs: Long?, val subject: String?, val obtainedMarks: Double, val totalMarks: Double, val grade: String?, val rank: Int?, val totalStudents: Int?)
+data class ResultCardInfo(
+    val id: String,
+    val examId: String?,
+    val examName: String,
+    val examDateMs: Long?,
+    val subject: String?,
+    val obtainedMarks: Double,
+    val totalMarks: Double,
+    val grade: String?,
+    val rank: Int?,
+    val totalStudents: Int?
+)
+
+private data class StudentExamInfo(
+    val examName: String,
+    val examDateMs: Long?,
+    val subject: String?,
+    val totalMarks: Double
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun StudentResultScreen(onBack: () -> Unit) {
-    val sid = StudentSessionManager.studentId.value ?: ""
-    val iid = StudentSessionManager.instituteId.value ?: ""
-    var results by remember { mutableStateOf<List<ResultCardInfo>>(emptyList()) }
-    var loading by remember { mutableStateOf(true) }
+    val sid by StudentSessionManager.studentId.collectAsState()
+    val iid by StudentSessionManager.instituteId.collectAsState()
+    val studentId = sid.orEmpty()
+    val instituteId = iid.orEmpty()
+    var resultSource by remember(studentId, instituteId) { mutableStateOf<List<ResultCardInfo>>(emptyList()) }
+    var examsById by remember(instituteId) { mutableStateOf<Map<String, StudentExamInfo>>(emptyMap()) }
+    var loading by remember(studentId, instituteId) { mutableStateOf(true) }
+    var syncError by remember(studentId, instituteId) { mutableStateOf<String?>(null) }
     val df = remember { SimpleDateFormat("dd MMM yyyy", Locale.getDefault()) }
 
-    DisposableEffect(iid, sid) {
+    fun reportListenerError(error: FirebaseFirestoreException?) {
+        if (error != null) {
+            loading = false
+            syncError = if (error.code == FirebaseFirestoreException.Code.PERMISSION_DENIED) {
+                "Live access is no longer available. Please sign in again."
+            } else {
+                "Live updates are paused. Check your connection."
+            }
+        }
+    }
+
+    DisposableEffect(instituteId, studentId) {
+        if (instituteId.isBlank() || studentId.isBlank()) {
+            onDispose { }
+        } else {
         val listener = FirebaseFirestore.getInstance()
-            .collection("institutes").document(iid)
-            .collection("results").whereEqualTo("studentId", sid)
-            .addSnapshotListener { snap, _ ->
-                results = snap?.documents?.map { doc ->
-                    val obt = doc.getDouble("obtainedMarks") ?: 0.0
-                    val tot = doc.getDouble("totalMarks") ?: 100.0
+            .collection("institutes").document(instituteId)
+            .collection("results").whereEqualTo("studentId", studentId)
+            .addSnapshotListener { snap, error ->
+                reportListenerError(error)
+                if (error != null) return@addSnapshotListener
+                resultSource = snap?.documents
+                    ?.filter { it.getBoolean("published") == true }
+                    ?.map { doc ->
+                    val obtained = (doc.get("marksObtained") as? Number)?.toDouble()
+                        ?: (doc.get("obtainedMarks") as? Number)?.toDouble()
+                        ?: 0.0
                     ResultCardInfo(
-                        id = doc.id, examName = doc.getString("examName") ?: "Exam",
-                        examDateMs = (doc.get("examDateMs") as? Number)?.toLong(), subject = doc.getString("subject"),
-                        obtainedMarks = obt, totalMarks = tot, grade = doc.getString("grade"),
-                        rank = (doc.get("rank") as? Number)?.toInt(), totalStudents = (doc.get("totalStudents") as? Number)?.toInt()
+                        id = doc.id,
+                        examId = doc.getString("examId"),
+                        examName = doc.getString("examName") ?: "Exam",
+                        examDateMs = (doc.get("examDateMs") as? Number)?.toLong(),
+                        subject = doc.getString("subject"),
+                        obtainedMarks = obtained,
+                        totalMarks = (doc.get("totalMarks") as? Number)?.toDouble() ?: 0.0,
+                        grade = doc.getString("grade"),
+                        rank = (doc.get("position") as? Number)?.toInt()
+                            ?: (doc.get("rank") as? Number)?.toInt(),
+                        totalStudents = (doc.get("totalStudents") as? Number)?.toInt()
                     )
-                }?.sortedByDescending { it.examDateMs ?: 0L } ?: emptyList()
+                }.orEmpty()
                 loading = false
             }
-        onDispose { listener.remove() }
+        val examListener = FirebaseFirestore.getInstance()
+            .collection("institutes").document(instituteId).collection("exams")
+            .addSnapshotListener { snap, error ->
+                reportListenerError(error)
+                if (error == null) {
+                    examsById = snap?.documents?.associate { doc ->
+                        doc.id to StudentExamInfo(
+                            examName = doc.getString("examName") ?: "Exam",
+                            examDateMs = (doc.get("examDateMs") as? Number)?.toLong(),
+                            subject = doc.getString("subject"),
+                            totalMarks = (doc.get("totalMarks") as? Number)?.toDouble() ?: 0.0
+                        )
+                    }.orEmpty()
+                }
+            }
+        onDispose { listener.remove(); examListener.remove() }
+        }
     }
+
+    // Result documents store the marks, while exam documents own the title,
+    // date and total marks. Joining both live sources prevents "Exam / 0 of
+    // 100" placeholder data after an institute publishes a real result.
+    val results = resultSource.map { result ->
+        val exam = result.examId?.let(examsById::get)
+        result.copy(
+            examName = exam?.examName ?: result.examName,
+            examDateMs = exam?.examDateMs ?: result.examDateMs,
+            subject = exam?.subject ?: result.subject,
+            totalMarks = exam?.totalMarks?.takeIf { it > 0.0 } ?: result.totalMarks
+        )
+    }.sortedByDescending { it.examDateMs ?: 0L }
 
     Scaffold(
         containerColor = RsBg,
         topBar = { TopAppBar(title = { Text("Results", color = RsWhite, fontWeight = FontWeight.Bold) }, navigationIcon = { IconButton(onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = RsMuted) } }, colors = TopAppBarDefaults.topAppBarColors(containerColor = RsBg)) }
     ) { padding ->
         if (loading) Box(Modifier.fillMaxSize().padding(padding).background(RsBg), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = RsCyan) }
-        else if (results.isEmpty()) Box(Modifier.fillMaxSize().padding(padding).background(RsBg), contentAlignment = Alignment.Center) { Text("No results yet.", color = RsMuted) }
+        else if (results.isEmpty()) Box(Modifier.fillMaxSize().padding(padding).background(RsBg), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                syncError?.let { Text(it, color = RsAmber, fontSize = 12.sp) }
+                Text("No published results yet.", color = RsMuted)
+            }
+        }
         else LazyColumn(Modifier.fillMaxSize().padding(padding).background(RsBg), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            syncError?.let { message ->
+                item {
+                    Surface(color = RsAmber.copy(alpha = 0.12f), shape = RoundedCornerShape(10.dp), modifier = Modifier.fillMaxWidth()) {
+                        Row(Modifier.padding(horizontal = 12.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Filled.SyncProblem, null, tint = RsAmber, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text(message, color = RsAmber, fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
             items(results) { r ->
                 val pct = if (r.totalMarks > 0) (r.obtainedMarks / r.totalMarks) * 100 else 0.0
                 Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = RsCard), border = BorderStroke(1.dp, RsStroke)) {
@@ -95,8 +189,8 @@ fun StudentResultScreen(onBack: () -> Unit) {
                         }
                         Spacer(Modifier.height(14.dp))
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                            RStat("Marks", "${"%.0f".format(r.obtainedMarks)}/${"%.0f".format(r.totalMarks)}")
-                            RStat("Percentage", "${"%.0f".format(pct)}%")
+                            RStat("Marks", if (r.totalMarks > 0) "${"%.0f".format(r.obtainedMarks)}/${"%.0f".format(r.totalMarks)}" else "${"%.0f".format(r.obtainedMarks)}")
+                            RStat("Percentage", if (r.totalMarks > 0) "${"%.0f".format(pct)}%" else "–")
                             r.rank?.let { RStat("Rank", "#$it of ${r.totalStudents ?: "?"}") }
                         }
                     }

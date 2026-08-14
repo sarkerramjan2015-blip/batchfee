@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.batchfee.edu.domain.StudentSessionManager
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.firestore.ListenerRegistration
 import java.text.SimpleDateFormat
 import java.util.*
@@ -42,10 +43,13 @@ data class AttRecord(val id: String, val dateMs: Long, val status: String)
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun StudentAttendanceScreen(onBack: () -> Unit) {
-    val sid = StudentSessionManager.studentId.value ?: ""
-    val iid = StudentSessionManager.instituteId.value ?: ""
-    var allRecords by remember { mutableStateOf<List<AttRecord>>(emptyList()) }
-    var loading by remember { mutableStateOf(true) }
+    val sid by StudentSessionManager.studentId.collectAsState()
+    val iid by StudentSessionManager.instituteId.collectAsState()
+    val studentId = sid.orEmpty()
+    val instituteId = iid.orEmpty()
+    var allRecords by remember(studentId, instituteId) { mutableStateOf<List<AttRecord>>(emptyList()) }
+    var loading by remember(studentId, instituteId) { mutableStateOf(true) }
+    var syncError by remember(studentId, instituteId) { mutableStateOf<String?>(null) }
 
     // Month navigation
     val cal = remember { Calendar.getInstance() }
@@ -53,15 +57,32 @@ fun StudentAttendanceScreen(onBack: () -> Unit) {
     var selectedYear by remember { mutableIntStateOf(cal.get(Calendar.YEAR)) }
     val monthDf = remember { SimpleDateFormat("MMMM yyyy", Locale.getDefault()) }
 
-    DisposableEffect(iid, sid) {
-        val listener = FirebaseFirestore.getInstance().collection("institutes").document(iid).collection("attendance").whereEqualTo("studentId", sid)
-            .addSnapshotListener { snap, _ ->
+    fun reportListenerError(error: FirebaseFirestoreException?) {
+        if (error != null) {
+            loading = false
+            syncError = if (error.code == FirebaseFirestoreException.Code.PERMISSION_DENIED) {
+                "Live access is no longer available. Please sign in again."
+            } else {
+                "Live updates are paused. Check your connection."
+            }
+        }
+    }
+
+    DisposableEffect(instituteId, studentId) {
+        if (instituteId.isBlank() || studentId.isBlank()) {
+            onDispose { }
+        } else {
+        val listener = FirebaseFirestore.getInstance().collection("institutes").document(instituteId).collection("attendance").whereEqualTo("studentId", studentId)
+            .addSnapshotListener { snap, error ->
+                reportListenerError(error)
+                if (error != null) return@addSnapshotListener
                 allRecords = snap?.documents?.map { doc ->
                     AttRecord(id = doc.id, dateMs = (doc.get("attendanceDateMs") as? Number)?.toLong() ?: 0L, status = doc.getString("status") ?: "absent")
                 }?.sortedByDescending { it.dateMs } ?: emptyList()
                 loading = false
             }
         onDispose { listener.remove() }
+        }
     }
 
     // Filter records for selected month
@@ -85,6 +106,15 @@ fun StudentAttendanceScreen(onBack: () -> Unit) {
         topBar = { TopAppBar(title = { Text("Attendance", color = AbWhite, fontWeight = FontWeight.Bold) }, navigationIcon = { IconButton(onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = AbMuted) } }, colors = TopAppBarDefaults.topAppBarColors(containerColor = AbBg)) }
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).background(AbBg)) {
+            syncError?.let { message ->
+                Surface(color = AbRed.copy(alpha = 0.12f), shape = RoundedCornerShape(10.dp), modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+                    Row(Modifier.padding(horizontal = 12.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.SyncProblem, null, tint = AbRed, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(message, color = AbRed, fontSize = 12.sp)
+                    }
+                }
+            }
             // Month selector
             Card(Modifier.fillMaxWidth().padding(16.dp), shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = AbCard), border = BorderStroke(1.dp, AbStroke)) {
                 Row(Modifier.padding(12.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {

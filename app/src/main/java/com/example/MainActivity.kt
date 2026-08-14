@@ -286,6 +286,7 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
                         if (!AccessControl.canAccessRoute(route)) return@navigate
                         when (route) {
                             "StudentsRoute" -> navController.navigate(StudentsRoute)
+                            "ArchivedStudentsRoute" -> navController.navigate(ArchivedStudentsRoute)
                             "AddStudentRoute" -> navController.navigate(AddStudentRoute)
                             "BatchesRoute" -> navController.navigate(BatchesRoute)
                             "AddBatchRoute" -> navController.navigate(AddBatchRoute)
@@ -344,6 +345,13 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
                 onAddStudent = { navController.navigate(AddStudentRoute) },
                 onNavigateToProfile = { studentId -> navController.navigate(StudentProfileRoute(studentId)) },
                 onNavigateToIdCards = { navController.navigate(IdCardGeneratorRoute) }
+            )
+        }
+
+        composable<ArchivedStudentsRoute> {
+            com.batchfee.edu.ui.students.ArchivedStudentsScreen(
+                db = appDb,
+                onBack = { navController.popBackStack() }
             )
         }
         

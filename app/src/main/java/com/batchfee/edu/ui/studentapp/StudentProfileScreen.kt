@@ -20,6 +20,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.batchfee.edu.domain.StudentSessionManager
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.firestore.ListenerRegistration
 
 private val PsBg     = Color(0xFF07111F)
@@ -35,29 +36,46 @@ private val PsDim    = Color(0xFF64748B)
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun StudentProfileScreen(onLogout: () -> Unit) {
-    val sid = StudentSessionManager.studentId.value ?: ""
-    val iid = StudentSessionManager.instituteId.value ?: ""
-    val sessionName = StudentSessionManager.studentName.value ?: ""
-    val sessionCode = StudentSessionManager.studentCode.value ?: ""
+    val sid by StudentSessionManager.studentId.collectAsState()
+    val iid by StudentSessionManager.instituteId.collectAsState()
+    val sessionName by StudentSessionManager.studentName.collectAsState()
+    val sessionCode by StudentSessionManager.studentCode.collectAsState()
+    val studentId = sid.orEmpty()
+    val instituteId = iid.orEmpty()
 
-    var fullName by remember { mutableStateOf(sessionName) }
-    var studentCode by remember { mutableStateOf(sessionCode) }
-    var phone by remember { mutableStateOf("") }
-    var email by remember { mutableStateOf("") }
-    var address by remember { mutableStateOf("") }
-    var className by remember { mutableStateOf("") }
-    var guardianName by remember { mutableStateOf("") }
-    var guardianPhone by remember { mutableStateOf("") }
-    var bloodGroup by remember { mutableStateOf("") }
-    var instituteName by remember { mutableStateOf("") }
-    var institutePhone by remember { mutableStateOf("") }
+    var fullName by remember(studentId) { mutableStateOf(sessionName.orEmpty()) }
+    var studentCode by remember(studentId) { mutableStateOf(sessionCode.orEmpty()) }
+    var phone by remember(studentId) { mutableStateOf("") }
+    var email by remember(studentId) { mutableStateOf("") }
+    var address by remember(studentId) { mutableStateOf("") }
+    var className by remember(studentId) { mutableStateOf("") }
+    var guardianName by remember(studentId) { mutableStateOf("") }
+    var guardianPhone by remember(studentId) { mutableStateOf("") }
+    var bloodGroup by remember(studentId) { mutableStateOf("") }
+    var instituteName by remember(instituteId) { mutableStateOf("") }
+    var institutePhone by remember(instituteId) { mutableStateOf("") }
+    var syncError by remember(studentId, instituteId) { mutableStateOf<String?>(null) }
 
-    DisposableEffect(iid, sid) {
+    fun reportListenerError(error: FirebaseFirestoreException?) {
+        if (error != null) {
+            syncError = if (error.code == FirebaseFirestoreException.Code.PERMISSION_DENIED) {
+                "Live access is no longer available. Please sign in again."
+            } else {
+                "Live updates are paused. Check your connection."
+            }
+        }
+    }
+
+    DisposableEffect(instituteId, studentId) {
+        if (instituteId.isBlank() || studentId.isBlank()) {
+            onDispose { }
+        } else {
         val fs = FirebaseFirestore.getInstance()
         val listeners = mutableListOf<ListenerRegistration>()
 
-        listeners += fs.collection("institutes").document(iid).collection("students").document(sid)
-            .addSnapshotListener { snap, _ ->
+        listeners += fs.collection("institutes").document(instituteId).collection("students").document(studentId)
+            .addSnapshotListener { snap, error ->
+                reportListenerError(error)
                 snap?.let {
                     fullName = it.getString("fullName") ?: fullName
                     studentCode = it.getString("studentCode") ?: studentCode
@@ -70,14 +88,16 @@ fun StudentProfileScreen(onLogout: () -> Unit) {
                     bloodGroup = it.getString("bloodGroup") ?: ""
                 }
             }
-        listeners += fs.collection("institutes").document(iid)
-            .addSnapshotListener { snap, _ ->
+        listeners += fs.collection("institutes").document(instituteId)
+            .addSnapshotListener { snap, error ->
+                reportListenerError(error)
                 snap?.let {
                     instituteName = it.getString("name") ?: it.getString("instituteName") ?: ""
                     institutePhone = it.getString("phone") ?: ""
                 }
             }
         onDispose { listeners.forEach { it.remove() } }
+        }
     }
 
     Scaffold(
@@ -93,6 +113,17 @@ fun StudentProfileScreen(onLogout: () -> Unit) {
             Text(fullName, color = PsWhite, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp)
             Text("ID: $studentCode", color = PsCyan, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
             if (className.isNotBlank()) Text(className, color = PsMuted, fontSize = 12.sp)
+
+            syncError?.let { message ->
+                Spacer(Modifier.height(12.dp))
+                Surface(color = PsRed.copy(alpha = 0.12f), shape = RoundedCornerShape(10.dp), modifier = Modifier.fillMaxWidth()) {
+                    Row(Modifier.padding(horizontal = 12.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.SyncProblem, null, tint = PsRed, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(message, color = PsRed, fontSize = 12.sp)
+                    }
+                }
+            }
 
             Spacer(Modifier.height(20.dp))
 

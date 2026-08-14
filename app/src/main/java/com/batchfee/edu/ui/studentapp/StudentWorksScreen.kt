@@ -20,6 +20,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.batchfee.edu.domain.StudentSessionManager
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.firestore.ListenerRegistration
 import java.text.SimpleDateFormat
 import java.util.*
@@ -36,46 +37,116 @@ private val WsWhite  = Color(0xFFF8FAFC)
 private val WsMuted  = Color(0xFF94A3B8)
 private val WsDim    = Color(0xFF64748B)
 
-data class WorkItem(val id: String, val type: String, val title: String, val description: String, val bookPage: String?, val dueDateMs: Long?, val createdAtMs: Long)
+data class WorkItem(
+    val id: String,
+    val type: String,
+    val batchId: String?,
+    val title: String,
+    val description: String,
+    val bookPage: String?,
+    val dueDateMs: Long?,
+    val createdAtMs: Long
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun StudentWorksScreen(onBack: () -> Unit) {
-    val iid = StudentSessionManager.instituteId.value ?: ""
-    var homeworks by remember { mutableStateOf<List<WorkItem>>(emptyList()) }
-    var assignments by remember { mutableStateOf<List<WorkItem>>(emptyList()) }
-    var loading by remember { mutableStateOf(true) }
+    val sid by StudentSessionManager.studentId.collectAsState()
+    val iid by StudentSessionManager.instituteId.collectAsState()
+    val studentId = sid.orEmpty()
+    val instituteId = iid.orEmpty()
+    var homeworkSource by remember(instituteId) { mutableStateOf<List<WorkItem>>(emptyList()) }
+    var assignmentSource by remember(instituteId) { mutableStateOf<List<WorkItem>>(emptyList()) }
+    var activeBatchIds by remember(studentId, instituteId) { mutableStateOf<Set<String>>(emptySet()) }
+    var loading by remember(studentId, instituteId) { mutableStateOf(true) }
+    var syncError by remember(studentId, instituteId) { mutableStateOf<String?>(null) }
     val df = remember { SimpleDateFormat("dd MMM yyyy", Locale.getDefault()) }
 
-    DisposableEffect(iid) {
+    fun reportListenerError(error: FirebaseFirestoreException?) {
+        if (error != null) {
+            loading = false
+            syncError = if (error.code == FirebaseFirestoreException.Code.PERMISSION_DENIED) {
+                "Live access is no longer available. Please sign in again."
+            } else {
+                "Live updates are paused. Check your connection."
+            }
+        }
+    }
+
+    DisposableEffect(instituteId, studentId) {
+        if (instituteId.isBlank() || studentId.isBlank()) {
+            onDispose { }
+        } else {
         val fs = FirebaseFirestore.getInstance()
         val listeners = mutableListOf<ListenerRegistration>()
 
-        listeners += fs.collection("institutes").document(iid).collection("homework")
+        // The institute may move a student between batches while the app is open.
+        // Keeping this listener live makes the work list update at the same time.
+        listeners += fs.collection("institutes").document(instituteId).collection("batch_students")
+            .whereEqualTo("studentId", studentId)
+            .addSnapshotListener { snap, error ->
+                reportListenerError(error)
+                if (error == null) {
+                    activeBatchIds = snap?.documents
+                        ?.filter { it.getString("status") == "active" }
+                        ?.mapNotNull { it.getString("batchId") }
+                        ?.toSet()
+                        .orEmpty()
+                }
+            }
+
+        listeners += fs.collection("institutes").document(instituteId).collection("homework")
             .whereEqualTo("status", "active")
-            .addSnapshotListener { snap, _ ->
-                homeworks = snap?.documents?.mapNotNull { doc ->
-                    WorkItem(id = doc.id, type = "HOMEWORK", title = doc.getString("title") ?: return@mapNotNull null, description = doc.getString("instructions") ?: "", bookPage = doc.getString("bookPage"), dueDateMs = (doc.get("dueDateMs") as? Number)?.toLong(), createdAtMs = (doc.get("createdAtMs") as? Number)?.toLong() ?: 0L)
-                }?.sortedByDescending { it.createdAtMs } ?: emptyList()
+            .addSnapshotListener { snap, error ->
+                reportListenerError(error)
+                if (error != null) return@addSnapshotListener
+                homeworkSource = snap?.documents?.mapNotNull { doc ->
+                    WorkItem(id = doc.id, type = "HOMEWORK", batchId = doc.getString("batchId"), title = doc.getString("title") ?: return@mapNotNull null, description = doc.getString("instructions") ?: "", bookPage = doc.getString("bookPage"), dueDateMs = (doc.get("dueDateMs") as? Number)?.toLong(), createdAtMs = (doc.get("createdAtMs") as? Number)?.toLong() ?: 0L)
+                }.orEmpty()
                 loading = false
             }
 
-        listeners += fs.collection("institutes").document(iid).collection("assignments")
+        listeners += fs.collection("institutes").document(instituteId).collection("assignments")
             .whereEqualTo("status", "published")
-            .addSnapshotListener { snap, _ ->
-                assignments = snap?.documents?.mapNotNull { doc ->
-                    WorkItem(id = doc.id, type = "ASSIGNMENT", title = doc.getString("title") ?: return@mapNotNull null, description = doc.getString("instructions") ?: "", bookPage = null, dueDateMs = (doc.get("dueDateMs") as? Number)?.toLong(), createdAtMs = (doc.get("createdAtMs") as? Number)?.toLong() ?: 0L)
-                }?.sortedByDescending { it.createdAtMs } ?: emptyList()
+            .addSnapshotListener { snap, error ->
+                reportListenerError(error)
+                if (error != null) return@addSnapshotListener
+                assignmentSource = snap?.documents?.mapNotNull { doc ->
+                    WorkItem(id = doc.id, type = "ASSIGNMENT", batchId = doc.getString("batchId"), title = doc.getString("title") ?: return@mapNotNull null, description = doc.getString("instructions") ?: "", bookPage = null, dueDateMs = (doc.get("dueDateMs") as? Number)?.toLong(), createdAtMs = (doc.get("createdAtMs") as? Number)?.toLong() ?: 0L)
+                }.orEmpty()
                 loading = false
             }
 
         onDispose { listeners.forEach { it.remove() } }
+        }
     }
+
+    // A work item without a batch is intentionally institute-wide. All other
+    // items stay scoped to a batch in which this student is currently active.
+    val homeworks = homeworkSource
+        .filter { it.batchId.isNullOrBlank() || it.batchId in activeBatchIds }
+        .sortedByDescending { it.createdAtMs }
+    val assignments = assignmentSource
+        .filter { it.batchId.isNullOrBlank() || it.batchId in activeBatchIds }
+        .sortedByDescending { it.createdAtMs }
 
     Scaffold(containerColor = WsBg,
         topBar = { TopAppBar(title = { Text("Works", color = WsWhite, fontWeight = FontWeight.Bold) }, colors = TopAppBarDefaults.topAppBarColors(containerColor = WsBg)) }
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).background(WsBg)) {
+            syncError?.let { message ->
+                Surface(
+                    color = WsAmber.copy(alpha = 0.12f),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
+                ) {
+                    Row(Modifier.padding(horizontal = 12.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.SyncProblem, null, tint = WsAmber, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(message, color = WsAmber, fontSize = 12.sp)
+                    }
+                }
+            }
             if (loading) Box(Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = WsCyan) }
             else if (homeworks.isEmpty() && assignments.isEmpty()) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("No work assigned yet.", color = WsMuted) }
             else LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {

@@ -125,11 +125,10 @@ class BillingViewModel(private val db: AppDatabase) : ViewModel() {
             val instId = SessionManager.currentInstituteId.value ?: return@launch
             firestore.collection("subscriptionRequests")
                 .whereEqualTo("instituteId", instId)
-                .orderBy("requestSentAt", Query.Direction.DESCENDING)
-                .limit(1)
                 .addSnapshotListener { snapshot, error ->
                     if (error != null) return@addSnapshotListener
-                    val doc = snapshot?.documents?.firstOrNull()
+                    val doc = snapshot?.documents
+                        ?.maxByOrNull { (it.data?.get("requestSentAt") as? Number)?.toLong() ?: 0L }
                     if (doc != null && doc.exists()) {
                         val data = doc.data ?: return@addSnapshotListener
                         _latestRequest.value = SubscriptionRequest.fromFirestore(doc.id, data)
@@ -140,11 +139,11 @@ class BillingViewModel(private val db: AppDatabase) : ViewModel() {
         }
         viewModelScope.launch {
             val instId = SessionManager.currentInstituteId.value ?: return@launch
-            // Subscription history is sourced from subscription requests/receipts only.
+            // This canonical record is created by the trusted approval service.
             // Student fee receipts intentionally share no billing UI or data path.
-            firestore.collection("subscriptionRequests")
-                .whereEqualTo("instituteId", instId)
-                .orderBy("requestSentAt", Query.Direction.DESCENDING)
+            firestore.collection("institutes").document(instId)
+                .collection("subscription_receipts")
+                .orderBy("approvedAt", Query.Direction.DESCENDING)
                 .addSnapshotListener { snapshot, error ->
                     if (error != null) {
                         FirebaseCrashlytics.getInstance().recordException(error)
@@ -152,7 +151,6 @@ class BillingViewModel(private val db: AppDatabase) : ViewModel() {
                     }
                     _receipts.value = snapshot?.documents?.mapNotNull { doc ->
                         val d = doc.data ?: return@mapNotNull null
-                        if (d["status"] != "approved") return@mapNotNull null
                         SubscriptionReceiptData(
                             receiptNumber = d["receiptNumber"] as? String ?: doc.id,
                             instituteName = d["instituteName"] as? String ?: "",

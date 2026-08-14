@@ -73,14 +73,13 @@ class SubscriptionRepository(
         return try {
             val snapshot = firestore.collection(COLLECTION)
                 .whereEqualTo("status", "pending")
-                .orderBy("requestSentAt")
                 .get()
                 .await()
             snapshot.documents.mapNotNull { doc ->
                 doc.data?.let { data ->
                     SubscriptionRequest.fromFirestore(doc.id, data)
                 }
-            }
+            }.sortedBy { it.requestSentAt }
         } catch (e: Exception) {
             FirebaseCrashlytics.getInstance().recordException(e)
             emptyList()
@@ -91,14 +90,13 @@ class SubscriptionRepository(
         return try {
             val snapshot = firestore.collection(COLLECTION)
                 .whereEqualTo("instituteId", instituteId)
-                .orderBy("requestSentAt")
                 .get()
                 .await()
             snapshot.documents.mapNotNull { doc ->
                 doc.data?.let { data ->
                     SubscriptionRequest.fromFirestore(doc.id, data)
                 }
-            }
+            }.sortedBy { it.requestSentAt }
         } catch (e: Exception) {
             FirebaseCrashlytics.getInstance().recordException(e)
             emptyList()

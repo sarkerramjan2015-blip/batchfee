@@ -4,8 +4,16 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
+import android.graphics.RectF
 import android.graphics.Typeface
+import android.graphics.pdf.PdfDocument
 import android.net.Uri
+import android.os.CancellationSignal
+import android.os.ParcelFileDescriptor
+import android.print.PrintAttributes
+import android.print.PrintDocumentAdapter
+import android.print.PrintDocumentInfo
+import android.print.PrintManager
 import androidx.core.content.FileProvider
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -43,6 +51,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.data.models.ExamEntity
 import com.batchfee.edu.domain.SessionManager
+import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -788,6 +797,19 @@ fun ExamDetailScreen(db: AppDatabase, examId: String, onBack: () -> Unit, onEdit
                             OutlinedButton(
                                 onClick = {
                                     showStudentMessageDialog = null
+                                    printResultCard(context, item, exam, batchName, gradeColor, passColor, passFail)
+                                },
+                                modifier = Modifier.weight(1f).height(44.dp),
+                                shape = RoundedCornerShape(12.dp),
+                                border = BorderStroke(1.dp, ElectricBlue.copy(alpha = 0.55f))
+                            ) {
+                                Icon(Icons.Filled.Print, null, tint = ElectricBlue, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(5.dp))
+                                Text("Print", color = ElectricBlue, fontSize = 12.sp)
+                            }
+                            OutlinedButton(
+                                onClick = {
+                                    showStudentMessageDialog = null
                                     val msg = viewModel.buildStudentMessage(item, exam)
                                     sendWhatsApp(context, item.student.phone, msg)
                                 },
@@ -981,7 +1003,263 @@ private fun sendSMS(context: android.content.Context, phone: String?, msg: Strin
     }
 }
 
+private fun createResultCardBitmap(
+    item: StudentResultItem,
+    exam: com.batchfee.edu.data.models.ExamEntity,
+    batchName: String,
+    gradeColor: androidx.compose.ui.graphics.Color,
+    passColor: androidx.compose.ui.graphics.Color,
+    passFail: String,
+): Bitmap {
+    val width = 1080
+    val height = 1350
+    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+    val navy = android.graphics.Color.parseColor("#0B1F3A")
+    val navyMid = android.graphics.Color.parseColor("#123C6A")
+    val cyan = android.graphics.Color.parseColor("#22D3EE")
+    val ink = android.graphics.Color.parseColor("#10233F")
+    val muted = android.graphics.Color.parseColor("#64748B")
+    val pale = android.graphics.Color.parseColor("#F6F9FF")
+    val paleBlue = android.graphics.Color.parseColor("#E0F2FE")
+    val line = android.graphics.Color.parseColor("#DCE6F2")
+    val white = android.graphics.Color.WHITE
+    val grade = gradeColor.toArgb()
+    val pass = passColor.toArgb()
+    val resultMarks = item.result?.marksObtained ?: 0.0
+    val percentage = if (exam.totalMarks > 0.0) ((resultMarks / exam.totalMarks) * 100).coerceIn(0.0, 100.0) else 0.0
+
+    val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    canvas.drawColor(pale)
+    fill.color = paleBlue
+    canvas.drawCircle(width * 0.94f, 410f, 260f, fill)
+    fill.color = android.graphics.Color.parseColor("#DBEAFE")
+    canvas.drawCircle(90f, 1060f, 190f, fill)
+
+    val headerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        shader = android.graphics.LinearGradient(
+            0f, 0f, width.toFloat(), 0f,
+            navy, navyMid, android.graphics.Shader.TileMode.CLAMP,
+        )
+    }
+    canvas.drawRoundRect(28f, 28f, width - 28f, 282f, 34f, 34f, headerPaint)
+    fill.color = android.graphics.Color.argb(26, 255, 255, 255)
+    canvas.drawCircle(900f, 75f, 185f, fill)
+    canvas.drawCircle(1000f, 240f, 120f, fill)
+
+    val brandPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = white; textSize = 24f; isFakeBoldText = true; textAlign = Paint.Align.CENTER }
+    fill.color = cyan
+    canvas.drawCircle(82f, 82f, 30f, fill)
+    canvas.drawText("BF", 82f, 90f, brandPaint)
+    val badgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = white; textSize = 18f; isFakeBoldText = true; letterSpacing = 0.10f }
+    canvas.drawText("RESULT STATEMENT", 130f, 70f, badgePaint)
+    val headerSmall = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.argb(185, 255, 255, 255); textSize = 18f }
+    canvas.drawText("BatchFee Academic Record", 130f, 101f, headerSmall)
+    val examPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = white; textSize = 34f; isFakeBoldText = true }
+    canvas.drawText(fitResultCardText(exam.examName, examPaint, 780f), 66f, 173f, examPaint)
+    val examMeta = listOf(batchName, SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(exam.examDateMs))).filter { it.isNotBlank() }.joinToString("  |  ")
+    canvas.drawText(fitResultCardText(examMeta, headerSmall, 760f), 66f, 212f, headerSmall)
+
+    val identityRect = RectF(54f, 232f, width - 54f, 422f)
+    fill.color = white
+    canvas.drawRoundRect(identityRect, 26f, 26f, fill)
+    val identityStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = line; style = Paint.Style.STROKE; strokeWidth = 2f }
+    canvas.drawRoundRect(identityRect, 26f, 26f, identityStroke)
+    fill.color = navy
+    canvas.drawCircle(132f, 327f, 49f, fill)
+    val initialPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = white; textSize = 44f; isFakeBoldText = true; textAlign = Paint.Align.CENTER }
+    canvas.drawText(item.student.fullName.trim().take(1).uppercase(), 132f, 343f, initialPaint)
+    val studentNamePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = ink; textSize = 36f; isFakeBoldText = true }
+    canvas.drawText(fitResultCardText(item.student.fullName, studentNamePaint, 590f), 210f, 313f, studentNamePaint)
+    val studentMetaPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = muted; textSize = 20f; isFakeBoldText = true; letterSpacing = 0.05f }
+    canvas.drawText("STUDENT ID  |  ${item.student.studentCode.ifBlank { "N/A" }}", 210f, 348f, studentMetaPaint)
+    val statusRect = RectF(794f, 291f, 982f, 360f)
+    fill.color = pass
+    canvas.drawRoundRect(statusRect, 35f, 35f, fill)
+    val statusPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = white; textSize = 19f; isFakeBoldText = true; textAlign = Paint.Align.CENTER; letterSpacing = 0.07f }
+    canvas.drawText(passFail, statusRect.centerX(), 334f, statusPaint)
+
+    val scoreRect = RectF(54f, 465f, width - 54f, 900f)
+    val scorePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        shader = android.graphics.LinearGradient(0f, scoreRect.top, scoreRect.right, scoreRect.bottom, navy, navyMid, android.graphics.Shader.TileMode.CLAMP)
+    }
+    canvas.drawRoundRect(scoreRect, 30f, 30f, scorePaint)
+    fill.color = android.graphics.Color.argb(25, 255, 255, 255)
+    canvas.drawCircle(scoreRect.right - 70f, scoreRect.top + 70f, 120f, fill)
+    canvas.drawCircle(scoreRect.right - 150f, scoreRect.bottom - 25f, 170f, fill)
+    val scoreLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.argb(190, 255, 255, 255); textSize = 18f; isFakeBoldText = true; letterSpacing = 0.12f }
+    canvas.drawText("FINAL SCORE", 100f, 527f, scoreLabelPaint)
+    val scoreNumberPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = white; textSize = 104f; isFakeBoldText = true }
+    canvas.drawText(formatNum(resultMarks), 98f, 648f, scoreNumberPaint)
+    val outOfPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.argb(190, 255, 255, 255); textSize = 23f }
+    canvas.drawText("out of ${formatNum(exam.totalMarks)} marks", 103f, 687f, outOfPaint)
+    val progressBg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.argb(45, 255, 255, 255) }
+    canvas.drawRoundRect(102f, 728f, 690f, 746f, 9f, 9f, progressBg)
+    val progressWidth = (588f * (percentage / 100.0)).toFloat()
+    val progressPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = cyan }
+    canvas.drawRoundRect(102f, 728f, 102f + progressWidth.coerceAtLeast(8f), 746f, 9f, 9f, progressPaint)
+    val percentagePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = cyan; textSize = 22f; isFakeBoldText = true; textAlign = Paint.Align.RIGHT }
+    canvas.drawText("${"%.0f".format(percentage)}%", 690f, 786f, percentagePaint)
+    val gradeCirclePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = grade }
+    canvas.drawCircle(843f, 659f, 100f, gradeCirclePaint)
+    val gradePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = white; textSize = 72f; isFakeBoldText = true; textAlign = Paint.Align.CENTER }
+    canvas.drawText(item.result?.grade ?: "-", 843f, 682f, gradePaint)
+    val gradeLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.argb(210, 255, 255, 255); textSize = 15f; isFakeBoldText = true; textAlign = Paint.Align.CENTER; letterSpacing = 0.10f }
+    canvas.drawText("GRADE", 843f, 817f, gradeLabelPaint)
+
+    val statLabels = listOf(
+        "POSITION" to if (item.position > 0) "#${item.position}" else "—",
+        "PASS MARK" to formatNum(exam.passingMarks),
+        "SUBJECT" to (exam.subject ?: "General"),
+    )
+    statLabels.forEachIndexed { index, (label, value) ->
+        val left = 54f + index * 326f
+        val statRect = RectF(left, 944f, left + 300f, 1058f)
+        fill.color = white
+        canvas.drawRoundRect(statRect, 20f, 20f, fill)
+        canvas.drawRoundRect(statRect, 20f, 20f, identityStroke)
+        val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = muted; textSize = 14f; isFakeBoldText = true; letterSpacing = 0.10f }
+        val valueStatPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = ink; textSize = if (label == "SUBJECT") 20f else 28f; isFakeBoldText = true }
+        canvas.drawText(label, left + 22f, 978f, labelPaint)
+        canvas.drawText(fitResultCardText(value, valueStatPaint, 250f), left + 22f, 1025f, valueStatPaint)
+    }
+
+    val messagePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = if (passFail == "PASSED") android.graphics.Color.parseColor("#15803D") else android.graphics.Color.parseColor("#B91C1C"); textSize = 23f; isFakeBoldText = true; textAlign = Paint.Align.CENTER }
+    val message = if (passFail == "PASSED") "Congratulations on your achievement!" else "Keep learning — your next result can be stronger."
+    canvas.drawText(message, width / 2f, 1135f, messagePaint)
+    val footerLine = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = line; strokeWidth = 2f }
+    canvas.drawLine(92f, 1193f, width - 92f, 1193f, footerLine)
+    val footerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = muted; textSize = 17f; textAlign = Paint.Align.CENTER }
+    canvas.drawText("Verified academic record  |  Generated by BatchFee", width / 2f, 1235f, footerPaint)
+    canvas.drawText(SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault()).format(Date()), width / 2f, 1265f, footerPaint)
+
+    return bitmap
+}
+
 private fun shareResultImage(
+    context: android.content.Context,
+    item: StudentResultItem,
+    exam: com.batchfee.edu.data.models.ExamEntity,
+    batchName: String,
+    gradeColor: androidx.compose.ui.graphics.Color,
+    passColor: androidx.compose.ui.graphics.Color,
+    passFail: String,
+) {
+    val bitmap = createResultCardBitmap(item, exam, batchName, gradeColor, passColor, passFail)
+    try {
+        val file = java.io.File(context.cacheDir, "result_${item.student.id}.jpg")
+        FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.JPEG, 96, it) }
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+            type = "image/jpeg"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }, "Share Result Card"))
+    } finally {
+        bitmap.recycle()
+    }
+}
+
+private fun printResultCard(
+    context: android.content.Context,
+    item: StudentResultItem,
+    exam: com.batchfee.edu.data.models.ExamEntity,
+    batchName: String,
+    gradeColor: androidx.compose.ui.graphics.Color,
+    passColor: androidx.compose.ui.graphics.Color,
+    passFail: String,
+) {
+    val bitmap = createResultCardBitmap(item, exam, batchName, gradeColor, passColor, passFail)
+    val printManager = context.getSystemService(android.content.Context.PRINT_SERVICE) as? PrintManager
+    if (printManager == null) {
+        bitmap.recycle()
+        android.widget.Toast.makeText(context, "Printing is not available on this device.", android.widget.Toast.LENGTH_SHORT).show()
+        return
+    }
+    val jobName = "Result - ${item.student.studentCode.ifBlank { item.student.fullName }}"
+    printManager.print(
+        jobName,
+        ResultCardPrintAdapter(bitmap, jobName),
+        PrintAttributes.Builder()
+            .setColorMode(PrintAttributes.COLOR_MODE_COLOR)
+            .setMediaSize(PrintAttributes.MediaSize.ISO_A4)
+            .build(),
+    )
+}
+
+private class ResultCardPrintAdapter(
+    private val bitmap: Bitmap,
+    private val documentName: String,
+) : PrintDocumentAdapter() {
+    override fun onLayout(
+        oldAttributes: PrintAttributes?,
+        newAttributes: PrintAttributes?,
+        cancellationSignal: CancellationSignal?,
+        callback: LayoutResultCallback,
+        extras: android.os.Bundle?,
+    ) {
+        if (cancellationSignal?.isCanceled == true) {
+            callback.onLayoutCancelled()
+            return
+        }
+        val info = PrintDocumentInfo.Builder("$documentName.pdf")
+            .setContentType(PrintDocumentInfo.CONTENT_TYPE_PHOTO)
+            .setPageCount(1)
+            .build()
+        callback.onLayoutFinished(info, oldAttributes != newAttributes)
+    }
+
+    override fun onWrite(
+        pages: Array<android.print.PageRange>,
+        destination: ParcelFileDescriptor,
+        cancellationSignal: CancellationSignal?,
+        callback: WriteResultCallback,
+    ) {
+        if (cancellationSignal?.isCanceled == true) {
+            callback.onWriteCancelled()
+            return
+        }
+        val document = PdfDocument()
+        try {
+            val page = document.startPage(PdfDocument.PageInfo.Builder(595, 842, 1).create())
+            val canvas = page.canvas
+            canvas.drawColor(android.graphics.Color.WHITE)
+            val maxWidth = page.info.pageWidth - 48f
+            val maxHeight = page.info.pageHeight - 48f
+            val scale = minOf(maxWidth / bitmap.width, maxHeight / bitmap.height)
+            val targetWidth = bitmap.width * scale
+            val targetHeight = bitmap.height * scale
+            val target = RectF(
+                (page.info.pageWidth - targetWidth) / 2f,
+                (page.info.pageHeight - targetHeight) / 2f,
+                (page.info.pageWidth + targetWidth) / 2f,
+                (page.info.pageHeight + targetHeight) / 2f,
+            )
+            canvas.drawBitmap(bitmap, null, target, Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
+            document.finishPage(page)
+            FileOutputStream(destination.fileDescriptor).use { document.writeTo(it) }
+            callback.onWriteFinished(arrayOf(android.print.PageRange.ALL_PAGES))
+        } catch (error: Exception) {
+            callback.onWriteFailed(error.message)
+        } finally {
+            document.close()
+        }
+    }
+
+    override fun onFinish() {
+        if (!bitmap.isRecycled) bitmap.recycle()
+    }
+}
+
+private fun fitResultCardText(value: String, paint: Paint, maxWidth: Float): String {
+    if (paint.measureText(value) <= maxWidth) return value
+    val suffix = "..."
+    var end = value.length
+    while (end > 0 && paint.measureText(value.take(end) + suffix) > maxWidth) end -= 1
+    return value.take(end) + suffix
+}
+
+private fun shareLegacyResultImage(
     context: android.content.Context,
     item: StudentResultItem,
     exam: com.batchfee.edu.data.models.ExamEntity,

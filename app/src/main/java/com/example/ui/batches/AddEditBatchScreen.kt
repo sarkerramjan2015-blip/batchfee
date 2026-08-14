@@ -1,5 +1,6 @@
 package com.batchfee.edu.ui.batches
 
+import android.app.TimePickerDialog
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.BorderStroke
@@ -21,6 +22,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -31,6 +33,8 @@ import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
 import com.batchfee.edu.data.models.BatchEntity
 import com.batchfee.edu.domain.SessionManager
 import kotlinx.coroutines.launch
+import java.util.Calendar
+import java.util.Locale
 
 // ── Colors (matching PricingScreen) ─────────────────────────────
 private val BgColor      = Color(0xFF07111F)
@@ -42,6 +46,30 @@ private val ElectricBlue  = Color(0xFF3B82F6)
 private val SkyBlue       = Color(0xFF38BDF8)
 private val TextWhite     = Color(0xFFF8FAFC)
 private val TextMuted     = Color(0xFF94A3B8)
+
+private data class ScheduleDay(val shortName: String, val fullName: String)
+
+private data class ScheduleFrequencyOption(val label: String, val dayCount: Int?)
+
+private val WeeklyScheduleDays = listOf(
+    ScheduleDay("Sun", "Sunday"),
+    ScheduleDay("Mon", "Monday"),
+    ScheduleDay("Tue", "Tuesday"),
+    ScheduleDay("Wed", "Wednesday"),
+    ScheduleDay("Thu", "Thursday"),
+    ScheduleDay("Fri", "Friday"),
+    ScheduleDay("Sat", "Saturday")
+)
+
+private val ScheduleFrequencyOptions = listOf(
+    ScheduleFrequencyOption("7 days", 7),
+    ScheduleFrequencyOption("6 days", 6),
+    ScheduleFrequencyOption("5 days", 5),
+    ScheduleFrequencyOption("4 days", 4),
+    ScheduleFrequencyOption("3 days", 3),
+    ScheduleFrequencyOption("2 days", 2),
+    ScheduleFrequencyOption("Custom", null)
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -57,6 +85,11 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
     var feeString by remember { mutableStateOf("") }
     var admissionFeeString by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
+    var selectedScheduleFrequency by remember { mutableStateOf<ScheduleFrequencyOption?>(null) }
+    var selectedScheduleDays by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var startTime by remember { mutableStateOf<String?>(null) }
+    var endTime by remember { mutableStateOf<String?>(null) }
+    var scheduleError by remember { mutableStateOf<String?>(null) }
     var editingBatch by remember(batchId) { mutableStateOf<BatchEntity?>(null) }
     var loadedBatchId by remember(batchId) { mutableStateOf<String?>(null) }
 
@@ -87,6 +120,21 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
                         }
                     } else ""
                     description = batch.description.orEmpty()
+                    val restoredDays = batch.scheduleDays
+                        ?.split(",")
+                        ?.map { it.trim() }
+                        ?.filter { day -> WeeklyScheduleDays.any { it.shortName == day } }
+                        ?.toSet()
+                        .orEmpty()
+                    selectedScheduleDays = restoredDays
+                    selectedScheduleFrequency = if (restoredDays.isEmpty()) {
+                        null
+                    } else {
+                        ScheduleFrequencyOptions.firstOrNull { it.dayCount == restoredDays.size }
+                            ?: ScheduleFrequencyOptions.last()
+                    }
+                    startTime = batch.startTime
+                    endTime = batch.endTime
                     loadedBatchId = batch.id
                 }
             }
@@ -220,6 +268,52 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
             Spacer(Modifier.height(16.dp))
 
             // ── Description ─────────────────────────────────
+            BatchScheduleSection(
+                selectedFrequency = selectedScheduleFrequency,
+                selectedDays = selectedScheduleDays,
+                startTime = startTime,
+                endTime = endTime,
+                errorMessage = scheduleError,
+                onFrequencySelected = { option ->
+                    selectedScheduleFrequency = option
+                    scheduleError = null
+                    option.dayCount?.let { maximumDays ->
+                        if (selectedScheduleDays.size > maximumDays) {
+                            selectedScheduleDays = WeeklyScheduleDays
+                                .filter { it.shortName in selectedScheduleDays }
+                                .take(maximumDays)
+                                .map { it.shortName }
+                                .toSet()
+                        }
+                    }
+                },
+                onDayClicked = { day ->
+                    val currentDays = selectedScheduleDays
+                    if (day.shortName in currentDays) {
+                        selectedScheduleDays = currentDays - day.shortName
+                        scheduleError = null
+                    } else {
+                        val maximumDays = selectedScheduleFrequency?.dayCount
+                        if (maximumDays != null && currentDays.size >= maximumDays) {
+                            scheduleError = "Select exactly $maximumDays days, or change classes per week."
+                        } else {
+                            selectedScheduleDays = currentDays + day.shortName
+                            scheduleError = null
+                        }
+                    }
+                },
+                onStartTimeSelected = {
+                    startTime = it
+                    scheduleError = null
+                },
+                onEndTimeSelected = {
+                    endTime = it
+                    scheduleError = null
+                }
+            )
+
+            Spacer(Modifier.height(16.dp))
+
             SectionLabel("Description (optional)")
             DarkTextField(
                 value = description,
@@ -269,8 +363,26 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
                         feeError = (fee == null || fee <= 0)
                         val admissionFee = admissionFeeString.toDoubleOrNull() ?: 0.0
                         admissionFeeError = admissionFee < 0
+                        val scheduleConfigured = selectedScheduleFrequency != null ||
+                            selectedScheduleDays.isNotEmpty() || startTime != null || endTime != null
+                        val requiredDayCount = selectedScheduleFrequency?.dayCount
+                        scheduleError = when {
+                            !scheduleConfigured -> null
+                            selectedScheduleFrequency == null -> "Select how many classes run each week."
+                            selectedScheduleDays.isEmpty() -> "Select the class days."
+                            requiredDayCount != null && selectedScheduleDays.size != requiredDayCount ->
+                                "Select exactly $requiredDayCount days for this schedule."
+                            startTime == null || endTime == null -> "Choose both a start and end time."
+                            !isValidScheduleTimeRange(startTime, endTime) ->
+                                "End time must be after start time."
+                            else -> null
+                        }
+                        val savedScheduleDays = selectedScheduleDays
+                            .sortedBy { selectedDay -> WeeklyScheduleDays.indexOfFirst { it.shortName == selectedDay } }
+                            .joinToString(", ")
+                            .takeIf { scheduleConfigured && it.isNotBlank() }
 
-                        if (!nameError && !feeError && !admissionFeeError && fee != null) {
+                        if (!nameError && !feeError && !admissionFeeError && scheduleError == null && fee != null) {
                             val cleanDescription = description.trim().takeIf { it.isNotEmpty() }
                             val existing = editingBatch
                             if (isEditMode) {
@@ -282,6 +394,9 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
                                             name = name.trim(),
                                             monthlyFeeAmount = fee,
                                             admissionFeeAmount = admissionFee,
+                                            scheduleDays = savedScheduleDays,
+                                            startTime = if (scheduleConfigured) startTime else null,
+                                            endTime = if (scheduleConfigured) endTime else null,
                                             description = cleanDescription
                                         ),
                                         onError = { message ->
@@ -300,6 +415,9 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
                                     name = name.trim(),
                                     feeAmount = fee,
                                     admissionFeeAmount = admissionFee,
+                                    scheduleDays = savedScheduleDays,
+                                    startTime = if (scheduleConfigured) startTime else null,
+                                    endTime = if (scheduleConfigured) endTime else null,
                                     description = cleanDescription,
                                     onError = { message ->
                                         scope.launch { snackbarHostState.showSnackbar(message) }
@@ -351,6 +469,266 @@ private fun BatchTemplateRow(options: List<String>, onSelected: (String) -> Unit
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun BatchScheduleSection(
+    selectedFrequency: ScheduleFrequencyOption?,
+    selectedDays: Set<String>,
+    startTime: String?,
+    endTime: String?,
+    errorMessage: String?,
+    onFrequencySelected: (ScheduleFrequencyOption) -> Unit,
+    onDayClicked: (ScheduleDay) -> Unit,
+    onStartTimeSelected: (String) -> Unit,
+    onEndTimeSelected: (String) -> Unit
+) {
+    val context = LocalContext.current
+    val selectedDayCount = selectedDays.size
+    val durationLabel = scheduleDurationLabel(startTime, endTime)
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        SectionLabel("Class Schedule (optional)")
+        Text(
+            "Choose the weekly class days and time. You can update it later.",
+            color = TextMuted,
+            fontSize = 11.sp
+        )
+        Spacer(Modifier.height(10.dp))
+
+        Text("Classes per week", color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(8.dp))
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+            items(ScheduleFrequencyOptions, key = { it.label }) { option ->
+                ScheduleChoiceChip(
+                    label = option.label,
+                    selected = option == selectedFrequency,
+                    onClick = { onFrequencySelected(option) }
+                )
+            }
+        }
+
+        Spacer(Modifier.height(14.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Select class days", color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.width(8.dp))
+            val requiredDayCount = selectedFrequency?.dayCount
+            Text(
+                when {
+                    selectedFrequency == null -> "Choose frequency first"
+                    requiredDayCount == null -> "$selectedDayCount selected"
+                    else -> "$selectedDayCount/$requiredDayCount selected"
+                },
+                color = if (selectedFrequency == null) TextMuted else Cyan,
+                fontSize = 11.sp
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        val dayRows = WeeklyScheduleDays.chunked(4)
+        dayRows.forEachIndexed { rowIndex, rowDays ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(7.dp)
+            ) {
+                rowDays.forEach { day ->
+                    ScheduleChoiceChip(
+                        label = day.shortName,
+                        selected = day.shortName in selectedDays,
+                        enabled = selectedFrequency != null,
+                        onClick = { onDayClicked(day) },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                repeat(4 - rowDays.size) {
+                    Spacer(Modifier.weight(1f))
+                }
+            }
+            if (rowIndex < dayRows.lastIndex) {
+                Spacer(Modifier.height(7.dp))
+            }
+        }
+
+        Spacer(Modifier.height(14.dp))
+        Text("Class time", color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            ScheduleTimeField(
+                label = "Start time",
+                time = startTime,
+                modifier = Modifier.weight(1f),
+                onClick = {
+                    showScheduleTimePicker(context, startTime, onStartTimeSelected)
+                }
+            )
+            ScheduleTimeField(
+                label = "End time",
+                time = endTime,
+                modifier = Modifier.weight(1f),
+                onClick = {
+                    showScheduleTimePicker(context, endTime ?: startTime, onEndTimeSelected)
+                }
+            )
+        }
+
+        if (durationLabel != null) {
+            Text(
+                "Class duration: $durationLabel",
+                color = Cyan,
+                fontSize = 11.sp,
+                modifier = Modifier.padding(top = 8.dp)
+            )
+        }
+        if (errorMessage != null) {
+            Text(
+                errorMessage,
+                color = Color(0xFFEF4444),
+                fontSize = 11.sp,
+                modifier = Modifier.padding(top = 8.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun ScheduleChoiceChip(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true
+) {
+    val shape = RoundedCornerShape(10.dp)
+    Box(
+        modifier = modifier
+            .height(38.dp)
+            .clip(shape)
+            .background(
+                when {
+                    selected -> ElectricBlue.copy(alpha = 0.22f)
+                    enabled -> CardBgAlt
+                    else -> CardBgAlt.copy(alpha = 0.5f)
+                }
+            )
+            .border(
+                1.dp,
+                when {
+                    selected -> Cyan.copy(alpha = 0.75f)
+                    enabled -> BorderSub
+                    else -> BorderSub.copy(alpha = 0.45f)
+                },
+                shape
+            )
+            .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            label,
+            color = when {
+                selected -> Cyan
+                enabled -> TextWhite
+                else -> TextMuted.copy(alpha = 0.5f)
+            },
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1
+        )
+    }
+}
+
+@Composable
+private fun ScheduleTimeField(
+    label: String,
+    time: String?,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    val shape = RoundedCornerShape(12.dp)
+    Row(
+        modifier = modifier
+            .height(54.dp)
+            .clip(shape)
+            .background(CardBgAlt)
+            .border(1.dp, BorderSub, shape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            Icons.Filled.Schedule,
+            contentDescription = null,
+            tint = Cyan,
+            modifier = Modifier.size(17.dp)
+        )
+        Spacer(Modifier.width(8.dp))
+        Column {
+            Text(label, color = TextMuted, fontSize = 10.sp)
+            Text(
+                formatScheduleTime(time) ?: "Select time",
+                color = if (time == null) TextMuted.copy(alpha = 0.65f) else TextWhite,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1
+            )
+        }
+    }
+}
+
+private fun showScheduleTimePicker(
+    context: android.content.Context,
+    currentValue: String?,
+    onTimeSelected: (String) -> Unit
+) {
+    val calendar = Calendar.getInstance()
+    val (initialHour, initialMinute) = parseScheduleTime(currentValue)
+        ?: (calendar.get(Calendar.HOUR_OF_DAY) to calendar.get(Calendar.MINUTE))
+    TimePickerDialog(
+        context,
+        { _, hour, minute -> onTimeSelected(String.format(Locale.US, "%02d:%02d", hour, minute)) },
+        initialHour,
+        initialMinute,
+        false
+    ).show()
+}
+
+private fun parseScheduleTime(value: String?): Pair<Int, Int>? {
+    val parts = value?.split(":") ?: return null
+    if (parts.size != 2) return null
+    val hour = parts[0].toIntOrNull() ?: return null
+    val minute = parts[1].toIntOrNull() ?: return null
+    return if (hour in 0..23 && minute in 0..59) hour to minute else null
+}
+
+private fun scheduleTimeInMinutes(value: String?): Int? = parseScheduleTime(value)?.let { (hour, minute) ->
+    hour * 60 + minute
+}
+
+private fun isValidScheduleTimeRange(startTime: String?, endTime: String?): Boolean {
+    val startMinutes = scheduleTimeInMinutes(startTime) ?: return false
+    val endMinutes = scheduleTimeInMinutes(endTime) ?: return false
+    return endMinutes > startMinutes
+}
+
+private fun formatScheduleTime(value: String?): String? = parseScheduleTime(value)?.let { (hour, minute) ->
+    val suffix = if (hour < 12) "AM" else "PM"
+    val displayHour = when (val normalized = hour % 12) {
+        0 -> 12
+        else -> normalized
+    }
+    String.format(Locale.US, "%d:%02d %s", displayHour, minute, suffix)
+}
+
+private fun scheduleDurationLabel(startTime: String?, endTime: String?): String? {
+    val startMinutes = scheduleTimeInMinutes(startTime) ?: return null
+    val endMinutes = scheduleTimeInMinutes(endTime) ?: return null
+    if (endMinutes <= startMinutes) return null
+    val duration = endMinutes - startMinutes
+    val hours = duration / 60
+    val minutes = duration % 60
+    return when {
+        hours == 0 -> "$minutes min"
+        minutes == 0 -> "$hours hr"
+        else -> "$hours hr $minutes min"
     }
 }
 

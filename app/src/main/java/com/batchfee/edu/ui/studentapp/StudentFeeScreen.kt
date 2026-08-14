@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.batchfee.edu.domain.StudentSessionManager
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.firestore.ListenerRegistration
 import java.text.SimpleDateFormat
 import java.util.*
@@ -41,33 +42,55 @@ data class PaymentReceipt(val id: String, val amount: Double, val dateMs: Long, 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun StudentFeeScreen(onBack: () -> Unit) {
-    val sid = StudentSessionManager.studentId.value ?: ""
-    val iid = StudentSessionManager.instituteId.value ?: ""
-    var fees by remember { mutableStateOf<List<FeeCardInfo>>(emptyList()) }
-    var receipts by remember { mutableStateOf<List<PaymentReceipt>>(emptyList()) }
-    var totalAmount by remember { mutableStateOf(0.0) }
-    var totalPaid by remember { mutableStateOf(0.0) }
-    var loading by remember { mutableStateOf(true) }
-    var selectedFeeId by remember { mutableStateOf<String?>(null) }
+    val sid by StudentSessionManager.studentId.collectAsState()
+    val iid by StudentSessionManager.instituteId.collectAsState()
+    val studentId = sid.orEmpty()
+    val instituteId = iid.orEmpty()
+    var fees by remember(studentId, instituteId) { mutableStateOf<List<FeeCardInfo>>(emptyList()) }
+    var receipts by remember(studentId, instituteId) { mutableStateOf<List<PaymentReceipt>>(emptyList()) }
+    var totalAmount by remember(studentId) { mutableStateOf(0.0) }
+    var totalPaid by remember(studentId) { mutableStateOf(0.0) }
+    var loading by remember(studentId, instituteId) { mutableStateOf(true) }
+    var selectedFeeId by remember(studentId) { mutableStateOf<String?>(null) }
+    var syncError by remember(studentId, instituteId) { mutableStateOf<String?>(null) }
     val df = remember { SimpleDateFormat("dd MMM yyyy hh:mm a", Locale.getDefault()) }
 
-    DisposableEffect(iid, sid) {
+    fun reportListenerError(error: FirebaseFirestoreException?) {
+        if (error != null) {
+            loading = false
+            syncError = if (error.code == FirebaseFirestoreException.Code.PERMISSION_DENIED) {
+                "Live access is no longer available. Please sign in again."
+            } else {
+                "Live updates are paused. Check your connection."
+            }
+        }
+    }
+
+    DisposableEffect(instituteId, studentId) {
+        if (instituteId.isBlank() || studentId.isBlank()) {
+            onDispose { }
+        } else {
         val fs = FirebaseFirestore.getInstance()
         val listeners = mutableListOf<ListenerRegistration>()
-        listeners += fs.collection("institutes").document(iid).collection("fees").whereEqualTo("studentId", sid)
-            .addSnapshotListener { snap, _ ->
+        listeners += fs.collection("institutes").document(instituteId).collection("fees").whereEqualTo("studentId", studentId)
+            .addSnapshotListener { snap, error ->
+                reportListenerError(error)
+                if (error != null) return@addSnapshotListener
                 val list = snap?.documents?.map { doc ->
                     FeeCardInfo(id = doc.id, description = doc.getString("description") ?: doc.getString("monthYear") ?: "Fee", monthYear = doc.getString("monthYear"), totalAmount = doc.getDouble("totalAmount") ?: 0.0, paidAmount = doc.getDouble("paidAmount") ?: 0.0, status = doc.getString("status") ?: "pending")
                 }?.sortedByDescending { it.totalAmount - it.paidAmount } ?: emptyList()
                 fees = list; totalAmount = list.sumOf { it.totalAmount }; totalPaid = list.sumOf { it.paidAmount }; loading = false
             }
-        listeners += fs.collection("institutes").document(iid).collection("payments").whereEqualTo("studentId", sid)
-            .addSnapshotListener { snap, _ ->
+        listeners += fs.collection("institutes").document(instituteId).collection("payments").whereEqualTo("studentId", studentId)
+            .addSnapshotListener { snap, error ->
+                reportListenerError(error)
+                if (error != null) return@addSnapshotListener
                 receipts = snap?.documents?.map { doc ->
                     PaymentReceipt(id = doc.id, amount = doc.getDouble("amount") ?: 0.0, dateMs = (doc.get("paymentDateMs") as? Number)?.toLong() ?: 0L, method = doc.getString("paymentMethod") ?: "Cash", receiptNumber = doc.getString("receiptNumber"), note = doc.getString("note"))
                 }?.sortedByDescending { it.dateMs } ?: emptyList()
             }
         onDispose { listeners.forEach { it.remove() } }
+        }
     }
 
     val totalDue = totalAmount - totalPaid
@@ -76,6 +99,15 @@ fun StudentFeeScreen(onBack: () -> Unit) {
         topBar = { TopAppBar(title = { Text("Fees & Receipts", color = FsWhite, fontWeight = FontWeight.Bold) }, navigationIcon = { IconButton(onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = FsMuted) } }, colors = TopAppBarDefaults.topAppBarColors(containerColor = FsBg)) }
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).background(FsBg)) {
+            syncError?.let { message ->
+                Surface(color = FsRed.copy(alpha = 0.12f), shape = RoundedCornerShape(10.dp), modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+                    Row(Modifier.padding(horizontal = 12.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.SyncProblem, null, tint = FsRed, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(message, color = FsRed, fontSize = 12.sp)
+                    }
+                }
+            }
             Card(Modifier.fillMaxWidth().padding(16.dp), shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = FsCard), border = BorderStroke(1.dp, FsStroke)) {
                 Row(Modifier.padding(16.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                     FeeS("Total", "৳${"%,.0f".format(totalAmount)}", FsCyan)

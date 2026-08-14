@@ -9,6 +9,9 @@ interface StudentDao {
     @Query("SELECT * FROM students WHERE instituteId = :instituteId AND archivedAtMs IS NULL ORDER BY fullName ASC")
     fun getStudentsByInstitute(instituteId: String): Flow<List<StudentEntity>>
 
+    @Query("SELECT * FROM students WHERE instituteId = :instituteId AND archivedAtMs IS NOT NULL ORDER BY archivedAtMs DESC")
+    fun getArchivedStudentsByInstitute(instituteId: String): Flow<List<StudentEntity>>
+
     @Query("SELECT * FROM students WHERE instituteId = :instituteId AND archivedAtMs IS NULL ORDER BY fullName ASC")
     suspend fun getStudentsByInstituteOnce(instituteId: String): List<StudentEntity>
 
@@ -23,5 +26,8 @@ interface StudentDao {
 
     @Update
     suspend fun updateStudent(student: StudentEntity)
+
+    @Query("DELETE FROM students WHERE instituteId = :instituteId AND id = :studentId")
+    suspend fun deleteStudent(instituteId: String, studentId: String)
 
 }

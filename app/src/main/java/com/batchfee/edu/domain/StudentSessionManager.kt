@@ -3,6 +3,8 @@ package com.batchfee.edu.domain
 import android.content.Context
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.FirebaseFirestoreException
+import com.google.firebase.firestore.ListenerRegistration
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -40,6 +42,7 @@ object StudentSessionManager {
     val restoredSession: StateFlow<Boolean> = _restoredSession.asStateFlow()
 
     private var firebaseUid: String? = null
+    private var accessListener: ListenerRegistration? = null
 
     fun initialize(context: Context) {
         // Remove the old indefinitely-lived plaintext session during the upgrade.
@@ -95,7 +98,49 @@ object StudentSessionManager {
         _studentCode.value = studentCodeStr
         _sessionExpiresAtMs.value = expiresAtMs
         _restoredSession.value = restored
+        observeStudentAccess(firebaseUid, instituteId, studentId)
         return true
+    }
+
+    /**
+     * Keeps the in-memory session aligned with changes made by the institute.
+     * In particular, disabling or archiving a student immediately removes access
+     * instead of waiting for the next app resume or token expiry.
+     */
+    private fun observeStudentAccess(
+        expectedUid: String,
+        instituteId: String,
+        studentId: String
+    ) {
+        accessListener?.remove()
+        accessListener = FirebaseFirestore.getInstance()
+            .collection("institutes").document(instituteId)
+            .collection("students").document(studentId)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    // Once an institute disables a student, the rule deliberately
+                    // rejects subsequent reads of that student's document.
+                    if (error.code == FirebaseFirestoreException.Code.PERMISSION_DENIED) {
+                        logout()
+                    }
+                    return@addSnapshotListener
+                }
+
+                val isStillActive = snapshot?.exists() == true &&
+                    snapshot.getString("firebaseUid") == expectedUid &&
+                    snapshot.getBoolean("isAppAccessEnabled") == true &&
+                    snapshot.getString("status") == "active" &&
+                    snapshot.get("archivedAtMs") == null
+                if (!isStillActive) {
+                    logout()
+                    return@addSnapshotListener
+                }
+
+                // Profile edits made by the institute should be reflected without
+                // requiring a sign-out/sign-in cycle.
+                _studentName.value = snapshot.getString("fullName") ?: _studentName.value
+                _studentCode.value = snapshot.getString("studentCode") ?: _studentCode.value
+            }
     }
 
     suspend fun restoreFromFirebase(): Boolean = validateFirebaseSession()
@@ -171,6 +216,8 @@ object StudentSessionManager {
         _studentId.value != null && _sessionExpiresAtMs.value > System.currentTimeMillis()
 
     private fun clearMemory() {
+        accessListener?.remove()
+        accessListener = null
         firebaseUid = null
         _studentId.value = null
         _instituteId.value = null

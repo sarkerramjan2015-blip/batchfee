@@ -1,23 +1,17 @@
-feat: subscription receipts, broadcast system, block/unblock, and UI polish
+feat: Cloudinary migration, permanent student deletion, student/web app cleanup, navigation fix
 
-SuperAdmin:
-- Payment receipts with timeline serial view, WhatsApp/PDF sharing per institute
-- Receipt generation for free trial (auto) and paid subscriptions (on approval)
-- Block/unblock with subscriptionStatus sync to Firestore + Room DB
-- Extend dialog: professional UI with presets, date preview, status card
-- Manage dialog: plan switch with preview, auto-fill limits, expiry date card
-- Broadcast system: expiry control, edit/archive/delete, history list, confirmation
-- Institute detail: plan card with metrics, WhatsApp button, polish
-
-Institute Owner:
-- Payment History in BillingScreen with real-time listener + PDF download
-- GlobalNotificationCard: sender branding, multi-notification carousel, dismiss
-
-Fixes:
-- Removed orderBy from receipts query (Firestore index requirement)
-- planDisplayPrice fallback from 500 to -1 (no misleading default)
-- extendSubscription now updates currentPeriodEndMs + Room DB + UI
-- manageInstitute now updates Room DB + UI immediately
-- toggleBlock now sets subscriptionStatus properly
+- Migrate photo uploads from Firebase Storage to Cloudinary (student photos, institute logos)
+- Permanent student deletion with cascade: fees, payments, receipts, batch enrollments, attendance, exam results
+- Restricted to InstituteOwner/SuperAdmin; staff can only Close (inactive)
+- Remove student_app/ directory (separate project cleanup)
+- Remove web_form/ directory (unused web admin panel)
+- Session management: initialize in Application.onCreate, markActivity on userInteraction
+- Simplified login-to-dashboard navigation flow
+- Fix back navigation: rememberSaveable preserves More tab state (line 229)
+- Non-blocking subscription check after dashboard navigation
+- Student add/edit: Cloudinary upload with progress state + error handling
+- Student profile: remove Mother name field, permanent delete UI changes
+- Demo data seeding restricted to DEBUG builds
+- Updated firestore.rules
 
 Co-authored-by: CommandCodeBot <noreply@commandcode.ai>

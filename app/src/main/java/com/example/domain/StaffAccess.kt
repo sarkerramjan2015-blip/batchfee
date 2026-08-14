@@ -70,6 +70,7 @@ object AccessControl {
 
     private val routePermissions = mapOf(
         "StudentsRoute" to setOf(StaffPermissions.VIEW_STUDENTS, StaffPermissions.MANAGE_STUDENTS),
+        "ArchivedStudentsRoute" to setOf(StaffPermissions.MANAGE_STUDENTS),
         "StudentProfileRoute" to setOf(StaffPermissions.VIEW_STUDENTS, StaffPermissions.MANAGE_STUDENTS),
         "AddStudentRoute" to setOf(StaffPermissions.MANAGE_STUDENTS),
         "EditStudentRoute" to setOf(StaffPermissions.MANAGE_STUDENTS),

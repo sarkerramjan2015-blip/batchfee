@@ -38,7 +38,17 @@ class BatchViewModel(private val db: AppDatabase) : ViewModel() {
         }
     }
 
-    fun addBatch(name: String, feeAmount: Double, admissionFeeAmount: Double = 0.0, description: String? = null, onError: (String) -> Unit = {}, onSuccess: () -> Unit) {
+    fun addBatch(
+        name: String,
+        feeAmount: Double,
+        admissionFeeAmount: Double = 0.0,
+        scheduleDays: String? = null,
+        startTime: String? = null,
+        endTime: String? = null,
+        description: String? = null,
+        onError: (String) -> Unit = {},
+        onSuccess: () -> Unit
+    ) {
         if (name.isBlank()) {
             onError("Batch name is required.")
             return
@@ -64,9 +74,9 @@ class BatchViewModel(private val db: AppDatabase) : ViewModel() {
             admissionFeeAmount = admissionFeeAmount,
             startDateMs = System.currentTimeMillis(),
             endDateMs = null,
-            scheduleDays = null,
-            startTime = null,
-            endTime = null,
+            scheduleDays = scheduleDays,
+            startTime = startTime,
+            endTime = endTime,
             maxStudents = 50,
             status = "active",
             description = description?.trim()?.takeIf { it.isNotEmpty() },

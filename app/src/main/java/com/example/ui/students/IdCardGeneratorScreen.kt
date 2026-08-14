@@ -11,6 +11,7 @@ import android.net.Uri
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -56,6 +57,7 @@ import com.batchfee.edu.data.models.StudentEntity
 import com.batchfee.edu.domain.SessionManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.firstOrNull
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.InputStream
@@ -139,6 +141,7 @@ fun IdCardGeneratorScreen(db: AppDatabase, onBack: () -> Unit, onNavigateToPrevi
 @Composable
 fun IdCardPreviewScreen(db: AppDatabase, type: String, studentId: String, onBack: () -> Unit) {
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
     var student by remember { mutableStateOf<StudentEntity?>(null) }
     var institute by remember { mutableStateOf<InstituteEntity?>(null) }
     var isLoading by remember { mutableStateOf(true) }
@@ -180,118 +183,43 @@ fun IdCardPreviewScreen(db: AppDatabase, type: String, studentId: String, onBack
                 Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 8.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // ── Neon glow around card ──
-                Box(Modifier.fillMaxWidth().aspectRatio(1.56f).padding(2.dp), contentAlignment = Alignment.Center) {
-                    Box(Modifier.matchParentSize().drawBehind {
-                        drawRoundRect(Color.Cyan.copy(alpha = 0.10f), cornerRadius = androidx.compose.ui.geometry.CornerRadius(24f, 24f), size = Size(size.width + 16f, size.height + 16f), topLeft = Offset(-8f, -8f))
-                        drawRoundRect(Color(0xFF6366F1).copy(alpha = 0.06f), cornerRadius = androidx.compose.ui.geometry.CornerRadius(28f, 28f), size = Size(size.width + 24f, size.height + 24f), topLeft = Offset(-12f, -12f))
-                    })
-
-                    Card(Modifier.fillMaxSize(), shape = RoundedCornerShape(18.dp), elevation = CardDefaults.cardElevation(defaultElevation = 18.dp)) {
-                        Box(Modifier.fillMaxSize().background(Color.White)) {
-                            // ── BACKGROUND SHAPES ──
-                            Canvas(Modifier.fillMaxSize()) {
-                                val cW = size.width; val cH = size.height
-                                val tri = Path().apply { moveTo(cW, 0f); lineTo(cW, cH * 0.32f); lineTo(cW * 0.52f, 0f); close() }
-                                drawPath(tri, Color(0xFFF1F5F9))
-                                drawOval(Color(0xFFE2E8F0).copy(alpha = 0.35f), topLeft = Offset(cW * 0.58f, cH * 0.80f), size = Size(cW * 0.34f, cH * 0.18f))
-                                drawCircle(Color(0xFFF8FAFC), radius = cW * 0.11f, center = Offset(cW * 0.07f, cH * 0.07f))
-                                for (gx in 0..4) for (gy in 0..2) {
-                                    drawCircle(Color(0xFFCBD5E1).copy(alpha = 0.30f), radius = 2f, center = Offset(cW * (0.81f + gx * 0.03f), cH * (0.84f + gy * 0.04f)))
-                                }
-                            }
-
-                            Column(Modifier.fillMaxSize()) {
-                                // ── HEADER with diagonal stripes ──
-                                Box(Modifier.fillMaxWidth().fillMaxHeight(0.30f).background(Brush.horizontalGradient(listOf(Color(0xFF0F2B5B), Color(0xFF1A4F8A), Color(0xFF0F2B5B))))) {
-                                    Canvas(Modifier.fillMaxSize()) {
-                                        for (i in -5..20) drawLine(Color.White.copy(alpha = 0.035f), Offset(i * 32f, 0f), Offset(i * 32f - size.height * 0.5f, size.height), strokeWidth = 1.5f)
-                                        val wave = Path().apply { moveTo(0f, size.height); lineTo(0f, size.height - 6f)
-                                            for (x in 0..size.width.toInt() step 20) lineTo(x.toFloat(), size.height - 6f - 3f * kotlin.math.sin(x.toFloat() / 30f))
-                                            lineTo(size.width, size.height); close() }
-                                        drawPath(wave, Color(0xFF1E4B7A).copy(alpha = 0.25f))
-                                    }
-                                    Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 18.dp), verticalAlignment = Alignment.CenterVertically) {
-                                        if (!logoUri.isNullOrBlank()) {
-                                            AsyncImage(model = logoUri, contentDescription = "Logo", modifier = Modifier.size(40.dp).clip(RoundedCornerShape(8.dp)).background(Color.White), contentScale = ContentScale.Fit)
-                                            Spacer(Modifier.width(10.dp))
-                                        }
-                                        Column(Modifier.weight(1f)) {
-                                            Text(instName.uppercase(), color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                            Text("$instCode  |  $instPhone", color = Color.White.copy(alpha = 0.7f), fontSize = 9.sp)
-                                            Spacer(Modifier.height(4.dp))
-                                            Box(Modifier.width(120.dp).height(1.5.dp).background(Cyan.copy(alpha = 0.55f)))
-                                        }
-                                    }
-                                }
-
-                                // ── PHOTO with sweep ring ──
-                                Box(Modifier.fillMaxWidth().offset(y = (-40).dp).height(80.dp), contentAlignment = Alignment.TopCenter) {
-                                    Box(Modifier.size(86.dp).clip(CircleShape).background(Brush.sweepGradient(listOf(Color(0xFF22D3EE), Color(0xFF3B82F6), Color(0xFF6366F1), Color(0xFF22D3EE)))), contentAlignment = Alignment.Center) {
-                                        Box(Modifier.size(78.dp).clip(CircleShape).background(Color.White).padding(4.dp).clip(CircleShape).background(Color(0xFFE2E8F0)), contentAlignment = Alignment.Center) {
-                                            if (!s.photoUri.isNullOrBlank()) {
-                                                AsyncImage(model = ImageRequest.Builder(context).data(Uri.parse(s.photoUri)).crossfade(true).build(), contentDescription = "Photo", modifier = Modifier.fillMaxSize().clip(CircleShape), contentScale = ContentScale.Crop)
-                                            } else {
-                                                Text(s.fullName.take(1).uppercase(), color = Color(0xFF64748B), fontSize = 28.sp, fontWeight = FontWeight.Bold)
-                                            }
-                                        }
-                                    }
-                                }
-
-                                // ── DETAILS ──
-                                Column(Modifier.fillMaxWidth().weight(1f).padding(horizontal = 22.dp).offset(y = (-24).dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Text(s.fullName, color = Color(0xFF0F172A), fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center, letterSpacing = 0.5.sp)
-                                    Row(Modifier.padding(top = 3.dp), verticalAlignment = Alignment.CenterVertically) {
-                                        Box(Modifier.size(6.dp).clip(CircleShape).background(Color(0xFF22C55E)))
-                                        Spacer(Modifier.width(6.dp))
-                                        Text("ID: ${s.studentCode}", color = Color(0xFF64748B), fontSize = 11.sp, fontWeight = FontWeight.Medium, letterSpacing = 1.sp)
-                                    }
-                                    Spacer(Modifier.height(8.dp))
-                                    IdInfoRow("📚", "Class", s.className ?: "N/A")
-                                    IdInfoRow("🩸", "Blood", s.bloodGroup ?: "N/A")
-                                    IdInfoRow("📞", "Phone", s.phone ?: "N/A")
-                                    IdInfoRow("👤", "Guardian", s.guardianName ?: "N/A")
-                                    if (!s.address.isNullOrBlank()) { Spacer(Modifier.height(2.dp)); Text(s.address.take(45), color = Color(0xFF64748B), fontSize = 9.sp, textAlign = TextAlign.Center, lineHeight = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis) }
-                                    Spacer(Modifier.weight(1f))
-
-                                    // Footer: barcode + dates
-                                    Row(Modifier.fillMaxWidth().padding(bottom = 6.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
-                                        Column {
-                                            Text("ISSUED: $issuedDate", color = Color(0xFF94A3B8), fontSize = 7.sp, fontWeight = FontWeight.Medium, letterSpacing = 0.5.sp)
-                                            Text("VALID: $expiryDate", color = Color(0xFF94A3B8), fontSize = 7.sp, fontWeight = FontWeight.Medium, letterSpacing = 0.5.sp)
-                                        }
-                                        Canvas(Modifier.width(72.dp).height(18.dp).offset(x = 4.dp)) {
-                                            val bs = listOf(1,0,1,1,0,0,1,0,1,1,0,1,0,0,1,1,0,1); val bw = size.width / bs.size
-                                            bs.forEachIndexed { i, v -> if (v == 1) drawRect(Color(0xFF1E293B), Offset(i*bw, 0f), Size(bw*0.65f, size.height)) }
-                                        }
-                                    }
-                                    Row(Modifier.fillMaxWidth().padding(bottom = 6.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
-                                        Column { Box(Modifier.width(80.dp).height(1.dp).background(Color(0xFFCBD5E1))); Text("Authorised Signatory", color = Color(0xFF94A3B8), fontSize = 7.sp, letterSpacing = 0.3.sp) }
-                                        Box(Modifier.size(34.dp).clip(CircleShape).background(Color(0xFFEFF6FF)).padding(6.dp), contentAlignment = Alignment.Center) {
-                                            Canvas(Modifier.fillMaxSize()) { drawCircle(Color(0xFF1E3A5F), radius = 8f, style = Stroke(2f)); drawCircle(Color(0xFF3B82F6), radius = 3f) }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                PremiumStudentIdCard(
+                    student = s,
+                    instituteName = instName,
+                    instituteCode = instCode,
+                    institutePhone = instPhone,
+                    logoUri = logoUri,
+                    issuedDate = issuedDate,
+                    expiryDate = expiryDate,
+                    context = context,
+                )
 
                 Spacer(Modifier.height(12.dp))
 
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(
-                        onClick = { openPdf(context, generateProfessionalIdCardPdf(context, s, institute, issuedDate, expiryDate)) },
+                        onClick = {
+                            coroutineScope.launch {
+                                val file = withContext(Dispatchers.IO) {
+                                    generateProfessionalIdCardPdf(context, s, institute, issuedDate, expiryDate)
+                                }
+                                openPdf(context, file)
+                            }
+                        },
                         modifier = Modifier.weight(1f).height(48.dp), shape = RoundedCornerShape(14.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = ElectricBlue)
                     ) { Icon(Icons.Filled.Print, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Print", fontWeight = FontWeight.Bold) }
                     OutlinedButton(
                         onClick = {
-                            val file = generateProfessionalIdCardPdf(context, s, institute, issuedDate, expiryDate)
-                            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-                            val intent = Intent(Intent.ACTION_SEND).apply { setType("application/pdf"); putExtra(Intent.EXTRA_STREAM, uri); setPackage("com.whatsapp") }
-                            if (intent.resolveActivity(context.packageManager) != null) context.startActivity(intent)
-                            else android.widget.Toast.makeText(context, "WhatsApp not installed", android.widget.Toast.LENGTH_SHORT).show()
+                            coroutineScope.launch {
+                                val file = withContext(Dispatchers.IO) {
+                                    generateProfessionalIdCardPdf(context, s, institute, issuedDate, expiryDate)
+                                }
+                                val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+                                val intent = Intent(Intent.ACTION_SEND).apply { setType("application/pdf"); putExtra(Intent.EXTRA_STREAM, uri); setPackage("com.whatsapp") }
+                                if (intent.resolveActivity(context.packageManager) != null) context.startActivity(intent)
+                                else android.widget.Toast.makeText(context, "WhatsApp not installed", android.widget.Toast.LENGTH_SHORT).show()
+                            }
                         },
                         modifier = Modifier.weight(1f).height(48.dp), shape = RoundedCornerShape(14.dp),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF25D366))
@@ -300,6 +228,250 @@ fun IdCardPreviewScreen(db: AppDatabase, type: String, studentId: String, onBack
                 Spacer(Modifier.height(24.dp))
             }
         }
+    }
+}
+
+@Composable
+private fun PremiumStudentIdCard(
+    student: StudentEntity,
+    instituteName: String,
+    instituteCode: String,
+    institutePhone: String,
+    logoUri: String?,
+    issuedDate: String,
+    expiryDate: String,
+    context: Context,
+) {
+    val navy = Color(0xFF0B1F3A)
+    val navyMid = Color(0xFF123C6A)
+    val ink = Color(0xFF10233F)
+    val softInk = Color(0xFF64748B)
+    val photoRequest = remember(student.photoUri) {
+        ImageRequest.Builder(context).data(student.photoUri).crossfade(true).build()
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .aspectRatio(1.586f)
+            .padding(3.dp)
+            .drawBehind {
+                drawRoundRect(
+                    color = Cyan.copy(alpha = 0.14f),
+                    topLeft = Offset(-6f, -6f),
+                    size = Size(size.width + 12f, size.height + 12f),
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(26f, 26f),
+                )
+            },
+    ) {
+        Card(
+            modifier = Modifier.fillMaxSize(),
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.White),
+            elevation = CardDefaults.cardElevation(defaultElevation = 14.dp),
+        ) {
+            Box(Modifier.fillMaxSize()) {
+                Canvas(Modifier.fillMaxSize()) {
+                    val width = size.width
+                    val height = size.height
+                    val leftPanel = Path().apply {
+                        moveTo(0f, height * 0.23f)
+                        lineTo(width * 0.31f, height * 0.23f)
+                        lineTo(width * 0.20f, height)
+                        lineTo(0f, height)
+                        close()
+                    }
+                    drawPath(leftPanel, Color(0xFFF0F9FF))
+                    drawCircle(
+                        color = Color(0xFFE0F2FE),
+                        radius = width * 0.19f,
+                        center = Offset(width * 0.92f, height * 0.83f),
+                    )
+                    drawCircle(
+                        color = Color(0xFFDBEAFE).copy(alpha = 0.7f),
+                        radius = width * 0.08f,
+                        center = Offset(width * 0.75f, height * 0.89f),
+                    )
+                    drawLine(
+                        color = Cyan.copy(alpha = 0.65f),
+                        start = Offset(width * 0.45f, height * 0.32f),
+                        end = Offset(width * 0.91f, height * 0.32f),
+                        strokeWidth = 2f,
+                    )
+                }
+
+                Column(Modifier.fillMaxSize()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(58.dp)
+                            .background(Brush.horizontalGradient(listOf(navy, navyMid, navy))),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .padding(start = 12.dp)
+                                .size(34.dp)
+                                .clip(RoundedCornerShape(9.dp))
+                                .background(Color.White),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            if (!logoUri.isNullOrBlank()) {
+                                AsyncImage(
+                                    model = logoUri,
+                                    contentDescription = "Institute logo",
+                                    modifier = Modifier.fillMaxSize().padding(3.dp),
+                                    contentScale = ContentScale.Fit,
+                                )
+                            } else {
+                                Icon(Icons.Filled.School, null, tint = navyMid, modifier = Modifier.size(20.dp))
+                            }
+                        }
+                        Spacer(Modifier.width(9.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                text = instituteName.uppercase(),
+                                color = Color.White,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                letterSpacing = 0.25.sp,
+                            )
+                            Text(
+                                text = listOf(instituteCode, institutePhone).filter { it.isNotBlank() }.joinToString("  |  "),
+                                color = Color.White.copy(alpha = 0.70f),
+                                fontSize = 8.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .padding(end = 12.dp)
+                                .clip(RoundedCornerShape(7.dp))
+                                .background(Cyan.copy(alpha = 0.18f))
+                                .border(1.dp, Cyan.copy(alpha = 0.60f), RoundedCornerShape(7.dp))
+                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                        ) {
+                            Text("STUDENT ID", color = Color.White, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                            .padding(horizontal = 12.dp, vertical = 11.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .width(84.dp)
+                                .fillMaxHeight()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(navy)
+                                .border(2.dp, Cyan.copy(alpha = 0.72f), RoundedCornerShape(12.dp))
+                                .padding(3.dp)
+                                .clip(RoundedCornerShape(9.dp))
+                                .background(Color(0xFFE2E8F0)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            if (!student.photoUri.isNullOrBlank()) {
+                                AsyncImage(
+                                    model = photoRequest,
+                                    contentDescription = "Student photo",
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentScale = ContentScale.Crop,
+                                )
+                            } else {
+                                Text(
+                                    student.fullName.take(1).uppercase(),
+                                    color = softInk,
+                                    fontSize = 31.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                )
+                            }
+                        }
+
+                        Spacer(Modifier.width(13.dp))
+                        Column(
+                            modifier = Modifier.fillMaxHeight().weight(1f),
+                            verticalArrangement = Arrangement.Center,
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(Modifier.size(6.dp).clip(CircleShape).background(Color(0xFF22C55E)))
+                                Spacer(Modifier.width(5.dp))
+                                Text("ACTIVE STUDENT", color = Color(0xFF15803D), fontSize = 8.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.6.sp)
+                            }
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                student.fullName,
+                                color = ink,
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                "ID  •  ${student.studentCode}",
+                                color = softInk,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                letterSpacing = 0.45.sp,
+                            )
+                            Spacer(Modifier.height(9.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                                IdMetric("CLASS", student.className ?: "N/A", Modifier.weight(1f))
+                                IdMetric("BLOOD", student.bloodGroup ?: "N/A", Modifier.weight(1f))
+                            }
+                            Spacer(Modifier.height(6.dp))
+                            Text("GUARDIAN  ${student.guardianName ?: student.guardianPhone ?: "N/A"}", color = softInk, fontSize = 8.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(36.dp)
+                            .background(Color(0xFFF8FAFC))
+                            .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(bottomStart = 20.dp, bottomEnd = 20.dp))
+                            .padding(horizontal = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("ISSUED  $issuedDate", color = softInk, fontSize = 7.sp, fontWeight = FontWeight.SemiBold)
+                            Text("VALID UNTIL  $expiryDate", color = softInk, fontSize = 7.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                        Icon(Icons.Filled.Verified, null, tint = Cyan, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("BATCHFEE VERIFIED", color = navyMid, fontSize = 7.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 0.4.sp)
+                        Spacer(Modifier.width(9.dp))
+                        Canvas(Modifier.width(47.dp).height(17.dp)) {
+                            val pattern = listOf(1, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 1, 1)
+                            val barWidth = size.width / pattern.size
+                            pattern.forEachIndexed { index, bit ->
+                                if (bit == 1) drawRect(navy, Offset(index * barWidth, 0f), Size(barWidth * 0.62f, size.height))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun IdMetric(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(7.dp))
+            .background(Color(0xFFF1F5F9))
+            .padding(horizontal = 7.dp, vertical = 5.dp),
+    ) {
+        Text(label, color = Color(0xFF64748B), fontSize = 7.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp)
+        Text(value, color = Color(0xFF10233F), fontSize = 10.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -321,7 +493,208 @@ private fun openPdf(context: Context, file: File) {
 // ═══════════════════════════════════════
 //  PROFESSIONAL PDF — shapes & patterns
 // ═══════════════════════════════════════
-private fun generateProfessionalIdCardPdf(context: Context, student: StudentEntity, institute: InstituteEntity?, issuedDate: String, expiryDate: String): File {
+private fun generateProfessionalIdCardPdf(
+    context: Context,
+    student: StudentEntity,
+    institute: InstituteEntity?,
+    issuedDate: String,
+    expiryDate: String,
+): File {
+    val document = PdfDocument()
+    val page = document.startPage(PdfDocument.PageInfo.Builder(544, 343, 1).create())
+    val canvas = page.canvas
+    val width = 544f
+    val height = 343f
+
+    val navy = AndroidColor.rgb(11, 31, 58)
+    val navyMid = AndroidColor.rgb(18, 60, 106)
+    val cyan = AndroidColor.rgb(34, 211, 238)
+    val ink = AndroidColor.rgb(16, 35, 63)
+    val muted = AndroidColor.rgb(100, 116, 139)
+    val paleBlue = AndroidColor.rgb(240, 249, 255)
+    val paleGray = AndroidColor.rgb(248, 250, 252)
+    val white = AndroidColor.WHITE
+    val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    val headerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = white; textSize = 17f; isFakeBoldText = true }
+    val smallHeaderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = AndroidColor.argb(185, 255, 255, 255); textSize = 8f }
+    val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = muted; textSize = 7f; isFakeBoldText = true; letterSpacing = 0.08f }
+    val valuePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = ink; textSize = 11f; isFakeBoldText = true }
+
+    canvas.drawColor(white)
+    fill.color = paleBlue
+    canvas.drawCircle(width * 0.95f, height * 0.80f, 102f, fill)
+    fill.color = AndroidColor.rgb(219, 234, 254)
+    canvas.drawCircle(width * 0.76f, height * 0.92f, 42f, fill)
+    fill.color = navy
+    canvas.drawRect(0f, 0f, width, 65f, fill)
+    fill.color = navyMid
+    val headerShape = android.graphics.Path().apply {
+        moveTo(width * 0.60f, 0f)
+        lineTo(width, 0f)
+        lineTo(width, 65f)
+        lineTo(width * 0.46f, 65f)
+        close()
+    }
+    canvas.drawPath(headerShape, fill)
+    fill.color = cyan
+    canvas.drawRect(0f, 63f, width, 65f, fill)
+
+    val logoRect = RectF(14f, 15f, 50f, 51f)
+    val logoPath = android.graphics.Path().apply { addRoundRect(logoRect, 8f, 8f, android.graphics.Path.Direction.CW) }
+    canvas.save()
+    canvas.clipPath(logoPath)
+    fill.color = white
+    canvas.drawRect(logoRect, fill)
+    loadIdCardBitmap(context, institute?.profilePhotoUri)?.let { logo ->
+        drawCenterCroppedBitmap(canvas, logo, logoRect)
+        logo.recycle()
+    } ?: run {
+        val monogram = (institute?.name ?: "B").trim().take(1).uppercase()
+        val monogramPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = navyMid
+            textSize = 20f
+            isFakeBoldText = true
+            textAlign = Paint.Align.CENTER
+        }
+        canvas.drawText(monogram, logoRect.centerX(), logoRect.centerY() + 7f, monogramPaint)
+    }
+    canvas.restore()
+
+    val instituteName = institute?.name?.uppercase() ?: "BATCHFEE INSTITUTE"
+    canvas.drawText(fitPdfText(instituteName, headerPaint, 285f), 62f, 33f, headerPaint)
+    val instituteMeta = listOf(institute?.instituteCode, institute?.phone).filterNotNull().filter { it.isNotBlank() }.joinToString("  |  ")
+    canvas.drawText(fitPdfText(instituteMeta, smallHeaderPaint, 285f), 62f, 49f, smallHeaderPaint)
+    val cardLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = white; textSize = 8f; isFakeBoldText = true; textAlign = Paint.Align.RIGHT; letterSpacing = 0.08f }
+    canvas.drawText("STUDENT IDENTITY CARD", width - 16f, 35f, cardLabelPaint)
+
+    val photoFrame = RectF(17f, 84f, 125f, 250f)
+    fill.color = navy
+    canvas.drawRoundRect(photoFrame, 13f, 13f, fill)
+    val photoInner = RectF(21f, 88f, 121f, 246f)
+    val photoPath = android.graphics.Path().apply { addRoundRect(photoInner, 10f, 10f, android.graphics.Path.Direction.CW) }
+    canvas.save()
+    canvas.clipPath(photoPath)
+    fill.color = AndroidColor.rgb(226, 232, 240)
+    canvas.drawRect(photoInner, fill)
+    loadIdCardBitmap(context, student.photoUri)?.let { photo ->
+        drawCenterCroppedBitmap(canvas, photo, photoInner)
+        photo.recycle()
+    } ?: run {
+        val initialPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = muted
+            textSize = 43f
+            isFakeBoldText = true
+            textAlign = Paint.Align.CENTER
+        }
+        canvas.drawText(student.fullName.trim().take(1).uppercase(), photoInner.centerX(), photoInner.centerY() + 15f, initialPaint)
+    }
+    canvas.restore()
+
+    val contentX = 151f
+    val activePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = AndroidColor.rgb(21, 128, 61); textSize = 8f; isFakeBoldText = true; letterSpacing = 0.1f }
+    fill.color = AndroidColor.rgb(34, 197, 94)
+    canvas.drawCircle(contentX + 3f, 95f, 3f, fill)
+    canvas.drawText("ACTIVE STUDENT", contentX + 12f, 98f, activePaint)
+    val namePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = ink; textSize = 22f; isFakeBoldText = true }
+    canvas.drawText(fitPdfText(student.fullName, namePaint, 345f), contentX, 126f, namePaint)
+    val idPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = muted; textSize = 10f; isFakeBoldText = true; letterSpacing = 0.08f }
+    canvas.drawText("ID  -  ${student.studentCode}", contentX, 144f, idPaint)
+
+    val metricTop = 161f
+    val metrics = listOf("CLASS" to (student.className ?: "N/A"), "BLOOD" to (student.bloodGroup ?: "N/A"))
+    metrics.forEachIndexed { index, (label, value) ->
+        val left = contentX + index * 143f
+        val metricRect = RectF(left, metricTop, left + 133f, metricTop + 42f)
+        fill.color = AndroidColor.rgb(241, 245, 249)
+        canvas.drawRoundRect(metricRect, 8f, 8f, fill)
+        canvas.drawText(label, left + 10f, metricTop + 15f, labelPaint)
+        canvas.drawText(fitPdfText(value, valuePaint, 112f), left + 10f, metricTop + 31f, valuePaint)
+    }
+    canvas.drawText("GUARDIAN", contentX, 222f, labelPaint)
+    canvas.drawText(fitPdfText(student.guardianName ?: student.guardianPhone ?: "N/A", valuePaint, 285f), contentX, 239f, valuePaint)
+
+    val footerTop = 274f
+    fill.color = paleGray
+    canvas.drawRect(0f, footerTop, width, height, fill)
+    val footerLine = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = AndroidColor.rgb(226, 232, 240); strokeWidth = 1f }
+    canvas.drawLine(0f, footerTop, width, footerTop, footerLine)
+    val footerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = muted; textSize = 7f; isFakeBoldText = true; letterSpacing = 0.05f }
+    canvas.drawText("ISSUED  $issuedDate", 18f, 297f, footerPaint)
+    canvas.drawText("VALID UNTIL  $expiryDate", 18f, 311f, footerPaint)
+    val verifiedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = navyMid; textSize = 7f; isFakeBoldText = true; letterSpacing = 0.08f }
+    canvas.drawText("BATCHFEE VERIFIED", 202f, 304f, verifiedPaint)
+    fill.color = cyan
+    canvas.drawCircle(191f, 301f, 6f, fill)
+    fill.color = navy
+    canvas.drawCircle(191f, 301f, 2.5f, fill)
+    val signaturePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = muted; textSize = 7f; textAlign = Paint.Align.CENTER }
+    canvas.drawLine(340f, 304f, 415f, 304f, footerLine)
+    canvas.drawText("Authorised Signatory", 377f, 316f, signaturePaint)
+    val barcodePattern = listOf(1, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1, 0)
+    val barWidth = 64f / barcodePattern.size
+    barcodePattern.forEachIndexed { index, bit ->
+        if (bit == 1) {
+            fill.color = navy
+            canvas.drawRect(457f + index * barWidth, 289f, 457f + index * barWidth + barWidth * 0.62f, 316f, fill)
+        }
+    }
+
+    document.finishPage(page)
+    val file = File(context.cacheDir, "id_card_${student.studentCode}.pdf")
+    file.outputStream().use { document.writeTo(it) }
+    document.close()
+    return file
+}
+
+private fun fitPdfText(value: String, paint: Paint, maxWidth: Float): String {
+    if (paint.measureText(value) <= maxWidth) return value
+    val suffix = "..."
+    var end = value.length
+    while (end > 0 && paint.measureText(value.take(end) + suffix) > maxWidth) end -= 1
+    return value.take(end) + suffix
+}
+
+private fun loadIdCardBitmap(context: Context, source: String?): android.graphics.Bitmap? {
+    if (source.isNullOrBlank()) return null
+    return try {
+        val uri = Uri.parse(source)
+        when (uri.scheme?.lowercase()) {
+            "http", "https" -> {
+                val connection = URL(source).openConnection() as HttpURLConnection
+                try {
+                    connection.doInput = true
+                    connection.connectTimeout = 5_000
+                    connection.readTimeout = 5_000
+                    connection.inputStream.use { BitmapFactory.decodeStream(it) }
+                } finally {
+                    connection.disconnect()
+                }
+            }
+            "content", "file" -> context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) }
+            else -> BitmapFactory.decodeFile(source)
+        }
+    } catch (_: Exception) {
+        null
+    }
+}
+
+private fun drawCenterCroppedBitmap(canvas: android.graphics.Canvas, bitmap: android.graphics.Bitmap, target: RectF) {
+    if (bitmap.width <= 0 || bitmap.height <= 0) return
+    val sourceAspect = bitmap.width.toFloat() / bitmap.height
+    val targetAspect = target.width() / target.height()
+    val source = if (sourceAspect > targetAspect) {
+        val cropWidth = (bitmap.height * targetAspect).toInt()
+        val left = (bitmap.width - cropWidth) / 2
+        android.graphics.Rect(left, 0, left + cropWidth, bitmap.height)
+    } else {
+        val cropHeight = (bitmap.width / targetAspect).toInt()
+        val top = (bitmap.height - cropHeight) / 2
+        android.graphics.Rect(0, top, bitmap.width, top + cropHeight)
+    }
+    canvas.drawBitmap(bitmap, source, target, Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
+}
+
+private fun generateLegacyIdCardPdf(context: Context, student: StudentEntity, institute: InstituteEntity?, issuedDate: String, expiryDate: String): File {
     val document = PdfDocument()
     val page = document.startPage(PdfDocument.PageInfo.Builder(340, 544, 1).create())
     val canvas = page.canvas; val w = 340f; val h = 544f

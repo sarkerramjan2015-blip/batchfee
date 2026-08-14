@@ -20,6 +20,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -52,6 +53,7 @@ import com.google.firebase.firestore.FirebaseFirestore
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import com.batchfee.edu.ui.components.BatchFeeBottomNav
 import com.batchfee.edu.domain.AccessControl
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -948,7 +950,7 @@ fun DashboardScreen(
 
                 // Staff Logs Card
                 Card(
-                    modifier = Modifier.fillMaxWidth().clickable { safeNavigate("StaffAttendanceRoute") },
+                    modifier = Modifier.fillMaxWidth().premiumClickable { safeNavigate("StaffAttendanceRoute") },
                     colors = CardDefaults.cardColors(containerColor = DashboardCard),
                     border = borderStroke()
                 ) {
@@ -994,8 +996,6 @@ fun DashboardScreen(
                             Text("Attendance", color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                             Text("Today", color = AccentCyan, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                         }
-                        Spacer(Modifier.height(12.dp))
-
                         if (attLoading) {
                             // Shimmer placeholder
                             Column(Modifier.fillMaxWidth().height(90.dp), verticalArrangement = Arrangement.Center,
@@ -1006,16 +1006,17 @@ fun DashboardScreen(
                             }
                         } else if (studentOverall != null && studentOverall.markedCount > 0) {
                             // ── Student segmented bar ──────────────
-                            AttendanceSegmentedBar(studentOverall, "Students")
-                            Spacer(Modifier.height(12.dp))
+                            PolishedAttendanceOverview(studentOverall, staffSum)
                             // ── Staff segmented bar ────────────────
-                            StaffSegmentedBar(staffSum)
                         } else {
-                            Column(Modifier.fillMaxWidth().padding(vertical = 12.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally) {
-                                Icon(Icons.Filled.CalendarMonth, null, tint = TextSecondary.copy(0.4f), modifier = Modifier.size(40.dp))
-                                Spacer(Modifier.height(8.dp))
-                                Text("No attendance recorded yet.", color = TextSecondary, fontSize = 13.sp)
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                Icon(Icons.Filled.CalendarMonth, null, tint = TextSecondary.copy(alpha = 0.55f), modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text("No attendance recorded yet", color = TextSecondary, fontSize = 12.sp)
                             }
                         }
                     }
@@ -1041,7 +1042,7 @@ fun DashboardScreen(
                 ) {
                     // Today Collection
                     Card(
-                        modifier = Modifier.weight(1f).clickable {
+                        modifier = Modifier.weight(1f).premiumClickable {
                             safeNavigate("ReportsRoute?period=today")
                         },
                         shape = RoundedCornerShape(12.dp),
@@ -1057,7 +1058,7 @@ fun DashboardScreen(
                     }
                     // Monthly Collection
                     Card(
-                        modifier = Modifier.weight(1f).clickable {
+                        modifier = Modifier.weight(1f).premiumClickable {
                             safeNavigate("ReportsRoute?period=month")
                         },
                         shape = RoundedCornerShape(12.dp),
@@ -1073,7 +1074,7 @@ fun DashboardScreen(
                     }
                     // Lifetime Collection
                     Card(
-                        modifier = Modifier.weight(1f).clickable {
+                        modifier = Modifier.weight(1f).premiumClickable {
                             safeNavigate("ReportsRoute?period=lifetime")
                         },
                         shape = RoundedCornerShape(12.dp),
@@ -1091,64 +1092,18 @@ fun DashboardScreen(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // ── Due Fees & Pending Card ─────────────────────
-                Card(
-                    modifier = Modifier.fillMaxWidth().clickable { safeNavigate("DueFeesRoute") },
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = DashboardCard),
-                    border = borderStroke()
-                ) {
-                    Column(modifier = Modifier.padding(16.dp).fillMaxWidth()) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(
-                                modifier = Modifier.size(38.dp).clip(RoundedCornerShape(12.dp))
-                                    .background(AccentCyan.copy(alpha = 0.12f)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(Icons.Filled.Calculate, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(21.dp))
-                            }
-                            Spacer(Modifier.width(12.dp))
-                            Text("Due Fees", color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                            Text("View", color = AccentCyan, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                        }
-                        Spacer(Modifier.height(14.dp))
-                        if (compactLayout) {
-                            Column(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                DueSummaryBlock(
-                                    count = dueFeeSummary.activeCount,
-                                    amount = dueFeeSummary.activeAmount,
-                                    label = "Active",
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-                                DueSummaryBlock(
-                                    count = dueFeeSummary.closeCount,
-                                    amount = dueFeeSummary.closeAmount,
-                                    label = "Close",
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-                            }
-                        } else {
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                DueSummaryBlock(
-                                    count = dueFeeSummary.activeCount,
-                                    amount = dueFeeSummary.activeAmount,
-                                    label = "Active",
-                                    modifier = Modifier.weight(1f)
-                                )
-                                DueSummaryBlock(
-                                    count = dueFeeSummary.closeCount,
-                                    amount = dueFeeSummary.closeAmount,
-                                    label = "Close",
-                                    modifier = Modifier.weight(1f)
-                                )
-                            }
-                        }
+                InstituteExpenseSummaryCard(
+                    monthExpense = financialSummary.monthExpense,
+                    todayExpense = financialSummary.todayExpense,
+                    onClick = { safeNavigate("ExpensesRoute") }
+                )
 
-                    }
-                }
+                Spacer(modifier = Modifier.height(16.dp))
+
+                CompactDueFeesCard(
+                    summary = dueFeeSummary,
+                    onClick = { safeNavigate("DueFeesRoute") }
+                )
                 Spacer(modifier = Modifier.height(16.dp))
                 SectionHeader(title = "Tools & reminders")
                 Spacer(modifier = Modifier.height(10.dp))
@@ -1914,6 +1869,56 @@ private fun deleteLocalInstituteProfilePhoto(photoUri: String?) {
 @Composable
 private fun borderStroke() = androidx.compose.foundation.BorderStroke(1.dp, DashboardStroke)
 
+/** A shared, restrained press treatment for dashboard actions. */
+@Composable
+private fun Modifier.premiumClickable(onClick: () -> Unit): Modifier {
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed) 0.982f else 1f,
+        animationSpec = tween(durationMillis = if (pressed) 90 else 150, easing = FastOutSlowInEasing),
+        label = "dashboardCardPress"
+    )
+    return this
+        .graphicsLayer {
+            scaleX = scale
+            scaleY = scale
+        }
+        .clickable(interactionSource = interactionSource, indication = null, onClick = onClick)
+}
+
+/** A low-frequency highlight reserved for high-priority financial summaries. */
+@Composable
+private fun BoxScope.FinancialCardSheen(accent: Color) {
+    val transition = rememberInfiniteTransition(label = "financialCardSheen")
+    val offset by transition.animateFloat(
+        initialValue = -260f,
+        targetValue = 680f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(5200, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "financialSheenOffset"
+    )
+    Box(
+        modifier = Modifier
+            .matchParentSize()
+            .background(
+                Brush.linearGradient(
+                    colors = listOf(
+                        Color.Transparent,
+                        accent.copy(alpha = 0.035f),
+                        accent.copy(alpha = 0.09f),
+                        accent.copy(alpha = 0.035f),
+                        Color.Transparent
+                    ),
+                    start = Offset(offset - 80f, 0f),
+                    end = Offset(offset + 80f, 76f)
+                )
+            )
+    )
+}
+
 @Composable
 private fun CuteAddFab(
     expanded: Boolean,
@@ -2341,6 +2346,117 @@ private fun SectionHeader(title: String, modifier: Modifier = Modifier) {
 }
 
 @Composable
+private fun InstituteExpenseSummaryCard(
+    monthExpense: Double,
+    todayExpense: Double,
+    onClick: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth().premiumClickable(onClick),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = DashboardCard),
+        border = BorderStroke(1.dp, AccentOrange.copy(alpha = 0.38f))
+    ) {
+        Box(modifier = Modifier.fillMaxWidth()) {
+            FinancialCardSheen(AccentOrange)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(38.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(AccentOrange.copy(alpha = 0.14f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.ReceiptLong,
+                    contentDescription = null,
+                    tint = AccentOrange,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "Institute Expenses",
+                    color = TextPrimary,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Text("This month", color = TextSecondary, fontSize = 11.sp)
+            }
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    formatDashboardAmount(monthExpense),
+                    color = TextPrimary,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    "Today ${formatDashboardAmount(todayExpense)}",
+                    color = AccentOrange,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+            Spacer(Modifier.width(6.dp))
+            Icon(
+                imageVector = Icons.Filled.ChevronRight,
+                contentDescription = "Open expenses",
+                tint = AccentOrange,
+                modifier = Modifier.size(20.dp)
+            )
+        }
+        }
+    }
+}
+
+@Composable
+private fun CompactDueFeesCard(summary: DueFeeSummary, onClick: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth().premiumClickable(onClick),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = DashboardCard),
+        border = borderStroke()
+    ) {
+        Box(modifier = Modifier.fillMaxWidth()) {
+            FinancialCardSheen(AccentCyan)
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier.size(36.dp).clip(RoundedCornerShape(12.dp))
+                    .background(AccentCyan.copy(alpha = 0.12f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Filled.Calculate, null, tint = AccentCyan, modifier = Modifier.size(20.dp))
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Due Fees", color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    "${summary.activeCount} active · ${summary.closeCount} close students",
+                    color = TextSecondary,
+                    fontSize = 11.sp
+                )
+            }
+            Column(horizontalAlignment = Alignment.End) {
+                Text(formatDashboardAmount(summary.activeAmount), color = TextPrimary, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                Text("Active due", color = AccentCyan, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+            }
+            Spacer(Modifier.width(6.dp))
+            Icon(Icons.Filled.ChevronRight, "Open due fees", tint = AccentCyan, modifier = Modifier.size(20.dp))
+        }
+        }
+    }
+}
+
+@Composable
 private fun DueSummaryBlock(count: Int, amount: Double, label: String, modifier: Modifier = Modifier) {
     Column(
         modifier = modifier
@@ -2480,7 +2596,7 @@ private fun HomeFeatureTile(
     Card(
         modifier = modifier
             .height(68.dp)
-            .clickable(onClick = onClick),
+            .premiumClickable(onClick),
         shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = DashboardCardAlt),
         border = borderStroke()
@@ -2524,7 +2640,7 @@ private fun HomeFullActionTile(
         modifier = Modifier
             .fillMaxWidth()
             .height(58.dp)
-            .clickable(onClick = onClick),
+            .premiumClickable(onClick),
         shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = DashboardCardAlt),
         border = borderStroke()
@@ -2974,7 +3090,7 @@ private fun OverviewRow(
         initialValue = -300f,
         targetValue = 600f,
         animationSpec = infiniteRepeatable(
-            animation = tween(2200, easing = LinearEasing),
+            animation = tween(4400, easing = LinearEasing),
             repeatMode = RepeatMode.Restart
         ),
         label = "shimmerOffset"
@@ -2984,7 +3100,7 @@ private fun OverviewRow(
         initialValue = 0.6f,
         targetValue = 1.0f,
         animationSpec = infiniteRepeatable(
-            animation = tween(1500, easing = FastOutSlowInEasing),
+            animation = tween(2800, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
         label = "glowAlpha"
@@ -3092,6 +3208,72 @@ private fun MiniCard(title: String, subtitle: String, progress: Float, textProgr
 // ── New attendance composables ──────────────────────────────
 
 @Composable
+private fun PolishedAttendanceOverview(
+    studentSummary: BatchAttendanceSummary,
+    staffSummary: StaffAttendanceSummary
+) {
+    Column(modifier = Modifier.fillMaxWidth().padding(top = 9.dp)) {
+        CompactDetailedAttendanceRow(
+            label = "Students",
+            marked = studentSummary.markedCount,
+            total = studentSummary.totalStudents,
+            present = studentSummary.presentCount,
+            absent = studentSummary.absentCount,
+            leave = studentSummary.leaveCount,
+            holiday = studentSummary.holidayCount
+        )
+        Spacer(Modifier.height(9.dp))
+        CompactDetailedAttendanceRow(
+            label = "Staff",
+            marked = staffSummary.markedCount,
+            total = staffSummary.totalStaff,
+            present = staffSummary.presentCount,
+            absent = staffSummary.absentCount,
+            leave = staffSummary.leaveCount,
+            holiday = staffSummary.holidayCount
+        )
+    }
+}
+
+@Composable
+private fun CompactDetailedAttendanceRow(
+    label: String,
+    marked: Int,
+    total: Int,
+    present: Int,
+    absent: Int,
+    leave: Int,
+    holiday: Int
+) {
+    val chartTotal = (present + absent + leave + holiday).coerceAtLeast(1)
+    val values = listOf(present, absent, leave, holiday)
+    val colors = listOf(AccentGreen, AccentRed, AccentSky, AccentGray)
+    val captions = if (label == "Students") listOf("Present", "Absent", "Leave", "Holiday") else listOf("P", "A", "L", "H")
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(label, color = TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            Text("$marked/$total marked", color = TextSecondary, fontSize = 11.sp)
+        }
+        Spacer(Modifier.height(5.dp))
+        Row(modifier = Modifier.fillMaxWidth().height(7.dp).clip(RoundedCornerShape(4.dp))) {
+            values.forEachIndexed { index, value ->
+                if (value > 0) {
+                    Box(Modifier.weight(value.toFloat()).fillMaxHeight().background(colors[index]))
+                }
+            }
+            if (values.sum() == 0) Box(Modifier.fillMaxSize().background(DashboardCardAlt))
+        }
+        Spacer(Modifier.height(5.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            values.forEachIndexed { index, value ->
+                val percent = value * 100 / chartTotal
+                Text("● ${captions[index]} $percent%", color = colors[index], fontSize = 10.sp)
+            }
+        }
+    }
+}
+
+@Composable
 private fun AttendanceSegmentedBar(sum: BatchAttendanceSummary, label: String) {
     Column {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -3179,25 +3361,27 @@ private fun BatchMiniCard(name: String, total: Int, marked: Int, presentPct: Flo
 @Composable
 private fun AttendanceMiniCard(label: String, icon: ImageVector, marked: Int, total: Int, detail: String, accent: Color, onClick: () -> Unit, modifier: Modifier = Modifier) {
     Card(
-        modifier = modifier.clickable(onClick = onClick),
+        modifier = modifier.premiumClickable(onClick),
         shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = DashboardCard),
         border = borderStroke()
     ) {
-        Column(Modifier.padding(12.dp)) {
+        Column(Modifier.padding(horizontal = 11.dp, vertical = 10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(icon, null, tint = accent, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(6.dp))
                 Text(label, color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
             }
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(5.dp))
             Text("$marked / $total $detail", color = TextSecondary, fontSize = 12.sp)
-            Spacer(Modifier.height(4.dp))
-            val prog = if (total > 0) marked.toFloat() / total else 0f
-            LinearProgressIndicator(
-                progress = { prog }, modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(3.dp)),
-                color = accent, trackColor = DashboardBg
-            )
+            if (marked > 0) {
+                Spacer(Modifier.height(4.dp))
+                val prog = if (total > 0) marked.toFloat() / total else 0f
+                LinearProgressIndicator(
+                    progress = { prog }, modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(3.dp)),
+                    color = accent, trackColor = DashboardBg
+                )
+            }
         }
     }
 }
@@ -3256,6 +3440,7 @@ fun MoreScreen(
             "Staff Management" to "StaffRoute",
             "Staff Attendance" to "StaffAttendanceRoute",
             "Salary Management" to "SalaryRoute",
+            "Archived Students" to "ArchivedStudentsRoute",
             "Expenses" to "ExpensesRoute",
             "Profit & Loss" to "ProfitLossRoute",
             "ID Card Generator" to "IdCardGeneratorRoute",

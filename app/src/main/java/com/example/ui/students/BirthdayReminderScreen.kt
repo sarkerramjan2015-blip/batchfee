@@ -65,6 +65,152 @@ private val WAGreen = Color(0xFF25D366)
 private fun generateBirthdayCard(
     studentName: String,
     age: Int,
+    instituteName: String?,
+    context: android.content.Context,
+): Uri {
+    val width = 1080
+    val height = 1350
+    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+    val midnight = android.graphics.Color.parseColor("#24104F")
+    val violet = android.graphics.Color.parseColor("#5B2185")
+    val pink = android.graphics.Color.parseColor("#EC4899")
+    val coral = android.graphics.Color.parseColor("#FB7185")
+    val gold = android.graphics.Color.parseColor("#FBBF24")
+    val cream = android.graphics.Color.parseColor("#FFF7ED")
+    val white = android.graphics.Color.WHITE
+    val softWhite = android.graphics.Color.argb(225, 255, 255, 255)
+    val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+
+    val background = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        shader = android.graphics.LinearGradient(
+            0f, 0f, width.toFloat(), height.toFloat(),
+            intArrayOf(midnight, violet, android.graphics.Color.parseColor("#7C235C")),
+            floatArrayOf(0f, 0.58f, 1f),
+            android.graphics.Shader.TileMode.CLAMP,
+        )
+    }
+    canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), background)
+    fill.color = android.graphics.Color.argb(38, 255, 255, 255)
+    canvas.drawCircle(110f, 150f, 250f, fill)
+    canvas.drawCircle(970f, 1160f, 290f, fill)
+    fill.color = android.graphics.Color.argb(25, 251, 191, 36)
+    canvas.drawCircle(900f, 260f, 185f, fill)
+
+    val confetti = listOf(
+        Triple(95f, 285f, 32f) to gold, Triple(190f, 170f, 22f) to coral,
+        Triple(906f, 180f, 26f) to gold, Triple(981f, 410f, 30f) to pink,
+        Triple(105f, 1000f, 28f) to coral, Triple(938f, 965f, 24f) to gold,
+        Triple(240f, 1190f, 20f) to pink, Triple(810f, 1120f, 25f) to coral,
+    )
+    confetti.forEachIndexed { index, (shape, color) ->
+        fill.color = color
+        fill.alpha = 190
+        canvas.save()
+        canvas.rotate(if (index % 2 == 0) 28f else -26f, shape.first, shape.second)
+        canvas.drawRoundRect(shape.first - shape.third, shape.second - 7f, shape.first + shape.third, shape.second + 7f, 7f, 7f, fill)
+        canvas.restore()
+    }
+    fill.alpha = 255
+
+    val panel = RectF(70f, 92f, width - 70f, height - 92f)
+    fill.color = android.graphics.Color.argb(235, 255, 255, 255)
+    canvas.drawRoundRect(panel, 42f, 42f, fill)
+    val panelStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.argb(80, 255, 255, 255); style = Paint.Style.STROKE; strokeWidth = 3f }
+    canvas.drawRoundRect(panel, 42f, 42f, panelStroke)
+
+    val tagRect = RectF(360f, 142f, 720f, 204f)
+    fill.color = android.graphics.Color.argb(24, 91, 33, 133)
+    canvas.drawRoundRect(tagRect, 31f, 31f, fill)
+    val tagStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.argb(90, 91, 33, 133); style = Paint.Style.STROKE; strokeWidth = 2f }
+    canvas.drawRoundRect(tagRect, 31f, 31f, tagStroke)
+    val tagPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = violet; textSize = 18f; isFakeBoldText = true; textAlign = Paint.Align.CENTER; letterSpacing = 0.13f }
+    canvas.drawText("A SPECIAL DAY", 540f, 181f, tagPaint)
+
+    drawBirthdayCake(canvas, 540f, 338f, pink, coral, gold, violet)
+    val headlinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = violet; textSize = 59f; isFakeBoldText = true; textAlign = Paint.Align.CENTER; letterSpacing = 0.02f }
+    canvas.drawText("Happy Birthday", 540f, 516f, headlinePaint)
+    val namePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = midnight; textSize = 65f; isFakeBoldText = true; textAlign = Paint.Align.CENTER }
+    canvas.drawText(fitBirthdayCardText(studentName, namePaint, 790f), 540f, 602f, namePaint)
+    val ageRect = RectF(370f, 642f, 710f, 710f)
+    fill.color = android.graphics.Color.argb(24, 236, 72, 153)
+    canvas.drawRoundRect(ageRect, 34f, 34f, fill)
+    val agePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = pink; textSize = 27f; isFakeBoldText = true; textAlign = Paint.Align.CENTER }
+    canvas.drawText(if (age > 0) "Celebrating $age wonderful years" else "Celebrating your special day", 540f, 686f, agePaint)
+
+    val divider = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        shader = android.graphics.LinearGradient(
+            275f, 0f, 805f, 0f,
+            intArrayOf(pink, gold, pink),
+            floatArrayOf(0f, 0.5f, 1f),
+            android.graphics.Shader.TileMode.CLAMP,
+        )
+        strokeWidth = 4f
+    }
+    canvas.drawRoundRect(275f, 758f, 805f, 762f, 2f, 2f, divider)
+    val wishPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.parseColor("#4C1D5C"); textSize = 28f; textAlign = Paint.Align.CENTER }
+    canvas.drawText("Wishing you a beautiful year of learning,", 540f, 836f, wishPaint)
+    canvas.drawText("growth, success, and joyful moments ahead.", 540f, 880f, wishPaint)
+    val supportivePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.parseColor("#7E4B8B"); textSize = 22f; textAlign = Paint.Align.CENTER }
+    canvas.drawText("May every dream you work for come a little closer today.", 540f, 935f, supportivePaint)
+
+    drawBirthdayBalloon(canvas, 205f, 1014f, coral, -18f)
+    drawBirthdayBalloon(canvas, 875f, 1014f, gold, 18f)
+    val footerLine = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.argb(36, 91, 33, 133); strokeWidth = 2f }
+    canvas.drawLine(205f, 1115f, 875f, 1115f, footerLine)
+    val footerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.parseColor("#6B356E"); textSize = 21f; textAlign = Paint.Align.CENTER; isFakeBoldText = true }
+    val signature = instituteName?.trim()?.takeIf { it.isNotBlank() } ?: "BatchFee"
+    canvas.drawText("With warm wishes from", 540f, 1170f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.parseColor("#8A5A92"); textSize = 18f; textAlign = Paint.Align.CENTER })
+    canvas.drawText(fitBirthdayCardText(signature, footerPaint, 670f), 540f, 1211f, footerPaint)
+    val brandPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.parseColor("#A46EAE"); textSize = 16f; textAlign = Paint.Align.CENTER; letterSpacing = 0.08f }
+    canvas.drawText("BATCHFEE BIRTHDAY WISH", 540f, 1260f, brandPaint)
+
+    val file = File(context.cacheDir, "birthday_card_${System.currentTimeMillis()}.png")
+    FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+    return FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+}
+
+private fun fitBirthdayCardText(value: String, paint: Paint, maxWidth: Float): String {
+    if (paint.measureText(value) <= maxWidth) return value
+    val suffix = "..."
+    var end = value.length
+    while (end > 0 && paint.measureText(value.take(end) + suffix) > maxWidth) end -= 1
+    return value.take(end) + suffix
+}
+
+private fun drawBirthdayCake(canvas: Canvas, centerX: Float, top: Float, pink: Int, coral: Int, gold: Int, violet: Int) {
+    val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    fill.color = android.graphics.Color.argb(25, 91, 33, 133)
+    canvas.drawCircle(centerX, top + 25f, 126f, fill)
+    fill.color = coral
+    canvas.drawRoundRect(centerX - 104f, top + 34f, centerX + 104f, top + 112f, 18f, 18f, fill)
+    fill.color = pink
+    canvas.drawRoundRect(centerX - 92f, top + 112f, centerX + 92f, top + 174f, 15f, 15f, fill)
+    fill.color = android.graphics.Color.parseColor("#FFF1F2")
+    for (index in 0..4) canvas.drawCircle(centerX - 72f + index * 36f, top + 109f, 12f, fill)
+    val candlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = gold; strokeWidth = 12f; strokeCap = Paint.Cap.ROUND }
+    listOf(-56f, 0f, 56f).forEach { offset ->
+        canvas.drawLine(centerX + offset, top - 12f, centerX + offset, top + 34f, candlePaint)
+        fill.color = android.graphics.Color.parseColor("#FDE68A")
+        canvas.drawCircle(centerX + offset, top - 26f, 11f, fill)
+    }
+    val platePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.argb(44, 91, 33, 133); strokeWidth = 9f; strokeCap = Paint.Cap.ROUND }
+    canvas.drawLine(centerX - 120f, top + 187f, centerX + 120f, top + 187f, platePaint)
+}
+
+private fun drawBirthdayBalloon(canvas: Canvas, centerX: Float, top: Float, color: Int, tilt: Float) {
+    val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { this.color = color }
+    canvas.save()
+    canvas.rotate(tilt, centerX, top)
+    canvas.drawOval(RectF(centerX - 42f, top - 62f, centerX + 42f, top + 52f), fill)
+    val stringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { this.color = android.graphics.Color.argb(110, 91, 33, 133); strokeWidth = 2f }
+    canvas.drawLine(centerX, top + 50f, centerX + if (tilt < 0f) -28f else 28f, top + 130f, stringPaint)
+    canvas.restore()
+}
+
+private fun generateLegacyBirthdayCard(
+    studentName: String,
+    age: Int,
     context: android.content.Context
 ): Uri {
     val w = 800; val h = 1000
@@ -349,7 +495,7 @@ fun BirthdayReminderScreen(db: AppDatabase, onBack: () -> Unit, onNavigateToPric
                         onClick = {
                             wishDialogTarget = null
                             try {
-                                val cardUri = generateBirthdayCard(student.fullName, age, context)
+                                val cardUri = generateBirthdayCard(student.fullName, age, instituteSignature, context)
                                 val intent = Intent(Intent.ACTION_SEND).apply {
                                     type = "image/png"
                                     putExtra(Intent.EXTRA_STREAM, cardUri)
@@ -366,7 +512,7 @@ fun BirthdayReminderScreen(db: AppDatabase, onBack: () -> Unit, onNavigateToPric
                                 context.startActivity(intent)
                             } catch (_: Exception) {
                                 // Fallback: generic share
-                                val cardUri = generateBirthdayCard(student.fullName, age, context)
+                                val cardUri = generateBirthdayCard(student.fullName, age, instituteSignature, context)
                                 context.startActivity(Intent.createChooser(
                                     Intent(Intent.ACTION_SEND).apply {
                                         type = "image/png"

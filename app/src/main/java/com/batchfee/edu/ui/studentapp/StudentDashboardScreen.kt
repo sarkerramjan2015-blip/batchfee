@@ -20,8 +20,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.batchfee.edu.domain.StudentSessionManager
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.firestore.ListenerRegistration
-import kotlinx.coroutines.tasks.await
 
 private val StuBg     = Color(0xFF07111F)
 private val StuCard   = Color(0xFF0F172A)
@@ -38,49 +38,89 @@ private val StuDim    = Color(0xFF64748B)
 
 @Composable
 fun StudentDashboardScreen() {
-    val sid = StudentSessionManager.studentId.value ?: ""
-    val iid = StudentSessionManager.instituteId.value ?: ""
-    val studentName = StudentSessionManager.studentName.value ?: "Student"
-    val instCode = StudentSessionManager.instituteCode.value ?: ""
+    val sid by StudentSessionManager.studentId.collectAsState()
+    val iid by StudentSessionManager.instituteId.collectAsState()
+    val sessionStudentName by StudentSessionManager.studentName.collectAsState()
+    val studentId = sid.orEmpty()
+    val instituteId = iid.orEmpty()
 
-    var instituteName by remember { mutableStateOf("") }
-    var className by remember { mutableStateOf("") }
-    var totalFee by remember { mutableStateOf(0.0) }
-    var totalPaid by remember { mutableStateOf(0.0) }
-    var totalDue by remember { mutableStateOf(0.0) }
-    var attendancePct by remember { mutableStateOf(0.0) }
-    var presentCount by remember { mutableStateOf(0) }
-    var totalAttCount by remember { mutableStateOf(0) }
-    var latestGrade by remember { mutableStateOf("-") }
-    var latestExam by remember { mutableStateOf("") }
-    var hwCount by remember { mutableStateOf(0) }
-    var assignCount by remember { mutableStateOf(0) }
-    var loading by remember { mutableStateOf(true) }
+    var displayName by remember(studentId) { mutableStateOf(sessionStudentName ?: "Student") }
+    var instituteName by remember(instituteId) { mutableStateOf("") }
+    var className by remember(studentId) { mutableStateOf("") }
+    var totalFee by remember(studentId) { mutableStateOf(0.0) }
+    var totalPaid by remember(studentId) { mutableStateOf(0.0) }
+    var totalDue by remember(studentId) { mutableStateOf(0.0) }
+    var attendancePct by remember(studentId) { mutableStateOf(0.0) }
+    var presentCount by remember(studentId) { mutableStateOf(0) }
+    var totalAttCount by remember(studentId) { mutableStateOf(0) }
+    var latestGrade by remember(studentId) { mutableStateOf("-") }
+    var latestExam by remember(studentId) { mutableStateOf("") }
+    var homeworkBatchIds by remember(instituteId) { mutableStateOf<List<String?>>(emptyList()) }
+    var assignmentBatchIds by remember(instituteId) { mutableStateOf<List<String?>>(emptyList()) }
+    var activeBatchIds by remember(studentId, instituteId) { mutableStateOf<Set<String>>(emptySet()) }
+    var loading by remember(studentId, instituteId) { mutableStateOf(true) }
+    var syncError by remember(studentId, instituteId) { mutableStateOf<String?>(null) }
 
-    DisposableEffect(iid, sid) {
+    fun reportListenerError(error: FirebaseFirestoreException?) {
+        if (error != null) {
+            loading = false
+            syncError = if (error.code == FirebaseFirestoreException.Code.PERMISSION_DENIED) {
+                "Live access is no longer available. Please sign in again."
+            } else {
+                "Live updates are paused. Check your connection."
+            }
+        }
+    }
+
+    DisposableEffect(instituteId, studentId) {
+        if (instituteId.isBlank() || studentId.isBlank()) {
+            onDispose { }
+        } else {
         val fs = FirebaseFirestore.getInstance()
         val listeners = mutableListOf<ListenerRegistration>()
 
         // Student profile snapshot
-        listeners += fs.collection("institutes").document(iid).collection("students").document(sid)
-            .addSnapshotListener { snap, _ ->
+        listeners += fs.collection("institutes").document(instituteId).collection("students").document(studentId)
+            .addSnapshotListener { snap, error ->
+                reportListenerError(error)
                 snap?.let {
+                    displayName = it.getString("fullName") ?: displayName
                     className = it.getString("className") ?: ""
+                }
+                if (error == null) loading = false
+            }
+
+        // Work items are batch-scoped. Watch enrollment separately so a batch
+        // transfer refreshes the dashboard counts without reopening the app.
+        listeners += fs.collection("institutes").document(instituteId).collection("batch_students")
+            .whereEqualTo("studentId", studentId)
+            .addSnapshotListener { snap, error ->
+                reportListenerError(error)
+                if (error == null) {
+                    activeBatchIds = snap?.documents
+                        ?.filter { it.getString("status") == "active" }
+                        ?.mapNotNull { it.getString("batchId") }
+                        ?.toSet()
+                        .orEmpty()
                 }
             }
 
         // Institute name
-        listeners += fs.collection("institutes").document(iid)
-            .addSnapshotListener { snap, _ ->
+        listeners += fs.collection("institutes").document(instituteId)
+            .addSnapshotListener { snap, error ->
+                reportListenerError(error)
                 snap?.let {
                     instituteName = it.getString("name") ?: it.getString("instituteName") ?: ""
                 }
+                if (error == null) loading = false
             }
 
         // Fees snapshot
-        listeners += fs.collection("institutes").document(iid).collection("fees")
-            .whereEqualTo("studentId", sid)
-            .addSnapshotListener { snap, _ ->
+        listeners += fs.collection("institutes").document(instituteId).collection("fees")
+            .whereEqualTo("studentId", studentId)
+            .addSnapshotListener { snap, error ->
+                reportListenerError(error)
+                if (error != null) return@addSnapshotListener
                 var tf = 0.0; var tp = 0.0
                 snap?.documents?.forEach { doc ->
                     tf += doc.getDouble("totalAmount") ?: 0.0
@@ -91,9 +131,11 @@ fun StudentDashboardScreen() {
             }
 
         // Attendance snapshot
-        listeners += fs.collection("institutes").document(iid).collection("attendance")
-            .whereEqualTo("studentId", sid)
-            .addSnapshotListener { snap, _ ->
+        listeners += fs.collection("institutes").document(instituteId).collection("attendance")
+            .whereEqualTo("studentId", studentId)
+            .addSnapshotListener { snap, error ->
+                reportListenerError(error)
+                if (error != null) return@addSnapshotListener
                 val docs = snap?.documents ?: emptyList()
                 val p = docs.count { it.getString("status") == "present" }
                 presentCount = p
@@ -102,28 +144,50 @@ fun StudentDashboardScreen() {
             }
 
         // Latest result
-        listeners += fs.collection("institutes").document(iid).collection("results")
-            .whereEqualTo("studentId", sid)
-            .addSnapshotListener { snap, _ ->
-                val docs = snap?.documents?.sortedByDescending { (it.get("examDateMs") as? Number)?.toLong() ?: 0L } ?: emptyList()
+        listeners += fs.collection("institutes").document(instituteId).collection("results")
+            .whereEqualTo("studentId", studentId)
+            .addSnapshotListener { snap, error ->
+                reportListenerError(error)
+                if (error != null) return@addSnapshotListener
+                val docs = snap?.documents
+                    ?.filter { it.getBoolean("published") == true }
+                    ?.sortedByDescending { (it.get("updatedAtMs") as? Number)?.toLong() ?: 0L }
+                    .orEmpty()
                 if (docs.isNotEmpty()) {
                     latestGrade = docs[0].getString("grade") ?: "-"
-                    latestExam = docs[0].getString("examName") ?: ""
+                    latestExam = docs[0].getString("examName") ?: "Latest result"
+                } else {
+                    latestGrade = "-"
+                    latestExam = ""
                 }
             }
 
         // Homework count
-        listeners += fs.collection("institutes").document(iid).collection("homework")
+        listeners += fs.collection("institutes").document(instituteId).collection("homework")
             .whereEqualTo("status", "active")
-            .addSnapshotListener { snap, _ -> hwCount = snap?.size() ?: 0 }
+            .addSnapshotListener { snap, error ->
+                reportListenerError(error)
+                if (error == null) homeworkBatchIds = snap?.documents
+                    ?.map { it.getString("batchId") }
+                    .orEmpty()
+            }
 
         // Assignment count
-        listeners += fs.collection("institutes").document(iid).collection("assignments")
+        listeners += fs.collection("institutes").document(instituteId).collection("assignments")
             .whereEqualTo("status", "published")
-            .addSnapshotListener { snap, _ -> assignCount = snap?.size() ?: 0 }
+            .addSnapshotListener { snap, error ->
+                reportListenerError(error)
+                if (error == null) assignmentBatchIds = snap?.documents
+                    ?.map { it.getString("batchId") }
+                    .orEmpty()
+            }
 
         onDispose { listeners.forEach { it.remove() } }
+        }
     }
+
+    val hwCount = homeworkBatchIds.count { it.isNullOrBlank() || it in activeBatchIds }
+    val assignCount = assignmentBatchIds.count { it.isNullOrBlank() || it in activeBatchIds }
 
     Column(
         Modifier.fillMaxSize().background(StuBg).verticalScroll(rememberScrollState()).padding(16.dp)
@@ -131,13 +195,28 @@ fun StudentDashboardScreen() {
         // Header
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(52.dp).clip(RoundedCornerShape(16.dp)).background(Brush.linearGradient(listOf(StuCyan, StuBlue))), contentAlignment = Alignment.Center) {
-                Text(studentName.take(1).uppercase(), color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 22.sp)
+                Text(displayName.take(1).uppercase(), color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 22.sp)
             }
             Spacer(Modifier.width(14.dp))
             Column {
-                Text("Hello, ${studentName.split(" ").firstOrNull() ?: studentName}!", color = StuWhite, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp)
+                Text("Hello, ${displayName.split(" ").firstOrNull() ?: displayName}!", color = StuWhite, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp)
                 if (className.isNotBlank()) Text(className, color = StuCyan, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 if (instituteName.isNotBlank()) Text(instituteName, color = StuMuted, fontSize = 12.sp)
+            }
+        }
+
+        syncError?.let { message ->
+            Spacer(Modifier.height(12.dp))
+            Surface(
+                color = StuAmber.copy(alpha = 0.12f),
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(Modifier.padding(horizontal = 12.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.SyncProblem, null, tint = StuAmber, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(message, color = StuAmber, fontSize = 12.sp)
+                }
             }
         }
 
