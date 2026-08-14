@@ -3,7 +3,7 @@
 const { FieldValue } = require("firebase-admin/firestore");
 const { HttpsError } = require("firebase-functions/v2/https");
 const { hasPermission } = require("./studentAuthCore");
-const { hasCurrentSubscription } = require("./subscriptionPolicy");
+const { hasCurrentSubscription, hasUnlimitedTrialStudents } = require("./subscriptionPolicy");
 const { parseMediaReference } = require("./mediaSecurityCore");
 const {
   canonicalDeletionRequest,
@@ -254,7 +254,7 @@ function createSafeDeletionHandler({ db, adminAuth }) {
       .doc(deletionStateId(parsed.entityType, parsed.entityId));
     const targetRef = entityRef(instituteRef, parsed.entityType, parsed.entityId);
     const seats = seatCollection(instituteRef, parsed.entityType);
-    const seatCountQuery = seats ? seats.where("archivedAtMs", "==", null).count() : null;
+    const seatCountQuery = seats ? seats.where("status", "==", "active").count() : null;
 
     const plan = await db.runTransaction(async (transaction) => {
       const actorAppUserRef = db.collection("app_users").doc(actorUid);
@@ -407,7 +407,9 @@ function createSafeDeletionHandler({ db, adminAuth }) {
         const previous = stateSnap.get("previous") || {};
         authUid = stateSnap.get("authUid") || authUid;
         restoreStudentAccess = stateSnap.get("restoreStudentAccess") === true;
-        if (seatCountSnap) {
+        const unlimitedTrialStudents = parsed.entityType === "student" &&
+          hasUnlimitedTrialStudents(institute, now);
+        if (seatCountSnap && !unlimitedTrialStudents) {
           const planSnap = await transaction.get(
             db.collection("subscription_plans").doc(institute.currentPlanId || "plan_free_trial"),
           );

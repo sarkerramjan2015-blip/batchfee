@@ -103,9 +103,11 @@ function canonicalUploadRequest(data) {
   };
 }
 
-function cloudinaryPublicId(instituteId, purpose, assetId, isPrivate) {
+function storageObjectPath(instituteId, purpose, assetId, isPrivate) {
   const tenantKey = createHash("sha256").update(instituteId).digest("hex").slice(0, 20);
-  return `batchfee/${isPrivate ? "private" : "public"}/${tenantKey}/${purpose}/${assetId}`;
+  // Object names are intentionally opaque and do not contain a student/staff ID.
+  // Firebase Storage Rules deny direct client access; private reads use a signed URL.
+  return `batchfee-media/v1/${isPrivate ? "private" : "public"}/${tenantKey}/${purpose}/${assetId}.jpg`;
 }
 
 module.exports = {
@@ -114,6 +116,6 @@ module.exports = {
   PURPOSES,
   buildMediaReference,
   canonicalUploadRequest,
-  cloudinaryPublicId,
+  storageObjectPath,
   parseMediaReference,
 };

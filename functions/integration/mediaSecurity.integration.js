@@ -13,44 +13,73 @@ if (!process.env.FIRESTORE_EMULATOR_HOST) {
 initializeApp({ projectId });
 const db = getFirestore();
 
-class FakeCloudinary {
-  constructor() {
-    this.resources = new Map();
-    this.uploader = {
-      upload: async (_dataUri, options) => {
-        if (this.resources.has(options.public_id)) {
-          const error = new Error("already exists");
-          error.http_code = 409;
-          throw error;
-        }
-        const result = {
-          public_id: options.public_id,
-          asset_id: `cloud-${this.resources.size + 1}`,
-          version: this.resources.size + 1,
-          format: "jpg",
-          bytes: 9,
-          type: options.type,
-          secure_url: `https://res.cloudinary.com/test/image/${options.type}/${options.public_id}.jpg`,
-        };
-        this.resources.set(options.public_id, result);
-        return result;
+class FakeStorageFile {
+  constructor(bucket, name) {
+    this.bucket = bucket;
+    this.name = name;
+  }
+
+  async save(bytes, options) {
+    if (this.bucket.objects.has(this.name)) {
+      const error = new Error("precondition failed");
+      error.code = 412;
+      throw error;
+    }
+    this.bucket.objects.set(this.name, {
+      metadata: {
+        name: this.name,
+        bucket: this.bucket.name,
+        generation: String(this.bucket.objects.size + 1),
+        size: String(bytes.length),
+        contentType: options.metadata.contentType,
+        metadata: { ...options.metadata.metadata },
       },
-    };
-    this.api = {
-      resource: async (publicId) => this.resources.get(publicId),
-    };
-    this.utils = {
-      private_download_url: (publicId, format, options) => {
-        assert.equal(options.type, "authenticated");
-        assert.equal(options.attachment, false);
-        return `https://api.cloudinary.test/download/${publicId}.${format}?expires_at=${options.expires_at}&signature=test`;
-      },
-    };
+    });
+  }
+
+  async getMetadata() {
+    const object = this.bucket.objects.get(this.name);
+    if (!object) {
+      const error = new Error("not found");
+      error.code = 404;
+      throw error;
+    }
+    return [object.metadata];
+  }
+
+  async getSignedUrl(options) {
+    assert.equal(options.version, "v4");
+    assert.equal(options.action, "read");
+    assert.equal(options.responseDisposition, "inline");
+    return [`https://storage.googleapis.test/${this.bucket.name}/${this.name}?signed=1`];
   }
 }
 
-const cloudinary = new FakeCloudinary();
-const handlers = createMediaSecurityHandlers({ db, getCloudinary: () => cloudinary });
+class FakeStorageBucket {
+  constructor() {
+    this.name = "batchfee-media-test.firebasestorage.app";
+    this.objects = new Map();
+  }
+
+  file(name) {
+    return new FakeStorageFile(this, name);
+  }
+}
+
+const bucket = new FakeStorageBucket();
+const legacyCloudinary = {
+  utils: {
+    private_download_url: (publicId, format, options) => {
+      assert.equal(options.type, "authenticated");
+      return `https://api.cloudinary.test/download/${publicId}.${format}?expires_at=${options.expires_at}`;
+    },
+  },
+};
+const handlers = createMediaSecurityHandlers({
+  db,
+  bucket,
+  getLegacyCloudinary: () => legacyCloudinary,
+});
 const jpegBase64 = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 0xff, 0xd9]).toString("base64");
 const instituteA = "media-owner-a";
 const instituteB = "media-owner-b";
@@ -97,9 +126,10 @@ async function main() {
   assert.equal(first.private, true);
   const firstAsset = await db.collection("institutes").doc(instituteA)
     .collection("media_assets").doc(first.assetId).get();
-  assert.equal(firstAsset.get("deliveryType"), "authenticated");
+  assert.equal(firstAsset.get("deliveryType"), "firebase_storage_signed_url");
   assert.equal(firstAsset.get("uploadedByUid"), instituteA);
   assert.equal(firstAsset.get("status"), "active");
+  assert.match(firstAsset.get("storageObjectPath"), /^batchfee-media\/v1\/private\//);
 
   const idempotent = await handlers.uploadSecureMedia(ownerRequest(
     instituteA,
@@ -108,7 +138,7 @@ async function main() {
     { subjectId: studentA },
   ));
   assert.deepEqual(idempotent, first);
-  assert.equal(cloudinary.resources.size, 1);
+  assert.equal(bucket.objects.size, 1);
 
   await db.collection("institutes").doc(instituteA).collection("students").doc(studentA)
     .update({ photoUri: first.reference });
@@ -126,8 +156,31 @@ async function main() {
     auth: studentAuth,
     data: { reference: first.reference },
   });
-  assert.match(delivery.url, /^https:\/\/api\.cloudinary\.test\/download\//);
+  assert.match(delivery.url, /^https:\/\/storage\.googleapis\.test\//);
   assert.ok(delivery.expiresAtMs > Date.now());
+
+  const legacyAssetId = "b".repeat(32);
+  const legacyReference = `batchfee-media://v1/${instituteA}/${legacyAssetId}`;
+  await db.collection("institutes").doc(instituteA).collection("media_assets").doc(legacyAssetId).set({
+    instituteId: instituteA,
+    assetId: legacyAssetId,
+    reference: legacyReference,
+    deliveryType: "authenticated",
+    cloudinaryPublicId: "batchfee/private/legacy/student",
+    format: "jpg",
+    purpose: "student_photo",
+    subjectId: studentA,
+    status: "active",
+  });
+  await db.collection("institutes").doc(instituteA).collection("students").doc(studentA)
+    .update({ photoUri: legacyReference });
+  const legacyDelivery = await handlers.getSecureMediaUrl({
+    auth: studentAuth,
+    data: { reference: legacyReference },
+  });
+  assert.match(legacyDelivery.url, /^https:\/\/api\.cloudinary\.test\/download\//);
+  await db.collection("institutes").doc(instituteA).collection("students").doc(studentA)
+    .update({ photoUri: first.reference });
 
   await db.collection("institutes").doc(instituteA).collection("students").doc("another-student")
     .set({ instituteId: instituteA, status: "active", archivedAtMs: null, photoUri: first.reference });
@@ -162,13 +215,10 @@ async function main() {
     "media-operation-public-0001",
     "institute_logo",
   ));
-  assert.match(logo.reference, /^https:\/\/res\.cloudinary\.com\//);
+  assert.match(logo.reference, /^https:\/\/firebasestorage\.googleapis\.com\/v0\/b\//);
   assert.equal(logo.private, false);
-
-  const assetWriteProbe = await db.collection("institutes").doc(instituteA)
-    .collection("media_assets").get();
-  assert.equal(assetWriteProbe.size, 3);
-  console.log("P0-07 media integration: PASS");
+  assert.equal(bucket.objects.size, 3);
+  console.log("Firebase Storage media integration: PASS");
 }
 
 main().catch((error) => {

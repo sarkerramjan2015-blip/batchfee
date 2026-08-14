@@ -1,5 +1,6 @@
 "use strict";
 
+const { randomUUID } = require("node:crypto");
 const { HttpsError } = require("firebase-functions/v2/https");
 const { hasPermission } = require("./studentAuthCore");
 const { hasCurrentSubscription } = require("./subscriptionPolicy");
@@ -7,8 +8,8 @@ const {
   MEDIA_RETENTION_MS,
   buildMediaReference,
   canonicalUploadRequest,
-  cloudinaryPublicId,
   parseMediaReference,
+  storageObjectPath,
 } = require("./mediaSecurityCore");
 
 const STUDENT_READ_PERMISSIONS = [
@@ -17,6 +18,7 @@ const STUDENT_READ_PERMISSIONS = [
   "view_attendance_reports", "view_reports", "manage_exams", "generate_id_cards",
   "birthday_reminders",
 ];
+const SIGNED_URL_TTL_MS = 5 * 60 * 1000;
 
 function active(data) {
   return data && data.status === "active" && data.archivedAtMs == null;
@@ -86,41 +88,89 @@ function assertCanUpload(principal, purpose, subjectId, actorUid) {
   throw new HttpsError("permission-denied", "Media upload is not allowed.");
 }
 
-function safeCloudinaryError(error, fallback) {
-  const code = Number(error && (error.http_code || error.statusCode) || 0);
+function storageErrorCode(error) {
+  return Number(error && (error.code || error.statusCode) || 0);
+}
+
+function safeStorageError(error, fallback) {
+  const code = storageErrorCode(error);
   if (code === 400 || code === 413) return new HttpsError("invalid-argument", fallback);
-  if (code === 401 || code === 403) return new HttpsError("failed-precondition", "Media service is not configured.");
+  if (code === 401 || code === 403) {
+    return new HttpsError("failed-precondition", "Firebase Storage is not configured for secure media.");
+  }
   return new HttpsError("unavailable", fallback);
 }
 
-async function uploadOrRecover(cloudinary, parsed, publicId) {
-  const options = {
-    public_id: publicId,
-    resource_type: "image",
-    type: parsed.isPrivate ? "authenticated" : "upload",
-    overwrite: false,
-    invalidate: true,
-    unique_filename: false,
-    use_filename: false,
-    tags: ["batchfee", parsed.purpose, parsed.isPrivate ? "private" : "public"],
-  };
-  try {
-    return await cloudinary.uploader.upload(
-      `data:image/jpeg;base64,${parsed.imageBase64}`,
-      options,
-    );
-  } catch (error) {
-    if (Number(error && error.http_code) === 409) {
-      return cloudinary.api.resource(publicId, {
-        resource_type: "image",
-        type: options.type,
-      });
-    }
-    throw error;
+function legacyCloudinaryError(error, fallback) {
+  const code = Number(error && (error.http_code || error.statusCode) || 0);
+  if (code === 401 || code === 403) {
+    return new HttpsError("failed-precondition", "Legacy media migration is not configured.");
   }
+  return new HttpsError("unavailable", fallback);
 }
 
-function createMediaSecurityHandlers({ db, getCloudinary }) {
+function publicDownloadUrl(bucketName, objectPath, downloadToken) {
+  return "https://firebasestorage.googleapis.com/v0/b/" +
+    `${encodeURIComponent(bucketName)}/o/${encodeURIComponent(objectPath)}` +
+    `?alt=media&token=${encodeURIComponent(downloadToken)}`;
+}
+
+function storedMetadata(metadata) {
+  const custom = metadata && metadata.metadata;
+  return custom && typeof custom === "object" ? custom : {};
+}
+
+function assertStoredObject(metadata, parsed, objectPath) {
+  const custom = storedMetadata(metadata);
+  if (!metadata || metadata.name !== objectPath || metadata.contentType !== "image/jpeg" ||
+      custom.batchfeeAssetId !== parsed.assetId || custom.batchfeeSha256 !== parsed.sha256 ||
+      custom.batchfeePurpose !== parsed.purpose || custom.batchfeeInstituteHash == null) {
+    throw new HttpsError("already-exists", "Media object collision detected.");
+  }
+  return custom;
+}
+
+/**
+ * Writes once with a generation precondition. A retry may recover only the exact object
+ * generated for the same asset/content; another object at this path is never overwritten.
+ */
+async function uploadOrRecover(bucket, parsed, objectPath, downloadToken) {
+  const file = bucket.file(objectPath);
+  const metadata = {
+    contentType: "image/jpeg",
+    cacheControl: parsed.isPrivate ? "private, max-age=300" : "public, max-age=86400",
+    metadata: {
+      batchfeeAssetId: parsed.assetId,
+      batchfeeSha256: parsed.sha256,
+      batchfeePurpose: parsed.purpose,
+      batchfeeInstituteHash: objectPath.split("/")[3],
+      batchfeeAccess: parsed.isPrivate ? "signed" : "public-token",
+    },
+  };
+  if (!parsed.isPrivate) metadata.metadata.firebaseStorageDownloadTokens = downloadToken;
+  try {
+    await file.save(parsed.bytes, {
+      resumable: false,
+      validation: "md5",
+      preconditionOpts: { ifGenerationMatch: 0 },
+      metadata,
+    });
+  } catch (error) {
+    if (storageErrorCode(error) !== 409 && storageErrorCode(error) !== 412) throw error;
+  }
+  const [objectMetadata] = await file.getMetadata();
+  const custom = assertStoredObject(objectMetadata, parsed, objectPath);
+  if (!parsed.isPrivate && !custom.firebaseStorageDownloadTokens) {
+    throw new HttpsError("internal", "Public media object is missing its download token.");
+  }
+  return { file, metadata: objectMetadata, custom };
+}
+
+function createMediaSecurityHandlers({ db, bucket, getLegacyCloudinary = null }) {
+  if (!bucket || typeof bucket.file !== "function") {
+    throw new Error("A Firebase Storage bucket is required for media handlers.");
+  }
+
   async function uploadSecureMedia(request) {
     let parsed;
     try {
@@ -160,8 +210,7 @@ function createMediaSecurityHandlers({ db, getCloudinary }) {
     });
     if (existing) return existing;
 
-    const cloudinary = getCloudinary();
-    const publicId = cloudinaryPublicId(
+    const objectPath = storageObjectPath(
       parsed.instituteId,
       parsed.purpose,
       parsed.assetId,
@@ -169,26 +218,21 @@ function createMediaSecurityHandlers({ db, getCloudinary }) {
     );
     let uploaded;
     try {
-      uploaded = await uploadOrRecover(cloudinary, parsed, publicId);
+      uploaded = await uploadOrRecover(bucket, parsed, objectPath, randomUUID());
     } catch (error) {
       await operationRef.update({
         status: "failed",
-        errorCode: Number(error && error.http_code || 0) || null,
+        errorCode: storageErrorCode(error) || null,
         updatedAtMs: Date.now(),
       }).catch(() => {});
-      throw safeCloudinaryError(error, "Secure image upload failed. Try again.");
-    }
-    if (!uploaded || uploaded.public_id !== publicId || !uploaded.format || !uploaded.version) {
-      throw new HttpsError("internal", "Media service returned an invalid asset record.");
+      if (error instanceof HttpsError) throw error;
+      throw safeStorageError(error, "Secure image upload failed. Try again.");
     }
 
     const now = Date.now();
     const reference = parsed.isPrivate
       ? buildMediaReference(parsed.instituteId, parsed.assetId)
-      : uploaded.secure_url;
-    if (!reference || (parsed.isPrivate === false && !/^https:\/\//.test(reference))) {
-      throw new HttpsError("internal", "Media service did not return a secure reference.");
-    }
+      : publicDownloadUrl(bucket.name, objectPath, uploaded.custom.firebaseStorageDownloadTokens);
     const result = {
       reference,
       assetId: parsed.assetId,
@@ -222,12 +266,12 @@ function createMediaSecurityHandlers({ db, getCloudinary }) {
         subjectId: parsed.subjectId,
         uploadedByUid: actorUid,
         reference,
-        deliveryType: parsed.isPrivate ? "authenticated" : "upload",
-        cloudinaryPublicId: publicId,
-        cloudinaryAssetId: uploaded.asset_id || null,
-        version: Number(uploaded.version),
-        format: String(uploaded.format),
-        bytes: Number(uploaded.bytes || parsed.byteLength),
+        deliveryType: parsed.isPrivate ? "firebase_storage_signed_url" : "firebase_storage_public_token",
+        storageBucket: bucket.name,
+        storageObjectPath: objectPath,
+        storageGeneration: String(uploaded.metadata.generation || ""),
+        format: "jpg",
+        bytes: Number(uploaded.metadata.size || parsed.byteLength),
         sha256: parsed.sha256,
         status: "active",
         cleanupState: "retained",
@@ -269,8 +313,15 @@ function createMediaSecurityHandlers({ db, getCloudinary }) {
     const assetSnap = await principal.instituteRef.collection("media_assets").doc(parsed.assetId).get();
     if (!assetSnap.exists) throw new HttpsError("not-found", "Media asset not found.");
     const asset = assetSnap.data();
+    const isFirebaseStorageAsset = asset.deliveryType === "firebase_storage_signed_url" &&
+      typeof asset.storageObjectPath === "string" && asset.storageBucket === bucket.name;
+    // Existing private Cloudinary references remain readable during the deliberate
+    // data cutover. New writes never use this path; remove it only after the
+    // audited legacy-media migration reports zero remaining assets.
+    const isLegacyCloudinaryAsset = asset.deliveryType === "authenticated" &&
+      typeof asset.cloudinaryPublicId === "string" && typeof getLegacyCloudinary === "function";
     if (asset.instituteId !== parsed.instituteId || asset.reference !== reference ||
-        asset.deliveryType !== "authenticated" || asset.status === "deleted") {
+        asset.status === "deleted" || (!isFirebaseStorageAsset && !isLegacyCloudinaryAsset)) {
       throw new HttpsError("permission-denied", "Media asset is unavailable.");
     }
 
@@ -304,19 +355,42 @@ function createMediaSecurityHandlers({ db, getCloudinary }) {
       throw new HttpsError("permission-denied", "Retained media requires principal review.");
     }
 
-    const expiresAtSeconds = Math.floor(Date.now() / 1000) + 5 * 60;
-    const cloudinary = getCloudinary();
-    const url = cloudinary.utils.private_download_url(
-      asset.cloudinaryPublicId,
-      asset.format,
-      {
-        resource_type: "image",
-        type: "authenticated",
-        attachment: false,
-        expires_at: expiresAtSeconds,
-      },
-    );
-    return { url, expiresAtMs: expiresAtSeconds * 1000 };
+    const expiresAtMs = Date.now() + SIGNED_URL_TTL_MS;
+    if (isLegacyCloudinaryAsset) {
+      try {
+        const url = getLegacyCloudinary().utils.private_download_url(
+          asset.cloudinaryPublicId,
+          asset.format || "jpg",
+          {
+            resource_type: "image",
+            type: "authenticated",
+            attachment: false,
+            expires_at: Math.floor(expiresAtMs / 1000),
+          },
+        );
+        if (typeof url !== "string" || !url.startsWith("https://")) {
+          throw new Error("Legacy media service returned an invalid signed URL.");
+        }
+        return { url, expiresAtMs };
+      } catch (error) {
+        throw legacyCloudinaryError(error, "Legacy secure media is temporarily unavailable.");
+      }
+    }
+    try {
+      const [url] = await bucket.file(asset.storageObjectPath).getSignedUrl({
+        version: "v4",
+        action: "read",
+        expires: expiresAtMs,
+        responseDisposition: "inline",
+        responseType: "image/jpeg",
+      });
+      if (typeof url !== "string" || !url.startsWith("https://")) {
+        throw new Error("Storage returned an invalid signed URL.");
+      }
+      return { url, expiresAtMs };
+    } catch (error) {
+      throw safeStorageError(error, "Secure media is temporarily unavailable.");
+    }
   }
 
   return { uploadSecureMedia, getSecureMediaUrl };

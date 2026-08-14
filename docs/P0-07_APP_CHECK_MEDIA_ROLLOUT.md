@@ -1,62 +1,52 @@
-# P0-07 production rollout and legacy-media migration
+# P0-07 Firebase Storage media rollout and legacy-media migration
 
-This repository is code-ready, but this checklist intentionally does not deploy functions,
-change Firebase enforcement, change Cloudinary settings, or rewrite production data.
+This repository is ready to use the active Firebase Storage bucket
+`batchfee-477b8.firebasestorage.app`. This checklist intentionally does not deploy
+functions/rules or modify production media.
 
-## Required production rollout order
+## Security model
 
-1. Create the Functions secret `CLOUDINARY_URL` in the form
-   `cloudinary://API_KEY:API_SECRET@CLOUD_NAME`. Never put it in Android resources,
-   BuildConfig, Firestore, Remote Config, source control, or CI logs.
-2. Register the Android app and release signing certificates for Play Integrity App Check.
-   Register individual Firebase App Check debug tokens only for approved development devices;
-   never register a debug token used by a release build.
-3. Deploy the callable functions. Confirm `uploadSecureMedia` and `getSecureMediaUrl` metrics,
-   authentication failures, App Check failures, latency, and Cloudinary error rate in a staging
-   Firebase project before production.
-4. Release the Android build that installs the debug provider only in the debug source set and
-   the Play Integrity provider only in the release source set.
-5. In Firebase App Check, monitor unverified traffic first. Then enable enforcement for Cloud
-   Functions and Firestore after the supported-app threshold is acceptable. The callable code
-   already rejects missing/invalid App Check tokens with `enforceAppCheck: true`.
-6. Disable and then delete/rotate the legacy Cloudinary unsigned preset
-   `bf_institute_logo_9q7k2m4x`. Confirm no supported app version still sends unsigned uploads.
-   The preset value has been removed from the Android source, but only Cloudinary console/API
-   action can invalidate the already-exposed production preset.
+- Android sends an optimized JPEG only to the existing Auth + App Check protected
+  `uploadSecureMedia` callable. It has no direct Firebase Storage write permission.
+- The function writes with the Admin SDK, generation-match create-only semantics, an
+  opaque object path, checksum metadata, ownership metadata, and an audit record.
+- Student and staff photos are stored below the private prefix. Firestore/Room keep only
+  `batchfee-media://v1/...`; an authorised request receives a five-minute V4 signed URL.
+- Institute logos retain their intentional direct-display compatibility for receipts and
+  PDFs. They use an opaque Firebase Storage path plus a server-created Firebase download
+  token. Neither clients nor Firestore rules can upload, list, delete, or mutate any object.
+- `storage.rules` denies every direct client read/write. Admin SDK calls and signed URLs are
+  the only serving paths, so Firebase Storage must not be left in Test mode.
 
-## New-media policy
+## Required rollout order
 
-- Institute logos use a server-signed upload and remain intentionally public because they are
-  public branding embedded in receipts and ID cards.
-- Student and staff photos upload through an Auth + App Check protected callable as Cloudinary
-  `authenticated` assets. Firestore and Room store only `batchfee-media://v1/...` references.
-- Image display exchanges that reference for a five-minute signed download URL after checking
-  institute membership and purpose-specific permission. Signed delivery URLs are never stored.
-- Ownership, upload idempotency, replacement state, and audit metadata live in backend-only
-  `media_assets`, `media_upload_operations`, and `media_audit` documents.
-- Replacement and safe-deletion flows retain assets and audit state. No client can physically
-  delete a Cloudinary asset.
+1. Confirm the active default bucket is `batchfee-477b8.firebasestorage.app`. For staging or a
+   differently named bucket, set `FIREBASE_STORAGE_BUCKET` in the Functions runtime before deploy.
+2. Give the deployed Functions runtime service account least-privilege object create/read/delete
+   access to this bucket. It also needs permission to sign blobs for V4 URLs (`iam.serviceAccounts.signBlob`).
+3. Deploy `storage.rules`, Firestore rules, and Functions to staging. Confirm all direct Android
+   Storage SDK reads/writes fail, while the callable flow succeeds with App Check and Firebase Auth.
+4. Run the media integration test against a Firestore emulator and perform real staging smoke tests:
+   institute logo, student photo, staff photo, replacement/idempotency, signed-URL expiry,
+   cross-institute denial, staff permissions, student self-photo access, and purge deletion.
+5. Deploy the Android app after the Functions/rules rollout. Monitor upload and signed-URL errors,
+   App Check rejections, Storage permission errors, object count, and egress cost.
+6. The deployed Functions retain `CLOUDINARY_URL` only for temporary signed read/purge support of
+   pre-cutover private assets. Only after all legacy references are migrated and sampled
+   successfully, remove that compatibility code/secret, revoke the Cloudinary credentials/preset,
+   and remove legacy assets according to retention policy.
 
-## Legacy public student/staff photo migration
+## Legacy Cloudinary cutover
 
-Run migration only from a reviewed Admin SDK job and default it to dry-run.
+Do not switch off Cloudinary while documents still contain legacy values:
 
-1. Enumerate student/staff documents whose photo field is an HTTPS URL. Allow only the expected
-   Cloudinary host/cloud name; report every other host for manual review. Never fetch arbitrary
-   document URLs from the migration worker.
-2. For each candidate, re-read the canonical institute and entity immediately before migration.
-   Skip inactive/retained institutes and records whose URL changed since the scan.
-3. Download with strict byte, MIME, redirect, timeout, and image-decode limits; optimize to the
-   same JPEG bounds used by the app; upload as an `authenticated` asset through the trusted
-   backend; create ownership and audit records.
-4. In one Firestore transaction, verify the old URL is still current and replace it with the new
-   opaque reference. Record old and new asset IDs/URLs in a backend-only migration audit.
-5. Keep the legacy public asset for at least 30 days. Sample and verify authorized display,
-   cross-tenant denial, offline sync, receipt/logo rendering, and rollback before cleanup.
-6. Physical cleanup must be a separate privileged, idempotent job. It must prove the old URL is
-   unreferenced, not under deletion/legal retention, and present in the migration audit before a
-   signed Cloudinary destroy call. Failed cleanup stays retryable and never rolls back the new
-   reference.
+- HTTPS Cloudinary URLs remain displayable until they are explicitly migrated.
+- Old `batchfee-media://v1/...` references whose asset documents have Cloudinary delivery metadata
+  retain signed-read compatibility in this Functions version. New uploads never create them.
+- Take a Firestore/Auth backup, inventory references, migrate a small sample to Firebase Storage,
+  verify authorised display and rollback, retain legacy source assets for at least 30 days, then
+  migrate the remainder. Physical legacy deletion is a separate reviewed operation.
 
-Public exposure of historical URLs ends only after this migration and the final verified cleanup;
-the application deliberately keeps legacy URLs readable until then to avoid breaking existing data.
+The application deliberately does not auto-download or rewrite historical production media during
+normal user actions. That avoids an unreviewed bulk data mutation and prevents a failed migration
+from losing an original image.

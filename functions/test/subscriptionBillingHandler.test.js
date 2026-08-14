@@ -30,6 +30,7 @@ class FakeQuery {
   }
 
   limit(maxResults) { return new FakeQuery(this.db, this.path, this.filters, maxResults); }
+  count() { return new FakeAggregateQuery(this); }
 
   snapshots() {
     const pathDepth = this.path.split("/").length + 1;
@@ -41,6 +42,11 @@ class FakeQuery {
       .slice(0, this.maxResults)
       .map(([path, data]) => new FakeSnapshot(new FakeDocument(this.db, path), data));
   }
+}
+
+class FakeAggregateQuery {
+  constructor(query) { this.query = query; }
+  snapshot() { return { data: () => ({ count: this.query.snapshots().length }) }; }
 }
 
 class FakeCollection extends FakeQuery {
@@ -66,9 +72,13 @@ class FakeDb {
   collection(name) { return new FakeCollection(this, name); }
   async runTransaction(callback) {
     const transaction = {
-      get: async (target) => target instanceof FakeQuery
-        ? { docs: target.snapshots(), empty: target.snapshots().length === 0 }
-        : new FakeSnapshot(target, this.documents.get(target.path)),
+      get: async (target) => {
+        if (target instanceof FakeAggregateQuery) return target.snapshot();
+        if (target instanceof FakeQuery) {
+          return { docs: target.snapshots(), empty: target.snapshots().length === 0 };
+        }
+        return new FakeSnapshot(target, this.documents.get(target.path));
+      },
       create: (ref, data) => {
         if (this.documents.has(ref.path)) throw new Error(`Document exists: ${ref.path}`);
         this.documents.set(ref.path, structuredClone(data));
@@ -97,7 +107,7 @@ function seededDb(now) {
       currentPeriodEndMs: now + 40 * 24 * 60 * 60 * 1000,
     },
     "app_users/super-admin": { role: "SuperAdmin", status: "active" },
-    "subscription_plans/plan_growth": { name: "Growth", priceBdt: 999 },
+    "subscription_plans/plan_growth": { name: "Growth", priceBdt: 999, maxStudents: 500, maxUsers: 13 },
   });
 }
 
@@ -175,9 +185,36 @@ test("approval preserves trial history, starts after paid access, and writes no 
   assert.equal(institute.trialEndDate, now + 5 * 24 * 60 * 60 * 1000);
   assert.ok(institute.currentPeriodEndMs > now + 40 * 24 * 60 * 60 * 1000);
   assert.equal(institute.subscriptionStatus, "active");
+  assert.equal(institute.studentLimit, 500);
+  assert.equal(institute.staffLimit, 13);
   assert.ok(db.documents.has(`institutes/institute-a/subscription_receipts/${result.receipt.receiptId}`));
   assert.equal(
     [...db.documents.keys()].some((path) => path.startsWith("institutes/institute-a/receipts/")),
     false,
+  );
+});
+
+test("request rejects a plan that cannot support legacy active students without an archive field", async () => {
+  const db = seededDb(Date.now());
+  for (let index = 0; index < 501; index += 1) {
+    db.documents.set(`institutes/institute-a/students/student-${index}`, { status: "active" });
+  }
+  db.documents.set("institutes/institute-a/students/archived", { status: "archived", archivedAtMs: Date.now() });
+  const handler = handlerFor(db);
+
+  await assert.rejects(
+    handler({
+      auth: { uid: "institute-a" },
+      data: {
+        action: "submit_request",
+        instituteId: "institute-a",
+        operationId: "sub_operation_00000005",
+        requestedPlanId: "plan_growth",
+        durationMonths: 1,
+        paymentMethod: "bkash",
+        transactionReference: "COUNT-ABC12345",
+      },
+    }),
+    (error) => error.code === "failed-precondition" && error.message.includes("501 active students"),
   );
 });

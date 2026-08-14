@@ -1,0 +1,13 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // The Android client never talks to Storage directly. Cloud Functions uses
+    // the Admin SDK after Auth + App Check + tenant/role authorization, and it
+    // returns a short-lived V4 signed URL only for an authorized private read.
+    // Institute logos use a Firebase download token generated server-side so
+    // legacy direct image/PDF rendering remains compatible without client write access.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

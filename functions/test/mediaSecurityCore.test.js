@@ -5,8 +5,8 @@ const assert = require("node:assert/strict");
 const {
   buildMediaReference,
   canonicalUploadRequest,
-  cloudinaryPublicId,
   parseMediaReference,
+  storageObjectPath,
 } = require("../src/mediaSecurityCore");
 
 const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 0xff, 0xd9]);
@@ -18,7 +18,7 @@ describe("P0-07 media security core", () => {
       instituteId: "tenant-unsafe",
       assetId: "a".repeat(32),
     });
-    assert.equal(parseMediaReference("https://res.cloudinary.com/demo/image/upload/photo.jpg"), null);
+    assert.equal(parseMediaReference("https://firebasestorage.googleapis.com/v0/b/demo/o/logo.jpg"), null);
     assert.equal(parseMediaReference("batchfee-media://v1/tenant/../../secret"), null);
   });
 
@@ -38,7 +38,7 @@ describe("P0-07 media security core", () => {
     assert.equal(first.byteLength, jpeg.length);
   });
 
-  test("logo remains a public delivery asset but still requires a trusted upload", () => {
+  test("logo gets an opaque Firebase Storage path but still requires a trusted upload", () => {
     const parsed = canonicalUploadRequest({
       instituteId: "tenant-a",
       purpose: "institute_logo",
@@ -46,8 +46,8 @@ describe("P0-07 media security core", () => {
       imageBase64: jpeg.toString("base64"),
     });
     assert.equal(parsed.isPrivate, false);
-    assert.match(cloudinaryPublicId("tenant-a", parsed.purpose, parsed.assetId, false),
-      /^batchfee\/public\/[a-f0-9]{20}\/institute_logo\/[a-f0-9]{32}$/);
+    assert.match(storageObjectPath("tenant-a", parsed.purpose, parsed.assetId, false),
+      /^batchfee-media\/v1\/public\/[a-f0-9]{20}\/institute_logo\/[a-f0-9]{32}\.jpg$/);
   });
 
   test("rejects unsupported purposes, malformed bytes, oversized identifiers, and unsafe replacements", () => {

@@ -14,4 +14,16 @@ function hasCurrentSubscription(institute, now = Date.now()) {
   );
 }
 
-module.exports = { FREE_TRIAL_DURATION_MS, hasCurrentSubscription };
+// Student seats are unlimited only for a live Free Trial.  Checking the plan
+// ID as well as the status prevents a malformed paid institute record from
+// accidentally bypassing its paid-plan student limit.
+function hasUnlimitedTrialStudents(institute, now = Date.now()) {
+  return Boolean(
+    institute &&
+    institute.currentPlanId === "plan_free_trial" &&
+    institute.subscriptionStatus === "trial" &&
+    hasCurrentSubscription(institute, now),
+  );
+}
+
+module.exports = { FREE_TRIAL_DURATION_MS, hasCurrentSubscription, hasUnlimitedTrialStudents };

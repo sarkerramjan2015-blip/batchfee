@@ -502,7 +502,7 @@ service cloud.firestore {
       allow read: if isSuperAdmin() || isActiveInstitutePrincipal(instituteId);
     }
 
-    // Cloudinary public IDs, ownership, delivery type and upload audit metadata are
+    // Firebase Storage object paths, ownership, delivery type and upload audit metadata are
     // backend-only. Clients receive only an opaque reference or a short-lived URL
     // from App Check + Auth protected callable functions.
     match /institutes/{instituteId}/media_assets/{assetId} {

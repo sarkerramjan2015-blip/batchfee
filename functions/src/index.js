@@ -4,6 +4,7 @@ const { randomUUID } = require("node:crypto");
 const { initializeApp } = require("firebase-admin/app");
 const { getAuth } = require("firebase-admin/auth");
 const { FieldValue, getFirestore } = require("firebase-admin/firestore");
+const { getStorage } = require("firebase-admin/storage");
 const { logger } = require("firebase-functions");
 const { defineSecret } = require("firebase-functions/params");
 const { HttpsError, onCall, onRequest } = require("firebase-functions/v2/https");
@@ -20,10 +21,15 @@ const {
 const { createFinancialLedgerHandler } = require("./financialLedger");
 const { createMediaSecurityHandlers } = require("./mediaSecurity");
 const { createSafeDeletionHandler } = require("./safeDeletion");
+const { createPermanentStudentPurgeHandler } = require("./permanentStudentPurge");
 const { createPublicRegistrationHandler } = require("./publicRegistration");
 const { createSubscriptionBillingHandler } = require("./subscriptionBilling");
 const { createPlatformAdminHandler } = require("./platformAdmin");
-const { FREE_TRIAL_DURATION_MS, hasCurrentSubscription } = require("./subscriptionPolicy");
+const {
+  FREE_TRIAL_DURATION_MS,
+  hasCurrentSubscription,
+  hasUnlimitedTrialStudents,
+} = require("./subscriptionPolicy");
 const { planFromSnapshot } = require("./defaultSubscriptionPlans");
 
 initializeApp();
@@ -41,22 +47,42 @@ const callableOptions = {
   memory: "256MiB",
   enforceAppCheck: true,
 };
-const cloudinaryUrl = defineSecret("CLOUDINARY_URL");
 const registrationRateLimitSecret = defineSecret("REGISTRATION_RATE_LIMIT_SECRET");
+// This secret is used only to serve/delete historical Cloudinary private assets
+// while they are migrated. New uploads exclusively use Firebase Storage.
+const legacyCloudinaryUrl = defineSecret("CLOUDINARY_URL");
 
 const db = getFirestore();
 const adminAuth = getAuth();
+function configuredMediaStorageBucketName() {
+  if (process.env.FIREBASE_STORAGE_BUCKET) return process.env.FIREBASE_STORAGE_BUCKET;
+  try {
+    const runtimeConfig = JSON.parse(process.env.FIREBASE_CONFIG || "{}");
+    if (typeof runtimeConfig.storageBucket === "string" && runtimeConfig.storageBucket) {
+      return runtimeConfig.storageBucket;
+    }
+  } catch (_) {
+    // Deploy-time Firebase config is optional for local checks; use the checked-in app bucket.
+  }
+  // Firebase projects created after October 2024 use the .firebasestorage.app default bucket.
+  return "batchfee-477b8.firebasestorage.app";
+}
 
-function getConfiguredCloudinary() {
+const mediaStorageBucket = getStorage().bucket(configuredMediaStorageBucketName());
+function getConfiguredLegacyCloudinary() {
   cloudinary.config(true);
   const config = cloudinary.config();
   if (!config.cloud_name || !config.api_key || !config.api_secret) {
-    throw new HttpsError("failed-precondition", "Media service is not configured.");
+    throw new HttpsError("failed-precondition", "Legacy media migration is not configured.");
   }
   return cloudinary;
 }
 
-const mediaSecurityHandlers = createMediaSecurityHandlers({ db, getCloudinary: getConfiguredCloudinary });
+const mediaSecurityHandlers = createMediaSecurityHandlers({
+  db,
+  bucket: mediaStorageBucket,
+  getLegacyCloudinary: getConfiguredLegacyCloudinary,
+});
 const publicRegistrationHandler = createPublicRegistrationHandler({
   db,
   rateLimitSecret: registrationRateLimitSecret,
@@ -274,7 +300,7 @@ async function createEntitledStudentHandler(request) {
   const instituteRef = db.collection("institutes").doc(instituteId);
   const students = instituteRef.collection("students");
   const studentRef = students.doc(studentId);
-  const studentCountQuery = students.where("archivedAtMs", "==", null).count();
+  const studentCountQuery = students.where("status", "==", "active").count();
   const allowed = ["studentCode", "fullName", "photoUri", "gender", "dateOfBirthMs", "phone", "email", "address", "schoolName", "className", "guardianName", "guardianPhone", "guardianEmail", "emergencyContact", "bloodGroup", "admissionDateMs", "notes"];
   const studentCode = requireString(entity, "studentCode", 64);
   const fullName = requireString(entity, "fullName", 160);
@@ -292,15 +318,23 @@ async function createEntitledStudentHandler(request) {
     if (!plan) throw new HttpsError("failed-precondition", "Subscription plan is unavailable.");
     if (existingSnap.exists) throw new HttpsError("already-exists", "Student already exists.");
     const count = studentCountSnap.data().count;
-    const limit = planLimit(instituteSnap.data(), plan, "student");
-    if (count >= limit) throw new HttpsError("resource-exhausted", `Student limit (${limit}) has been reached.`);
+    const unlimitedTrialStudents = hasUnlimitedTrialStudents(instituteSnap.data());
+    const limit = unlimitedTrialStudents ? null : planLimit(instituteSnap.data(), plan, "student");
+    if (limit != null && count >= limit) {
+      throw new HttpsError("resource-exhausted", `Student limit (${limit}) has been reached.`);
+    }
     const now = Date.now();
     transaction.create(studentRef, {
       ...copyFields(entity, allowed), instituteId, studentCode, fullName,
       status: "active", archivedAtMs: null, createdAtMs: now, updatedAtMs: now,
     });
     transaction.update(instituteRef, { studentCount: count + 1, updatedAtMs: now });
-    return { studentId, studentCount: count + 1, studentLimit: limit };
+    return {
+      studentId,
+      studentCount: count + 1,
+      studentLimit: limit,
+      unlimitedTrialStudents,
+    };
   });
 }
 
@@ -312,7 +346,7 @@ async function createEntitledBatchHandler(request) {
   const instituteRef = db.collection("institutes").doc(instituteId);
   const batches = instituteRef.collection("batches");
   const batchRef = batches.doc(batchId);
-  const batchCountQuery = batches.where("archivedAtMs", "==", null).count();
+  const batchCountQuery = batches.where("status", "==", "active").count();
   const allowed = ["batchCode", "name", "subject", "className", "teacherName", "monthlyFeeAmount", "admissionFeeAmount", "startDateMs", "endDateMs", "scheduleDays", "startTime", "endTime", "maxStudents", "description"];
   const batchCode = requireString(entity, "batchCode", 64);
   const name = requireString(entity, "name", 160);
@@ -355,7 +389,7 @@ async function createEntitledStaffHandler(request) {
   const instituteRef = db.collection("institutes").doc(instituteId);
   const staffs = instituteRef.collection("staffs");
   const staffRef = staffs.doc(staffId);
-  const staffCountQuery = staffs.where("archivedAtMs", "==", null).count();
+  const staffCountQuery = staffs.where("status", "==", "active").count();
   const allowed = ["staffCode", "fullName", "photoUri", "roleTitle", "phone", "email", "address", "joiningDateMs", "monthlySalary", "assignedBatchIds", "notes", "permissions"];
   const staffCode = requireString(entity, "staffCode", 64);
   const fullName = requireString(entity, "fullName", 160);
@@ -855,12 +889,18 @@ exports.commitSafeDeletion = onCall(
   { ...callableOptions, timeoutSeconds: 60 },
   guarded(createSafeDeletionHandler({ db, adminAuth })),
 );
+exports.permanentlyPurgeStudent = onCall(
+  { ...callableOptions, timeoutSeconds: 120, memory: "512MiB", secrets: [legacyCloudinaryUrl] },
+  guarded(createPermanentStudentPurgeHandler({
+    db, adminAuth, bucket: mediaStorageBucket, getLegacyCloudinary: getConfiguredLegacyCloudinary,
+  })),
+);
 exports.uploadSecureMedia = onCall(
-  { ...callableOptions, timeoutSeconds: 60, memory: "512MiB", secrets: [cloudinaryUrl] },
+  { ...callableOptions, timeoutSeconds: 60, memory: "512MiB" },
   guarded(mediaSecurityHandlers.uploadSecureMedia),
 );
 exports.getSecureMediaUrl = onCall(
-  { ...callableOptions, secrets: [cloudinaryUrl] },
+  { ...callableOptions, secrets: [legacyCloudinaryUrl] },
   guarded(mediaSecurityHandlers.getSecureMediaUrl),
 );
 exports.submitPublicRegistration = onRequest(

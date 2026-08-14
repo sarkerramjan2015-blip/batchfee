@@ -112,6 +112,26 @@ function canonicalSubscriptionStatus(planId, periodEndMs, now) {
   return subscriptionStatusFor(planId, periodEndMs, now);
 }
 
+function activeStudentCountQuery(instituteRef) {
+  // `status` is present on both legacy and current active student documents.
+  // Querying `archivedAtMs == null` would exclude legacy records that predate
+  // that optional field and could allow an ineligible paid plan.
+  return instituteRef.collection("students").where("status", "==", "active").count();
+}
+
+function assertPlanSupportsStudentCount(plan, activeStudentCount) {
+  const limit = Number(plan?.maxStudents);
+  if (!Number.isSafeInteger(limit) || limit < 1) {
+    throw new HttpsError("failed-precondition", "Selected subscription plan has no valid student limit.");
+  }
+  if (activeStudentCount > limit) {
+    throw new HttpsError(
+      "failed-precondition",
+      `This plan supports up to ${limit} students, but your institute has ${activeStudentCount} active students. Choose an eligible plan.`,
+    );
+  }
+}
+
 function requirePendingRequest(requestSnap) {
   if (!requestSnap.exists) throw new HttpsError("not-found", "Subscription request not found.");
   const request = requestSnap.data();
@@ -243,15 +263,19 @@ function createSubscriptionBillingHandler({ db, FieldValue }) {
           throw new HttpsError("invalid-argument", error.message);
         }
         const planRef = db.collection("subscription_plans").doc(requestedPlanId);
+        const activeStudentCount = activeStudentCountQuery(instituteRef);
         const duplicateQuery = db.collection("subscriptionRequests")
           .where("paymentReferenceHash", "==", paymentReferenceHash)
           .limit(1);
-        const [planSnap, duplicateSnap] = await Promise.all([
+        const [planSnap, duplicateSnap, studentCountSnap] = await Promise.all([
           transaction.get(planRef),
           transaction.get(duplicateQuery),
+          transaction.get(activeStudentCount),
         ]);
         const plan = planFromSnapshot(planSnap, requestedPlanId);
         if (!plan) throw new HttpsError("not-found", "Selected subscription plan is no longer available.");
+        const currentStudentCount = studentCountSnap.data().count;
+        assertPlanSupportsStudentCount(plan, currentStudentCount);
         if (!duplicateSnap.empty) {
           throw new HttpsError("already-exists", "This payment transaction was already submitted.");
         }
@@ -272,6 +296,7 @@ function createSubscriptionBillingHandler({ db, FieldValue }) {
             ? institute.phone : (typeof institute.whatsappNumber === "string" ? institute.whatsappNumber : ""),
           requestedPlanId,
           planName: typeof plan.name === "string" ? plan.name : requestedPlanId,
+          activeStudentCountAtRequest: currentStudentCount,
           durationMonths,
           amountPaid,
           paymentMethod: normalizedPaymentMethod,
@@ -304,11 +329,20 @@ function createSubscriptionBillingHandler({ db, FieldValue }) {
       if (action === "approve_request") {
         const requestId = requiredString(data, "requestId");
         const requestRef = db.collection("subscriptionRequests").doc(requestId);
-        const requestSnap = await transaction.get(requestRef);
+        const [requestSnap, studentCountSnap] = await Promise.all([
+          transaction.get(requestRef),
+          transaction.get(activeStudentCountQuery(instituteRef)),
+        ]);
         const subscriptionRequest = requirePendingRequest(requestSnap);
         if (subscriptionRequest.instituteId !== instituteId) {
           throw new HttpsError("permission-denied", "Subscription request belongs to another institute.");
         }
+        const requestedPlanRef = db.collection("subscription_plans").doc(subscriptionRequest.requestedPlanId);
+        const requestedPlanSnap = await transaction.get(requestedPlanRef);
+        const requestedPlan = planFromSnapshot(requestedPlanSnap, subscriptionRequest.requestedPlanId);
+        if (!requestedPlan) throw new HttpsError("not-found", "Selected subscription plan is no longer available.");
+        const currentStudentCount = studentCountSnap.data().count;
+        assertPlanSupportsStudentCount(requestedPlan, currentStudentCount);
         const startDateMs = subscriptionStartMs(paidPeriodEnd(authority.institute), now);
         const endDateMs = addCalendarMonths(startDateMs, subscriptionRequest.durationMonths);
         const receiptId = `SUBREC_${operationId}`;
@@ -339,6 +373,8 @@ function createSubscriptionBillingHandler({ db, FieldValue }) {
         const afterInstitute = {
           currentPlanId: subscriptionRequest.requestedPlanId,
           currentPeriodEndMs: endDateMs,
+          studentLimit: requestedPlan.maxStudents,
+          staffLimit: requestedPlan.maxUsers,
           subscriptionStatus: "active",
           isActive: true,
         };
@@ -446,9 +482,23 @@ function createSubscriptionBillingHandler({ db, FieldValue }) {
       const planId = requiredString(data, "planId");
       const isActive = requiredBoolean(data, "isActive");
       const planRef = db.collection("subscription_plans").doc(planId);
-      const planSnap = await transaction.get(planRef);
-      if (!planFromSnapshot(planSnap, planId)) {
+      const [planSnap, studentCountSnap] = await Promise.all([
+        transaction.get(planRef),
+        transaction.get(activeStudentCountQuery(instituteRef)),
+      ]);
+      const selectedPlan = planFromSnapshot(planSnap, planId);
+      if (!selectedPlan) {
         throw new HttpsError("not-found", "Selected subscription plan is no longer available.");
+      }
+      const currentStudentCount = studentCountSnap.data().count;
+      if (isActive && planId !== "plan_free_trial") {
+        assertPlanSupportsStudentCount(selectedPlan, currentStudentCount);
+        if (studentLimit < currentStudentCount) {
+          throw new HttpsError(
+            "failed-precondition",
+            `Student limit cannot be below the institute's ${currentStudentCount} active students.`,
+          );
+        }
       }
       const effectiveStatus = canonicalSubscriptionStatus(planId, newExpiryMs, now);
       const after = isActive ? {
