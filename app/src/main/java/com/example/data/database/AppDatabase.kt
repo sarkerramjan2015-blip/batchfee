@@ -481,7 +481,7 @@ abstract class AppDatabase : RoomDatabase() {
                 "currentPeriodEndMs" to (now + trialDurationMs),
                 "currentPlanId" to "plan_free_trial",
                 "subscriptionStatus" to "trial",
-                "studentLimit" to 50,
+                "studentLimit" to SubscriptionPolicy.FREE_TRIAL_STUDENT_LIMIT,
                 "staffLimit" to 1,
                 "studentCount" to 0,
                 "staffCount" to 0,
@@ -521,7 +521,7 @@ abstract class AppDatabase : RoomDatabase() {
                      name = "Free Trial",
                      description = "30-day full access trial with unlimited students",
                      priceBdt = 0.0, priceInr = 0.0,
-                     maxStudents = 50, maxBatches = 5, maxUsers = 1, maxBranches = 1,
+                     maxStudents = SubscriptionPolicy.FREE_TRIAL_STUDENT_LIMIT, maxBatches = 5, maxUsers = 1, maxBranches = 1,
                      tag = "Trial", tierLevel = 0
                  ),
                  SubscriptionPlanEntity(
@@ -1228,7 +1228,7 @@ abstract class AppDatabase : RoomDatabase() {
                         "currentPeriodEndMs" to (now + SubscriptionPolicy.FREE_TRIAL_DURATION_MS),
                         "currentPlanId" to "plan_free_trial",
                         "subscriptionStatus" to "trial",
-                        "studentLimit" to 50,
+                        "studentLimit" to SubscriptionPolicy.FREE_TRIAL_STUDENT_LIMIT,
                         "staffLimit" to 1,
                         "studentCount" to studentCount,
                         "staffCount" to staffCount,

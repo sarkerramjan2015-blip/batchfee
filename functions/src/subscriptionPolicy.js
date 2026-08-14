@@ -2,6 +2,10 @@
 
 // The canonical free-trial duration used by every trusted backend flow.
 const FREE_TRIAL_DURATION_MS = 30 * 24 * 60 * 60 * 1000;
+// New institute records use zero as the display value for unlimited trial
+// student seats. Entitlement checks must still use the plan/status helper so
+// older records that stored a numeric limit remain unlimited while live.
+const FREE_TRIAL_STUDENT_LIMIT = 0;
 
 function hasCurrentSubscription(institute, now = Date.now()) {
   const endMs = Number(institute && institute.currentPeriodEndMs);
@@ -26,4 +30,9 @@ function hasUnlimitedTrialStudents(institute, now = Date.now()) {
   );
 }
 
-module.exports = { FREE_TRIAL_DURATION_MS, hasCurrentSubscription, hasUnlimitedTrialStudents };
+module.exports = {
+  FREE_TRIAL_DURATION_MS,
+  FREE_TRIAL_STUDENT_LIMIT,
+  hasCurrentSubscription,
+  hasUnlimitedTrialStudents,
+};

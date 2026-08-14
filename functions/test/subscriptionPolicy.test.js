@@ -2,11 +2,16 @@
 
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { FREE_TRIAL_DURATION_MS, hasUnlimitedTrialStudents } = require("../src/subscriptionPolicy");
+const {
+  FREE_TRIAL_DURATION_MS,
+  FREE_TRIAL_STUDENT_LIMIT,
+  hasUnlimitedTrialStudents,
+} = require("../src/subscriptionPolicy");
 
 test("only a live Free Trial has unlimited student seats", () => {
   const now = Date.UTC(2026, 7, 14);
   assert.equal(FREE_TRIAL_DURATION_MS, 30 * 24 * 60 * 60 * 1000);
+  assert.equal(FREE_TRIAL_STUDENT_LIMIT, 0);
   assert.equal(hasUnlimitedTrialStudents({
     currentPlanId: "plan_free_trial",
     subscriptionStatus: "trial",

@@ -47,7 +47,7 @@ function validNewInstitute(email, createdAt = Date.now()) {
     currentPeriodEndMs: createdAt + 2_592_000_000,
     currentPlanId: "plan_free_trial",
     subscriptionStatus: "trial",
-    studentLimit: 50,
+    studentLimit: 0,
     staffLimit: 1,
     studentCount: 0,
     staffCount: 0,
@@ -420,12 +420,22 @@ describe("P0-02 owner and staff security boundary", { concurrency: false }, () =
     await assertSucceeds(setDoc(instituteRef(db, uid), validNewInstitute(email)));
     await assertFails(setDoc(instituteRef(db, "some-other-owner"), validNewInstitute(email)));
 
+    const legacyUid = "legacy-limit-owner";
+    const legacyEmail = "legacy-limit-owner@example.test";
+    const legacyTrial = validNewInstitute(legacyEmail);
+    legacyTrial.studentLimit = 50;
+    await assertSucceeds(setDoc(instituteRef(authDb(legacyUid, legacyEmail), legacyUid), legacyTrial));
+
     const invalidUid = "invalid-new-owner";
     const invalidEmail = "invalid-new-owner@example.test";
     const invalidDb = authDb(invalidUid, invalidEmail);
     const invalid = validNewInstitute(invalidEmail);
     invalid.trialEndDate += 31_536_000_000;
     await assertFails(setDoc(instituteRef(invalidDb, invalidUid), invalid));
+
+    const invalidLimit = validNewInstitute("invalid-limit@example.test");
+    invalidLimit.studentLimit = -1;
+    await assertFails(setDoc(instituteRef(authDb("invalid-limit", "invalid-limit@example.test"), "invalid-limit"), invalidLimit));
   });
 
   test("active staff access is permission-scoped and token matching is exact", async () => {

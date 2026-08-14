@@ -108,6 +108,9 @@ private fun planDisplayName(planId: String, plans: List<SubscriptionPlanEntity>)
 private fun planDisplayPrice(planId: String, plans: List<SubscriptionPlanEntity>): Double =
     plans.firstOrNull { it.id == planId }?.priceBdt ?: -1.0
 
+private fun planStudentCapacityLabel(plan: SubscriptionPlanEntity): String =
+    if (plan.id == DEFAULT_TRIAL_PLAN_ID) "Unlimited students" else "${plan.maxStudents} students"
+
 private fun planDisplayDetails(planId: String, plans: List<SubscriptionPlanEntity>): SubscriptionPlanEntity? =
     plans.firstOrNull { it.id == planId }
 
@@ -2384,7 +2387,7 @@ private fun SubscriptionPlanSection(
                             Spacer(Modifier.height(10.dp))
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 PlanMetricChip("BDT ${formatMoneyValue(plan.priceBdt)}")
-                                PlanMetricChip("${plan.maxStudents} students")
+                                PlanMetricChip(planStudentCapacityLabel(plan))
                                 PlanMetricChip("${plan.maxUsers} users")
                                 PlanMetricChip("${planUsage[plan.id] ?: 0} institutes")
                             }
@@ -3108,7 +3111,7 @@ private fun InstituteCard(
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                 if (planDetail != null) {
                                     PlanMetricChip("BDT ${formatMoneyValue(planDetail.priceBdt)}")
-                                    PlanMetricChip("${planDetail.maxStudents} students")
+                                    PlanMetricChip(planStudentCapacityLabel(planDetail))
                                     planDetail.let { PlanMetricChip("${it.maxBatches} batches") }
                                     planDetail.let { PlanMetricChip("${it.maxUsers} users") }
                                 } else {
@@ -3672,7 +3675,7 @@ private fun InstituteCard(
                             Column(Modifier.padding(12.dp)) {
                                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                     PlanMetricChip("BDT ${formatMoneyValue(selectedPlanDetail!!.priceBdt)}")
-                                    PlanMetricChip("${selectedPlanDetail!!.maxStudents} students")
+                                    PlanMetricChip(planStudentCapacityLabel(selectedPlanDetail!!))
                                     PlanMetricChip("${selectedPlanDetail!!.maxUsers} users")
                                 }
                                 if (selectedPlanDetail!!.description.isNotBlank()) {
@@ -3727,7 +3730,7 @@ private fun InstituteCard(
                 }
             },
             confirmButton = {
-                Button(onClick = { val studentLimit = editStudentLimit.toIntOrNull()?.coerceAtLeast(1) ?: 50; val staffLimit = editStaffLimit.toIntOrNull()?.coerceAtLeast(1) ?: 10; viewModel.manageInstitute(inst.id, computedExpiryMs(), studentLimit, staffLimit, selectedPlanId, editIsActive) { showManageDialog = false } }, modifier = Modifier.fillMaxWidth().height(44.dp), shape = RoundedCornerShape(12.dp), colors = ButtonDefaults.buttonColors(containerColor = AccentViolet)) {
+                Button(onClick = { val studentLimit = if (selectedPlanId == DEFAULT_TRIAL_PLAN_ID) 0 else (editStudentLimit.toIntOrNull()?.coerceAtLeast(1) ?: 50); val staffLimit = editStaffLimit.toIntOrNull()?.coerceAtLeast(1) ?: 10; viewModel.manageInstitute(inst.id, computedExpiryMs(), studentLimit, staffLimit, selectedPlanId, editIsActive) { showManageDialog = false } }, modifier = Modifier.fillMaxWidth().height(44.dp), shape = RoundedCornerShape(12.dp), colors = ButtonDefaults.buttonColors(containerColor = AccentViolet)) {
                     Icon(Icons.Filled.Save, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Save Changes", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = TextWhite)
                 }
             },

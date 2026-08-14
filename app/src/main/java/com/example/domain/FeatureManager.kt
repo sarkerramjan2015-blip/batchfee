@@ -45,6 +45,7 @@ object FeatureManager {
     
     fun canAddStudent(currentCount: Int, plan: SubscriptionPlanEntity?): Boolean {
         if (plan == null) return false
+        if (plan.id == "plan_free_trial") return true
         return currentCount < plan.maxStudents
     }
     

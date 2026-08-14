@@ -5,7 +5,7 @@
 // institute owner directly through Firestore.
 const { createHash, randomUUID } = require("node:crypto");
 const { HttpsError } = require("firebase-functions/v2/https");
-const { FREE_TRIAL_DURATION_MS } = require("./subscriptionPolicy");
+const { FREE_TRIAL_DURATION_MS, FREE_TRIAL_STUDENT_LIMIT } = require("./subscriptionPolicy");
 const { planFromSnapshot } = require("./defaultSubscriptionPlans");
 
 const PLATFORM_ROLES = new Set(["root", "billing", "support", "operations", "read_only"]);
@@ -164,7 +164,9 @@ async function createInstitute({ db, adminAuth, request, operationId, requestHas
         trialEndDate,
         currentPeriodEndMs: trialEndDate,
         isActive: true,
-        studentLimit: Number.isSafeInteger(plan.maxStudents) ? plan.maxStudents : 0,
+        studentLimit: requestedPlanId === "plan_free_trial"
+          ? FREE_TRIAL_STUDENT_LIMIT
+          : (Number.isSafeInteger(plan.maxStudents) ? plan.maxStudents : 0),
         staffLimit: Number.isSafeInteger(plan.maxUsers) ? plan.maxUsers : 0,
         createdAt: now,
         createdAtMs: now,

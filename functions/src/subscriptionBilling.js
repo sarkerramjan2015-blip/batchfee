@@ -12,6 +12,7 @@ const {
   transactionReferenceHash,
 } = require("./subscriptionBillingCore");
 const { planFromSnapshot } = require("./defaultSubscriptionPlans");
+const { FREE_TRIAL_STUDENT_LIMIT } = require("./subscriptionPolicy");
 
 const ALLOWED_ACTIONS = new Set([
   "submit_request",
@@ -110,6 +111,10 @@ function paidPeriodEnd(institute) {
 
 function canonicalSubscriptionStatus(planId, periodEndMs, now) {
   return subscriptionStatusFor(planId, periodEndMs, now);
+}
+
+function isFreeTrialPlan(planId) {
+  return planId === "plan_free_trial";
 }
 
 function activeStudentCountQuery(instituteRef) {
@@ -274,6 +279,9 @@ function createSubscriptionBillingHandler({ db, FieldValue }) {
         ]);
         const plan = planFromSnapshot(planSnap, requestedPlanId);
         if (!plan) throw new HttpsError("not-found", "Selected subscription plan is no longer available.");
+        if (isFreeTrialPlan(requestedPlanId) || Number(plan.priceBdt) <= 0) {
+          throw new HttpsError("failed-precondition", "Free Trial cannot be purchased. Choose a paid plan.");
+        }
         const currentStudentCount = studentCountSnap.data().count;
         assertPlanSupportsStudentCount(plan, currentStudentCount);
         if (!duplicateSnap.empty) {
@@ -341,6 +349,9 @@ function createSubscriptionBillingHandler({ db, FieldValue }) {
         const requestedPlanSnap = await transaction.get(requestedPlanRef);
         const requestedPlan = planFromSnapshot(requestedPlanSnap, subscriptionRequest.requestedPlanId);
         if (!requestedPlan) throw new HttpsError("not-found", "Selected subscription plan is no longer available.");
+        if (isFreeTrialPlan(subscriptionRequest.requestedPlanId) || Number(requestedPlan.priceBdt) <= 0) {
+          throw new HttpsError("failed-precondition", "Free Trial requests cannot be approved as paid subscriptions.");
+        }
         const currentStudentCount = studentCountSnap.data().count;
         assertPlanSupportsStudentCount(requestedPlan, currentStudentCount);
         const startDateMs = subscriptionStartMs(paidPeriodEnd(authority.institute), now);
@@ -477,7 +488,7 @@ function createSubscriptionBillingHandler({ db, FieldValue }) {
       }
 
       const newExpiryMs = requiredSafeInteger(data, "newExpiryMs", 1, 4_102_444_800_000);
-      const studentLimit = requiredSafeInteger(data, "studentLimit", 1, 1_000_000);
+      const requestedStudentLimit = requiredSafeInteger(data, "studentLimit", 0, 1_000_000);
       const staffLimit = requiredSafeInteger(data, "staffLimit", 1, 100_000);
       const planId = requiredString(data, "planId");
       const isActive = requiredBoolean(data, "isActive");
@@ -491,7 +502,12 @@ function createSubscriptionBillingHandler({ db, FieldValue }) {
         throw new HttpsError("not-found", "Selected subscription plan is no longer available.");
       }
       const currentStudentCount = studentCountSnap.data().count;
-      if (isActive && planId !== "plan_free_trial") {
+      const freeTrial = isFreeTrialPlan(planId);
+      const studentLimit = freeTrial ? FREE_TRIAL_STUDENT_LIMIT : requestedStudentLimit;
+      if (!freeTrial && studentLimit < 1) {
+        throw new HttpsError("invalid-argument", "Paid plans require a positive student limit.");
+      }
+      if (isActive && !freeTrial) {
         assertPlanSupportsStudentCount(selectedPlan, currentStudentCount);
         if (studentLimit < currentStudentCount) {
           throw new HttpsError(

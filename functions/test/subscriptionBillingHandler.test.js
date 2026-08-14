@@ -218,3 +218,48 @@ test("request rejects a plan that cannot support legacy active students without 
     (error) => error.code === "failed-precondition" && error.message.includes("501 active students"),
   );
 });
+
+test("a Free Trial cannot be submitted as a paid subscription request", async () => {
+  const db = seededDb(Date.now());
+  const handler = handlerFor(db);
+
+  await assert.rejects(
+    handler({
+      auth: { uid: "institute-a" },
+      data: {
+        action: "submit_request",
+        instituteId: "institute-a",
+        operationId: "sub_operation_00000006",
+        requestedPlanId: "plan_free_trial",
+        durationMonths: 1,
+        paymentMethod: "bkash",
+        transactionReference: "FREE-ABC12345",
+      },
+    }),
+    (error) => error.code === "failed-precondition" && error.message.includes("Free Trial"),
+  );
+});
+
+test("platform trial management always persists the unlimited student sentinel", async () => {
+  const now = Date.now();
+  const db = seededDb(now);
+  const handler = handlerFor(db);
+
+  const result = await handler({
+    auth: { uid: "super-admin" },
+    data: {
+      action: "manage_institute_subscription",
+      instituteId: "institute-a",
+      operationId: "sub_operation_00000007",
+      newExpiryMs: now + 30 * 24 * 60 * 60 * 1000,
+      studentLimit: 999999,
+      staffLimit: 1,
+      planId: "plan_free_trial",
+      isActive: true,
+    },
+  });
+
+  assert.equal(result.institute.studentLimit, 0);
+  assert.equal(db.documents.get("institutes/institute-a").studentLimit, 0);
+  assert.equal(db.documents.get("institutes/institute-a").subscriptionStatus, "trial");
+});

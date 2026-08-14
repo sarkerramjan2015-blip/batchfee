@@ -146,7 +146,7 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                             "currentPeriodEndMs" to (now + trialDurationMs),
                             "currentPlanId" to "plan_free_trial",
                             "subscriptionStatus" to "trial",
-                            "studentLimit" to 50,
+                            "studentLimit" to SubscriptionPolicy.FREE_TRIAL_STUDENT_LIMIT,
                             "staffLimit" to 1,
                             "studentCount" to 0,
                             "staffCount" to 0,

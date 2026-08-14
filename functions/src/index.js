@@ -26,6 +26,7 @@ const { createSubscriptionBillingHandler } = require("./subscriptionBilling");
 const { createPlatformAdminHandler } = require("./platformAdmin");
 const {
   FREE_TRIAL_DURATION_MS,
+  FREE_TRIAL_STUDENT_LIMIT,
   hasCurrentSubscription,
   hasUnlimitedTrialStudents,
 } = require("./subscriptionPolicy");
@@ -219,7 +220,10 @@ async function repairSubscriptionEntitlementsHandler(request) {
       if (!validStatus || (institute.subscriptionStatus !== "blocked" && institute.subscriptionStatus !== "expired" && institute.subscriptionStatus !== nextStatus)) {
         patch.subscriptionStatus = nextStatus;
       }
-      if (!Number.isSafeInteger(institute.studentLimit) || institute.studentLimit < 1) {
+      if (planId === "plan_free_trial" && institute.studentLimit !== FREE_TRIAL_STUDENT_LIMIT) {
+        patch.studentLimit = FREE_TRIAL_STUDENT_LIMIT;
+      } else if (planId !== "plan_free_trial" &&
+          (!Number.isSafeInteger(institute.studentLimit) || institute.studentLimit < 1)) {
         patch.studentLimit = Number.isSafeInteger(plan.maxStudents) && plan.maxStudents > 0 ? plan.maxStudents : 50;
       }
       if (!Number.isSafeInteger(institute.staffLimit) || institute.staffLimit < 1) {

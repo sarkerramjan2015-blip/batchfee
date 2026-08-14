@@ -31,10 +31,10 @@ const legacyPricingPlans = [
 const defaultPlans = [
   {
     id: "plan_free_trial", name: "Free Trial", description: "30-day full access trial with unlimited students",
-    // `maxStudents` remains for older clients' plan schema. Trusted backend
-    // entitlement logic uses the explicit trial policy, so it is never a cap
-    // while this 30-day trial is live.
-    priceBdt: 0, priceInr: 0, maxStudents: 50, unlimitedStudents: true, maxBatches: 5, maxUsers: 1,
+    // Zero is the canonical unlimited-trial display value. Trusted entitlement
+    // logic uses the explicit trial policy, never this numeric value, to decide
+    // whether a student seat is available.
+    priceBdt: 0, priceInr: 0, maxStudents: 0, unlimitedStudents: true, maxBatches: 5, maxUsers: 1,
     maxBranches: 1, tag: "Trial", tierLevel: 0,
   },
   // Existing plans remain supported so no current institute loses access when
