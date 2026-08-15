@@ -28,6 +28,7 @@ object BillingRoute
 
 @Serializable object StudentsRoute
 @Serializable object ArchivedStudentsRoute
+@Serializable object AllArchivesRoute
 @Serializable object AddStudentRoute
 @Serializable data class EditStudentRoute(val studentId: String)
 @Serializable data class StudentProfileRoute(val studentId: String)

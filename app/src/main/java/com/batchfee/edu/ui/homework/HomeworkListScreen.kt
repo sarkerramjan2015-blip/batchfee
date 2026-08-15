@@ -22,9 +22,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.firestore.WorkCloudSyncHelper
 import com.batchfee.edu.data.models.HomeworkEntity
+import com.batchfee.edu.data.repository.PermanentWorkPurgeRepository
 import com.batchfee.edu.domain.SessionManager
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
@@ -45,10 +48,25 @@ private val HwDim    = Color(0xFF64748B)
 fun HomeworkListScreen(db: AppDatabase, onBack: () -> Unit, onAddHomework: () -> Unit) {
     val instId = SessionManager.currentInstituteId.value ?: ""
     var homeworks by remember { mutableStateOf<List<HomeworkEntity>>(emptyList()) }
+    var pendingDelete by remember { mutableStateOf<HomeworkEntity?>(null) }
+    var isDeleting by remember { mutableStateOf(false) }
+    var deleteError by remember { mutableStateOf<String?>(null) }
     val df = remember { SimpleDateFormat("dd MMM yyyy", Locale.getDefault()) }
+    val scope = rememberCoroutineScope()
 
     LaunchedEffect(instId) {
         db.homeworkDao().getActive(instId).collect { homeworks = it }
+    }
+
+    // Backfill older local-only homework created before cloud publishing was
+    // enforced. New homework is synced before it is saved locally.
+    LaunchedEffect(instId) {
+        if (instId.isNotBlank()) {
+            val savedHomework = withContext(Dispatchers.IO) {
+                db.homeworkDao().getActive(instId).first()
+            }
+            savedHomework.forEach { homework -> runCatching { WorkCloudSyncHelper.syncHomework(homework) } }
+        }
     }
 
     val active = homeworks.filter { it.status == "active" }
@@ -96,8 +114,13 @@ fun HomeworkListScreen(db: AppDatabase, onBack: () -> Unit, onAddHomework: () ->
                                         Text(hw.title, color = HwWhite, fontWeight = FontWeight.Bold, fontSize = 15.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                                         hw.subject?.let { Text(it, color = HwBlue, fontSize = 12.sp, fontWeight = FontWeight.SemiBold) }
                                     }
-                                    Surface(shape = RoundedCornerShape(8.dp), color = if (hw.status == "active") HwGreen.copy(alpha = 0.15f) else HwDim.copy(alpha = 0.15f)) {
-                                        Text(if (hw.status == "active") "Active" else "Closed", Modifier.padding(horizontal = 10.dp, vertical = 4.dp), color = if (hw.status == "active") HwGreen else HwDim, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Surface(shape = RoundedCornerShape(8.dp), color = if (hw.status == "active") HwGreen.copy(alpha = 0.15f) else HwDim.copy(alpha = 0.15f)) {
+                                            Text(if (hw.status == "active") "Active" else "Closed", Modifier.padding(horizontal = 10.dp, vertical = 4.dp), color = if (hw.status == "active") HwGreen else HwDim, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                        IconButton(onClick = { pendingDelete = hw }) {
+                                            Icon(Icons.Filled.DeleteForever, "Delete homework permanently", tint = HwRed, modifier = Modifier.size(20.dp))
+                                        }
                                     }
                                 }
                                 hw.className?.let { Spacer(Modifier.height(4.dp)); Row { Spacer(Modifier.width(52.dp)); Text(it, color = HwDim, fontSize = 11.sp) } }
@@ -126,6 +149,45 @@ fun HomeworkListScreen(db: AppDatabase, onBack: () -> Unit, onAddHomework: () ->
                 }
             }
         }
+    }
+
+    pendingDelete?.let { homework ->
+        AlertDialog(
+            onDismissRequest = { if (!isDeleting) pendingDelete = null },
+            containerColor = HwCard,
+            titleContentColor = HwWhite,
+            textContentColor = HwMuted,
+            title = { Text("Delete homework permanently?") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("\"${homework.title}\" and all student submissions will be removed from the institute and student app.")
+                    deleteError?.let { Text(it, color = HwRed, fontSize = 12.sp) }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        isDeleting = true
+                        deleteError = null
+                        scope.launch {
+                            try {
+                                PermanentWorkPurgeRepository(db).purgeHomework(instId, homework.id)
+                                pendingDelete = null
+                            } catch (_: Exception) {
+                                deleteError = "Could not delete homework. Check your connection and try again."
+                            } finally {
+                                isDeleting = false
+                            }
+                        }
+                    },
+                    enabled = !isDeleting,
+                    colors = ButtonDefaults.buttonColors(containerColor = HwRed)
+                ) { Text(if (isDeleting) "Deleting…" else "Delete permanently") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDelete = null }, enabled = !isDeleting) { Text("Cancel", color = HwMuted) }
+            }
+        )
     }
 }
 

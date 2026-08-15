@@ -15,9 +15,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
+import com.batchfee.edu.data.media.FirebaseStorageImageUploadHelper
 import com.batchfee.edu.domain.StudentSessionManager
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreException
@@ -45,6 +51,7 @@ fun StudentProfileScreen(onLogout: () -> Unit) {
 
     var fullName by remember(studentId) { mutableStateOf(sessionName.orEmpty()) }
     var studentCode by remember(studentId) { mutableStateOf(sessionCode.orEmpty()) }
+    var photoUri by remember(studentId) { mutableStateOf<String?>(null) }
     var phone by remember(studentId) { mutableStateOf("") }
     var email by remember(studentId) { mutableStateOf("") }
     var address by remember(studentId) { mutableStateOf("") }
@@ -79,6 +86,7 @@ fun StudentProfileScreen(onLogout: () -> Unit) {
                 snap?.let {
                     fullName = it.getString("fullName") ?: fullName
                     studentCode = it.getString("studentCode") ?: studentCode
+                    photoUri = it.getString("photoUri")
                     phone = it.getString("phone") ?: ""
                     email = it.getString("email") ?: ""
                     address = it.getString("address") ?: ""
@@ -106,10 +114,9 @@ fun StudentProfileScreen(onLogout: () -> Unit) {
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).background(PsBg).verticalScroll(rememberScrollState()).padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             // Avatar
-            Box(Modifier.size(80.dp).clip(RoundedCornerShape(24.dp)).background(Brush.linearGradient(listOf(PsCyan, PsBlue))), contentAlignment = Alignment.Center) {
-                Text(fullName.take(1).uppercase(), color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 32.sp)
-            }
+            StudentProfileAvatar(photoUri = photoUri, fullName = fullName)
             Spacer(Modifier.height(12.dp))
+
             Text(fullName, color = PsWhite, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp)
             Text("ID: $studentCode", color = PsCyan, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
             if (className.isNotBlank()) Text(className, color = PsMuted, fontSize = 12.sp)
@@ -160,6 +167,27 @@ fun StudentProfileScreen(onLogout: () -> Unit) {
 }
 
 @Composable
+private fun StudentProfileAvatar(photoUri: String?, fullName: String) {
+    val context = LocalContext.current
+    Box(
+        Modifier.size(80.dp).clip(RoundedCornerShape(24.dp))
+            .background(Brush.linearGradient(listOf(PsCyan, PsBlue))),
+        contentAlignment = Alignment.Center
+    ) {
+        if (photoUri.isNullOrBlank()) {
+            Text(fullName.take(1).uppercase(), color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 32.sp)
+        } else {
+            AsyncImage(
+                model = FirebaseStorageImageUploadHelper.displaySource(context, photoUri),
+                contentDescription = "$fullName photo",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+    }
+}
+
+@Composable
 private fun SectionCard(title: String, content: @Composable ColumnScope.() -> Unit) {
     Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = PsCard), border = BorderStroke(1.dp, PsStroke)) {
         Column(Modifier.padding(16.dp)) {
@@ -172,8 +200,17 @@ private fun SectionCard(title: String, content: @Composable ColumnScope.() -> Un
 
 @Composable
 private fun InfoRow(label: String, value: String) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-        Text(label, color = PsMuted, fontSize = 13.sp)
-        Text(value, color = PsWhite, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+    Row(Modifier.fillMaxWidth().padding(vertical = 5.dp), verticalAlignment = Alignment.Top) {
+        Text(label, color = PsMuted, fontSize = 12.sp, modifier = Modifier.weight(0.34f))
+        Text(
+            value,
+            color = PsWhite,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Medium,
+            textAlign = TextAlign.End,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(0.66f)
+        )
     }
 }

@@ -1,9 +1,16 @@
 ﻿package com.batchfee.edu.data.models
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 
-@Entity(tableName = "students")
+@Entity(
+    tableName = "students",
+    indices = [
+        Index(value = ["instituteId", "archivedAtMs", "fullName"]),
+        Index(value = ["instituteId", "studentCode"])
+    ]
+)
 data class StudentEntity(
     @PrimaryKey val id: String,
     val instituteId: String,

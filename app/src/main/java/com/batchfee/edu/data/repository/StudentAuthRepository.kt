@@ -54,12 +54,21 @@ class StudentAuthRepository {
                 auth.signOut()
                 return@withContext StudentLoginResult(false, "Student identity verification failed.")
             }
-            val token = authResult.user?.getIdToken(true)?.await()
-            val claims = token?.claims.orEmpty()
-            val claimsValid = claims["student"] == true &&
-                claims["studentId"] == studentId &&
-                claims["instituteId"] == instituteId &&
-                (claims["studentSessionExpiresAt"] as? Number)?.toLong() == expiresAtMs
+            fun hasExpectedClaims(claims: Map<String, Any>): Boolean =
+                claims["student"] == true &&
+                    claims["studentId"] == studentId &&
+                    claims["instituteId"] == instituteId &&
+                    (claims["studentSessionExpiresAt"] as? Number)?.toLong() == expiresAtMs
+
+            // A custom-token sign-in issues a fresh ID token.  Reading that token
+            // first avoids an extra forced network refresh on the normal path.
+            // The force-refresh fallback preserves the old strict verification if
+            // a device has not yet received the newly issued claims.
+            var claims = authResult.user?.getIdToken(false)?.await()?.claims ?: emptyMap()
+            if (!hasExpectedClaims(claims)) {
+                claims = authResult.user?.getIdToken(true)?.await()?.claims ?: emptyMap()
+            }
+            val claimsValid = hasExpectedClaims(claims)
             if (!claimsValid) {
                 auth.signOut()
                 return@withContext StudentLoginResult(false, "Student identity verification failed.")

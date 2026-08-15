@@ -591,7 +591,8 @@ service cloud.firestore {
     }
 
     match /institutes/{instituteId}/enquiries/{enquiryId} {
-      allow read, write: if hasStaffPermission(instituteId, 'view_reports');
+      allow read, write: if isActiveInstitutePrincipal(instituteId)
+        || hasStaffPermission(instituteId, 'view_reports');
     }
 
     match /institutes/{instituteId}/exams/{examId} {
@@ -639,43 +640,51 @@ service cloud.firestore {
     match /institutes/{instituteId}/works/{workId} {
       allow read: if (isStudentAuthRequest() && isStudentOf(instituteId))
         || (!isStudentAuthRequest()
-          && (hasStaffPermission(instituteId, 'view_student')
+          && (isActiveInstitutePrincipal(instituteId)
+            || hasStaffPermission(instituteId, 'view_student')
             || hasStaffPermission(instituteId, 'manage_student')
             || hasStaffPermission(instituteId, 'view_batch')
             || hasStaffPermission(instituteId, 'manage_batch')));
-      allow write: if hasStaffPermission(instituteId, 'manage_student')
+      allow write: if isActiveInstitutePrincipal(instituteId)
+        || hasStaffPermission(instituteId, 'manage_student')
         || hasStaffPermission(instituteId, 'manage_batch');
     }
 
     match /institutes/{instituteId}/homework/{homeworkId} {
       allow read: if (isStudentAuthRequest() && isStudentOf(instituteId))
         || (!isStudentAuthRequest()
-          && (hasStaffPermission(instituteId, 'view_student')
+          && (isActiveInstitutePrincipal(instituteId)
+            || hasStaffPermission(instituteId, 'view_student')
             || hasStaffPermission(instituteId, 'manage_student')
             || hasStaffPermission(instituteId, 'view_batch')
             || hasStaffPermission(instituteId, 'manage_batch')));
-      allow write: if hasStaffPermission(instituteId, 'manage_student')
+      allow write: if isActiveInstitutePrincipal(instituteId)
+        || hasStaffPermission(instituteId, 'manage_student')
         || hasStaffPermission(instituteId, 'manage_batch');
     }
 
     match /institutes/{instituteId}/assignments/{assignmentId} {
       allow read: if (isStudentAuthRequest() && isStudentOf(instituteId))
         || (!isStudentAuthRequest()
-          && (hasStaffPermission(instituteId, 'view_student')
+          && (isActiveInstitutePrincipal(instituteId)
+            || hasStaffPermission(instituteId, 'view_student')
             || hasStaffPermission(instituteId, 'manage_student')
             || hasStaffPermission(instituteId, 'view_batch')
             || hasStaffPermission(instituteId, 'manage_batch')));
-      allow write: if hasStaffPermission(instituteId, 'manage_student')
+      allow write: if isActiveInstitutePrincipal(instituteId)
+        || hasStaffPermission(instituteId, 'manage_student')
         || hasStaffPermission(instituteId, 'manage_batch');
     }
 
     match /institutes/{instituteId}/homework_submissions/{submissionId} {
-      allow read, write: if hasStaffPermission(instituteId, 'manage_student')
+      allow read, write: if isActiveInstitutePrincipal(instituteId)
+        || hasStaffPermission(instituteId, 'manage_student')
         || hasStaffPermission(instituteId, 'manage_batch');
     }
 
     match /institutes/{instituteId}/assignment_submissions/{submissionId} {
-      allow read, write: if hasStaffPermission(instituteId, 'manage_student')
+      allow read, write: if isActiveInstitutePrincipal(instituteId)
+        || hasStaffPermission(instituteId, 'manage_student')
         || hasStaffPermission(instituteId, 'manage_batch');
     }
 

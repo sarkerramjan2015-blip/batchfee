@@ -6,6 +6,11 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -13,11 +18,16 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
+import com.batchfee.edu.data.media.FirebaseStorageImageUploadHelper
 import com.batchfee.edu.domain.StudentSessionManager
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreException
@@ -45,6 +55,7 @@ fun StudentDashboardScreen() {
     val instituteId = iid.orEmpty()
 
     var displayName by remember(studentId) { mutableStateOf(sessionStudentName ?: "Student") }
+    var photoUri by remember(studentId) { mutableStateOf<String?>(null) }
     var instituteName by remember(instituteId) { mutableStateOf("") }
     var className by remember(studentId) { mutableStateOf("") }
     var totalFee by remember(studentId) { mutableStateOf(0.0) }
@@ -85,6 +96,7 @@ fun StudentDashboardScreen() {
                 reportListenerError(error)
                 snap?.let {
                     displayName = it.getString("fullName") ?: displayName
+                    photoUri = it.getString("photoUri")
                     className = it.getString("className") ?: ""
                 }
                 if (error == null) loading = false
@@ -121,12 +133,19 @@ fun StudentDashboardScreen() {
             .addSnapshotListener { snap, error ->
                 reportListenerError(error)
                 if (error != null) return@addSnapshotListener
-                var tf = 0.0; var tp = 0.0
+                var tf = 0.0; var tp = 0.0; var td = 0.0
                 snap?.documents?.forEach { doc ->
-                    tf += doc.getDouble("totalAmount") ?: 0.0
-                    tp += doc.getDouble("paidAmount") ?: 0.0
+                    val amount = doc.getDouble("totalAmount") ?: 0.0
+                    val paid = doc.getDouble("paidAmount") ?: 0.0
+                    // dueAmount is the ledger's final value after discounts,
+                    // adjustments, cancellations and payments.
+                    val due = doc.getDouble("dueAmount")
+                        ?: if (doc.getString("status") == "cancelled") 0.0 else (amount - paid).coerceAtLeast(0.0)
+                    tf += amount
+                    tp += paid
+                    td += due.coerceAtLeast(0.0)
                 }
-                totalFee = tf; totalPaid = tp; totalDue = tf - tp
+                totalFee = tf; totalPaid = tp; totalDue = td
                 loading = false
             }
 
@@ -189,13 +208,36 @@ fun StudentDashboardScreen() {
     val hwCount = homeworkBatchIds.count { it.isNullOrBlank() || it in activeBatchIds }
     val assignCount = assignmentBatchIds.count { it.isNullOrBlank() || it in activeBatchIds }
 
+    val context = LocalContext.current
+    val glowTransition = rememberInfiniteTransition(label = "studentDashboardGlow")
+    val glow by glowTransition.animateFloat(
+        initialValue = 0.03f,
+        targetValue = 0.14f,
+        animationSpec = infiniteRepeatable(tween(2200), RepeatMode.Reverse),
+        label = "feeSummaryGlow"
+    )
+    val shineOffset by glowTransition.animateFloat(
+        initialValue = -320f,
+        targetValue = 920f,
+        animationSpec = infiniteRepeatable(tween(3600), RepeatMode.Restart),
+        label = "feeSummaryShine"
+    )
     Column(
         Modifier.fillMaxSize().background(StuBg).verticalScroll(rememberScrollState()).padding(16.dp)
     ) {
         // Header
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(52.dp).clip(RoundedCornerShape(16.dp)).background(Brush.linearGradient(listOf(StuCyan, StuBlue))), contentAlignment = Alignment.Center) {
-                Text(displayName.take(1).uppercase(), color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 22.sp)
+                if (photoUri.isNullOrBlank()) {
+                    Text(displayName.take(1).uppercase(), color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 22.sp)
+                } else {
+                    AsyncImage(
+                        model = FirebaseStorageImageUploadHelper.displaySource(context, photoUri),
+                        contentDescription = "$displayName photo",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
             }
             Spacer(Modifier.width(14.dp))
             Column {
@@ -223,19 +265,46 @@ fun StudentDashboardScreen() {
         Spacer(Modifier.height(24.dp))
 
         // Fee summary card
-        Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = StuCard), border = BorderStroke(1.dp, StuStroke)) {
-            Column(Modifier.padding(16.dp)) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("Fee Summary", color = StuWhite, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                    Text(if (totalDue > 0) "৳ ${"%,.0f".format(totalDue)} due" else "All paid ✓", color = if (totalDue > 0) StuRed else StuGreen, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = Color.Transparent), border = BorderStroke(1.dp, StuBlue.copy(alpha = 0.34f))) {
+            Box(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp))
+                    .background(Brush.linearGradient(listOf(StuCard, StuBlue.copy(alpha = glow), StuCard), Offset.Zero, Offset(700f, 310f)))
+            ) {
+                // A gentle highlight makes the live financial card feel active
+                // while keeping every value readable.
+                Box(
+                    Modifier.matchParentSize().background(
+                        Brush.linearGradient(
+                            listOf(Color.Transparent, Color.White.copy(alpha = 0.075f), Color.Transparent),
+                            start = Offset(shineOffset - 230f, 0f),
+                            end = Offset(shineOffset + 120f, 260f)
+                        )
+                    )
+                )
+                Column(Modifier.padding(16.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Column {
+                        Text("Fee Summary", color = StuWhite, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                        Text("Live institute balance", color = StuMuted, fontSize = 10.sp)
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.size(6.dp).clip(RoundedCornerShape(99.dp)).background(if (totalDue > 0) StuRed else StuGreen))
+                        Spacer(Modifier.width(6.dp))
+                        Text(if (totalDue > 0) "৳ ${"%,.0f".format(totalDue)} due" else "All paid ✓", color = if (totalDue > 0) StuRed else StuGreen, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    }
                 }
                 Spacer(Modifier.height(12.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 2.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     DashStat("Total", "৳${"%,.0f".format(totalFee)}", StuCyan)
                     DashStat("Paid", "৳${"%,.0f".format(totalPaid)}", StuGreen)
                     DashStat("Due", "৳${"%,.0f".format(totalDue)}", if (totalDue > 0) StuRed else StuGreen)
                 }
             }
+        }
         }
 
         Spacer(Modifier.height(14.dp))
@@ -280,7 +349,10 @@ fun StudentDashboardScreen() {
 }
 
 @Composable
-private fun DashStat(label: String, value: String, color: Color) = Column(horizontalAlignment = Alignment.CenterHorizontally) {
+private fun DashStat(label: String, value: String, color: Color) = Column(
+    modifier = Modifier.width(84.dp).padding(horizontal = 3.dp),
+    horizontalAlignment = Alignment.CenterHorizontally
+) {
     Text(value, color = color, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp)
     Text(label, color = StuMuted, fontSize = 11.sp)
 }

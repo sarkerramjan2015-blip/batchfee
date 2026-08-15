@@ -186,8 +186,20 @@ private fun WCard(w: WorkItem, df: SimpleDateFormat, accent: Color) {
                 Spacer(Modifier.width(12.dp))
                 Text(w.title, Modifier.weight(1f), color = WsWhite, fontWeight = FontWeight.Bold, fontSize = 15.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
-            if (w.description.isNotBlank()) { Spacer(Modifier.height(8.dp)); Text(w.description, color = WsMuted, fontSize = 13.sp, maxLines = 4, overflow = TextOverflow.Ellipsis, lineHeight = 18.sp) }
-            w.bookPage?.let { Spacer(Modifier.height(4.dp)); Text("📖 $it", color = WsDim, fontSize = 11.sp) }
+            if (w.description.isNotBlank()) {
+                Spacer(Modifier.height(9.dp))
+                Text("Instructions", color = WsDim, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(2.dp))
+                Text(w.description, color = WsMuted, fontSize = 13.sp, maxLines = 4, overflow = TextOverflow.Ellipsis, lineHeight = 18.sp)
+            }
+            w.bookPage?.let {
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.MenuBook, null, tint = WsCyan, modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.width(5.dp))
+                    Text("Book / page: $it", color = WsDim, fontSize = 11.sp)
+                }
+            }
             if (w.dueDateMs != null) {
                 Spacer(Modifier.height(10.dp))
                 Row(Modifier.fillMaxWidth().background(if (isPast) WsRed.copy(alpha = 0.1f) else WsGreen.copy(alpha = 0.1f), RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {

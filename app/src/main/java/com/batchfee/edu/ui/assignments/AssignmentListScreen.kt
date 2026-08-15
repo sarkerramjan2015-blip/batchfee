@@ -21,8 +21,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.firestore.WorkCloudSyncHelper
 import com.batchfee.edu.data.models.AssignmentEntity
+import com.batchfee.edu.data.repository.PermanentWorkPurgeRepository
 import com.batchfee.edu.domain.SessionManager
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -41,9 +47,23 @@ private val AsDim   = Color(0xFF64748B)
 fun AssignmentListScreen(db: AppDatabase, onBack: () -> Unit, onAddAssignment: () -> Unit) {
     val instId = SessionManager.currentInstituteId.value ?: ""
     var assignments by remember { mutableStateOf<List<AssignmentEntity>>(emptyList()) }
+    var pendingDelete by remember { mutableStateOf<AssignmentEntity?>(null) }
+    var isDeleting by remember { mutableStateOf(false) }
+    var operationError by remember { mutableStateOf<String?>(null) }
     val df = remember { SimpleDateFormat("dd MMM yyyy", Locale.getDefault()) }
+    val scope = rememberCoroutineScope()
 
     LaunchedEffect(instId) { db.assignmentDao().getAll(instId).collect { assignments = it } }
+
+    // Makes assignments created before the cloud-save fix available to students.
+    LaunchedEffect(instId) {
+        if (instId.isNotBlank()) {
+            val savedAssignments = withContext(Dispatchers.IO) {
+                db.assignmentDao().getAll(instId).first()
+            }
+            savedAssignments.forEach { assignment -> runCatching { WorkCloudSyncHelper.syncAssignment(assignment) } }
+        }
+    }
 
     val published = assignments.filter { it.status == "published" }
     val drafts = assignments.filter { it.status == "draft" }
@@ -64,6 +84,14 @@ fun AssignmentListScreen(db: AppDatabase, onBack: () -> Unit, onAddAssignment: (
                 }
             }
 
+            operationError?.let { message ->
+                Surface(
+                    color = AsRed.copy(alpha = 0.12f),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)
+                ) { Text(message, color = AsRed, fontSize = 12.sp, modifier = Modifier.padding(11.dp)) }
+            }
+
             if (assignments.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Filled.Assignment, null, Modifier.size(48.dp), tint = AsDim); Spacer(Modifier.height(12.dp)); Text("No assignments yet", color = AsMuted, fontSize = 16.sp); Spacer(Modifier.height(4.dp)); Text("Tap + to create your first assignment", color = AsDim, fontSize = 13.sp) } }
             } else {
@@ -79,8 +107,13 @@ fun AssignmentListScreen(db: AppDatabase, onBack: () -> Unit, onAddAssignment: (
                                         Text(a.title, color = AsWhite, fontWeight = FontWeight.Bold, fontSize = 15.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                                         a.subject?.let { Text(it, color = AsAmber, fontSize = 12.sp, fontWeight = FontWeight.SemiBold) }
                                     }
-                                    Surface(shape = RoundedCornerShape(8.dp), color = when(a.status) { "published" -> AsGreen.copy(alpha = 0.15f); "draft" -> AsAmber.copy(alpha = 0.15f); else -> AsDim.copy(alpha = 0.15f) }) {
-                                        Text(a.status.replaceFirstChar { it.uppercase() }, Modifier.padding(horizontal = 10.dp, vertical = 4.dp), color = when(a.status) { "published" -> AsGreen; "draft" -> AsAmber; else -> AsDim }, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Surface(shape = RoundedCornerShape(8.dp), color = when(a.status) { "published" -> AsGreen.copy(alpha = 0.15f); "draft" -> AsAmber.copy(alpha = 0.15f); else -> AsDim.copy(alpha = 0.15f) }) {
+                                            Text(a.status.replaceFirstChar { it.uppercase() }, Modifier.padding(horizontal = 10.dp, vertical = 4.dp), color = when(a.status) { "published" -> AsGreen; "draft" -> AsAmber; else -> AsDim }, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                        IconButton(onClick = { pendingDelete = a }) {
+                                            Icon(Icons.Filled.DeleteForever, "Delete assignment permanently", tint = AsRed, modifier = Modifier.size(20.dp))
+                                        }
                                     }
                                 }
                                 Row(Modifier.padding(start = 52.dp, top = 4.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -97,6 +130,32 @@ fun AssignmentListScreen(db: AppDatabase, onBack: () -> Unit, onAddAssignment: (
                                         Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Filled.Schedule, null, Modifier.size(13.dp), tint = if (overdue) AsRed else AsGreen); Spacer(Modifier.width(4.dp)); Text(if (overdue) "Overdue" else "Due ${df.format(Date(due))}", color = if (overdue) AsRed else AsGreen, fontSize = 11.sp, fontWeight = FontWeight.Bold) }
                                     }
                                 }
+                                if (a.status == "draft") {
+                                    Spacer(Modifier.height(12.dp))
+                                    OutlinedButton(
+                                        onClick = {
+                                            scope.launch {
+                                                val now = System.currentTimeMillis()
+                                                val publishedAssignment = a.copy(status = "published", publishDateMs = now, updatedAtMs = now)
+                                                operationError = null
+                                                try {
+                                                    WorkCloudSyncHelper.syncAssignment(publishedAssignment)
+                                                    withContext(Dispatchers.IO) { db.assignmentDao().upsert(publishedAssignment) }
+                                                } catch (_: Exception) {
+                                                    operationError = "Could not publish assignment for students. Check your connection and try again."
+                                                }
+                                            }
+                                        },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        shape = RoundedCornerShape(12.dp),
+                                        border = BorderStroke(1.dp, AsGreen.copy(alpha = 0.6f)),
+                                        colors = ButtonDefaults.outlinedButtonColors(contentColor = AsGreen)
+                                    ) {
+                                        Icon(Icons.Filled.Publish, null, modifier = Modifier.size(16.dp))
+                                        Spacer(Modifier.width(8.dp))
+                                        Text("Publish for Students", fontWeight = FontWeight.Bold)
+                                    }
+                                }
                             }
                         }
                     }
@@ -104,6 +163,45 @@ fun AssignmentListScreen(db: AppDatabase, onBack: () -> Unit, onAddAssignment: (
                 }
             }
         }
+    }
+
+    pendingDelete?.let { assignment ->
+        AlertDialog(
+            onDismissRequest = { if (!isDeleting) pendingDelete = null },
+            containerColor = AsCard,
+            titleContentColor = AsWhite,
+            textContentColor = AsMuted,
+            title = { Text("Delete assignment permanently?") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("\"${assignment.title}\" and all student submissions will be removed from the institute and student app.")
+                    operationError?.let { Text(it, color = AsRed, fontSize = 12.sp) }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        isDeleting = true
+                        operationError = null
+                        scope.launch {
+                            try {
+                                PermanentWorkPurgeRepository(db).purgeAssignment(instId, assignment.id)
+                                pendingDelete = null
+                            } catch (_: Exception) {
+                                operationError = "Could not delete assignment. Check your connection and try again."
+                            } finally {
+                                isDeleting = false
+                            }
+                        }
+                    },
+                    enabled = !isDeleting,
+                    colors = ButtonDefaults.buttonColors(containerColor = AsRed)
+                ) { Text(if (isDeleting) "Deleting…" else "Delete permanently") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDelete = null }, enabled = !isDeleting) { Text("Cancel", color = AsMuted) }
+            }
+        )
     }
 }
 

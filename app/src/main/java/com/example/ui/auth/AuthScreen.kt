@@ -719,6 +719,7 @@ private val AuthBorder   = Color(0xFF1E293B)
 private val AuthCyan     = Color(0xFF22D3EE)
 private val AuthBlue     = Color(0xFF3B82F6)
 private val AuthViolet   = Color(0xFFA855F7)
+private val AuthAmber    = Color(0xFFFBBF24)
 private val AuthWhite    = Color(0xFFF8FAFC)
 private val AuthMuted    = Color(0xFF94A3B8)
 private val AuthErrorBg  = Color(0x33EF4444)
@@ -749,7 +750,6 @@ private fun AnimatedLogo(modifier: Modifier = Modifier) {
 
     Box(
         modifier = modifier
-            .size(100.dp)
             .graphicsLayer {
                 alpha = fadeAlpha
                 scaleX = scale
@@ -781,7 +781,7 @@ private fun GlassCard(
         colors = CardDefaults.cardColors(containerColor = AuthCardBg.copy(alpha = 0.85f)),
         border = BorderStroke(1.dp, AuthBorder.copy(alpha = 0.6f))
     ) {
-        Column(modifier = Modifier.padding(24.dp)) { content() }
+        Column(modifier = Modifier.padding(20.dp)) { content() }
     }
 }
 
@@ -887,8 +887,8 @@ fun AuthScreen(
         val compactWidth = maxWidth < 360.dp
         val compactHeight = maxHeight < 700.dp
         val contentHorizontalPadding = if (compactWidth) 16.dp else 24.dp
-        val contentVerticalPadding = if (compactHeight) 24.dp else 48.dp
-        val logoSize = if (compactWidth) 88.dp else 100.dp
+        val contentVerticalPadding = if (compactHeight) 10.dp else 14.dp
+        val logoSize = if (compactWidth || compactHeight) 78.dp else 86.dp
         val orbOneSize = if (compactWidth || compactHeight) 220.dp else 280.dp
         val orbTwoSize = if (compactWidth || compactHeight) 260.dp else 320.dp
         val orbThreeSize = if (compactWidth || compactHeight) 160.dp else 200.dp
@@ -938,16 +938,69 @@ fun AuthScreen(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
+                    .statusBarsPadding()
                     .verticalScroll(rememberScrollState())
-                    .padding(horizontal = contentHorizontalPadding, vertical = contentVerticalPadding),
+                    .padding(horizontal = contentHorizontalPadding, vertical = contentVerticalPadding)
+                    .navigationBarsPadding(),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Spacer(Modifier.height(16.dp))
+                // Quick actions stay at the top so owner/staff and student
+                // entry points are both easy to find without adding height.
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .widthIn(max = actionsMaxWidth),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedButton(
+                        onClick = onNavigateStudentLogin,
+                        modifier = Modifier.height(36.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.dp, AuthCyan.copy(alpha = 0.48f)),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = AuthCyan.copy(alpha = 0.08f),
+                            contentColor = AuthCyan
+                        ),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)
+                    ) {
+                        Icon(Icons.Filled.Person, null, modifier = Modifier.size(15.dp))
+                        Spacer(Modifier.width(5.dp))
+                        Text("Student Login", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+
+                    val encodedMsg = java.net.URLEncoder.encode(
+                        "Hello Developer, I am contacting you regarding some queries about the BatchFee app.",
+                        "UTF-8"
+                    )
+                    val waUri = "https://api.whatsapp.com/send?phone=+8801518657869&text=$encodedMsg"
+                    OutlinedButton(
+                        onClick = {
+                            context.startActivity(
+                                android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(waUri))
+                            )
+                        },
+                        modifier = Modifier.height(36.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.dp, AuthViolet.copy(alpha = 0.5f)),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = AuthViolet.copy(alpha = 0.08f),
+                            contentColor = AuthWhite
+                        ),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)
+                    ) {
+                        Icon(Icons.Filled.Chat, null, tint = AuthViolet, modifier = Modifier.size(15.dp))
+                        Spacer(Modifier.width(5.dp))
+                        Text("Contact", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                Spacer(Modifier.height(if (compactHeight) 14.dp else 18.dp))
 
                 // Animated Logo
                 AnimatedLogo(modifier = Modifier.size(logoSize))
 
-                Spacer(Modifier.height(if (compactHeight) 18.dp else 24.dp))
+                Spacer(Modifier.height(if (compactHeight) 10.dp else 14.dp))
 
                 // App Name + Tagline
                 Text(
@@ -965,7 +1018,7 @@ fun AuthScreen(
                     color = AuthCyan,
                     textAlign = TextAlign.Center
                 )
-                Spacer(Modifier.height(if (compactHeight) 20.dp else 32.dp))
+                Spacer(Modifier.height(if (compactHeight) 14.dp else 20.dp))
 
                 // Login / Register Form Card
                 GlassCard(
@@ -1352,16 +1405,44 @@ fun AuthScreen(
 
                 Spacer(Modifier.height(8.dp))
 
-                // Toggle login/register
-                TextButton(onClick = { isLoginMode = !isLoginMode; errorMessage = null }) {
-                    Text(
-                        text = if (isLoginMode) "Need an account? Register Institute" else "Already have an account? Login",
-                        color = AuthCyan,
-                        fontWeight = FontWeight.Medium
-                    )
+                // A highlighted shortcut keeps registration easy to find.
+                Surface(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(14.dp))
+                        .clickable { isLoginMode = !isLoginMode; errorMessage = null },
+                    shape = RoundedCornerShape(14.dp),
+                    color = AuthAmber.copy(alpha = 0.12f),
+                    border = BorderStroke(1.dp, AuthAmber.copy(alpha = 0.45f))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Text(
+                            text = if (isLoginMode) "Need an account?" else "Already registered?",
+                            color = AuthMuted,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = if (isLoginMode) "Register Institute" else "Login",
+                            color = AuthAmber,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Icon(
+                            Icons.Filled.ArrowForward,
+                            contentDescription = null,
+                            tint = AuthAmber,
+                            modifier = Modifier.size(14.dp)
+                        )
+                    }
                 }
 
-                Spacer(Modifier.height(4.dp))
+                Spacer(Modifier.height(10.dp))
 
                 Row(
                     horizontalArrangement = Arrangement.Center,
@@ -1381,47 +1462,7 @@ fun AuthScreen(
                     }
                 }
 
-                Spacer(Modifier.height(4.dp))
-
-                // WhatsApp contact button
-                val encodedMsg = java.net.URLEncoder
-                    .encode("Hello Developer, I am contacting you regarding some queries about the BatchFee app.", "UTF-8")
-                val waUri = "https://api.whatsapp.com/send?phone=+8801518657869&text=$encodedMsg"
-                OutlinedButton(
-                    onClick = {
-                        context.startActivity(
-                            android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(waUri))
-                        )
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .widthIn(max = actionsMaxWidth),
-                    shape = RoundedCornerShape(10.dp),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, AuthCyan.copy(alpha = 0.25f)),
-                    colors = ButtonDefaults.outlinedButtonColors(
-                        containerColor = AuthCyan.copy(alpha = 0.06f),
-                        contentColor = AuthCyan.copy(alpha = 0.75f)
-                    )
-                ) {
-                    Text("💬", fontSize = 13.sp)
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        "Chat on WhatsApp: +880 1518657869",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 1,
-                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                    )
-                }
-
                 Spacer(Modifier.height(8.dp))
-
-                // Student Login
-                TextButton(onClick = onNavigateStudentLogin) {
-                    Text("👤 Student Login", color = AuthCyan, fontWeight = FontWeight.Medium, fontSize = 14.sp)
-                }
-
-                Spacer(Modifier.height(4.dp))
 
                 Text(
                     text = "v" + BuildConfig.VERSION_NAME + " · BatchFee",

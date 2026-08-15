@@ -20,4 +20,10 @@ interface AssignmentDao {
 
     @Query("UPDATE assignments SET archivedAtMs = :ts WHERE id = :id AND instituteId = :instId")
     suspend fun archive(id: String, instId: String, ts: Long)
+
+    @Query("DELETE FROM assignment_submissions WHERE instituteId = :instId AND assignmentId = :assignmentId")
+    suspend fun deleteSubmissionsForAssignment(instId: String, assignmentId: String)
+
+    @Query("DELETE FROM assignments WHERE id = :id AND instituteId = :instId")
+    suspend fun deletePermanently(id: String, instId: String)
 }

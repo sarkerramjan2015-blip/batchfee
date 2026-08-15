@@ -6,7 +6,11 @@ import androidx.room.PrimaryKey
 
 @Entity(
     tableName = "payments",
-    indices = [Index(value = ["instituteId", "operationId"], unique = true)]
+    indices = [
+        Index(value = ["instituteId", "operationId"], unique = true),
+        Index(value = ["instituteId", "paymentDateMs"]),
+        Index(value = ["instituteId", "feeId", "paymentDateMs"])
+    ]
 )
 data class PaymentEntity(
     @PrimaryKey val id: String,

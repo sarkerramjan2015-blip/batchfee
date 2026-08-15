@@ -24,6 +24,7 @@ import com.batchfee.edu.domain.PasswordHasher
 import com.batchfee.edu.domain.SessionManager
 import com.batchfee.edu.domain.StudentSessionManager
 import com.batchfee.edu.domain.ThemePreferences
+import com.batchfee.edu.data.firestore.InstituteRealtimeSyncManager
 import com.batchfee.edu.ui.auth.AuthScreen
 import com.batchfee.edu.ui.billing.BillingScreen
 import com.batchfee.edu.ui.dashboard.DashboardScreen
@@ -90,6 +91,8 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
     val navController = rememberNavController()
     val lifecycleOwner = LocalLifecycleOwner.current
     val isLoggedIn by SessionManager.currentUserId.collectAsState()
+    val sessionRole by SessionManager.currentUserRole.collectAsState()
+    val sessionInstituteId by SessionManager.currentInstituteId.collectAsState()
     val sessionNotice by SessionManager.sessionNotice.collectAsState()
     val lastActivityAtMs by SessionManager.lastActivityAtMs.collectAsState()
     val studentSessionId by StudentSessionManager.studentId.collectAsState()
@@ -113,6 +116,18 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
             navController.navigate(StudentDashboardRoute) {
                 popUpTo(navController.graph.id) { inclusive = true }
             }
+        }
+    }
+
+    // A single, session-scoped listener group keeps the high-use owner data current.
+    // It only updates Room in the background and is always removed on logout/switch.
+    DisposableEffect(isLoggedIn, sessionRole, sessionInstituteId) {
+        val instituteId = sessionInstituteId
+        if (isLoggedIn != null && sessionRole != "SuperAdmin" && !instituteId.isNullOrBlank()) {
+            InstituteRealtimeSyncManager.start(appDb, instituteId)
+        }
+        onDispose {
+            if (!instituteId.isNullOrBlank()) InstituteRealtimeSyncManager.stop(instituteId)
         }
     }
 
@@ -287,6 +302,7 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
                         when (route) {
                             "StudentsRoute" -> navController.navigate(StudentsRoute)
                             "ArchivedStudentsRoute" -> navController.navigate(ArchivedStudentsRoute)
+                            "AllArchivesRoute" -> navController.navigate(AllArchivesRoute)
                             "AddStudentRoute" -> navController.navigate(AddStudentRoute)
                             "BatchesRoute" -> navController.navigate(BatchesRoute)
                             "AddBatchRoute" -> navController.navigate(AddBatchRoute)
@@ -352,6 +368,13 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
 
         composable<ArchivedStudentsRoute> {
             com.batchfee.edu.ui.students.ArchivedStudentsScreen(
+                db = appDb,
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        composable<AllArchivesRoute> {
+            com.batchfee.edu.ui.archive.AllArchivesScreen(
                 db = appDb,
                 onBack = { navController.popBackStack() }
             )

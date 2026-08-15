@@ -58,7 +58,7 @@ private data class StudentExamInfo(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun StudentResultScreen(onBack: () -> Unit) {
+fun StudentResultScreen(onBack: () -> Unit, onOpenDocuments: () -> Unit) {
     val sid by StudentSessionManager.studentId.collectAsState()
     val iid by StudentSessionManager.instituteId.collectAsState()
     val studentId = sid.orEmpty()
@@ -146,7 +146,14 @@ fun StudentResultScreen(onBack: () -> Unit) {
 
     Scaffold(
         containerColor = RsBg,
-        topBar = { TopAppBar(title = { Text("Results", color = RsWhite, fontWeight = FontWeight.Bold) }, navigationIcon = { IconButton(onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = RsMuted) } }, colors = TopAppBarDefaults.topAppBarColors(containerColor = RsBg)) }
+        topBar = {
+            TopAppBar(
+                title = { Text("Results", color = RsWhite, fontWeight = FontWeight.Bold) },
+                navigationIcon = { IconButton(onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = RsMuted) } },
+                actions = { IconButton(onOpenDocuments) { Icon(Icons.Filled.PictureAsPdf, "Open result card", tint = RsCyan) } },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = RsBg)
+            )
+        }
     ) { padding ->
         if (loading) Box(Modifier.fillMaxSize().padding(padding).background(RsBg), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = RsCyan) }
         else if (results.isEmpty()) Box(Modifier.fillMaxSize().padding(padding).background(RsBg), contentAlignment = Alignment.Center) {
@@ -192,6 +199,18 @@ fun StudentResultScreen(onBack: () -> Unit) {
                             RStat("Marks", if (r.totalMarks > 0) "${"%.0f".format(r.obtainedMarks)}/${"%.0f".format(r.totalMarks)}" else "${"%.0f".format(r.obtainedMarks)}")
                             RStat("Percentage", if (r.totalMarks > 0) "${"%.0f".format(pct)}%" else "–")
                             r.rank?.let { RStat("Rank", "#$it of ${r.totalStudents ?: "?"}") }
+                        }
+                        Spacer(Modifier.height(14.dp))
+                        OutlinedButton(
+                            onClick = onOpenDocuments,
+                            modifier = Modifier.fillMaxWidth().height(40.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, RsCyan.copy(alpha = 0.55f)),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = RsCyan)
+                        ) {
+                            Icon(Icons.Filled.PictureAsPdf, null, modifier = Modifier.size(17.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Open Result Card", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }

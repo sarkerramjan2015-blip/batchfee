@@ -118,7 +118,9 @@ object InstituteCacheRefreshManager {
     suspend fun prefetchHighUseData(db: AppDatabase, instituteId: String) {
         refreshScopeIfStale(db, instituteId, InstituteRefreshScope.STUDENTS)
         refreshScopeIfStale(db, instituteId, InstituteRefreshScope.BATCHES)
+        refreshScopeIfStale(db, instituteId, InstituteRefreshScope.ENROLLMENTS)
         refreshScopeIfStale(db, instituteId, InstituteRefreshScope.STAFF)
+        refreshScopeIfStale(db, instituteId, InstituteRefreshScope.EXPENSES)
     }
 
     private suspend fun markAllScopesRefreshed(instituteId: String) {

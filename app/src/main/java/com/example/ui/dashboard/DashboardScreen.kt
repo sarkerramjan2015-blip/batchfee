@@ -45,7 +45,11 @@ import com.batchfee.edu.data.media.FirebaseStorageImageUploadHelper
 import com.batchfee.edu.data.firestore.EnquirySyncHelper
 import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
 import com.batchfee.edu.data.firestore.InstituteRefreshScope
+import com.batchfee.edu.data.models.BatchEntity
+import com.batchfee.edu.data.models.BatchStudentEntity
+import com.batchfee.edu.data.models.FeeEntity
 import com.batchfee.edu.data.models.InstituteEntity
+import com.batchfee.edu.data.models.StudentEntity
 
 import com.batchfee.edu.domain.SessionManager
 import com.batchfee.edu.domain.MonthlyDueCalculator
@@ -60,6 +64,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.firstOrNull
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -73,6 +78,7 @@ import androidx.core.content.FileProvider
 import coil.compose.AsyncImage
 import java.io.File
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Locale
 import java.util.UUID
 import com.batchfee.edu.ui.attendance.AttendanceViewModel
@@ -115,6 +121,18 @@ private data class DashboardBootstrapSnapshot(
     val staffCount: Int
 )
 
+private data class DashboardDueInput(
+    val fees: List<FeeEntity>,
+    val students: List<StudentEntity>,
+    val batches: List<BatchEntity>,
+    val activeEnrollments: List<BatchStudentEntity>
+)
+
+private data class DashboardDueResult(
+    val pendingFeesCount: Int,
+    val summary: DueFeeSummary
+)
+
 private fun formatRelativeTime(timeMs: Long): String {
     val diff = System.currentTimeMillis() - timeMs
     return when {
@@ -145,12 +163,134 @@ data class EnquirySummary(
     val total: Int = 0,
     val active: Int = 0,
     val close: Int = 0,
-    val followUp: Int = 0
+    val followUp: Int = 0,
+    val todayFollowUp: Int = 0,
+    val overdueFollowUp: Int = 0
 )
+
+private fun dashboardStartOfDay(timeMs: Long): Long = Calendar.getInstance().apply {
+    timeInMillis = timeMs
+    set(Calendar.HOUR_OF_DAY, 0)
+    set(Calendar.MINUTE, 0)
+    set(Calendar.SECOND, 0)
+    set(Calendar.MILLISECOND, 0)
+}.timeInMillis
 
 private fun isClosedStudentStatus(status: String?): Boolean {
     val normalized = status.orEmpty().trim().lowercase()
     return normalized == "close" || normalized == "closed" || normalized == "inactive"
+}
+
+/** Pure dashboard math runs on Dispatchers.Default, never on Compose's UI thread. */
+private fun calculateDashboardDue(input: DashboardDueInput): DashboardDueResult {
+    val studentsById = input.students.associateBy { it.id }
+    val batchesById = input.batches.associateBy { it.id }
+    val batchesByStudent = input.activeEnrollments
+        .groupBy { it.studentId }
+        .mapValues { (_, enrollments) ->
+            enrollments.mapNotNull { enrollment -> batchesById[enrollment.batchId] }
+        }
+    val feesByStudentAndBatch = input.fees.groupBy { fee -> fee.studentId to fee.batchId }
+
+    val activeStudentIds = mutableSetOf<String>()
+    val closedStudentIds = mutableSetOf<String>()
+    var activeNonMonthlyDue = 0.0
+    var closedNonMonthlyDue = 0.0
+    var activeMonthlyDue = 0.0
+    var closedMonthlyDue = 0.0
+
+    input.fees.asSequence()
+        .filter { fee ->
+            fee.dueAmount > 0.0 &&
+                !MonthlyDueCalculator.isMonthlyFeeType(fee.feeType) &&
+                MonthlyDueCalculator.isPastMonth(fee.feePeriod)
+        }
+        .forEach { fee ->
+            // Ignore orphaned historic records, matching the Due Fees screen.
+            val student = studentsById[fee.studentId] ?: return@forEach
+            if (isClosedStudentStatus(student.status)) {
+                closedNonMonthlyDue += fee.dueAmount
+                closedStudentIds += student.id
+            } else {
+                activeNonMonthlyDue += fee.dueAmount
+                activeStudentIds += student.id
+            }
+        }
+
+    input.students.forEach { student ->
+        if (student.admissionDateMs <= 0L) return@forEach
+        val isClosed = isClosedStudentStatus(student.status)
+        batchesByStudent[student.id].orEmpty().forEach { batch ->
+            if (batch.monthlyFeeAmount <= 0.0) return@forEach
+            val items = MonthlyDueCalculator.computeMonthlyOutstandingItems(
+                admissionDateMs = student.admissionDateMs,
+                monthlyFeeAmount = batch.monthlyFeeAmount,
+                batchId = batch.id,
+                batchName = batch.name,
+                existingMonthlyFees = feesByStudentAndBatch[student.id to batch.id].orEmpty()
+            )
+            items.forEach { item ->
+                if (isClosed) {
+                    closedMonthlyDue += item.outstanding
+                    closedStudentIds += student.id
+                } else {
+                    activeMonthlyDue += item.outstanding
+                    activeStudentIds += student.id
+                }
+            }
+        }
+    }
+
+    return DashboardDueResult(
+        pendingFeesCount = (activeStudentIds + closedStudentIds).size,
+        summary = DueFeeSummary(
+            activeCount = activeStudentIds.size,
+            activeAmount = activeNonMonthlyDue + activeMonthlyDue,
+            closeCount = closedStudentIds.size,
+            closeAmount = closedNonMonthlyDue + closedMonthlyDue
+        )
+    )
+}
+
+private fun calculateFinancialSummary(
+    payments: List<com.batchfee.edu.data.models.PaymentEntity>,
+    expenses: List<com.batchfee.edu.data.models.ExpenseEntity>
+): FinancialSummary {
+    val now = java.util.Calendar.getInstance()
+    val startOfDay = now.apply {
+        set(java.util.Calendar.HOUR_OF_DAY, 0)
+        set(java.util.Calendar.MINUTE, 0)
+        set(java.util.Calendar.SECOND, 0)
+        set(java.util.Calendar.MILLISECOND, 0)
+    }.timeInMillis
+    val startOfMonth = now.apply {
+        set(java.util.Calendar.DAY_OF_MONTH, 1)
+        set(java.util.Calendar.HOUR_OF_DAY, 0)
+        set(java.util.Calendar.MINUTE, 0)
+        set(java.util.Calendar.SECOND, 0)
+        set(java.util.Calendar.MILLISECOND, 0)
+    }.timeInMillis
+
+    var todayIncome = 0.0
+    var todayExpense = 0.0
+    var monthIncome = 0.0
+    var monthExpense = 0.0
+    var lifetimeIncome = 0.0
+    var lifetimeExpense = 0.0
+
+    payments.forEach { payment ->
+        lifetimeIncome += payment.amount
+        if (payment.paymentDateMs >= startOfMonth) monthIncome += payment.amount
+        if (payment.paymentDateMs >= startOfDay) todayIncome += payment.amount
+    }
+    expenses.forEach { expense ->
+        lifetimeExpense += expense.amount
+        if (expense.expenseDateMs >= startOfMonth) monthExpense += expense.amount
+        if (expense.expenseDateMs >= startOfDay) todayExpense += expense.amount
+    }
+    return FinancialSummary(
+        todayIncome, todayExpense, monthIncome, monthExpense, lifetimeIncome, lifetimeExpense
+    )
 }
 
 private fun daysUntilNextBirthday(dobMs: Long, today: java.util.Calendar): Int {
@@ -344,12 +484,25 @@ class DashboardViewModel(private val db: AppDatabase) : ViewModel() {
                 db.enquiryDao().getEnquiriesByInstitute(instId).collect { enquiries ->
                     val active = enquiries.count { it.status.equals("active", ignoreCase = true) }
                     val close = enquiries.count { it.status.equals("close", ignoreCase = true) || it.status.equals("closed", ignoreCase = true) }
-                    val followUp = enquiries.count { it.status.equals("follow_up", ignoreCase = true) || it.status.equals("follow up", ignoreCase = true) }
+                    val followUps = enquiries.filter {
+                        it.status.equals("follow_up", ignoreCase = true) || it.status.equals("follow up", ignoreCase = true)
+                    }
+                    val startOfToday = dashboardStartOfDay(System.currentTimeMillis())
+                    val startOfTomorrow = Calendar.getInstance().apply {
+                        timeInMillis = startOfToday
+                        add(Calendar.DAY_OF_YEAR, 1)
+                    }.timeInMillis
                     _enquirySummary.value = EnquirySummary(
                         total = enquiries.size,
                         active = active,
                         close = close,
-                        followUp = followUp
+                        followUp = followUps.size,
+                        todayFollowUp = followUps.count { enquiry ->
+                            enquiry.followUpDateMs?.let { it in startOfToday until startOfTomorrow } == true
+                        },
+                        overdueFollowUp = followUps.count { enquiry ->
+                            enquiry.followUpDateMs?.let { it < startOfToday } == true
+                        }
                     )
                 }
             }
@@ -363,87 +516,27 @@ class DashboardViewModel(private val db: AppDatabase) : ViewModel() {
                 kotlinx.coroutines.flow.combine(
                     db.paymentDao().getRecentPayments(instId),
                     db.expenseDao().getExpensesByInstitute(instId)
-                ) { payments, expenses ->
-                    val now = java.util.Calendar.getInstance()
-                    val startOfDay = now.apply { set(java.util.Calendar.HOUR_OF_DAY, 0); set(java.util.Calendar.MINUTE, 0); set(java.util.Calendar.SECOND, 0) }.timeInMillis
-                    val startOfMonth = now.apply { set(java.util.Calendar.DAY_OF_MONTH, 1); set(java.util.Calendar.HOUR_OF_DAY, 0) }.timeInMillis
-                    
-                    var tI = 0.0; var tE = 0.0; var mI = 0.0; var mE = 0.0; var lI = 0.0; var lE = 0.0
-                    
-                    payments.forEach { p ->
-                        lI += p.amount
-                        if (p.paymentDateMs >= startOfMonth) mI += p.amount
-                        if (p.paymentDateMs >= startOfDay) tI += p.amount
+                ) { payments, expenses -> payments to expenses }
+                    .collectLatest { (payments, expenses) ->
+                        _financialSummary.value = withContext(Dispatchers.Default) {
+                            calculateFinancialSummary(payments, expenses)
+                        }
                     }
-                    expenses.forEach { e ->
-                        lE += e.amount
-                        if (e.expenseDateMs >= startOfMonth) mE += e.amount
-                        if (e.expenseDateMs >= startOfDay) tE += e.amount
-                    }
-                    FinancialSummary(tI, tE, mI, mE, lI, lE)
-                }.collect { stats ->
-                    _financialSummary.value = stats
-                }
             }
             launch {
-                db.feeDao().getAllFees(instId).collect { allFees ->
-                    val fees = allFees.filter {
-                        it.dueAmount > 0.0
-                        && (MonthlyDueCalculator.isMonthlyFeeType(it.feeType) || MonthlyDueCalculator.isPastMonth(it.feePeriod))
+                kotlinx.coroutines.flow.combine(
+                    db.feeDao().getAllFees(instId),
+                    db.studentDao().getStudentsByInstitute(instId),
+                    db.batchDao().getBatchesByInstitute(instId),
+                    db.batchStudentDao().getActiveEnrollmentsForInstitute(instId)
+                ) { fees, students, batches, activeEnrollments ->
+                    DashboardDueInput(fees, students, batches, activeEnrollments)
+                }.collectLatest { input ->
+                    val result = withContext(Dispatchers.Default) {
+                        calculateDashboardDue(input)
                     }
-                    val students = db.studentDao().getStudentsByInstituteOnce(instId).associateBy { it.id }
-                    val activeStudentIds = mutableSetOf<String>()
-                    val closedStudentIds = mutableSetOf<String>()
-                    var activeNonMonthlyDue = 0.0
-                    var closedNonMonthlyDue = 0.0
-                    fees.filter { !MonthlyDueCalculator.isMonthlyFeeType(it.feeType) }.forEach { fee ->
-                        val sid = fee.studentId
-                        // A fee without an active student record is an orphan from a historical
-                        // soft-delete. The Due Fees screen already excludes it; doing the same
-                        // here keeps both totals and student counts identical.
-                        val student = students[sid] ?: return@forEach
-                        if (isClosedStudentStatus(student.status)) {
-                            closedNonMonthlyDue += fee.dueAmount
-                            closedStudentIds += sid
-                        } else {
-                            activeNonMonthlyDue += fee.dueAmount
-                            activeStudentIds += sid
-                        }
-                    }
-                    var activeMonthlyDue = 0.0
-                    var closedMonthlyDue = 0.0
-                    students.values.forEach { student ->
-                        if (student.admissionDateMs <= 0L) return@forEach
-                        val enrolledBatches = db.batchStudentDao().getBatchesForStudent(student.id, instId).firstOrNull() ?: return@forEach
-                        val isClosed = isClosedStudentStatus(student.status)
-                        enrolledBatches.forEach { batch ->
-                            if (batch.monthlyFeeAmount <= 0.0) return@forEach
-                            val batchFees = allFees.filter { it.studentId == student.id && it.batchId == batch.id }
-                            val items = MonthlyDueCalculator.computeMonthlyOutstandingItems(
-                                admissionDateMs = student.admissionDateMs,
-                                monthlyFeeAmount = batch.monthlyFeeAmount,
-                                batchId = batch.id,
-                                batchName = batch.name,
-                                existingMonthlyFees = batchFees
-                            )
-                            items.forEach { item ->
-                                if (isClosed) {
-                                    closedMonthlyDue += item.outstanding
-                                    closedStudentIds += student.id
-                                } else {
-                                    activeMonthlyDue += item.outstanding
-                                    activeStudentIds += student.id
-                                }
-                            }
-                        }
-                    }
-                    _pendingFeesCount.value = (activeStudentIds + closedStudentIds).size
-                    _dueFeeSummary.value = DueFeeSummary(
-                        activeCount = activeStudentIds.size,
-                        activeAmount = activeNonMonthlyDue + activeMonthlyDue,
-                        closeCount = closedStudentIds.size,
-                        closeAmount = closedNonMonthlyDue + closedMonthlyDue
-                    )
+                    _pendingFeesCount.value = result.pendingFeesCount
+                    _dueFeeSummary.value = result.summary
                 }
             }
         }
@@ -2711,6 +2804,8 @@ private fun EnquirySummaryCard(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
+                TodayFollowUpBeacon(count = summary.todayFollowUp)
+                Spacer(Modifier.width(8.dp))
                 Box(
                     modifier = Modifier
                         .size(34.dp)
@@ -2720,6 +2815,14 @@ private fun EnquirySummaryCard(
                 ) {
                     Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(20.dp))
                 }
+            }
+
+            if (summary.todayFollowUp > 0) {
+                Spacer(Modifier.height(12.dp))
+                TodayFollowUpReminder(
+                    todayCount = summary.todayFollowUp,
+                    overdueCount = summary.overdueFollowUp
+                )
             }
 
             Spacer(Modifier.height(12.dp))
@@ -2736,21 +2839,103 @@ private fun EnquirySummaryCard(
                 EnquiryStat(summary.total, "Total", Modifier.weight(1f))
                 EnquiryStat(summary.active, "Active", Modifier.weight(1f))
                 EnquiryStat(summary.close, "Close", Modifier.weight(1f))
-                EnquiryStat(summary.followUp, "Follow up", Modifier.weight(1f))
+                EnquiryStat(summary.followUp, "Follow up", Modifier.weight(1f), AccentAmber)
             }
         }
     }
 }
 
 @Composable
-private fun EnquiryStat(value: Int, label: String, modifier: Modifier = Modifier) {
+private fun TodayFollowUpBeacon(count: Int) {
+    val pulseTransition = rememberInfiniteTransition(label = "todayFollowUpPulse")
+    val pulseScale by pulseTransition.animateFloat(
+        initialValue = 0.92f,
+        targetValue = 1.14f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 900, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "todayFollowUpScale"
+    )
+    val hasReminder = count > 0
+    Box(
+        modifier = Modifier.size(38.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        if (hasReminder) {
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .graphicsLayer(scaleX = pulseScale, scaleY = pulseScale)
+                    .clip(CircleShape)
+                    .background(AccentAmber.copy(alpha = 0.22f))
+            )
+        }
+        Box(
+            modifier = Modifier
+                .size(32.dp)
+                .clip(CircleShape)
+                .background(
+                    if (hasReminder) Brush.linearGradient(listOf(AccentOrange, AccentAmber))
+                    else Brush.linearGradient(listOf(AccentCyan.copy(alpha = 0.28f), AccentBlue.copy(alpha = 0.22f)))
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            if (hasReminder) {
+                Text(count.toString(), color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 14.sp)
+            } else {
+                Icon(Icons.Filled.EventAvailable, contentDescription = "No follow-ups scheduled today", tint = AccentCyan, modifier = Modifier.size(17.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun TodayFollowUpReminder(todayCount: Int, overdueCount: Int) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(13.dp))
+            .background(AccentAmber.copy(alpha = 0.11f))
+            .border(1.dp, AccentAmber.copy(alpha = 0.34f), RoundedCornerShape(13.dp))
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(Icons.Filled.NotificationsActive, contentDescription = null, tint = AccentAmber, modifier = Modifier.size(19.dp))
+        Spacer(Modifier.width(9.dp))
+        Column(Modifier.weight(1f)) {
+            Text("Today's follow-ups", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            Text(
+                "$todayCount contact${if (todayCount == 1) "" else "s"} to make today",
+                color = TextSecondary,
+                fontSize = 11.sp
+            )
+        }
+        if (overdueCount > 0) {
+            Text(
+                "$overdueCount overdue",
+                color = AccentRed,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+    }
+}
+
+@Composable
+private fun EnquiryStat(
+    value: Int,
+    label: String,
+    modifier: Modifier = Modifier,
+    valueColor: Color = TextPrimary
+) {
     Column(
         modifier = modifier,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
             value.toString(),
-            color = TextPrimary,
+            color = valueColor,
             fontSize = 17.sp,
             fontWeight = FontWeight.Bold,
             maxLines = 1
@@ -3478,7 +3663,7 @@ fun MoreScreen(
             "Staff Management" to "StaffRoute",
             "Staff Attendance" to "StaffAttendanceRoute",
             "Salary Management" to "SalaryRoute",
-            "Archived Students" to "ArchivedStudentsRoute",
+            "All Archives" to "AllArchivesRoute",
             "Expenses" to "ExpensesRoute",
             "Profit & Loss" to "ProfitLossRoute",
             "ID Card Generator" to "IdCardGeneratorRoute",

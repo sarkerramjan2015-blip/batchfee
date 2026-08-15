@@ -1,9 +1,13 @@
 ﻿package com.batchfee.edu.data.models
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 
-@Entity(tableName = "expenses")
+@Entity(
+    tableName = "expenses",
+    indices = [Index(value = ["instituteId", "archivedAtMs", "expenseDateMs"])]
+)
 data class ExpenseEntity(
     @PrimaryKey val id: String,
     val instituteId: String,

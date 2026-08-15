@@ -8,8 +8,10 @@ import com.google.firebase.crashlytics.FirebaseCrashlytics
 enum class InstituteRefreshScope {
     STUDENTS,
     BATCHES,
+    ENROLLMENTS,
     STAFF,
     FINANCE,
+    EXPENSES,
     ATTENDANCE
 }
 
@@ -59,12 +61,16 @@ object CoreDataSyncCoordinator {
                     SafeDeletionRepository(db).replayPending(instituteId)
                     BatchSyncHelper.syncAllFromFirestore(db, instituteId)
                 }
+                InstituteRefreshScope.ENROLLMENTS ->
+                    BatchStudentSyncHelper.syncAllFromFirestore(db, instituteId)
                 InstituteRefreshScope.STAFF ->
                     StaffSyncHelper.syncAllFromFirestore(db, instituteId)
                 InstituteRefreshScope.FINANCE -> {
                     FeeCollectionRepository(db).replayPendingOperations(instituteId)
                     FinanceSyncHelper.syncAllFromFirestore(db, instituteId)
                 }
+                InstituteRefreshScope.EXPENSES ->
+                    ExpenseSyncHelper.syncAllFromFirestore(db, instituteId)
                 InstituteRefreshScope.ATTENDANCE ->
                     AttendanceSyncHelper.syncAllFromFirestore(db, instituteId)
             }

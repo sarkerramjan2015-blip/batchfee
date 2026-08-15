@@ -20,10 +20,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.firestore.WorkCloudSyncHelper
 import com.batchfee.edu.data.models.BatchEntity
 import com.batchfee.edu.data.models.AssignmentEntity
 import com.batchfee.edu.domain.SessionManager
-import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
@@ -60,7 +60,9 @@ fun AddAssignmentScreen(db: AppDatabase, onBack: () -> Unit) {
     var dueDateMs by remember { mutableStateOf<Long?>(null) }
     var allowLateSubmission by remember { mutableStateOf(false) }
     var submissionFormat by remember { mutableStateOf("any") }
-    var status by remember { mutableStateOf("draft") }
+    // Assignment is normally intended for students, so publish is the simple default.
+    // The owner can still explicitly choose Draft when it is not ready.
+    var status by remember { mutableStateOf("published") }
     var isSaving by remember { mutableStateOf(false) }
     var saveError by remember { mutableStateOf<String?>(null) }
     var batchExpanded by remember { mutableStateOf(false) }
@@ -122,9 +124,11 @@ fun AddAssignmentScreen(db: AppDatabase, onBack: () -> Unit) {
             // Marks + Grading row
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(value = totalMarks, onValueChange = { totalMarks = it.filter { c -> c.isDigit() || c == '.' } }, label = { Text("Total Marks", color = AsMuted) }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(14.dp), singleLine = true, colors = asFieldColors())
-                ExposedDropdownMenuBox(expanded = gmExpanded, onExpandedChange = { gmExpanded = it }) {
-                    OutlinedTextField(value = gradingMethods.first { it.first == gradingMethod }.second, onValueChange = {}, readOnly = true, label = { Text("Grading", color = AsMuted) }, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(gmExpanded) }, modifier = Modifier.weight(1f).menuAnchor(), shape = RoundedCornerShape(14.dp), colors = asFieldColors())
-                    ExposedDropdownMenu(expanded = gmExpanded, onDismissRequest = { gmExpanded = false }, containerColor = AsCard) { gradingMethods.forEach { DropdownMenuItem(text = { Text(it.second, color = AsWhite) }, onClick = { gradingMethod = it.first; gmExpanded = false }) } }
+                Box(Modifier.weight(1f)) {
+                    ExposedDropdownMenuBox(expanded = gmExpanded, onExpandedChange = { gmExpanded = it }) {
+                        OutlinedTextField(value = gradingMethods.first { it.first == gradingMethod }.second, onValueChange = {}, readOnly = true, label = { Text("Grading", color = AsMuted) }, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(gmExpanded) }, modifier = Modifier.fillMaxWidth().menuAnchor(), shape = RoundedCornerShape(14.dp), colors = asFieldColors())
+                        ExposedDropdownMenu(expanded = gmExpanded, onDismissRequest = { gmExpanded = false }, containerColor = AsCard) { gradingMethods.forEach { DropdownMenuItem(text = { Text(it.second, color = AsWhite) }, onClick = { gradingMethod = it.first; gmExpanded = false }) } }
+                    }
                 }
             }
 
@@ -159,7 +163,7 @@ fun AddAssignmentScreen(db: AppDatabase, onBack: () -> Unit) {
                 }
             }
 
-            // Draft / Publish
+            // Publishing is the usual path; draft keeps unfinished work private.
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 FilterChip(selected = status == "draft", onClick = { status = "draft" }, label = { Text("Save as Draft", color = if (status == "draft") AsWhite else AsMuted) }, modifier = Modifier.weight(1f), colors = FilterChipDefaults.filterChipColors(selectedContainerColor = AsAmber.copy(alpha = 0.2f)))
                 FilterChip(selected = status == "published", onClick = { status = "published" }, label = { Text("Publish Now", color = if (status == "published") AsWhite else AsMuted) }, modifier = Modifier.weight(1f), colors = FilterChipDefaults.filterChipColors(selectedContainerColor = AsGreen.copy(alpha = 0.2f)))
@@ -172,14 +176,22 @@ fun AddAssignmentScreen(db: AppDatabase, onBack: () -> Unit) {
                 isSaving = true; saveError = null
                 scope.launch {
                     val a = AssignmentEntity(id = UUID.randomUUID().toString(), instituteId = instId, batchId = selectedBatch?.id, title = title.trim(), subject = subject.takeIf { it.isNotBlank() }, className = className.takeIf { it.isNotBlank() }, assignmentType = assignmentType, instructions = instructions.trim(), learningObjective = learningObjective.takeIf { it.isNotBlank() }, totalMarks = totalMarks.toDoubleOrNull(), passingMarks = null, gradingMethod = gradingMethod, rubricJson = null, startDateMs = System.currentTimeMillis(), dueDateMs = if (hasDueDate) dueDateMs else null, allowLateSubmission = allowLateSubmission, latePenalty = null, submissionFormat = submissionFormat, maxFileSizeKb = null, referenceMaterials = null, status = status, publishDateMs = if (status == "published") System.currentTimeMillis() else null, createdAtMs = System.currentTimeMillis(), updatedAtMs = System.currentTimeMillis(), archivedAtMs = null)
-                    withContext(Dispatchers.IO) { db.assignmentDao().upsert(a) }
-                    try { FirebaseFirestore.getInstance().collection("institutes").document(instId).collection("assignments").document(a.id).set(mapOf("instituteId" to instId, "batchId" to a.batchId, "title" to a.title, "subject" to a.subject, "className" to a.className, "assignmentType" to a.assignmentType, "instructions" to a.instructions, "learningObjective" to a.learningObjective, "totalMarks" to a.totalMarks, "gradingMethod" to a.gradingMethod, "startDateMs" to a.startDateMs, "dueDateMs" to a.dueDateMs, "allowLateSubmission" to a.allowLateSubmission, "submissionFormat" to a.submissionFormat, "status" to a.status, "createdAtMs" to a.createdAtMs)).await() } catch (_: Exception) {}
-                    isSaving = false; onBack()
+                    try {
+                        // A published assignment must reach the student app before
+                        // this screen reports a successful save.
+                        WorkCloudSyncHelper.syncAssignment(a)
+                        withContext(Dispatchers.IO) { db.assignmentDao().upsert(a) }
+                        onBack()
+                    } catch (_: Exception) {
+                        saveError = "Could not share assignment with students. Check your connection and try again."
+                    } finally {
+                        isSaving = false
+                    }
                 }
             }, modifier = Modifier.fillMaxWidth().height(54.dp), shape = RoundedCornerShape(16.dp), colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent), contentPadding = PaddingValues(0.dp)) {
                 Box(Modifier.fillMaxSize().shadow(12.dp, RoundedCornerShape(16.dp), spotColor = AsAmber.copy(alpha = 0.4f)).background(Brush.horizontalGradient(listOf(AsAmber, AsCyan)), RoundedCornerShape(16.dp)), contentAlignment = Alignment.Center) {
                     if (isSaving) CircularProgressIndicator(Modifier.size(22.dp), color = Color.White, strokeWidth = 2.dp)
-                    else Text("Save Assignment", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    else Text(if (status == "published") "Save & Publish" else "Save Draft", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                 }
             }
             Spacer(Modifier.height(24.dp))

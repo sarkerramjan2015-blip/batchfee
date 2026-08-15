@@ -17,4 +17,10 @@ interface HomeworkDao {
 
     @Query("UPDATE homework SET archivedAtMs = :ts WHERE id = :id AND instituteId = :instId")
     suspend fun archive(id: String, instId: String, ts: Long)
+
+    @Query("DELETE FROM homework_submissions WHERE instituteId = :instId AND homeworkId = :homeworkId")
+    suspend fun deleteSubmissionsForHomework(instId: String, homeworkId: String)
+
+    @Query("DELETE FROM homework WHERE id = :id AND instituteId = :instId")
+    suspend fun deletePermanently(id: String, instId: String)
 }

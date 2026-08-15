@@ -7,7 +7,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 object SessionManager {
-    const val SESSION_TIMEOUT_MS = 300_000L
+    // Institute owners and staff may need a little uninterrupted time while
+    // taking attendance or collecting payments. Sign out only after 20 minutes
+    // without any interaction; every touch or keyboard action resets the timer.
+    const val SESSION_TIMEOUT_MS = 1_200_000L
     const val SESSION_EXPIRED_MESSAGE = "Your session has expired. Please log in again."
 
     private const val PREFS_LOGIN = "batchfee_login_prefs"

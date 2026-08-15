@@ -34,6 +34,12 @@ class EnquiryViewModel(private val db: AppDatabase) : ViewModel() {
     private val _followUpCount = MutableStateFlow(0)
     val followUpCount = _followUpCount.asStateFlow()
 
+    private val _todayFollowUpCount = MutableStateFlow(0)
+    val todayFollowUpCount = _todayFollowUpCount.asStateFlow()
+
+    private val _overdueFollowUpCount = MutableStateFlow(0)
+    val overdueFollowUpCount = _overdueFollowUpCount.asStateFlow()
+
     val todayLabel = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(
         Calendar.getInstance().time
     )
@@ -50,14 +56,22 @@ class EnquiryViewModel(private val db: AppDatabase) : ViewModel() {
             db.enquiryDao().getEnquiriesByInstitute(instId).collect { list ->
                 _allEnquiries.value = list
 
-                val startOfToday = Calendar.getInstance().apply {
-                    set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
-                    set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+                val startOfToday = startOfDay(System.currentTimeMillis())
+                val startOfTomorrow = Calendar.getInstance().apply {
+                    timeInMillis = startOfToday
+                    add(Calendar.DAY_OF_YEAR, 1)
                 }.timeInMillis
                 _todayCount.value = list.count { it.enquiryDateMs >= startOfToday }
-                _followUpCount.value = list.count {
-                    it.status.equals("follow_up", ignoreCase = true) ||
-                    it.status.equals("follow up", ignoreCase = true)
+                val followUps = list.filter { isFollowUp(it.status) }
+                _followUpCount.value = followUps.size
+                // Old records did not have a scheduled follow-up date. Do not
+                // guess a date from their original enquiry date: owners should
+                // only be reminded about contacts they explicitly scheduled.
+                _todayFollowUpCount.value = followUps.count { enquiry ->
+                    enquiry.followUpDateMs?.let { it in startOfToday until startOfTomorrow } == true
+                }
+                _overdueFollowUpCount.value = followUps.count { enquiry ->
+                    enquiry.followUpDateMs?.let { it < startOfToday } == true
                 }
                 _isLoading.value = false
             }
@@ -74,6 +88,9 @@ class EnquiryViewModel(private val db: AppDatabase) : ViewModel() {
                 withContext(Dispatchers.IO) {
                     val updated = enquiry.copy(
                         status = newStatus,
+                        followUpDateMs = if (isFollowUp(newStatus)) {
+                            enquiry.followUpDateMs ?: startOfDay(System.currentTimeMillis())
+                        } else enquiry.followUpDateMs,
                         updatedAtMs = System.currentTimeMillis()
                     )
                     EnquirySyncHelper.upsertEnquiry(updated)
@@ -81,6 +98,25 @@ class EnquiryViewModel(private val db: AppDatabase) : ViewModel() {
                 }
             } catch (e: Exception) {
                 onError(e.message ?: "Failed to update status")
+            }
+        }
+    }
+
+    /** Scheduling always keeps this enquiry in the follow-up queue. */
+    fun scheduleFollowUp(enquiry: EnquiryEntity, dateMs: Long, onError: (String) -> Unit = {}) {
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    val updated = enquiry.copy(
+                        status = "follow_up",
+                        followUpDateMs = startOfDay(dateMs),
+                        updatedAtMs = System.currentTimeMillis()
+                    )
+                    EnquirySyncHelper.upsertEnquiry(updated)
+                    db.enquiryDao().updateEnquiry(updated)
+                }
+            } catch (e: Exception) {
+                onError(e.message ?: "Could not schedule follow-up")
             }
         }
     }
@@ -157,6 +193,17 @@ class EnquiryViewModel(private val db: AppDatabase) : ViewModel() {
             }
         }
     }
+
+    private fun isFollowUp(status: String): Boolean =
+        status.equals("follow_up", ignoreCase = true) || status.equals("follow up", ignoreCase = true)
+
+    private fun startOfDay(timeMs: Long): Long = Calendar.getInstance().apply {
+        timeInMillis = timeMs
+        set(Calendar.HOUR_OF_DAY, 0)
+        set(Calendar.MINUTE, 0)
+        set(Calendar.SECOND, 0)
+        set(Calendar.MILLISECOND, 0)
+    }.timeInMillis
 }
 
 class EnquiryViewModelFactory(private val db: AppDatabase) : ViewModelProvider.Factory {

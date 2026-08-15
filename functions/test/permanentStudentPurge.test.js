@@ -91,7 +91,6 @@ function request() {
     data: {
       instituteId: "institute-a",
       studentId: "student-a",
-      confirmationName: "Archived Student",
     },
   };
 }
@@ -138,4 +137,26 @@ test("permanent purge clears student authentication artifacts", async () => {
   assert.equal(db.documents.has("student_auth_attempts/login-key"), false);
   assert.equal(db.documents.has("student_login_mappings/STU-100"), false);
   assert.deepEqual(deletedAuthUsers, ["student-auth-uid"]);
+});
+
+test("managed institute owner can purge an archived student", async () => {
+  const now = Date.now();
+  const db = new FakeDb({
+    "institutes/institute-a": liveInstitute(now),
+    "institutes/institute-a/students/student-a": archivedStudent(),
+    "app_users/owner-auth-uid": { role: "InstituteOwner", instituteId: "institute-a", status: "active" },
+  });
+  const handler = createPermanentStudentPurgeHandler({
+    db,
+    adminAuth: { deleteUser: async () => {} },
+    bucket: { name: "bucket", file: () => ({ delete: async () => {} }) },
+  });
+
+  const result = await handler({
+    auth: { uid: "owner-auth-uid" },
+    data: { instituteId: "institute-a", studentId: "student-a" },
+  });
+
+  assert.deepEqual(result, { studentId: "student-a", permanentlyDeleted: true });
+  assert.equal(db.documents.has("institutes/institute-a/students/student-a"), false);
 });

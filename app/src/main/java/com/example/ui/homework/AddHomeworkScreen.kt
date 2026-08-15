@@ -20,11 +20,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.firestore.WorkCloudSyncHelper
 import com.batchfee.edu.data.models.BatchEntity
 import com.batchfee.edu.data.models.HomeworkEntity
 import com.batchfee.edu.domain.PasswordHasher
 import com.batchfee.edu.domain.SessionManager
-import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
@@ -173,12 +173,17 @@ fun AddHomeworkScreen(db: AppDatabase, onBack: () -> Unit) {
                         requiresSubmission = requiresSubmission, status = "active", attachmentUri = null,
                         createdAtMs = System.currentTimeMillis(), updatedAtMs = System.currentTimeMillis(), archivedAtMs = null
                     )
-                    withContext(Dispatchers.IO) { db.homeworkDao().upsert(hw) }
                     try {
-                        FirebaseFirestore.getInstance().collection("institutes").document(instId).collection("homework").document(hw.id)
-                            .set(mapOf("instituteId" to instId, "batchId" to hw.batchId, "title" to hw.title, "subject" to hw.subject, "className" to hw.className, "instructions" to hw.instructions, "bookPage" to hw.bookPage, "startDateMs" to hw.startDateMs, "dueDateMs" to hw.dueDateMs, "requiresSubmission" to hw.requiresSubmission, "status" to hw.status, "createdAtMs" to hw.createdAtMs)).await()
-                    } catch (_: Exception) {}
-                    isSaving = false; onBack()
+                        // Student work is live data. Do not show a local-only
+                        // save as published when the shared cloud write failed.
+                        WorkCloudSyncHelper.syncHomework(hw)
+                        withContext(Dispatchers.IO) { db.homeworkDao().upsert(hw) }
+                        onBack()
+                    } catch (_: Exception) {
+                        saveError = "Could not share homework with students. Check your connection and try again."
+                    } finally {
+                        isSaving = false
+                    }
                 }
             }, modifier = Modifier.fillMaxWidth().height(54.dp), shape = RoundedCornerShape(16.dp), colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent), contentPadding = PaddingValues(0.dp)) {
                 Box(Modifier.fillMaxSize().shadow(12.dp, RoundedCornerShape(16.dp), spotColor = HwBlue.copy(alpha = 0.4f)).background(Brush.horizontalGradient(listOf(HwBlue, HwCyan)), RoundedCornerShape(16.dp)), contentAlignment = Alignment.Center) {

@@ -317,7 +317,7 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
     val students by viewModel.students.collectAsState()
     val records by viewModel.attendanceRecords.collectAsState()
     val batch by viewModel.currentBatch.collectAsState()
-    val absentMsgMap by viewModel.absentMessageMap.collectAsState()
+    val attendanceMsgMap by viewModel.attendanceMessageMap.collectAsState()
     val sendingIds by viewModel.sendingMessageIds.collectAsState()
     val absentMessageTemplate by viewModel.absentMessageTemplate.collectAsState()
     val selectedDateMs by viewModel.selectedDateMs.collectAsState()
@@ -335,6 +335,7 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
     // Dialog states
     var showChannelDialog by remember { mutableStateOf(false) }
     var dialogStudentId by remember { mutableStateOf<String?>(null) }
+    var dialogAttendanceStatus by remember { mutableStateOf("absent") }
     var showAllChannelDialog by remember { mutableStateOf(false) }
     var messageDraft by remember { mutableStateOf("") }
     var showTemplateEditor by remember { mutableStateOf(false) }
@@ -419,7 +420,7 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
 
             // Student list
             studentsWithStatus.forEach { (student, status) ->
-                val hasMessage = absentMsgMap[student.id] == true
+                val hasMessage = attendanceMsgMap[student.id] == true
                 val isSending = student.id in sendingIds
                 StudentAttendanceCard(
                     studentName = student.fullName,
@@ -431,7 +432,13 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
                     onUndo = { viewModel.undoAttendance(student.id, selectedDateMs, batchId) },
                     onSendMessage = {
                         dialogStudentId = student.id
-                        messageDraft = viewModel.buildAbsentMessage(student, batch?.name.orEmpty(), selectedDateMs)
+                        dialogAttendanceStatus = status
+                        messageDraft = viewModel.buildAttendanceMessage(
+                            student = student,
+                            batchName = batch?.name.orEmpty(),
+                            dateMs = selectedDateMs,
+                            status = status
+                        )
                         showChannelDialog = true
                     }
                 )
@@ -447,10 +454,18 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
         AlertDialog(
             onDismissRequest = { showChannelDialog = false },
             containerColor = CardBg,
-            title = { Text("Send Absent Message", color = TextWhite, fontSize = 16.sp) },
+            title = { Text("Send Attendance Message", color = TextWhite, fontSize = 16.sp) },
             text = {
                 Column {
+                    /* Legacy absent-only label retained for source-encoding compatibility.
                     Text("${student?.fullName ?: "Student"} — absent $dateLabel", color = TextMuted, fontSize = 13.sp)
+                    */
+                    val statusLabel = dialogAttendanceStatus.replaceFirstChar { it.uppercase() }
+                    val studentLabel = student?.fullName ?: "Student"
+                    Text("$studentLabel - $statusLabel - $dateLabel", color = TextMuted, fontSize = 13.sp)
+                    /* Legacy source-encoded label retained for compatibility.
+                    Text("${student?.fullName ?: \"Student\"} • $statusLabel • $dateLabel", color = TextMuted, fontSize = 13.sp)
+                    */
                     val recipient = student?.guardianPhone?.takeIf { it.isNotBlank() }
                         ?: student?.phone?.takeIf { it.isNotBlank() }
                     Text(
@@ -475,14 +490,16 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
                             unfocusedLabelColor = TextMuted
                         )
                     )
-                    TextButton(onClick = {
-                        templateDraft = absentMessageTemplate
-                        showChannelDialog = false
-                        showTemplateEditor = true
-                    }) {
-                        Text("Edit default template", color = Cyan, fontSize = 12.sp)
+                    if (dialogAttendanceStatus == "absent") {
+                        TextButton(onClick = {
+                            templateDraft = absentMessageTemplate
+                            showChannelDialog = false
+                            showTemplateEditor = true
+                        }) {
+                            Text("Edit absent template", color = Cyan, fontSize = 12.sp)
+                        }
                     }
-                    if (absentMsgMap[sid] == true) {
+                    if (attendanceMsgMap[sid] == true) {
                         Text(
                             "A message was already opened today. You can still send an updated message.",
                             color = AccentSky,
@@ -493,7 +510,7 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
                     channelCard("WhatsApp", Icons.Filled.Message, WAGreen, {
                         showChannelDialog = false
                         student?.let {
-                            viewModel.sendAbsentMessage(
+                            viewModel.sendAttendanceMessage(
                                 context = context, student = it, batchId = batchId,
                                 dateMs = selectedDateMs, channel = "whatsapp", messageText = messageDraft,
                                 onSent = {},
@@ -505,7 +522,7 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
                     channelCard("SMS", Icons.Filled.Sms, ElectricBlue, {
                         showChannelDialog = false
                         student?.let {
-                            viewModel.sendAbsentMessage(
+                            viewModel.sendAttendanceMessage(
                                 context = context, student = it, batchId = batchId,
                                 dateMs = selectedDateMs, channel = "sms", messageText = messageDraft,
                                 onSent = {},
@@ -666,21 +683,19 @@ private fun StudentAttendanceCard(
                     modifier = Modifier.height(28.dp)
                 ) { Icon(Icons.Filled.Undo, null, tint = TextMuted, modifier = Modifier.size(14.dp)); Spacer(Modifier.width(2.dp)); Text("Undo", color = TextMuted, fontSize = 11.sp) }
 
-                if (status == "absent") {
-                    OutlinedButton(
-                        onClick = onSendMessage,
-                        enabled = !isSending,
-                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
-                        modifier = Modifier.height(28.dp),
-                        shape = RoundedCornerShape(6.dp),
-                        border = BorderStroke(1.dp, WAGreen.copy(0.5f)),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = WAGreen)
-                    ) {
-                        when {
-                            isSending -> CircularProgressIndicator(color = WAGreen, strokeWidth = 2.dp, modifier = Modifier.size(12.dp))
-                            hasMessage -> { Icon(Icons.Filled.Message, null, tint = WAGreen, modifier = Modifier.size(14.dp)); Spacer(Modifier.width(2.dp)); Text("Msg again", fontSize = 10.sp) }
-                            else -> { Icon(Icons.Filled.Message, null, tint = WAGreen, modifier = Modifier.size(14.dp)); Spacer(Modifier.width(2.dp)); Text("Msg", fontSize = 10.sp) }
-                        }
+                OutlinedButton(
+                    onClick = onSendMessage,
+                    enabled = !isSending,
+                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+                    modifier = Modifier.height(28.dp),
+                    shape = RoundedCornerShape(6.dp),
+                    border = BorderStroke(1.dp, WAGreen.copy(0.5f)),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = WAGreen)
+                ) {
+                    when {
+                        isSending -> CircularProgressIndicator(color = WAGreen, strokeWidth = 2.dp, modifier = Modifier.size(12.dp))
+                        hasMessage -> { Icon(Icons.Filled.Message, null, tint = WAGreen, modifier = Modifier.size(14.dp)); Spacer(Modifier.width(2.dp)); Text("Msg again", fontSize = 10.sp) }
+                        else -> { Icon(Icons.Filled.Message, null, tint = WAGreen, modifier = Modifier.size(14.dp)); Spacer(Modifier.width(2.dp)); Text("Msg", fontSize = 10.sp) }
                     }
                 }
             }

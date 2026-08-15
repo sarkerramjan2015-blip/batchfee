@@ -503,7 +503,7 @@ private fun openPdf(context: Context, file: File) {
 // ═══════════════════════════════════════
 //  PROFESSIONAL PDF — shapes & patterns
 // ═══════════════════════════════════════
-private suspend fun generateProfessionalIdCardPdf(
+internal suspend fun generateProfessionalIdCardPdf(
     context: Context,
     student: StudentEntity,
     institute: InstituteEntity?,

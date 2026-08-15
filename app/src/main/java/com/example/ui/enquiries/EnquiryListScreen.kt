@@ -35,6 +35,7 @@ import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.data.models.EnquiryEntity
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
@@ -60,6 +61,8 @@ fun EnquiryListScreen(db: AppDatabase, onBack: () -> Unit, onAddEnquiry: () -> U
     val isLoading by viewModel.isLoading.collectAsState()
     val todayCount by viewModel.todayCount.collectAsState()
     val followUpCount by viewModel.followUpCount.collectAsState()
+    val todayFollowUpCount by viewModel.todayFollowUpCount.collectAsState()
+    val overdueFollowUpCount by viewModel.overdueFollowUpCount.collectAsState()
 
     var selectedEnquiry by remember { mutableStateOf<EnquiryEntity?>(null) }
     var showDetailDialog by remember { mutableStateOf(false) }
@@ -76,11 +79,21 @@ fun EnquiryListScreen(db: AppDatabase, onBack: () -> Unit, onAddEnquiry: () -> U
 
     val filteredEnquiries = remember(allEnquiries, filterStatus) {
         when (filterStatus) {
-            "follow_up" -> allEnquiries.filter { it.status.equals("follow_up", ignoreCase = true) || it.status.equals("follow up", ignoreCase = true) }
+            "follow_up" -> allEnquiries
+                .filter { isFollowUp(it.status) }
+                .sortedWith(compareBy<EnquiryEntity> { it.followUpDateMs ?: Long.MAX_VALUE }.thenBy { it.name.lowercase() })
             "active" -> allEnquiries.filter { it.status.equals("active", ignoreCase = true) }
             "close" -> allEnquiries.filter { it.status.equals("close", ignoreCase = true) || it.status.equals("closed", ignoreCase = true) }
             else -> allEnquiries
         }
+    }
+    val followUpGroups = remember(filteredEnquiries, filterStatus) {
+        if (filterStatus == "follow_up") {
+            filteredEnquiries
+                .groupBy { it.followUpDateMs }
+                .toList()
+                .sortedBy { (date, _) -> date ?: Long.MAX_VALUE }
+        } else emptyList()
     }
 
     Scaffold(
@@ -110,8 +123,12 @@ fun EnquiryListScreen(db: AppDatabase, onBack: () -> Unit, onAddEnquiry: () -> U
             ) {
                 item {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        SummaryChip("Today", "$todayCount", Cyan, Modifier.weight(1f))
-                        SummaryChip("Follow Up", "$followUpCount", AccentAmber, Modifier.weight(1f))
+                        SummaryChip("Today's contacts", "$todayFollowUpCount", AccentAmber, Modifier.weight(1f))
+                        SummaryChip("All follow-ups", "$followUpCount", Cyan, Modifier.weight(1f))
+                    }
+                    if (overdueFollowUpCount > 0) {
+                        Spacer(Modifier.height(7.dp))
+                        Text("$overdueFollowUpCount follow-up${if (overdueFollowUpCount == 1) " is" else "s are"} overdue", color = AccentRed, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                     }
                     Spacer(Modifier.height(10.dp))
                 }
@@ -140,14 +157,31 @@ fun EnquiryListScreen(db: AppDatabase, onBack: () -> Unit, onAddEnquiry: () -> U
                         }
                     }
                 } else {
-                    items(filteredEnquiries, key = { it.id }) { enquiry ->
-                        EnquiryCard(enquiry = enquiry, dateFormat = dateFormat, onClick = { selectedEnquiry = enquiry; showDetailDialog = true },
-                            onCall = { context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:${enquiry.phone}"))) },
-                            onSms = { context.startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${enquiry.phone}")).apply { putExtra("sms_body", "Hello ${enquiry.name}, ") }) },
-                            onWhatsApp = {
-                                val enc = java.net.URLEncoder.encode("Hello ${enquiry.name}, ", "UTF-8")
-                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/${enquiry.phone.replace("+","").replace(" ","")}?text=$enc")))
-                            })
+                    if (filterStatus == "follow_up") {
+                        followUpGroups.forEach { (date, enquiries) ->
+                            item(key = "follow-up-date-${date ?: "unscheduled"}") {
+                                FollowUpDateHeader(dateMs = date, count = enquiries.size, dateFormat = dateFormat)
+                            }
+                            items(enquiries, key = { it.id }) { enquiry ->
+                                EnquiryCard(enquiry = enquiry, dateFormat = dateFormat, onClick = { selectedEnquiry = enquiry; showDetailDialog = true },
+                                    onCall = { context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:${enquiry.phone}"))) },
+                                    onSms = { context.startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${enquiry.phone}")).apply { putExtra("sms_body", "Hello ${enquiry.name}, ") }) },
+                                    onWhatsApp = {
+                                        val enc = java.net.URLEncoder.encode("Hello ${enquiry.name}, ", "UTF-8")
+                                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/${enquiry.phone.replace("+","").replace(" ","")}?text=$enc")))
+                                    })
+                            }
+                        }
+                    } else {
+                        items(filteredEnquiries, key = { it.id }) { enquiry ->
+                            EnquiryCard(enquiry = enquiry, dateFormat = dateFormat, onClick = { selectedEnquiry = enquiry; showDetailDialog = true },
+                                onCall = { context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:${enquiry.phone}"))) },
+                                onSms = { context.startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${enquiry.phone}")).apply { putExtra("sms_body", "Hello ${enquiry.name}, ") }) },
+                                onWhatsApp = {
+                                    val enc = java.net.URLEncoder.encode("Hello ${enquiry.name}, ", "UTF-8")
+                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/${enquiry.phone.replace("+","").replace(" ","")}?text=$enc")))
+                                })
+                        }
                     }
                 }
                 item { Spacer(Modifier.height(80.dp)) }
@@ -189,6 +223,10 @@ fun EnquiryListScreen(db: AppDatabase, onBack: () -> Unit, onAddEnquiry: () -> U
         val statusLabel = when { e.status.equals("follow_up", ignoreCase = true) || e.status.equals("follow up", ignoreCase = true) -> "Follow Up"; e.status.equals("active", ignoreCase = true) -> "Active"; else -> "Closed" }
         val statusColor = when { e.status.equals("follow_up", ignoreCase = true) || e.status.equals("follow up", ignoreCase = true) -> AccentAmber; e.status.equals("active", ignoreCase = true) -> Cyan; else -> TextMuted }
         var editNote by remember { mutableStateOf(e.note ?: "") }
+        var showFollowUpDatePicker by remember(e.id) { mutableStateOf(false) }
+        val followUpDatePickerState = rememberDatePickerState(
+            initialSelectedDateMillis = e.followUpDateMs ?: System.currentTimeMillis()
+        )
 
         Dialog(onDismissRequest = { showDetailDialog = false }) {
             Card(Modifier.fillMaxWidth().padding(vertical = 8.dp), shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = CardBg), border = BorderStroke(1.dp, BorderSub)) {
@@ -239,12 +277,62 @@ fun EnquiryListScreen(db: AppDatabase, onBack: () -> Unit, onAddEnquiry: () -> U
                         StatusBtn("Closed", Icons.Filled.CheckCircle, AccentGreen, Modifier.weight(1f)) { viewModel.updateStatus(e, "close"); showDetailDialog = false }
                     }
 
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedButton(
+                        onClick = { showFollowUpDatePicker = true },
+                        modifier = Modifier.fillMaxWidth().height(42.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        border = BorderStroke(1.dp, AccentAmber.copy(alpha = 0.45f)),
+                        contentPadding = PaddingValues(horizontal = 12.dp)
+                    ) {
+                        Icon(Icons.Filled.Event, contentDescription = null, tint = AccentAmber, modifier = Modifier.size(17.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            if (e.followUpDateMs == null) "Schedule follow-up date" else "Follow-up: ${dateFormat.format(Date(e.followUpDateMs))}",
+                            color = AccentAmber,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+
                     Spacer(Modifier.height(12.dp))
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         TextButton(onClick = { showDetailDialog = false; selectedEnquiry = e; showDeleteDialog = true }) { Text("Delete", color = AccentRed, fontWeight = FontWeight.SemiBold) }
                         TextButton(onClick = { showDetailDialog = false }) { Text("Close", color = TextMuted) }
                     }
                 }
+            }
+        }
+
+        if (showFollowUpDatePicker) {
+            DatePickerDialog(
+                onDismissRequest = { showFollowUpDatePicker = false },
+                confirmButton = {
+                    TextButton(onClick = {
+                        followUpDatePickerState.selectedDateMillis?.let { selectedDate ->
+                            viewModel.scheduleFollowUp(
+                                enquiry = e,
+                                dateMs = selectedDate,
+                                onError = { scope.launch { snackbarHostState.showSnackbar(it) } }
+                            )
+                            scope.launch { snackbarHostState.showSnackbar("Follow-up scheduled") }
+                        }
+                        showFollowUpDatePicker = false
+                        showDetailDialog = false
+                    }) { Text("Schedule", color = AccentAmber, fontWeight = FontWeight.Bold) }
+                },
+                dismissButton = { TextButton(onClick = { showFollowUpDatePicker = false }) { Text("Cancel", color = TextMuted) } },
+                colors = DatePickerDefaults.colors(containerColor = CardBg)
+            ) {
+                DatePicker(state = followUpDatePickerState, colors = DatePickerDefaults.colors(
+                    containerColor = CardBg,
+                    titleContentColor = TextWhite,
+                    headlineContentColor = AccentAmber,
+                    weekdayContentColor = TextMuted,
+                    selectedDayContainerColor = AccentAmber,
+                    selectedDayContentColor = BgColor,
+                    todayDateBorderColor = AccentAmber
+                ))
             }
         }
     }
@@ -262,8 +350,9 @@ fun EnquiryListScreen(db: AppDatabase, onBack: () -> Unit, onAddEnquiry: () -> U
 
 @Composable
 private fun EnquiryCard(enquiry: EnquiryEntity, dateFormat: SimpleDateFormat, onClick: () -> Unit, onCall: () -> Unit, onSms: () -> Unit, onWhatsApp: () -> Unit) {
-    val statusColor = when { enquiry.status.equals("follow_up", ignoreCase = true) || enquiry.status.equals("follow up", ignoreCase = true) -> AccentAmber; enquiry.status.equals("active", ignoreCase = true) -> Cyan; else -> TextMuted }
-    val statusLabel = when { enquiry.status.equals("follow_up", ignoreCase = true) || enquiry.status.equals("follow up", ignoreCase = true) -> "Follow Up"; enquiry.status.equals("active", ignoreCase = true) -> "Active"; else -> "Closed" }
+    val isFollowUp = isFollowUp(enquiry.status)
+    val statusColor = when { isFollowUp -> AccentAmber; enquiry.status.equals("active", ignoreCase = true) -> Cyan; else -> TextMuted }
+    val statusLabel = when { isFollowUp -> "Follow Up"; enquiry.status.equals("active", ignoreCase = true) -> "Active"; else -> "Closed" }
 
     Card(Modifier.fillMaxWidth().clickable(onClick = onClick), shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = CardBgAlt), border = BorderStroke(1.dp, BorderSub)) {
         Column(modifier = Modifier.padding(14.dp)) {
@@ -288,6 +377,22 @@ private fun EnquiryCard(enquiry: EnquiryEntity, dateFormat: SimpleDateFormat, on
                     Text(note, color = TextMuted, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 }
             }
+            if (isFollowUp) {
+                Spacer(Modifier.height(8.dp))
+                val followUpLabel = enquiry.followUpDateMs?.let { followUpDateLabel(it, dateFormat) } ?: "Set follow-up date"
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(AccentAmber.copy(alpha = 0.10f))
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Filled.Event, null, tint = AccentAmber, modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(followUpLabel, color = AccentAmber, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                }
+            }
             Spacer(Modifier.height(10.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 ActionChip(Icons.Filled.Call, "Call", AccentGreen, Modifier.weight(1f), onCall)
@@ -297,6 +402,43 @@ private fun EnquiryCard(enquiry: EnquiryEntity, dateFormat: SimpleDateFormat, on
         }
     }
 }
+
+@Composable
+private fun FollowUpDateHeader(dateMs: Long?, count: Int, dateFormat: SimpleDateFormat) {
+    val label = dateMs?.let { followUpDateLabel(it, dateFormat) } ?: "No date set"
+    val color = if (dateMs == null) TextMuted else AccentAmber
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp, bottom = 1.dp)) {
+        Icon(Icons.Filled.Event, contentDescription = null, tint = color, modifier = Modifier.size(15.dp))
+        Spacer(Modifier.width(6.dp))
+        Text(label, color = color, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.width(6.dp))
+        Text("$count", color = TextMuted, fontSize = 12.sp)
+    }
+}
+
+private fun isFollowUp(status: String): Boolean =
+    status.equals("follow_up", ignoreCase = true) || status.equals("follow up", ignoreCase = true)
+
+private fun followUpDateLabel(dateMs: Long, dateFormat: SimpleDateFormat): String {
+    val today = startOfDay(System.currentTimeMillis())
+    val tomorrow = Calendar.getInstance().apply {
+        timeInMillis = today
+        add(Calendar.DAY_OF_YEAR, 1)
+    }.timeInMillis
+    return when {
+        dateMs in today until tomorrow -> "Today · follow-up"
+        dateMs < today -> "Overdue · ${dateFormat.format(Date(dateMs))}"
+        else -> "Follow-up · ${dateFormat.format(Date(dateMs))}"
+    }
+}
+
+private fun startOfDay(timeMs: Long): Long = Calendar.getInstance().apply {
+    timeInMillis = timeMs
+    set(Calendar.HOUR_OF_DAY, 0)
+    set(Calendar.MINUTE, 0)
+    set(Calendar.SECOND, 0)
+    set(Calendar.MILLISECOND, 0)
+}.timeInMillis
 
 @Composable
 private fun ActionChip(icon: ImageVector, label: String, color: Color, modifier: Modifier, onClick: () -> Unit) {

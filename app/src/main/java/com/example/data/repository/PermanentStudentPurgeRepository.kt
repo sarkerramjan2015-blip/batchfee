@@ -9,12 +9,11 @@ import kotlinx.coroutines.tasks.await
 class PermanentStudentPurgeRepository(private val db: AppDatabase) {
     private val functions = FirebaseFunctions.getInstance("asia-south1")
 
-    suspend fun purge(instituteId: String, studentId: String, confirmationName: String) {
+    suspend fun purge(instituteId: String, studentId: String) {
         functions.getHttpsCallable("permanentlyPurgeStudent").call(
             mapOf(
                 "instituteId" to instituteId,
-                "studentId" to studentId,
-                "confirmationName" to confirmationName
+                "studentId" to studentId
             )
         ).await()
 

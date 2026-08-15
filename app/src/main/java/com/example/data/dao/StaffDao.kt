@@ -63,4 +63,7 @@ interface StaffDao {
 
     @Query("UPDATE staff SET archivedAtMs = NULL, status = 'active' WHERE id = :staffId AND instituteId = :instituteId")
     suspend fun restoreStaff(instituteId: String, staffId: String)
+
+    @Query("DELETE FROM staff WHERE id = :staffId AND instituteId = :instituteId")
+    suspend fun deleteStaff(instituteId: String, staffId: String)
 }

@@ -2,7 +2,6 @@ package com.batchfee.edu.ui.students
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -18,7 +17,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -98,9 +96,9 @@ fun ArchivedStudentsScreen(db: AppDatabase, onBack: () -> Unit) {
         )
     }
     purgeTarget?.let { student ->
-        PermanentDeleteDialog(student = student, isWorking = isWorking, onDismiss = { if (!isWorking) purgeTarget = null }) { name ->
+        PermanentDeleteDialog(student = student, isWorking = isWorking, onDismiss = { if (!isWorking) purgeTarget = null }) {
             val inst = instituteId ?: return@PermanentDeleteDialog
-            scope.launch { isWorking = true; runCatching { PermanentStudentPurgeRepository(db).purge(inst, student.id, name) }
+            scope.launch { isWorking = true; runCatching { PermanentStudentPurgeRepository(db).purge(inst, student.id) }
                 .onSuccess { purgeTarget = null; snackbar.showSnackbar("Student and all linked data permanently deleted") }
                 .onFailure { snackbar.showSnackbar(it.message ?: "Permanent deletion failed") }; isWorking = false }
         }
@@ -123,18 +121,14 @@ private fun ArchivedStudentCard(student: StudentEntity, onRestore: () -> Unit, o
 }
 
 @Composable
-private fun PermanentDeleteDialog(student: StudentEntity, isWorking: Boolean, onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
-    var typedName by remember(student.id) { mutableStateOf("") }
+private fun PermanentDeleteDialog(student: StudentEntity, isWorking: Boolean, onDismiss: () -> Unit, onConfirm: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss, containerColor = ArchiveCard,
         title = { Text("Permanently delete?", color = ArchiveRed, fontWeight = FontWeight.Bold) },
         text = { Column {
             Text("This removes ${student.fullName}'s profile, fees, payments, receipts, attendance, results, submissions, photo and login. This cannot be undone.", color = ArchiveMuted)
-            Spacer(Modifier.height(14.dp))
-            Text("Type the full student name to confirm", color = ArchiveText, fontSize = 13.sp)
-            OutlinedTextField(value = typedName, onValueChange = { typedName = it }, enabled = !isWorking, singleLine = true, label = { Text(student.fullName) }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text), colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = ArchiveRed, focusedLabelColor = ArchiveRed, focusedTextColor = ArchiveText, unfocusedTextColor = ArchiveText))
         } },
-        confirmButton = { TextButton(enabled = !isWorking && typedName.trim() == student.fullName.trim(), onClick = { onConfirm(typedName.trim()) }) { Text(if (isWorking) "Deleting…" else "Delete permanently", color = ArchiveRed) } },
+        confirmButton = { TextButton(enabled = !isWorking, onClick = onConfirm) { Text("Delete permanently", color = ArchiveRed) } },
         dismissButton = { TextButton(enabled = !isWorking, onClick = onDismiss) { Text("Cancel", color = ArchiveMuted) } }
     )
 }

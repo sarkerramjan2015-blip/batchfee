@@ -22,6 +22,12 @@ function isSuperAdmin(user) {
     (!Object.prototype.hasOwnProperty.call(user, "status") || user.status === "active");
 }
 
+function isManagedInstituteOwner(user, instituteId) {
+  return user && user.instituteId === instituteId &&
+    ["InstituteOwner", "owner", "instituteOwner", "institute_owner"].includes(user.role) &&
+    (!Object.prototype.hasOwnProperty.call(user, "status") || user.status === "active");
+}
+
 async function deleteQuery(db, query) {
   while (true) {
     const snapshot = await query.limit(400).get();
@@ -32,16 +38,27 @@ async function deleteQuery(db, query) {
   }
 }
 
+async function removeDeletionMetadata(db, instituteRef, entityType, entityId) {
+  await instituteRef.collection("deletion_states").doc(`${entityType}_${entityId}`).delete().catch(() => {});
+  for (const collection of ["deletion_operations", "deletion_audit"]) {
+    const snapshot = await instituteRef.collection(collection).where("entityId", "==", entityId).get();
+    const matches = snapshot.docs.filter((doc) => doc.get("entityType") === entityType);
+    if (matches.length === 0) continue;
+    const batch = db.batch();
+    matches.forEach((doc) => batch.delete(doc.ref));
+    await batch.commit();
+  }
+}
+
 /**
  * Irreversible server-side student data purge. Only an archived student can be purged;
- * the caller must be the institute owner or a Super Admin and must type the exact name.
+ * the caller must be the institute owner or a Super Admin.
  */
 function createPermanentStudentPurgeHandler({ db, adminAuth, bucket }) {
   return async (request) => {
     if (!request.auth?.uid) throw new HttpsError("unauthenticated", "Sign in is required.");
     const instituteId = requireString(request.data, "instituteId", 128);
     const studentId = requireString(request.data, "studentId", 128);
-    const confirmationName = requireString(request.data, "confirmationName", 160);
     const instituteRef = db.collection("institutes").doc(instituteId);
     const studentRef = instituteRef.collection("students").doc(studentId);
     const [instituteSnap, studentSnap, actorSnap] = await Promise.all([
@@ -49,9 +66,11 @@ function createPermanentStudentPurgeHandler({ db, adminAuth, bucket }) {
     ]);
     if (!instituteSnap.exists || !studentSnap.exists) throw new HttpsError("not-found", "Archived student was not found.");
     const institute = instituteSnap.data();
-    const superAdmin = isSuperAdmin(actorSnap.exists ? actorSnap.data() : null);
+    const actor = actorSnap.exists ? actorSnap.data() : null;
+    const superAdmin = isSuperAdmin(actor);
+    const managedOwner = isManagedInstituteOwner(actor, instituteId);
     const owner = request.auth.uid === instituteId || request.auth.uid === institute.ownerUid;
-    if (!owner && !superAdmin) {
+    if (!owner && !managedOwner && !superAdmin) {
       throw new HttpsError("permission-denied", "Only the institute owner or Super Admin can permanently delete a student.");
     }
     if (!hasCurrentSubscription(institute)) {
@@ -61,10 +80,6 @@ function createPermanentStudentPurgeHandler({ db, adminAuth, bucket }) {
     if (student.archivedAtMs == null || student.status !== "archived") {
       throw new HttpsError("failed-precondition", "Archive the student before permanently deleting their data.");
     }
-    if (confirmationName !== String(student.fullName || "").trim()) {
-      throw new HttpsError("invalid-argument", "Student name confirmation does not match.");
-    }
-
     // Remove every application record keyed by this student before deleting the profile.
     await Promise.all(STUDENT_COLLECTIONS.map((collection) =>
       deleteQuery(db, instituteRef.collection(collection).where("studentId", "==", studentId))
@@ -100,7 +115,7 @@ function createPermanentStudentPurgeHandler({ db, adminAuth, bucket }) {
       ...[...loginKeys].map((loginKey) => db.collection("student_auth_attempts").doc(loginKey).delete()),
     ]);
     await studentRef.delete();
-    await instituteRef.collection("deletion_states").doc(`student_${studentId}`).delete().catch(() => {});
+    await removeDeletionMetadata(db, instituteRef, "student", studentId);
     return { studentId, permanentlyDeleted: true };
   };
 }

@@ -106,8 +106,10 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
     private fun addSendingId(id: String) { synchronized(_sendingMessageIds) { _sendingMessageIds.value = _sendingMessageIds.value + id } }
     private fun removeSendingId(id: String) { synchronized(_sendingMessageIds) { _sendingMessageIds.value = _sendingMessageIds.value - id } }
 
-    private val _absentMessageMap = MutableStateFlow<Map<String, Boolean>>(emptyMap())
-    val absentMessageMap = _absentMessageMap.asStateFlow()
+    // This keeps track of any attendance notification opened for a student today.
+    // The underlying table keeps its legacy name for migration compatibility.
+    private val _attendanceMessageMap = MutableStateFlow<Map<String, Boolean>>(emptyMap())
+    val attendanceMessageMap = _attendanceMessageMap.asStateFlow()
 
     private val _absentMessageTemplate = MutableStateFlow(DEFAULT_ATTENDANCE_ABSENT_TEMPLATE)
     val absentMessageTemplate = _absentMessageTemplate.asStateFlow()
@@ -247,9 +249,29 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
         }
     }
 
-    fun buildAbsentMessage(student: StudentEntity, batchName: String, dateMs: Long): String {
+    fun buildAttendanceMessage(
+        student: StudentEntity,
+        batchName: String,
+        dateMs: Long,
+        status: String
+    ): String {
         val date = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(startOfDay(dateMs)))
         val guardianName = student.guardianName?.trim()?.takeIf { it.isNotBlank() } ?: "অভিভাবক"
+        if (status != "absent") {
+            val statusText = when (status) {
+                "present" -> "উপস্থিত ছিল"
+                "leave" -> "ছুটিতে ছিল"
+                "holiday" -> "ছুটির কারণে ক্লাসে উপস্থিত হওয়ার প্রয়োজন ছিল না"
+                else -> "attendance update করা হয়েছে"
+            }
+            return """
+                প্রিয় $guardianName,
+
+                আজ $date-এ ${student.fullName} (${student.studentCode}) $batchName ব্যাচে $statusText।
+
+                — ${_instituteName.value}
+            """.trimIndent()
+        }
         val replacements = mapOf(
             "{guardianName}" to guardianName,
             "{studentName}" to student.fullName,
@@ -276,7 +298,7 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
         }
         viewModelScope.launch {
             db.absentMessageDao().getMessagesForBatchDate(instId, batchId, startDay).collect { msgs ->
-                _absentMessageMap.value = msgs.associate { it.studentId to true }
+                _attendanceMessageMap.value = msgs.associate { it.studentId to true }
             }
         }
     }
@@ -369,7 +391,7 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
         }
     }
 
-    fun sendAbsentMessage(
+    fun sendAttendanceMessage(
         context: Context,
         student: StudentEntity,
         batchId: String,
@@ -452,13 +474,13 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
         absentRecords.forEach { record ->
             val student = _students.value.find { it.id == record.studentId } ?: run { completed.incrementAndGet(); return@forEach }
             val batchName = _currentBatch.value?.name ?: ""
-            sendAbsentMessage(
+            sendAttendanceMessage(
                 context = context,
                 student = student,
                 batchId = batchId,
                 dateMs = dateMs,
                 channel = channel,
-                messageText = buildAbsentMessage(student, batchName, dateMs),
+                messageText = buildAttendanceMessage(student, batchName, dateMs, "absent"),
                 onSent = { if (completed.incrementAndGet() >= total) onComplete() },
                 onError = { if (completed.incrementAndGet() >= total) onComplete() }
             )

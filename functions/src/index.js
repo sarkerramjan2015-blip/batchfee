@@ -21,6 +21,10 @@ const { createFinancialLedgerHandler } = require("./financialLedger");
 const { createMediaSecurityHandlers } = require("./mediaSecurity");
 const { createSafeDeletionHandler } = require("./safeDeletion");
 const { createPermanentStudentPurgeHandler } = require("./permanentStudentPurge");
+const {
+  createPermanentBatchPurgeHandler,
+  createPermanentStaffPurgeHandler,
+} = require("./permanentArchivePurge");
 const { createPublicRegistrationHandler } = require("./publicRegistration");
 const {
   cleanupPendingRegistrationPhoto,
@@ -966,14 +970,20 @@ async function loginStudentHandler(request) {
 
   await attemptRef.delete().catch(() => {});
   const sessionExpiresAtMs = now + SESSION_DURATION_MS;
-  await adminAuth.setCustomUserClaims(firebaseUid, {
+  const sessionClaims = {
     studentManaged: true,
     student: true,
     instituteId,
     studentId,
     studentSessionExpiresAt: sessionExpiresAtMs,
-  });
-  const customToken = await adminAuth.createCustomToken(firebaseUid);
+  };
+  // Put the claims in the custom token for the first ID token, while storing
+  // the same claims for later refreshes. These independent Admin calls can run
+  // together, which shortens a successful login without weakening its checks.
+  const [customToken] = await Promise.all([
+    adminAuth.createCustomToken(firebaseUid, sessionClaims),
+    adminAuth.setCustomUserClaims(firebaseUid, sessionClaims),
+  ]);
   return {
     customToken,
     firebaseUid,
@@ -1068,10 +1078,20 @@ exports.commitSafeDeletion = onCall(
   guarded(createSafeDeletionHandler({ db, adminAuth })),
 );
 exports.permanentlyPurgeStudent = onCall(
-  { ...callableOptions, timeoutSeconds: 120, memory: "512MiB" },
+  // This only opens the callable transport. The runtime still enforces App Check,
+  // Firebase authentication, and the institute-owner/Super Admin authorization below.
+  { ...callableOptions, timeoutSeconds: 120, memory: "512MiB", invoker: "public" },
   guarded(createPermanentStudentPurgeHandler({
     db, adminAuth, bucket: mediaStorageBucket,
   })),
+);
+exports.permanentlyPurgeBatch = onCall(
+  { ...callableOptions, timeoutSeconds: 120, memory: "512MiB" },
+  guarded(createPermanentBatchPurgeHandler({ db, bucket: mediaStorageBucket })),
+);
+exports.permanentlyPurgeStaff = onCall(
+  { ...callableOptions, timeoutSeconds: 120, memory: "512MiB" },
+  guarded(createPermanentStaffPurgeHandler({ db, adminAuth, bucket: mediaStorageBucket })),
 );
 exports.uploadSecureMedia = onCall(
   { ...callableOptions, timeoutSeconds: 60, memory: "512MiB" },

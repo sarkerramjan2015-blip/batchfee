@@ -61,7 +61,7 @@ import java.util.Locale
         com.batchfee.edu.data.models.HomeworkSubmissionEntity::class,
         com.batchfee.edu.data.models.AssignmentSubmissionEntity::class
     ],
-    version = 23,
+    version = 25,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -342,6 +342,31 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** Adds indexes for the owner dashboard's institute-scoped live queries. */
+        internal val MIGRATION_23_24 = object : androidx.room.migration.Migration(23, 24) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_students_instituteId_archivedAtMs_fullName ON students(instituteId, archivedAtMs, fullName)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_students_instituteId_studentCode ON students(instituteId, studentCode)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_batches_instituteId_archivedAtMs_name ON batches(instituteId, archivedAtMs, name)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_staff_instituteId_archivedAtMs_fullName ON staff(instituteId, archivedAtMs, fullName)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_staff_staffCode_archivedAtMs ON staff(staffCode, archivedAtMs)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_batch_students_instituteId_batchId_status ON batch_students(instituteId, batchId, status)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_batch_students_instituteId_studentId_status ON batch_students(instituteId, studentId, status)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_fees_instituteId_cancelledAtMs_dueDateMs ON fees(instituteId, cancelledAtMs, dueDateMs)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_fees_instituteId_studentId_cancelledAtMs ON fees(instituteId, studentId, cancelledAtMs)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_payments_instituteId_paymentDateMs ON payments(instituteId, paymentDateMs)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_payments_instituteId_feeId_paymentDateMs ON payments(instituteId, feeId, paymentDateMs)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_instituteId_archivedAtMs_expenseDateMs ON expenses(instituteId, archivedAtMs, expenseDateMs)")
+            }
+        }
+
+        /** Gives follow-ups their own scheduled date instead of reusing enquiry creation date. */
+        internal val MIGRATION_24_25 = object : androidx.room.migration.Migration(24, 25) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE enquiries ADD COLUMN followUpDateMs INTEGER")
+            }
+        }
+
         fun getDatabase(context: Context, scope: CoroutineScope): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val builder = Room.databaseBuilder(
@@ -349,7 +374,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "batchfee_database"
                 )
-                .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23)
+                .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25)
 
                 if (BuildConfig.DEBUG) {
                     builder.fallbackToDestructiveMigration()

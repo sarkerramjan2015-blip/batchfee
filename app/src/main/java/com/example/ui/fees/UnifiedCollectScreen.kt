@@ -556,9 +556,7 @@ fun UnifiedCollectScreen(
                                 onWhatsApp = { item -> sendHistoryReceiptWhatsApp(context, instituteInfo, student, student.phone, item) },
                                 onMessage = { item -> sendHistoryReceiptMessage(context, student.phone, buildHistoryReceiptText(instituteInfo, student, item)) },
                                 onShare = { item -> shareHistoryReceipt(context, buildHistoryReceiptText(instituteInfo, student, item)) },
-                                    onEdit = { item -> editingHistoryItem = item },
-                                    onReverse = { item -> reversingHistoryItem = item },
-                                    onDelete = { item -> deletingHistoryItem = item }
+                                onEdit = { item -> editingHistoryItem = item }
                             )
                         }
 
@@ -1104,7 +1102,14 @@ fun UnifiedCollectScreen(
                     }
                 }
             },
-            onDelete = { deletingHistoryItem = item }
+            onCancelPayment = {
+                editingHistoryItem = null
+                reversingHistoryItem = item
+            },
+            onDelete = {
+                editingHistoryItem = null
+                deletingHistoryItem = item
+            }
         )
     }
 
@@ -1310,9 +1315,7 @@ private fun PaymentHistoryCard(
     onWhatsApp: (StudentPaymentHistory) -> Unit,
     onMessage: (StudentPaymentHistory) -> Unit,
     onShare: (StudentPaymentHistory) -> Unit,
-    onEdit: (StudentPaymentHistory) -> Unit,
-    onReverse: (StudentPaymentHistory) -> Unit,
-    onDelete: (StudentPaymentHistory) -> Unit
+    onEdit: (StudentPaymentHistory) -> Unit
 ) {
     val currentUserRole by SessionManager.currentUserRole.collectAsState()
     val isFinancialOwner = currentUserRole in setOf("InstituteOwner", "SuperAdmin")
@@ -1374,13 +1377,7 @@ private fun PaymentHistoryCard(
                             }
                             if (isFinancialOwner && item.payment.status == "completed") {
                                 item {
-                                    HistoryActionButton("Edit Payment", Icons.Filled.Payments, Cyan) { onEdit(item) }
-                                }
-                                item {
-                                    HistoryActionButton("Reverse / Cancel Payment", Icons.Filled.Close, AccentRed) { onReverse(item) }
-                                }
-                                item {
-                                    HistoryActionButton("Delete Permanently", Icons.Filled.Delete, AccentRed) { onDelete(item) }
+                                    HistoryActionButton("Edit", Icons.Filled.Payments, Cyan) { onEdit(item) }
                                 }
                             }
                         }
@@ -1435,6 +1432,7 @@ private fun PaymentEditDialog(
     isSubmitting: Boolean,
     onDismiss: () -> Unit,
     onSave: (PaymentCorrectionRequest) -> Unit,
+    onCancelPayment: () -> Unit,
     onDelete: () -> Unit
 ) {
     val monthOptions = remember { generateMonthOptions() }
@@ -1453,7 +1451,7 @@ private fun PaymentEditDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        modifier = Modifier.fillMaxWidth(0.94f),
+        modifier = Modifier.fillMaxWidth(0.92f),
         containerColor = CardBg,
         shape = RoundedCornerShape(20.dp),
         title = {
@@ -1464,8 +1462,8 @@ private fun PaymentEditDialog(
         },
         text = {
             Column(
-                modifier = Modifier.heightIn(max = 470.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                modifier = Modifier.heightIn(max = 430.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Text(
                     "Correct this saved payment. The receipt number stays the same.",
@@ -1507,56 +1505,83 @@ private fun PaymentEditDialog(
                     }
                 }
                 SmartTextField(
-                    value = note,
-                    onValueChange = { note = it.take(1000) },
-                    placeholder = "Note (optional)",
-                    modifier = Modifier.heightIn(min = 48.dp)
-                )
-                SmartTextField(
                     value = reason,
                     onValueChange = { reason = it.take(500) },
-                    placeholder = "Why are you correcting this payment?",
-                    modifier = Modifier.heightIn(min = 48.dp)
+                    placeholder = "Reason for change (required)"
                 )
             }
         },
         confirmButton = {
-            Button(
-                onClick = {
-                    val selectedPeriod = if (selectedMonthIndex == initialMonthIndex) {
-                        item.feePeriod
-                    } else {
-                        monthOptions.getOrNull(selectedMonthIndex)?.label ?: item.feePeriod
-                    }
-                    val correctedAmount = validAmount ?: return@Button
-                    val correctedDate = validDate ?: return@Button
-                    onSave(
-                        PaymentCorrectionRequest(
-                            amount = correctedAmount,
-                            paymentMethod = paymentMethod,
-                            paymentDateMs = correctedDate,
-                            feePeriod = selectedPeriod,
-                            note = note.trim().takeIf { it.isNotEmpty() },
-                            reason = reason.trim()
-                        )
-                    )
-                },
-                enabled = !isSubmitting && validAmount != null && validDate != null && reason.trim().length >= 3,
-                colors = ButtonDefaults.buttonColors(containerColor = ElectricBlue)
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
-                Text(if (isSubmitting) "Saving..." else "Save Changes", color = Color.White, fontWeight = FontWeight.Bold)
+                Button(
+                    onClick = {
+                        val selectedPeriod = if (selectedMonthIndex == initialMonthIndex) {
+                            item.feePeriod
+                        } else {
+                            monthOptions.getOrNull(selectedMonthIndex)?.label ?: item.feePeriod
+                        }
+                        val correctedAmount = validAmount ?: return@Button
+                        val correctedDate = validDate ?: return@Button
+                        onSave(
+                            PaymentCorrectionRequest(
+                                amount = correctedAmount,
+                                paymentMethod = paymentMethod,
+                                paymentDateMs = correctedDate,
+                                feePeriod = selectedPeriod,
+                                note = note.trim().takeIf { it.isNotEmpty() },
+                                reason = reason.trim()
+                            )
+                        )
+                    },
+                    enabled = !isSubmitting && validAmount != null && validDate != null && reason.trim().length >= 3,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(44.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = ElectricBlue)
+                ) {
+                    Text(
+                        if (isSubmitting) "Saving..." else "Save Changes",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(
+                        onClick = onDismiss,
+                        enabled = !isSubmitting,
+                        modifier = Modifier.weight(0.65f),
+                        contentPadding = PaddingValues(horizontal = 2.dp, vertical = 4.dp)
+                    ) {
+                        Text("Close", color = TextMuted, fontSize = 12.sp)
+                    }
+                    TextButton(
+                        onClick = onCancelPayment,
+                        enabled = !isSubmitting,
+                        modifier = Modifier.weight(1.45f),
+                        contentPadding = PaddingValues(horizontal = 2.dp, vertical = 4.dp)
+                    ) {
+                        Text("Cancel payment", color = AccentRed, fontSize = 12.sp)
+                    }
+                    TextButton(
+                        onClick = onDelete,
+                        enabled = !isSubmitting,
+                        modifier = Modifier.weight(0.62f),
+                        contentPadding = PaddingValues(horizontal = 2.dp, vertical = 4.dp)
+                    ) {
+                        Text("Delete", color = AccentRed, fontSize = 12.sp)
+                    }
+                }
             }
         },
-        dismissButton = {
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                TextButton(onClick = onDelete, enabled = !isSubmitting) {
-                    Text("Delete", color = AccentRed)
-                }
-                TextButton(onClick = onDismiss, enabled = !isSubmitting) {
-                    Text("Cancel", color = TextMuted)
-                }
-            }
-        }
+        dismissButton = {}
     )
 }
 

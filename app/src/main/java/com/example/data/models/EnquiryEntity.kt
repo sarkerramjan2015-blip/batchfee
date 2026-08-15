@@ -13,6 +13,8 @@ data class EnquiryEntity(
     val subjectName: String,
     val enquiryDateMs: Long,
     val status: String,
+    /** Scheduled contact date. Null means an older, unscheduled follow-up. */
+    val followUpDateMs: Long? = null,
     val note: String? = null,
     val createdAtMs: Long,
     val updatedAtMs: Long,

@@ -12,6 +12,9 @@ interface BatchDao {
     @Query("SELECT * FROM batches WHERE instituteId = :instituteId AND archivedAtMs IS NULL ORDER BY name ASC")
     suspend fun getBatchesByInstituteOnce(instituteId: String): List<BatchEntity>
 
+    @Query("SELECT * FROM batches WHERE instituteId = :instituteId AND archivedAtMs IS NOT NULL ORDER BY archivedAtMs DESC")
+    fun getArchivedBatchesByInstitute(instituteId: String): Flow<List<BatchEntity>>
+
     @Query("SELECT * FROM batches WHERE id = :batchId AND instituteId = :instituteId LIMIT 1")
     fun getBatchById(batchId: String, instituteId: String): Flow<BatchEntity?>
 
@@ -23,5 +26,8 @@ interface BatchDao {
 
     @Update
     suspend fun updateBatch(batch: BatchEntity)
+
+    @Query("DELETE FROM batches WHERE instituteId = :instituteId AND id = :batchId")
+    suspend fun deleteBatch(instituteId: String, batchId: String)
 
 }
