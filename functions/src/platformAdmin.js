@@ -9,6 +9,9 @@ const { FREE_TRIAL_DURATION_MS, FREE_TRIAL_STUDENT_LIMIT } = require("./subscrip
 const { planFromSnapshot } = require("./defaultSubscriptionPlans");
 
 const PLATFORM_ROLES = new Set(["root", "billing", "support", "operations", "read_only"]);
+const INSTITUTE_ACCOUNT_ROLES = new Set([
+  "InstituteOwner", "owner", "InstituteAdmin", "admin", "instituteAdmin", "institute_admin",
+]);
 const ACTIONS = new Set([
   "create_institute",
   "preview_institute_import",
@@ -71,6 +74,44 @@ function platformRoleFor(user) {
   if (["SuperAdmin", "superAdmin", "super_admin"].includes(user.role) && !user.platformRole) return "root";
   return typeof user.platformRole === "string" && PLATFORM_ROLES.has(user.platformRole)
     ? user.platformRole : null;
+}
+
+/**
+ * Auth users can be shared by sign-in providers, but their BatchFee authority
+ * must never be repurposed by a Super Admin form. In particular, assigning a
+ * platform account to an institute would silently overwrite root/support
+ * access. Keep platform and institute identities strictly separate.
+ */
+function assertCanAssignInstituteOwner(existingUser, instituteId) {
+  if (!existingUser) return;
+  if (platformRoleFor(existingUser)) {
+    throw new HttpsError("failed-precondition", "A platform account cannot be assigned to an institute.");
+  }
+  const assignedInstituteId = typeof existingUser.instituteId === "string"
+    ? existingUser.instituteId.trim() : "";
+  if (assignedInstituteId && assignedInstituteId !== instituteId) {
+    throw new HttpsError("failed-precondition", "This account belongs to another institute.");
+  }
+  const role = typeof existingUser.role === "string" ? existingUser.role : "";
+  if (role && !INSTITUTE_ACCOUNT_ROLES.has(role)) {
+    throw new HttpsError("failed-precondition", "This account cannot be converted into an institute owner.");
+  }
+}
+
+function assertCanAssignPlatformRole(existingUser) {
+  if (!existingUser) return;
+  const assignedInstituteId = typeof existingUser.instituteId === "string"
+    ? existingUser.instituteId.trim() : "";
+  if (assignedInstituteId) {
+    throw new HttpsError("failed-precondition", "An institute account cannot receive a platform role.");
+  }
+  if (platformRoleFor(existingUser) === "root") {
+    throw new HttpsError("failed-precondition", "Root access cannot be replaced from this screen.");
+  }
+  const role = typeof existingUser.role === "string" ? existingUser.role : "";
+  if (role && role !== "PlatformAdmin") {
+    throw new HttpsError("failed-precondition", "This account cannot be converted into a platform administrator.");
+  }
 }
 
 async function assertPermission(db, auth, action) {
@@ -147,9 +188,7 @@ async function createInstitute({ db, adminAuth, request, operationId, requestHas
       if (existingInstitute.exists) throw new HttpsError("already-exists", "This owner already has an institute.");
       const plan = planFromSnapshot(planSnap, requestedPlanId);
       if (!plan) throw new HttpsError("not-found", "Selected subscription plan was not found.");
-      if (ownerRecord.exists && ownerRecord.get("instituteId") && ownerRecord.get("instituteId") !== owner.user.uid) {
-        throw new HttpsError("failed-precondition", "This email is already assigned to another institute.");
-      }
+      assertCanAssignInstituteOwner(ownerRecord.exists ? ownerRecord.data() : null, owner.user.uid);
       transaction.create(instituteRef, {
         instituteName,
         ownerName,
@@ -255,10 +294,10 @@ async function dashboardMetrics(db) {
   monthStartDate.setUTCDate(1);
   monthStartDate.setUTCHours(0, 0, 0, 0);
   const monthStart = monthStartDate.getTime();
-  const retained = institutesSnap.docs.filter((doc) => doc.get("deletionState") === "retained");
-  const active = institutesSnap.docs.filter((doc) => {
+  const activeInstitutes = institutesSnap.docs.filter((doc) => doc.get("deletionState") !== "retained");
+  const active = activeInstitutes.filter((doc) => {
     const end = Number(doc.get("currentPeriodEndMs") || doc.get("trialEndDate") || 0);
-    return doc.get("deletionState") !== "retained" && doc.get("isActive") !== false && end > now;
+    return doc.get("isActive") !== false && end > now;
   });
   const revenue = receiptsSnap.docs.reduce((totals, doc) => {
     const amount = Number(doc.get("amountPaid") || 0);
@@ -275,12 +314,12 @@ async function dashboardMetrics(db) {
   }).length;
   return {
     snapshotAtMs: now,
-    totalInstitutes: institutesSnap.size - retained.length,
+    totalInstitutes: activeInstitutes.length,
     activeInstitutes: active.length,
     expiringIn7Days: expiringWithin(7),
     expiringIn30Days: expiringWithin(30),
-    totalStudents: institutesSnap.docs.reduce((sum, doc) => sum + Number(doc.get("studentCount") || 0), 0),
-    totalStaff: institutesSnap.docs.reduce((sum, doc) => sum + Number(doc.get("staffCount") || 0), 0),
+    totalStudents: activeInstitutes.reduce((sum, doc) => sum + Number(doc.get("studentCount") || 0), 0),
+    totalStaff: activeInstitutes.reduce((sum, doc) => sum + Number(doc.get("staffCount") || 0), 0),
     lifetimeRevenue: Math.round(revenue.lifetime * 100) / 100,
     thisMonthRevenue: Math.round(revenue.thisMonth * 100) / 100,
     canonicalReceiptCount: receiptsSnap.size,
@@ -311,9 +350,7 @@ async function transferOwner({ db, adminAuth, request, operationId, requestHash,
         throw new HttpsError("not-found", "Active institute not found.");
       }
       const oldOwnerUid = typeof instituteSnap.get("ownerUid") === "string" ? instituteSnap.get("ownerUid") : instituteId;
-      if (newOwnerSnap.exists && newOwnerSnap.get("instituteId") && newOwnerSnap.get("instituteId") !== instituteId) {
-        throw new HttpsError("failed-precondition", "This account belongs to another institute.");
-      }
+      assertCanAssignInstituteOwner(newOwnerSnap.exists ? newOwnerSnap.data() : null, instituteId);
       transaction.update(instituteRef, { ownerUid: owner.user.uid, ownerName, email, ownerTransferAtMs: now });
       transaction.set(db.collection("app_users").doc(owner.user.uid), {
         name: ownerName, email, role: "InstituteOwner", instituteId, status: "active", createdAtMs: now,
@@ -376,13 +413,17 @@ async function managePlatformAdmin({ db, adminAuth, request, operationId, reques
   const result = { userId: owner.user.uid, email, name, platformRole };
   try {
     await db.runTransaction(async (transaction) => {
-      const existing = await transaction.get(operationRef);
+      const [existing, existingUser] = await Promise.all([
+        transaction.get(operationRef),
+        transaction.get(db.collection("app_users").doc(owner.user.uid)),
+      ]);
       if (existing.exists) {
         if (existing.get("requestHash") !== requestHash || existing.get("actorUid") !== request.auth.uid) {
           throw new HttpsError("already-exists", "Operation ID was already used for another request.");
         }
         return;
       }
+      assertCanAssignPlatformRole(existingUser.exists ? existingUser.data() : null);
       transaction.set(db.collection("app_users").doc(owner.user.uid), {
         name, email, role: "PlatformAdmin", platformRole, instituteId: null, status: "active", createdAtMs: now,
       }, { merge: true });
@@ -424,6 +465,8 @@ module.exports = {
   ACTIONS,
   PERMISSIONS,
   PLATFORM_ROLES,
+  assertCanAssignInstituteOwner,
+  assertCanAssignPlatformRole,
   createPlatformAdminHandler,
   platformRoleFor,
 };

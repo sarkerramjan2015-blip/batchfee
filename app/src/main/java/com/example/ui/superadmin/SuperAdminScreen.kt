@@ -325,6 +325,10 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
         institutes: List<InstituteCardData>,
         plans: List<SubscriptionPlanEntity> = _subscriptionPlans.value
     ) {
+        // The callable dashboard aggregates every institute on the server. Once
+        // it has loaded, never replace it with a calculation from one paged
+        // local screen (which may contain only the first 40 institutes).
+        if (hasServerDashboard) return
         val now = System.currentTimeMillis()
         val planPriceMap = plans.associate { it.id to it.priceBdt }
         val activeCount = institutes.count { card ->
@@ -482,6 +486,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                     )
                 }
                 rebuildReceiptHistory()
+                refreshPlatformDashboard()
                 _operationMsg.value = if (roomFailed) "Approved ${request.instituteName} (local cache update failed)" else "Approved ${request.instituteName}"
                 _receiptData.value = SubscriptionReceiptData(
                     receiptNumber = result.receiptNumber,
@@ -708,6 +713,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                         currentPeriodEndMs = updated.currentPeriodEndMs
                     ))
                 }
+                refreshPlatformDashboard()
                 _operationMsg.value = "Subscription extended by $daysToAdd days"
             } catch (e: Exception) {
                 _operationMsg.value = "Failed: ${e.message}"
@@ -737,6 +743,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                         currentPeriodEndMs = updated.currentPeriodEndMs
                     ))
                 }
+                refreshPlatformDashboard()
                 _operationMsg.value = if (newBlocked) "Institute blocked" else "Institute unblocked"
             } catch (e: Exception) {
                 _operationMsg.value = "Failed: ${e.message}"
@@ -808,6 +815,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                     )
                 ))
                 _institutes.value = _institutes.value.filter { it.entity.id != instituteId }
+                refreshPlatformDashboard()
                 _operationMsg.value = "${card.entity.name} archived. Data and ledger are retained for recovery."
             } catch (e: Exception) {
                 _operationMsg.value = "Failed: ${e.message}"
@@ -831,6 +839,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                         trialEndDateMs = card.entity.currentPeriodEndMs
                     )
                 ))
+                refreshPlatformDashboard()
                 _operationMsg.value = "${card.entity.name} restored."
             } catch (e: Exception) {
                 _operationMsg.value = "Failed: ${e.message}"
@@ -848,7 +857,6 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
         isActive: Boolean,
         onDone: () -> Unit
     ) {
-        if (hasServerDashboard) return
         viewModelScope.launch {
             try {
                 val updated = SubscriptionRepository(firestore).manageInstituteSubscription(
@@ -878,6 +886,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                         currentPeriodEndMs = updated.currentPeriodEndMs
                     ))
                 }
+                refreshPlatformDashboard()
                 _operationMsg.value = "Institute updated successfully"
                 onDone()
             } catch (e: Exception) {
