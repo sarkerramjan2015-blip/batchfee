@@ -105,6 +105,8 @@ function seededDb(now) {
       subscriptionStatus: "active",
       trialEndDate: now + 5 * 24 * 60 * 60 * 1000,
       currentPeriodEndMs: now + 40 * 24 * 60 * 60 * 1000,
+      studentLimit: 500,
+      staffLimit: 13,
     },
     "app_users/super-admin": { role: "SuperAdmin", status: "active" },
     "subscription_plans/plan_growth": { name: "Growth", priceBdt: 999, maxStudents: 500, maxUsers: 13 },
@@ -216,6 +218,73 @@ test("request rejects a plan that cannot support legacy active students without 
       },
     }),
     (error) => error.code === "failed-precondition" && error.message.includes("501 active students"),
+  );
+});
+
+test("a lower plan cannot reduce a live paid institute before its current period ends", async () => {
+  const now = Date.now();
+  const db = seededDb(now);
+  db.documents.set("subscription_plans/plan_basic", {
+    name: "Basic", priceBdt: 199, maxStudents: 50, maxUsers: 3,
+  });
+  const handler = handlerFor(db);
+
+  const assertEarlyDowngrade = (error) => error.code === "failed-precondition" &&
+    error.message.includes("current 500-student plan is still active");
+
+  await assert.rejects(
+    handler({
+      auth: { uid: "institute-a" },
+      data: {
+        action: "submit_request",
+        instituteId: "institute-a",
+        operationId: "sub_operation_00000009",
+        requestedPlanId: "plan_basic",
+        durationMonths: 1,
+        paymentMethod: "bkash",
+        transactionReference: "DOWNGRADE-ABC12345",
+      },
+    }),
+    assertEarlyDowngrade,
+  );
+
+  db.documents.set("subscriptionRequests/legacy-lower-plan", {
+    instituteId: "institute-a",
+    requestedPlanId: "plan_basic",
+    planName: "Basic",
+    durationMonths: 1,
+    amountPaid: 199,
+    quote: { monthlyPriceBdt: 199, amountBdt: 199, durationMonths: 1 },
+    status: "pending",
+  });
+  await assert.rejects(
+    handler({
+      auth: { uid: "super-admin" },
+      data: {
+        action: "approve_request",
+        instituteId: "institute-a",
+        operationId: "sub_operation_00000010",
+        requestId: "legacy-lower-plan",
+      },
+    }),
+    assertEarlyDowngrade,
+  );
+
+  await assert.rejects(
+    handler({
+      auth: { uid: "super-admin" },
+      data: {
+        action: "manage_institute_subscription",
+        instituteId: "institute-a",
+        operationId: "sub_operation_00000011",
+        newExpiryMs: now + 70 * 24 * 60 * 60 * 1000,
+        studentLimit: 50,
+        staffLimit: 3,
+        planId: "plan_basic",
+        isActive: true,
+      },
+    }),
+    assertEarlyDowngrade,
   );
 });
 

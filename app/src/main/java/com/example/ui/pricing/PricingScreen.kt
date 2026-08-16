@@ -229,6 +229,9 @@ fun PricingScreen(
     var institutePhone by remember { mutableStateOf<String?>(null) }
     var ownerName by remember { mutableStateOf("") }
     var subscriptionStatus by remember { mutableStateOf<String?>(null) }
+    var currentPlanId by remember { mutableStateOf<String?>(null) }
+    var currentPlanStudentLimit by remember { mutableStateOf<Int?>(null) }
+    var currentPeriodEndMs by remember { mutableLongStateOf(0L) }
     LaunchedEffect(Unit) {
         val instId = SessionManager.currentInstituteId.value
         if (instId != null) {
@@ -240,6 +243,11 @@ fun PricingScreen(
                 institutePhone = it.phone ?: it.whatsappNumber
                 ownerName = it.ownerName ?: ""
                 subscriptionStatus = it.subscriptionStatus
+                currentPlanId = it.currentPlanId
+                currentPeriodEndMs = it.currentPeriodEndMs
+                currentPlanStudentLimit = db.subscriptionPlanDao()
+                    .getPlanById(it.currentPlanId)
+                    ?.maxStudents
             }
         }
     }
@@ -406,7 +414,12 @@ fun PricingScreen(
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 items(plans.filter { !it.isEnterprise }) { plan ->
-                    val isEligible = plan.studentCount >= activeStudentCount
+                    val lowerPlanBeforeRenewal = subscriptionStatus == "active" &&
+                        currentPlanId != "plan_free_trial" &&
+                        currentPeriodEndMs > System.currentTimeMillis() &&
+                        currentPlanStudentLimit != null &&
+                        plan.studentCount < currentPlanStudentLimit!!
+                    val isEligible = plan.studentCount >= activeStudentCount && !lowerPlanBeforeRenewal
                     val price = remember(selectedDuration) { viewModel.priceFor(plan) }
                     val durationLabel = remember(selectedDuration) { viewModel.durationLabel() }
                     val durationMonths = remember(selectedDuration) { viewModel.billingMonths() }
@@ -420,6 +433,7 @@ fun PricingScreen(
                             durationMonths = durationMonths,
                             isSelected = selectedPlanId == plan.id,
                             isEligible = isEligible,
+                            unavailableLabel = if (lowerPlanBeforeRenewal) "At renewal" else null,
                             onChoose = {
                                 selectedPlanId = plan.id
                                 submitSuccess = false
@@ -695,6 +709,7 @@ private fun PlanCard(
     durationMonths: Int,
     isSelected: Boolean = false,
     isEligible: Boolean,
+    unavailableLabel: String? = null,
     onChoose: () -> Unit
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "planGlow")
@@ -877,7 +892,7 @@ private fun PlanCard(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    if (isEligible) "Choose Plan" else "Not eligible",
+                    if (isEligible) "Choose Plan" else (unavailableLabel ?: "Not eligible"),
                     color = if (hasProminentCta && isEligible) Color.White else TextMuted,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.SemiBold

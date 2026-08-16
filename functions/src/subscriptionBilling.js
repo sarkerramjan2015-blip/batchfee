@@ -138,6 +138,24 @@ function assertPlanSupportsStudentCount(plan, activeStudentCount) {
   }
 }
 
+// A lower plan must never take effect while the institute has already-paid
+// access remaining. The owner can choose it as soon as the current period
+// ends; until then their existing capacity stays intact.
+function assertNoEarlyCapacityDowngrade(institute, nextStudentLimit, now) {
+  const currentPlanId = typeof institute?.currentPlanId === "string" ? institute.currentPlanId : "";
+  const currentLimit = asNumber(institute?.studentLimit);
+  const nextLimit = Number(nextStudentLimit);
+  const periodEndMs = paidPeriodEnd(institute || {});
+  const hasLivePaidPlan = currentPlanId && !isFreeTrialPlan(currentPlanId) &&
+    institute?.isActive !== false && institute?.subscriptionStatus === "active" && periodEndMs > now;
+  if (hasLivePaidPlan && currentLimit > 0 && Number.isSafeInteger(nextLimit) && nextLimit < currentLimit) {
+    throw new HttpsError(
+      "failed-precondition",
+      `Your current ${currentLimit}-student plan is still active. A lower student limit can be selected after the current period ends.`,
+    );
+  }
+}
+
 function requirePendingRequest(requestSnap) {
   if (!requestSnap.exists) throw new HttpsError("not-found", "Subscription request not found.");
   const request = requestSnap.data();
@@ -370,6 +388,7 @@ function createSubscriptionBillingHandler({ db, FieldValue }) {
         }
         const currentStudentCount = studentCountSnap.data().count;
         assertPlanSupportsStudentCount(plan, currentStudentCount);
+        assertNoEarlyCapacityDowngrade(authority.institute, plan.maxStudents, now);
         if (!duplicateSnap.empty) {
           throw new HttpsError("already-exists", "This payment transaction was already submitted.");
         }
@@ -440,6 +459,7 @@ function createSubscriptionBillingHandler({ db, FieldValue }) {
         }
         const currentStudentCount = studentCountSnap.data().count;
         assertPlanSupportsStudentCount(requestedPlan, currentStudentCount);
+        assertNoEarlyCapacityDowngrade(authority.institute, requestedPlan.maxStudents, now);
         const startDateMs = subscriptionStartMs(paidPeriodEnd(authority.institute), now);
         const endDateMs = addCalendarMonths(startDateMs, subscriptionRequest.durationMonths);
         const receiptId = `SUBREC_${operationId}`;
@@ -595,6 +615,7 @@ function createSubscriptionBillingHandler({ db, FieldValue }) {
       }
       if (isActive && !freeTrial) {
         assertPlanSupportsStudentCount(selectedPlan, currentStudentCount);
+        assertNoEarlyCapacityDowngrade(authority.institute, studentLimit, now);
         if (studentLimit < currentStudentCount) {
           throw new HttpsError(
             "failed-precondition",
