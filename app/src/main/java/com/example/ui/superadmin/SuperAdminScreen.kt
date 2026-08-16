@@ -64,6 +64,7 @@ import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.google.firebase.firestore.AggregateSource
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.Query
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -287,6 +288,9 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
     private var nextInstitutePageCursor: DocumentSnapshot? = null
     private var totalInstituteCount: Int? = null
     private var hasServerDashboard = false
+    private var instituteFirstPageListener: ListenerRegistration? = null
+    private val instituteDocumentListeners = mutableMapOf<String, ListenerRegistration>()
+    private var resetInstituteListOnNextSnapshot = false
 
     private companion object {
         const val INSTITUTE_PAGE_SIZE = 40L
@@ -546,7 +550,78 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
     }
 
     private fun loadInstitutesRealtime() {
-        viewModelScope.launch { loadInstitutePage(reset = true) }
+        instituteFirstPageListener?.remove()
+        resetInstituteListOnNextSnapshot = true
+        nextInstitutePageCursor = null
+        _hasMoreInstitutes.value = false
+        _isLoading.value = true
+        instituteFirstPageListener = firestore.collection("institutes")
+            .orderBy("createdAt", Query.Direction.DESCENDING)
+            .limit(INSTITUTE_PAGE_SIZE)
+            .addSnapshotListener { page, error ->
+                if (error != null || page == null) {
+                    error?.let(FirebaseCrashlytics.getInstance()::recordException)
+                    _operationMsg.value = "Failed to load institutes: ${error?.message ?: "Unknown error"}"
+                    _isLoading.value = false
+                    return@addSnapshotListener
+                }
+                nextInstitutePageCursor = page.documents.lastOrNull()
+                _hasMoreInstitutes.value = page.documents.size == INSTITUTE_PAGE_SIZE.toInt()
+                val now = System.currentTimeMillis()
+                val pageIds = page.documents.map { it.id }.toSet()
+                val pageCards = page.documents.mapNotNull { instituteCardFromDocument(it, now) }
+                val existingCards = if (resetInstituteListOnNextSnapshot) emptyList() else _institutes.value
+                val mergedCards = (pageCards.associateBy { it.entity.id } +
+                    existingCards.filterNot { it.entity.id in pageIds }.associateBy { it.entity.id })
+                    .values
+                    .sortedByDescending { it.entity.createdAtMs }
+                resetInstituteListOnNextSnapshot = false
+                _institutes.value = mergedCards
+                val pageActive = page.documents.mapNotNull { document ->
+                    (document.data?.get("lastActiveAt") as? Number)?.toLong()?.let { document.id to it }
+                }.toMap()
+                _lastActiveMap.value = _lastActiveMap.value.toMutableMap().apply {
+                    pageIds.forEach(::remove)
+                    putAll(pageActive)
+                }
+                observeLoadedInstitutes(mergedCards)
+                recalculateStats(mergedCards)
+                rebuildReceiptHistory()
+                _isLoading.value = false
+            }
+    }
+
+    private fun observeLoadedInstitutes(cards: List<InstituteCardData>) {
+        val desiredIds = cards.map { it.entity.id }.toSet()
+        instituteDocumentListeners.keys.filterNot { it in desiredIds }.toList().forEach { id ->
+            instituteDocumentListeners.remove(id)?.remove()
+        }
+        cards.forEach { card ->
+            val instituteId = card.entity.id
+            if (instituteDocumentListeners.containsKey(instituteId)) return@forEach
+            instituteDocumentListeners[instituteId] = firestore.collection("institutes").document(instituteId)
+                .addSnapshotListener { snapshot, error ->
+                    if (error != null || snapshot == null) {
+                        error?.let(FirebaseCrashlytics.getInstance()::recordException)
+                        return@addSnapshotListener
+                    }
+                    val now = System.currentTimeMillis()
+                    val freshCard = snapshot.takeIf { it.exists() }?.let { instituteCardFromDocument(it, now) }
+                    val updatedCards = _institutes.value.filterNot { it.entity.id == instituteId }.toMutableList()
+                    freshCard?.let(updatedCards::add)
+                    updatedCards.sortByDescending { it.entity.createdAtMs }
+                    _institutes.value = updatedCards
+                    val nextActive = _lastActiveMap.value.toMutableMap()
+                    (snapshot.data?.get("lastActiveAt") as? Number)?.toLong()?.let { nextActive[instituteId] = it }
+                        ?: nextActive.remove(instituteId)
+                    _lastActiveMap.value = nextActive
+                    recalculateStats(updatedCards)
+                    rebuildReceiptHistory()
+                    if (!snapshot.exists()) {
+                        instituteDocumentListeners.remove(instituteId)?.remove()
+                    }
+                }
+        }
     }
 
     private fun loadInstituteTotalCount() {
@@ -610,6 +685,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
             }
             _institutes.value = mergedCards
             _lastActiveMap.value = if (reset) loadedActive else _lastActiveMap.value + loadedActive
+            observeLoadedInstitutes(mergedCards)
             recalculateStats(mergedCards)
             rebuildReceiptHistory()
         } catch (error: Exception) {
@@ -619,6 +695,14 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
             _isLoading.value = false
             _isLoadingMoreInstitutes.value = false
         }
+    }
+
+    override fun onCleared() {
+        instituteFirstPageListener?.remove()
+        instituteFirstPageListener = null
+        instituteDocumentListeners.values.forEach { it.remove() }
+        instituteDocumentListeners.clear()
+        super.onCleared()
     }
 
     private fun instituteCardFromDocument(document: DocumentSnapshot, now: Long): InstituteCardData? {
