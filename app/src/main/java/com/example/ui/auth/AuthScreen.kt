@@ -1,7 +1,9 @@
 package com.batchfee.edu.ui.auth
 
 import android.content.Context
+import android.content.ActivityNotFoundException
 import android.os.SystemClock
+import android.widget.Toast
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
@@ -973,12 +975,25 @@ fun AuthScreen(
                         "Hello Developer, I am contacting you regarding some queries about the BatchFee app.",
                         "UTF-8"
                     )
-                    val waUri = "https://api.whatsapp.com/send?phone=+8801518657869&text=$encodedMsg"
+                    val waUri = "https://wa.me/8801518657869?text=$encodedMsg"
                     OutlinedButton(
                         onClick = {
-                            context.startActivity(
-                                android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(waUri))
-                            )
+                            // Keep the developer contact action inside WhatsApp. A generic web
+                            // intent can be claimed by an unrelated app on some devices.
+                            try {
+                                context.startActivity(
+                                    android.content.Intent(
+                                        android.content.Intent.ACTION_VIEW,
+                                        android.net.Uri.parse(waUri)
+                                    ).setPackage("com.whatsapp")
+                                )
+                            } catch (_: ActivityNotFoundException) {
+                                Toast.makeText(
+                                    context,
+                                    "WhatsApp is not installed on this device.",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
                         },
                         modifier = Modifier.height(36.dp),
                         shape = RoundedCornerShape(12.dp),
