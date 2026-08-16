@@ -300,6 +300,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
         loadInstitutesRealtime()
         loadInstituteTotalCount()
         loadPendingRequestsRealtime()
+        cleanupInvalidPendingRequests()
         loadManagedUsersRealtime()
         loadTrashedInstitutes()
         viewModelScope.launch { safeDeletionRepository.replayAllPending() }
@@ -448,6 +449,18 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                     SubscriptionRequest.fromFirestore(doc.id, data)
                 }.sortedBy { it.requestSentAt }
             }
+    }
+
+    private fun cleanupInvalidPendingRequests() {
+        viewModelScope.launch {
+            try {
+                SubscriptionRepository(firestore).cleanupInvalidPendingRequests()
+            } catch (error: Exception) {
+                // This is a best-effort migration for old invalid records. Never
+                // interrupt valid payment review if an offline session cannot run it.
+                FirebaseCrashlytics.getInstance().recordException(error)
+            }
+        }
     }
 
     fun approveRequest(request: SubscriptionRequest) {

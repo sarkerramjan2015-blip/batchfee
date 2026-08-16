@@ -263,3 +263,43 @@ test("platform trial management always persists the unlimited student sentinel",
   assert.equal(db.documents.get("institutes/institute-a").studentLimit, 0);
   assert.equal(db.documents.get("institutes/institute-a").subscriptionStatus, "trial");
 });
+
+test("super admin removes legacy and orphaned requests from the pending queue", async () => {
+  const db = seededDb(Date.now());
+  db.documents.set("subscriptionRequests/legacy-request", {
+    instituteId: "institute-a",
+    status: "pending",
+    durationMonths: 1,
+    amountPaid: 999,
+  });
+  db.documents.set("subscriptionRequests/orphan-request", {
+    instituteId: "missing-institute",
+    status: "pending",
+    durationMonths: 1,
+    amountPaid: 999,
+    quote: { monthlyPriceBdt: 999, amountBdt: 999 },
+  });
+  db.documents.set("subscriptionRequests/current-request", {
+    instituteId: "institute-a",
+    status: "pending",
+    durationMonths: 1,
+    amountPaid: 999,
+    quote: { monthlyPriceBdt: 999, amountBdt: 999 },
+  });
+
+  const handler = handlerFor(db);
+  const request = {
+    auth: { uid: "super-admin" },
+    data: {
+      action: "cleanup_invalid_requests",
+      operationId: "sub_operation_00000008",
+    },
+  };
+  const result = await handler(request);
+
+  assert.equal(result.removedCount, 2);
+  assert.equal(db.documents.get("subscriptionRequests/legacy-request").status, "invalid");
+  assert.equal(db.documents.get("subscriptionRequests/orphan-request").status, "invalid");
+  assert.equal(db.documents.get("subscriptionRequests/current-request").status, "pending");
+  assert.deepEqual(await handler(request), result);
+});

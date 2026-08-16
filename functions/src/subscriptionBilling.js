@@ -18,6 +18,7 @@ const ALLOWED_ACTIONS = new Set([
   "submit_request",
   "approve_request",
   "reject_request",
+  "cleanup_invalid_requests",
   "extend_subscription",
   "set_institute_blocked",
   "manage_institute_subscription",
@@ -158,6 +159,86 @@ function requirePendingRequest(requestSnap) {
   return request;
 }
 
+function invalidPendingRequestReason(request, institute) {
+  if (!request.quote || typeof request.quote !== "object" ||
+      !Number.isFinite(request.quote.monthlyPriceBdt) ||
+      !Number.isFinite(request.quote.amountBdt)) {
+    return "Legacy request without a secure server quote.";
+  }
+  try {
+    const expected = quoteForPlan(request.quote.monthlyPriceBdt, request.durationMonths);
+    if (expected !== request.quote.amountBdt || expected !== request.amountPaid) {
+      return "Subscription request price verification failed.";
+    }
+  } catch (_) {
+    return "Subscription request quote is invalid.";
+  }
+  if (!institute) return "Institute no longer exists.";
+  if (institute.deletionState === "retained") return "Institute is archived.";
+  return null;
+}
+
+async function cleanupInvalidRequests({ db, actorUid, operationId, hash, now }) {
+  const appUserRef = db.collection("app_users").doc(actorUid);
+  const operationRef = db.collection("platform_admin_operations").doc(operationId);
+  const pendingQuery = db.collection("subscriptionRequests")
+    .where("status", "==", "pending")
+    .limit(200);
+
+  return db.runTransaction(async (transaction) => {
+    const [appUserSnap, operationSnap, pendingSnap] = await Promise.all([
+      transaction.get(appUserRef),
+      transaction.get(operationRef),
+      transaction.get(pendingQuery),
+    ]);
+    const appUser = appUserSnap.exists ? appUserSnap.data() : null;
+    if (!isSuperAdmin(appUser)) {
+      throw new HttpsError("permission-denied", "Only a Super Admin can clean invalid subscription requests.");
+    }
+    if (operationSnap.exists) {
+      if (operationSnap.get("actorUid") !== actorUid || operationSnap.get("requestHash") !== hash) {
+        throw new HttpsError("already-exists", "Operation ID was already used for another request.");
+      }
+      return operationSnap.get("result");
+    }
+
+    const pendingRequests = pendingSnap.docs.map((snap) => ({ ref: snap.ref, request: snap.data() }));
+    const instituteIds = [...new Set(pendingRequests
+      .map(({ request }) => typeof request.instituteId === "string" ? request.instituteId.trim() : "")
+      .filter(Boolean))];
+    const instituteSnaps = await Promise.all(instituteIds.map((id) =>
+      transaction.get(db.collection("institutes").doc(id)),
+    ));
+    const institutes = new Map(instituteSnaps.map((snap, index) => [
+      instituteIds[index],
+      snap.exists ? snap.data() : null,
+    ]));
+    const invalidRequests = pendingRequests.map(({ ref, request }) => ({
+      ref,
+      reason: invalidPendingRequestReason(request, institutes.get(request.instituteId) || null),
+    })).filter(({ reason }) => reason != null);
+
+    invalidRequests.forEach(({ ref, reason }) => {
+      transaction.update(ref, {
+        status: "invalid",
+        reviewedBy: actorUid,
+        reviewedAt: now,
+        reviewerNote: "Removed from pending queue: invalid legacy request.",
+        invalidReason: reason,
+      });
+    });
+    const result = { removedCount: invalidRequests.length };
+    transaction.create(operationRef, {
+      actorUid,
+      requestHash: hash,
+      action: "cleanup_invalid_requests",
+      result,
+      createdAtMs: now,
+    });
+    return result;
+  });
+}
+
 async function loadAuthority(transaction, db, auth, instituteId, requiredRole) {
   if (!auth || !auth.uid) throw new HttpsError("unauthenticated", "Sign in is required.");
   const instituteRef = db.collection("institutes").doc(instituteId);
@@ -224,7 +305,6 @@ function receiptResult(receiptId, receipt) {
 function createSubscriptionBillingHandler({ db, FieldValue }) {
   return async (request) => {
     const data = request.data || {};
-    const instituteId = requiredString(data, "instituteId");
     const operationId = requiredString(data, "operationId");
     const action = requiredString(data, "action", 64);
     if (!/^[A-Za-z0-9_-]{16,128}$/.test(operationId) || !ALLOWED_ACTIONS.has(action)) {
@@ -234,6 +314,12 @@ function createSubscriptionBillingHandler({ db, FieldValue }) {
     if (!actorUid) throw new HttpsError("unauthenticated", "Sign in is required.");
     const hash = requestHash(data);
     const now = Date.now();
+
+    if (action === "cleanup_invalid_requests") {
+      return cleanupInvalidRequests({ db, actorUid, operationId, hash, now });
+    }
+
+    const instituteId = requiredString(data, "instituteId");
 
     return db.runTransaction(async (transaction) => {
       const requiredRole = action === "submit_request"

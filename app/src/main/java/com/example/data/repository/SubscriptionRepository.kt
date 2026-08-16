@@ -86,6 +86,43 @@ class SubscriptionRepository(
         }
     }
 
+    /**
+     * Old requests created before server-side price verification may still exist
+     * in Firestore. They cannot be approved safely, so the trusted service
+     * marks only invalid/orphaned requests as non-pending.
+     */
+    suspend fun cleanupInvalidPendingRequests(
+        operationId: String = UUID.randomUUID().toString()
+    ): Int {
+        return try {
+            val response = functions.getHttpsCallable("commitSubscriptionOperation")
+                .call(
+                    mapOf(
+                        "action" to "cleanup_invalid_requests",
+                        "operationId" to operationId
+                    )
+                )
+                .await()
+            @Suppress("UNCHECKED_CAST")
+            val result = response.data as? Map<String, Any?>
+                ?: error("Invalid subscription cleanup response.")
+            (result["removedCount"] as? Number)?.toInt() ?: 0
+        } catch (error: FirebaseFunctionsException) {
+            when (error.code) {
+                FirebaseFunctionsException.Code.INVALID_ARGUMENT,
+                FirebaseFunctionsException.Code.FAILED_PRECONDITION,
+                FirebaseFunctionsException.Code.ALREADY_EXISTS,
+                FirebaseFunctionsException.Code.NOT_FOUND,
+                FirebaseFunctionsException.Code.PERMISSION_DENIED,
+                FirebaseFunctionsException.Code.UNAUTHENTICATED -> throw IllegalArgumentException(
+                    error.message ?: "Subscription cleanup was rejected.",
+                    error
+                )
+                else -> throw error
+            }
+        }
+    }
+
     suspend fun getRequestsForInstitute(instituteId: String): List<SubscriptionRequest> {
         return try {
             val snapshot = firestore.collection(COLLECTION)
