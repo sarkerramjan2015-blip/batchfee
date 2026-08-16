@@ -117,6 +117,12 @@ private fun planDisplayPrice(planId: String, plans: List<SubscriptionPlanEntity>
 private fun planStudentCapacityLabel(plan: SubscriptionPlanEntity): String =
     if (plan.id == DEFAULT_TRIAL_PLAN_ID) "Unlimited students" else "${plan.maxStudents} students"
 
+private fun planBatchCapacityLabel(plan: SubscriptionPlanEntity): String =
+    "${plan.maxBatches} ${if (plan.maxBatches == 1) "batch" else "batches"}"
+
+private fun planUserCapacityLabel(plan: SubscriptionPlanEntity): String =
+    "${plan.maxUsers} ${if (plan.maxUsers == 1) "user" else "users"}"
+
 private fun planDisplayDetails(planId: String, plans: List<SubscriptionPlanEntity>): SubscriptionPlanEntity? =
     plans.firstOrNull { it.id == planId }
 
@@ -3131,7 +3137,14 @@ private fun PlanMetricChip(label: String) {
             .background(AccentCyan.copy(alpha = 0.12f))
             .padding(horizontal = 8.dp, vertical = 4.dp)
     ) {
-        Text(label, color = AccentCyan, fontSize = 10.sp, fontWeight = FontWeight.Medium)
+        Text(
+            label,
+            color = AccentCyan,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }
 
@@ -3837,12 +3850,16 @@ private fun InstituteCard(
                                 }
                             }
                             Spacer(Modifier.height(6.dp))
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 if (planDetail != null) {
-                                    PlanMetricChip("BDT ${formatMoneyValue(planDetail.priceBdt)}")
-                                    PlanMetricChip(planStudentCapacityLabel(planDetail))
-                                    planDetail.let { PlanMetricChip("${it.maxBatches} batches") }
-                                    planDetail.let { PlanMetricChip("${it.maxUsers} users") }
+                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        PlanMetricChip("BDT ${formatMoneyValue(planDetail.priceBdt)}")
+                                        PlanMetricChip(planStudentCapacityLabel(planDetail))
+                                    }
+                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        PlanMetricChip(planBatchCapacityLabel(planDetail))
+                                        PlanMetricChip(planUserCapacityLabel(planDetail))
+                                    }
                                 } else {
                                     Text("Plan details unavailable", color = TextMuted, fontSize = 11.sp)
                                 }
