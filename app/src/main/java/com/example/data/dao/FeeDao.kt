@@ -24,6 +24,9 @@ interface FeeDao {
     @Query("SELECT * FROM fees WHERE instituteId = :instituteId AND studentId = :studentId AND cancelledAtMs IS NULL ORDER BY dueDateMs DESC")
     fun getFeesByStudent(instituteId: String, studentId: String): Flow<List<FeeEntity>>
 
+    @Query("SELECT * FROM fees WHERE instituteId = :instituteId AND sourceId = :sourceId AND cancelledAtMs IS NULL ORDER BY dueDateMs DESC")
+    suspend fun getActiveFeesBySource(instituteId: String, sourceId: String): List<FeeEntity>
+
     // ── Batch-wise fee queries ──────────────────────────────
     @Query("SELECT f.* FROM fees f INNER JOIN batch_students bs ON f.studentId = bs.studentId WHERE bs.batchId = :batchId AND f.instituteId = :instituteId AND f.cancelledAtMs IS NULL AND bs.status = 'active' ORDER BY f.dueDateMs DESC")
     fun getFeesByBatch(batchId: String, instituteId: String): Flow<List<FeeEntity>>

@@ -20,6 +20,18 @@ interface BatchStudentDao {
     @Query("SELECT * FROM batch_students WHERE instituteId = :instituteId AND status = 'active'")
     fun getActiveEnrollmentsForInstitute(instituteId: String): Flow<List<BatchStudentEntity>>
 
+    @Query("SELECT * FROM batch_students WHERE instituteId = :instituteId AND studentId = :studentId AND status = 'active'")
+    fun getActiveEnrollmentsForStudent(
+        studentId: String,
+        instituteId: String
+    ): Flow<List<BatchStudentEntity>>
+
+    @Query("SELECT * FROM batch_students WHERE instituteId = :instituteId AND studentId = :studentId AND status = 'active'")
+    suspend fun getActiveEnrollmentsForStudentOnce(
+        studentId: String,
+        instituteId: String
+    ): List<BatchStudentEntity>
+
     @Query("SELECT COUNT(*) FROM batch_students WHERE batchId = :batchId AND studentId = :studentId AND instituteId = :instituteId AND status = 'active'")
     suspend fun isStudentInBatch(batchId: String, studentId: String, instituteId: String): Int
 

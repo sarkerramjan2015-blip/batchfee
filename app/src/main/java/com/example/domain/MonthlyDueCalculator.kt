@@ -2,6 +2,7 @@ package com.batchfee.edu.domain
 
 import com.batchfee.edu.data.models.FeeEntity
 import java.util.Calendar
+import kotlin.math.round
 
 data class ComputedMonthDue(
     val period: String,
@@ -24,7 +25,9 @@ object MonthlyDueCalculator {
         monthlyFeeAmount: Double,
         batchId: String,
         batchName: String,
-        existingMonthlyFees: List<FeeEntity>
+        existingMonthlyFees: List<FeeEntity>,
+        firstMonthFeePeriod: String? = null,
+        firstMonthFeeAmount: Double? = null
     ): List<ComputedMonthDue> {
         if (admissionDateMs <= 0L || monthlyFeeAmount <= 0.0) return emptyList()
 
@@ -45,12 +48,17 @@ object MonthlyDueCalculator {
             val period = "${monthNames[month]} $year"
             val paid = paidByPeriod[period] ?: 0.0
             val existingFee = feeByPeriod[period]
-            val required = existingFee?.totalAmount ?: monthlyFeeAmount
+            val required = existingFee?.totalAmount ?: monthlyFeeAmountForPeriod(
+                period = period,
+                monthlyFeeAmount = monthlyFeeAmount,
+                firstMonthFeePeriod = firstMonthFeePeriod,
+                firstMonthFeeAmount = firstMonthFeeAmount
+            )
             val outstanding = (required - paid).coerceAtLeast(0.0)
             if (outstanding > 0.0) {
                 result += ComputedMonthDue(
                     period = period,
-                    monthlyFeeAmount = monthlyFeeAmount,
+                    monthlyFeeAmount = required,
                     paidAmount = paid,
                     outstanding = outstanding,
                     batchId = batchId,
@@ -62,6 +70,44 @@ object MonthlyDueCalculator {
         }
 
         return result
+    }
+
+    /**
+     * The first month uses a simple 30-day rule. Admission on the 1st is a
+     * full month; otherwise the amount is rounded to a whole BDT.
+     */
+    fun calculateFirstMonthFee(monthlyFeeAmount: Double, admissionDateMs: Long): Double {
+        if (monthlyFeeAmount <= 0.0 || admissionDateMs <= 0L) return 0.0
+        val calendar = Calendar.getInstance().apply { timeInMillis = admissionDateMs }
+        val admissionDay = calendar.get(Calendar.DAY_OF_MONTH).coerceAtMost(30)
+        val billableDays = (31 - admissionDay).coerceAtLeast(1)
+        return round((monthlyFeeAmount / 30.0) * billableDays)
+    }
+
+    fun periodFor(admissionDateMs: Long): String {
+        if (admissionDateMs <= 0L) return ""
+        val calendar = Calendar.getInstance().apply { timeInMillis = admissionDateMs }
+        return "${monthNames[calendar.get(Calendar.MONTH)]} ${calendar.get(Calendar.YEAR)}"
+    }
+
+    /**
+     * Existing enrollments intentionally have no frozen first-month amount,
+     * so their historic full-month behaviour remains unchanged. New
+     * enrollments receive both frozen values at creation time.
+     */
+    fun monthlyFeeAmountForPeriod(
+        period: String,
+        monthlyFeeAmount: Double,
+        firstMonthFeePeriod: String?,
+        firstMonthFeeAmount: Double?
+    ): Double = if (
+        !firstMonthFeePeriod.isNullOrBlank() &&
+        firstMonthFeeAmount != null &&
+        period.equals(firstMonthFeePeriod, ignoreCase = true)
+    ) {
+        firstMonthFeeAmount
+    } else {
+        monthlyFeeAmount
     }
 
     fun isMonthlyFeeType(feeType: String): Boolean =

@@ -60,6 +60,7 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import java.util.UUID
 import kotlinx.coroutines.launch
 
 private val BgColor = Color(0xFF07111F)
@@ -157,6 +158,12 @@ fun ExamListScreen(db: AppDatabase, onBack: () -> Unit, onAddExam: () -> Unit, o
                                     color = TextMuted, fontSize = 12.sp
                                 )
                                 if (exam.subject != null) Text(exam.subject, color = TextMuted.copy(alpha = 0.7f), fontSize = 11.sp)
+                                if (exam.examFeeAmount > 0.0) {
+                                    Text(
+                                        "Exam fee: BDT ${formatNum(exam.examFeeAmount)} per student",
+                                        color = AccentAmber, fontSize = 11.sp, fontWeight = FontWeight.SemiBold
+                                    )
+                                }
                             }
                             Box(
                                 modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(statusColor.copy(alpha = 0.12f))
@@ -194,11 +201,16 @@ fun AddEditExamScreen(db: AppDatabase, examId: String? = null, onBack: () -> Uni
     var examNote by remember { mutableStateOf("") }
     var totalMarks by remember { mutableStateOf("100") }
     var passingMarks by remember { mutableStateOf("40") }
+    var examFeeAmount by remember { mutableStateOf("") }
+    var isSaving by remember { mutableStateOf(false) }
+    val pendingExamId = remember { UUID.randomUUID().toString() }
+    val pendingExamFeeOperationId = remember { UUID.randomUUID().toString() }
     var selectedDateMs by remember { mutableStateOf(System.currentTimeMillis()) }
     var showDatePicker by remember { mutableStateOf(false) }
     var teacherTemplates by remember { mutableStateOf<List<String>>(emptyList()) }
     val dateFormat = remember { SimpleDateFormat("dd MMM yyyy", Locale.getDefault()) }
     var formInitialized by remember(examId) { mutableStateOf(false) }
+    val hasGeneratedExamFees = isEditMode && (selectedExam?.examFeeAmount ?: 0.0) > 0.0
 
     LaunchedEffect(examId) {
         if (examId != null) {
@@ -226,6 +238,7 @@ fun AddEditExamScreen(db: AppDatabase, examId: String? = null, onBack: () -> Uni
             examNote = exam.note.orEmpty()
             totalMarks = formatNum(exam.totalMarks)
             passingMarks = formatNum(exam.passingMarks)
+            examFeeAmount = if (exam.examFeeAmount > 0.0) formatNum(exam.examFeeAmount) else ""
             selectedDateMs = exam.examDateMs
             formInitialized = true
         }
@@ -262,7 +275,8 @@ fun AddEditExamScreen(db: AppDatabase, examId: String? = null, onBack: () -> Uni
                         LazyRow { items(batches) { b ->
                             val sel = selectedBatchId == b.id
                             FilterChip(
-                                selected = sel, onClick = { selectedBatchId = if (sel) null else b.id },
+                                selected = sel, onClick = { if (!hasGeneratedExamFees) selectedBatchId = if (sel) null else b.id },
+                                enabled = !hasGeneratedExamFees,
                                 label = { Text(b.name, fontSize = 12.sp) },
                                 modifier = Modifier.padding(end = 6.dp),
                                 colors = FilterChipDefaults.filterChipColors(
@@ -286,7 +300,7 @@ fun AddEditExamScreen(db: AppDatabase, examId: String? = null, onBack: () -> Uni
             ) { examName = it }
             Spacer(Modifier.height(8.dp))
             OutlinedTextField(
-                value = examName, onValueChange = { examName = it },
+                value = examName, onValueChange = { examName = it }, enabled = !hasGeneratedExamFees,
                 label = { Text("Exam Name *") }, singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
                 colors = fieldColors(), shape = RoundedCornerShape(12.dp)
@@ -328,7 +342,7 @@ fun AddEditExamScreen(db: AppDatabase, examId: String? = null, onBack: () -> Uni
                 value = dateFormat.format(Date(selectedDateMs)),
                 onValueChange = {}, readOnly = true, enabled = false,
                 label = { Text("Exam Date") },
-                trailingIcon = { IconButton(onClick = { showDatePicker = true }) { Icon(Icons.Filled.CalendarToday, null, tint = Cyan) } },
+                trailingIcon = { IconButton(onClick = { if (!hasGeneratedExamFees) showDatePicker = true }) { Icon(Icons.Filled.CalendarToday, null, tint = Cyan) } },
                 modifier = Modifier.fillMaxWidth(),
                 colors = fieldColors(), shape = RoundedCornerShape(12.dp)
             )
@@ -351,10 +365,48 @@ fun AddEditExamScreen(db: AppDatabase, examId: String? = null, onBack: () -> Uni
                 )
             }
 
+            Spacer(Modifier.height(12.dp))
+            if (!isEditMode) {
+                OutlinedTextField(
+                    value = examFeeAmount,
+                    onValueChange = { examFeeAmount = it },
+                    label = { Text("Exam Fee (optional)") },
+                    placeholder = { Text("e.g. 200") },
+                    supportingText = {
+                        Text(
+                            "This amount will be added as an exam fee for every enrolled student.",
+                            color = TextMuted, fontSize = 11.sp
+                        )
+                    },
+                    trailingIcon = { Text("BDT", color = Cyan, fontWeight = FontWeight.SemiBold, fontSize = 12.sp) },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = fieldColors(), shape = RoundedCornerShape(12.dp)
+                )
+            } else if ((selectedExam?.examFeeAmount ?: 0.0) > 0.0) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                        .background(AccentAmber.copy(alpha = 0.10f))
+                        .border(1.dp, AccentAmber.copy(alpha = 0.34f), RoundedCornerShape(12.dp))
+                        .padding(horizontal = 13.dp, vertical = 11.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text("Exam fee", color = TextWhite, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                        Text("Already created for enrolled students", color = TextMuted, fontSize = 11.sp)
+                    }
+                    Text("BDT ${formatNum(selectedExam!!.examFeeAmount)}", color = AccentAmber, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                }
+            }
+
             Spacer(Modifier.height(20.dp))
+            val parsedExamFee = examFeeAmount.trim().let { if (it.isEmpty()) 0.0 else it.toDoubleOrNull() }
             val canSaveExam = selectedBatchId != null && examName.isNotBlank() &&
                     (totalMarks.toDoubleOrNull() ?: 0.0) > 0 &&
-                    (passingMarks.toDoubleOrNull() ?: 0.0) <= (totalMarks.toDoubleOrNull() ?: 100.0)
+                    (passingMarks.toDoubleOrNull() ?: 0.0) <= (totalMarks.toDoubleOrNull() ?: 100.0) &&
+                    parsedExamFee != null && parsedExamFee >= 0.0 && !isSaving
             Box(
                 modifier = Modifier.fillMaxWidth().height(50.dp).clip(RoundedCornerShape(14.dp))
                     .shadow(4.dp, RoundedCornerShape(14.dp), spotColor = Cyan.copy(alpha = 0.3f))
@@ -363,7 +415,10 @@ fun AddEditExamScreen(db: AppDatabase, examId: String? = null, onBack: () -> Uni
             ) {
                 TextButton(
                     onClick = {
+                        if (isSaving) return@TextButton
+                        isSaving = true
                         val onError: (String) -> Unit = { message ->
+                            isSaving = false
                             scope.launch { snackbarHostState.showSnackbar(message) }
                         }
                         if (isEditMode) {
@@ -376,6 +431,7 @@ fun AddEditExamScreen(db: AppDatabase, examId: String? = null, onBack: () -> Uni
                                 passingMarks = passingMarks.toDoubleOrNull() ?: 40.0,
                                 examDateMs = selectedDateMs,
                                 teacherName = teacherName.ifBlank { null },
+                                note = examNote.ifBlank { null },
                                 onSuccess = onBack,
                                 onError = onError
                             )
@@ -386,6 +442,10 @@ fun AddEditExamScreen(db: AppDatabase, examId: String? = null, onBack: () -> Uni
                                 passingMarks = passingMarks.toDoubleOrNull() ?: 40.0,
                                 examDateMs = selectedDateMs,
                                 teacherName = teacherName.ifBlank { null },
+                                note = examNote.ifBlank { null },
+                                examFeeAmount = parsedExamFee ?: 0.0,
+                                examId = pendingExamId,
+                                operationId = pendingExamFeeOperationId,
                                 onSuccess = onBack,
                                 onError = onError
                             )
@@ -393,7 +453,12 @@ fun AddEditExamScreen(db: AppDatabase, examId: String? = null, onBack: () -> Uni
                     },
                     modifier = Modifier.fillMaxSize(), enabled = canSaveExam,
                     colors = ButtonDefaults.textButtonColors(contentColor = if (canSaveExam) Color.White else TextMuted)
-                ) { Text(if (isEditMode) "Update Exam" else "Create Exam", fontWeight = FontWeight.Bold, fontSize = 16.sp) }
+                ) {
+                    Text(
+                        if (isSaving) "Saving..." else if (isEditMode) "Update Exam" else "Create Exam",
+                        fontWeight = FontWeight.Bold, fontSize = 16.sp
+                    )
+                }
             }
         }
     }

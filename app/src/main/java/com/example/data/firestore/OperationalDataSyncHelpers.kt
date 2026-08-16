@@ -50,7 +50,9 @@ object BatchStudentSyncHelper {
                         "studentId" to enrollment.studentId,
                         "joinedAtMs" to enrollment.joinedAtMs,
                         "status" to enrollment.status,
-                        "leftAtMs" to enrollment.leftAtMs
+                        "leftAtMs" to enrollment.leftAtMs,
+                        "firstMonthFeePeriod" to enrollment.firstMonthFeePeriod,
+                        "firstMonthFeeAmount" to enrollment.firstMonthFeeAmount
                     )
                 ).await()
         } catch (e: Exception) {
@@ -98,7 +100,9 @@ object BatchStudentSyncHelper {
                     studentId = studentId,
                     joinedAtMs = (doc.get("joinedAtMs") as? Number).asLong() ?: 0L,
                     status = doc.getString("status") ?: "active",
-                    leftAtMs = (doc.get("leftAtMs") as? Number).asLong()
+                    leftAtMs = (doc.get("leftAtMs") as? Number).asLong(),
+                    firstMonthFeePeriod = doc.getString("firstMonthFeePeriod"),
+                    firstMonthFeeAmount = (doc.get("firstMonthFeeAmount") as? Number).asDouble()
                 )
             }.forEach { db.batchStudentDao().enrollStudent(it) }
         } catch (e: Exception) {
@@ -140,6 +144,7 @@ object FinanceSyncHelper {
                     createdAtMs = (doc.get("createdAtMs") as? Number).asLong() ?: System.currentTimeMillis(),
                     updatedAtMs = (doc.get("updatedAtMs") as? Number).asLong() ?: System.currentTimeMillis(),
                     cancelledAtMs = (doc.get("cancelledAtMs") as? Number).asLong(),
+                    sourceId = doc.getString("sourceId"),
                     businessKey = doc.getString("businessKey"),
                     ledgerVersion = (doc.get("ledgerVersion") as? Number)?.toInt() ?: 0
                 )
@@ -556,6 +561,7 @@ object ExamSyncHelper {
                     "examDateMs" to exam.examDateMs,
                     "totalMarks" to exam.totalMarks,
                     "passingMarks" to exam.passingMarks,
+                    "examFeeAmount" to exam.examFeeAmount,
                     "teacherName" to exam.teacherName,
                     "note" to exam.note,
                     "status" to exam.status,
@@ -607,6 +613,7 @@ object ExamSyncHelper {
                     examDateMs = (doc.get("examDateMs") as? Number).asLong() ?: 0L,
                     totalMarks = (doc.get("totalMarks") as? Number).asDouble() ?: 0.0,
                     passingMarks = (doc.get("passingMarks") as? Number).asDouble() ?: 0.0,
+                    examFeeAmount = (doc.get("examFeeAmount") as? Number).asDouble() ?: 0.0,
                     teacherName = doc.getString("teacherName"),
                     note = doc.getString("note"),
                     status = doc.getString("status") ?: "scheduled",

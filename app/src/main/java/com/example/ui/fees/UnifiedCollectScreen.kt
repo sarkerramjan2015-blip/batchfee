@@ -110,6 +110,7 @@ import androidx.compose.foundation.layout.Row
 import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
 import com.batchfee.edu.data.models.BatchEntity
+import com.batchfee.edu.data.models.BatchStudentEntity
 import com.batchfee.edu.data.models.FeeEntity
 import com.batchfee.edu.data.models.PaymentEntity
 import com.batchfee.edu.data.models.StudentEntity
@@ -190,6 +191,7 @@ fun UnifiedCollectScreen(
     var studentAllFees by remember { mutableStateOf<List<FeeEntity>>(emptyList()) }
     var studentDues by remember { mutableStateOf<List<EnrichedDue>>(emptyList()) }
     var studentBatches by remember { mutableStateOf<List<BatchEntity>>(emptyList()) }
+    var studentEnrollments by remember { mutableStateOf<List<BatchStudentEntity>>(emptyList()) }
     var paymentHistory by remember { mutableStateOf<List<StudentPaymentHistory>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
     var loadingLedger by remember { mutableStateOf(false) }
@@ -231,9 +233,28 @@ fun UnifiedCollectScreen(
     fun amountText(value: Double): String =
         if (value <= 0.0) "" else "%.0f".format(value)
 
-    fun calcNewFeeBase(batch: BatchEntity? = selectedBatch, months: Int = 1): Double {
-        val monthlyFee = batch?.monthlyFeeAmount ?: 0.0
-        return monthlyFee * months.coerceAtLeast(1)
+    fun requiredMonthlyAmount(batch: BatchEntity?, period: String): Double {
+        val safeBatch = batch ?: return 0.0
+        val enrollment = studentEnrollments.firstOrNull { it.batchId == safeBatch.id }
+        return MonthlyDueCalculator.monthlyFeeAmountForPeriod(
+            period = period,
+            monthlyFeeAmount = safeBatch.monthlyFeeAmount,
+            firstMonthFeePeriod = enrollment?.firstMonthFeePeriod,
+            firstMonthFeeAmount = enrollment?.firstMonthFeeAmount
+        )
+    }
+
+    fun calcNewFeeBase(
+        batch: BatchEntity? = selectedBatch,
+        startIdx: Int = startMonthIdx,
+        endIdx: Int = endMonthIdx
+    ): Double {
+        val start = minOf(startIdx, endIdx).coerceAtLeast(0)
+        val end = maxOf(startIdx, endIdx).coerceAtMost(monthOptions.lastIndex)
+        if (start > end) return 0.0
+        return (start..end).sumOf { index ->
+            requiredMonthlyAmount(batch, monthOptions[index].label)
+        }
     }
 
     fun numSelectedMonths(): Int {
@@ -274,9 +295,8 @@ fun UnifiedCollectScreen(
     fun onPeriodConfirmed(startIdx: Int, endIdx: Int) {
         startMonthIdx = minOf(startIdx, endIdx)
         endMonthIdx = maxOf(startIdx, endIdx)
-        val months = (endMonthIdx - startMonthIdx + 1).coerceAtLeast(1)
         feePeriod = buildFeePeriodLabel(startMonthIdx, endMonthIdx, monthOptions)
-        val nextBase = calcNewFeeBase(selectedBatch, months)
+        val nextBase = calcNewFeeBase(selectedBatch, startMonthIdx, endMonthIdx)
         baseAmount = amountText(nextBase)
         collectAmount = amountText(nextBase)
         showPeriodPicker = false
@@ -302,6 +322,9 @@ fun UnifiedCollectScreen(
             val batches = withContext(Dispatchers.IO) {
                 db.batchStudentDao().getBatchesForStudent(student.id, instId).first()
             }
+            val enrollments = withContext(Dispatchers.IO) {
+                db.batchStudentDao().getActiveEnrollmentsForStudentOnce(student.id, instId)
+            }
             val batchMap = withContext(Dispatchers.IO) {
                 db.batchDao().getBatchesByInstituteOnce(instId).associateBy { it.id }
             }
@@ -318,6 +341,7 @@ fun UnifiedCollectScreen(
 
             studentAllFees = allFees
             studentBatches = batches
+            studentEnrollments = enrollments
             if (selectedBatchId == null || batches.none { it.id == selectedBatchId }) {
                 selectedBatchId = batches.firstOrNull()?.id
             }
@@ -325,13 +349,17 @@ fun UnifiedCollectScreen(
             // ── Monthly dues ──
             val monthlyDues = batches.flatMap { batch ->
                 if (batch.monthlyFeeAmount <= 0.0) return@flatMap emptyList<EnrichedDue>()
+                val enrollment = enrollments.firstOrNull { it.batchId == batch.id }
+                    ?: return@flatMap emptyList<EnrichedDue>()
                 val batchFees = allFees.filter { it.batchId == batch.id && it.studentId == student.id }
                 val items = MonthlyDueCalculator.computeMonthlyOutstandingItems(
-                    admissionDateMs = student.admissionDateMs,
+                    admissionDateMs = enrollment.joinedAtMs,
                     monthlyFeeAmount = batch.monthlyFeeAmount,
                     batchId = batch.id,
                     batchName = batch.name,
-                    existingMonthlyFees = batchFees
+                    existingMonthlyFees = batchFees,
+                    firstMonthFeePeriod = enrollment.firstMonthFeePeriod,
+                    firstMonthFeeAmount = enrollment.firstMonthFeeAmount
                 )
                 items.map { item ->
                     val existingFee = batchFees.firstOrNull { it.feePeriod.equals(item.period, ignoreCase = true) }
@@ -375,7 +403,24 @@ fun UnifiedCollectScreen(
                 }
             }
 
-            studentDues = (monthlyDues + admissionDues)
+            // Server-created one-time fees (such as Exam Fee) must be shown
+            // here too. They already have a real fee ID, so Collect Payment
+            // updates the exact record and creates its normal receipt.
+            val generatedOneTimeDues = allFees.filter { fee ->
+                fee.dueAmount > 0.0 &&
+                    !fee.feeType.equals("monthly_fee", ignoreCase = true) &&
+                    !fee.feeType.equals("monthly", ignoreCase = true) &&
+                    !fee.feeType.equals("admission_fee", ignoreCase = true) &&
+                    !fee.feeType.equals("admission", ignoreCase = true)
+            }.map { fee ->
+                EnrichedDue(
+                    fee = fee,
+                    studentName = student.fullName,
+                    batchName = fee.batchId?.let { batchMap[it]?.name }
+                )
+            }
+
+            studentDues = (monthlyDues + admissionDues + generatedOneTimeDues)
                 .filter { it.fee.dueAmount > 0.0 }
                 .sortedBy { it.fee.feePeriod }
             paymentHistory = payments.map { payment ->
@@ -486,15 +531,15 @@ fun UnifiedCollectScreen(
                 }
 
                 val lockedMonthIndices = remember(selectedStudent?.id, selectedBatchId, studentAllFees) {
-                    val monthlyFee = selectedBatch?.monthlyFeeAmount ?: 0.0
-                    if (monthlyFee <= 0.0) return@remember emptySet<Int>()
+                    if ((selectedBatch?.monthlyFeeAmount ?: 0.0) <= 0.0) return@remember emptySet<Int>()
                     monthOptions.mapIndexedNotNull { idx, my ->
                         val existing = studentAllFees.firstOrNull { f ->
                             f.studentId == selectedStudent?.id && f.batchId == selectedBatchId &&
                                 f.feePeriod.equals(my.label, ignoreCase = true) && f.cancelledAtMs == null
                         }
                         val paid = existing?.paidAmount ?: 0.0
-                        val required = existing?.totalAmount ?: monthlyFee
+                        val required = existing?.totalAmount
+                            ?: requiredMonthlyAmount(selectedBatch, my.label)
                         if (paid >= required && paid > 0.0) idx else null
                     }.toSet()
                 }
@@ -503,7 +548,6 @@ fun UnifiedCollectScreen(
                     if (!showDueSelector && !isPartialPayment) {
                         val realStart = minOf(startMonthIdx, endMonthIdx)
                         val realEnd = maxOf(startMonthIdx, endMonthIdx)
-                        val monthlyFee = selectedBatch?.monthlyFeeAmount ?: 0.0
                         var outstandingTotal = 0.0
                         for (i in realStart..realEnd) {
                             val ml = monthOptions[i].label
@@ -512,7 +556,8 @@ fun UnifiedCollectScreen(
                                     f.feePeriod.equals(ml, ignoreCase = true) && f.cancelledAtMs == null
                             }
                             val paid = existing?.paidAmount ?: 0.0
-                            val required = existing?.totalAmount ?: monthlyFee
+                            val required = existing?.totalAmount
+                                ?: requiredMonthlyAmount(selectedBatch, ml)
                             outstandingTotal += (required - paid).coerceAtLeast(0.0)
                         }
                         collectAmount = amountText((outstandingTotal - (outstandingTotal * discountPercent / 100.0)).coerceAtLeast(0.0))
@@ -574,7 +619,7 @@ fun UnifiedCollectScreen(
                                         shape = RoundedCornerShape(10.dp),
                                         border = BorderStroke(1.dp, if (showDueSelector) AccentRed.copy(alpha = 0.6f) else BorderSub)
                                     ) {
-                                        Text("Due", color = if (showDueSelector) AccentRed else TextMuted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                                        Text("Pending Fees", color = if (showDueSelector) AccentRed else TextMuted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                                     }
                                 }
                                 OutlinedButton(
@@ -645,16 +690,19 @@ fun UnifiedCollectScreen(
                                     monthOptions = monthOptions,
                                     feeType = autoFeeType,
                                     baseAmount = baseAmount,
+                                    calculatedBase = calcNewFeeBase(selectedBatch),
                                     discountPercent = discountPercent,
-                                    admissionDateMs = selectedStudent?.admissionDateMs ?: 0L,
+                                    admissionDateMs = studentEnrollments
+                                        .firstOrNull { it.batchId == selectedBatchId }
+                                        ?.joinedAtMs
+                                        ?: selectedStudent?.admissionDateMs
+                                        ?: 0L,
                                     lockedMonthIndices = lockedMonthIndices,
                                     onBatchSelected = { batch ->
                                         selectedBatchId = batch?.id
-                                        val months = numSelectedMonths()
-                                        val nextBase = calcNewFeeBase(batch, months)
+                                        val nextBase = calcNewFeeBase(batch)
                                         val realStart = minOf(startMonthIdx, endMonthIdx)
                                         val realEnd = maxOf(startMonthIdx, endMonthIdx)
-                                        val monthlyFee = batch?.monthlyFeeAmount ?: 0.0
                                         var outstandingTotal = 0.0
                                         for (i in realStart..realEnd) {
                                             val ml = monthOptions[i].label
@@ -663,25 +711,22 @@ fun UnifiedCollectScreen(
                                                     f.feePeriod.equals(ml, ignoreCase = true) && f.cancelledAtMs == null
                                             }
                                             val paid = existing?.paidAmount ?: 0.0
-                                            val required = existing?.totalAmount ?: monthlyFee
+                                            val required = existing?.totalAmount
+                                                ?: requiredMonthlyAmount(batch, ml)
                                             outstandingTotal += (required - paid).coerceAtLeast(0.0)
                                         }
                                         baseAmount = amountText(nextBase)
                                         collectAmount = amountText(outstandingTotal)
                                     },
                                     onStartMonthChanged = { idx ->
-                                        val old = minOf(startMonthIdx, endMonthIdx)
-                                        val newEnd = maxOf(idx, endMonthIdx)
                                         startMonthIdx = minOf(idx, endMonthIdx)
                                         if (idx > endMonthIdx) endMonthIdx = idx
-                                        val months = (kotlin.math.max(startMonthIdx, endMonthIdx) - kotlin.math.min(startMonthIdx, endMonthIdx) + 1).coerceAtLeast(1)
                                         feePeriod = buildFeePeriodLabel(startMonthIdx, endMonthIdx, monthOptions)
                                         // Recalculate outstanding-based amount
                                         val realStart = minOf(startMonthIdx, endMonthIdx)
                                         val realEnd = maxOf(startMonthIdx, endMonthIdx)
-                                        val monthlyFee = selectedBatch?.monthlyFeeAmount ?: 0.0
                                         var outstandingTotal = 0.0
-                                        val rawBase = monthlyFee * months
+                                        val rawBase = calcNewFeeBase(selectedBatch)
                                         for (i in realStart..realEnd) {
                                             val ml = monthOptions[i].label
                                             val existing = studentAllFees.firstOrNull { f ->
@@ -689,7 +734,8 @@ fun UnifiedCollectScreen(
                                                     f.feePeriod.equals(ml, ignoreCase = true) && f.cancelledAtMs == null
                                             }
                                             val paid = existing?.paidAmount ?: 0.0
-                                            val required = existing?.totalAmount ?: monthlyFee
+                                            val required = existing?.totalAmount
+                                                ?: requiredMonthlyAmount(selectedBatch, ml)
                                             outstandingTotal += (required - paid).coerceAtLeast(0.0)
                                         }
                                         baseAmount = amountText(rawBase)
@@ -698,13 +744,11 @@ fun UnifiedCollectScreen(
                                     onEndMonthChanged = { idx ->
                                         if (idx < startMonthIdx) startMonthIdx = idx
                                         endMonthIdx = kotlin.math.max(startMonthIdx, idx)
-                                        val months = (endMonthIdx - startMonthIdx + 1).coerceAtLeast(1)
                                         feePeriod = buildFeePeriodLabel(startMonthIdx, endMonthIdx, monthOptions)
                                         val realStart = minOf(startMonthIdx, endMonthIdx)
                                         val realEnd = maxOf(startMonthIdx, endMonthIdx)
-                                        val monthlyFee = selectedBatch?.monthlyFeeAmount ?: 0.0
                                         var outstandingTotal = 0.0
-                                        val rawBase = monthlyFee * months
+                                        val rawBase = calcNewFeeBase(selectedBatch)
                                         for (i in realStart..realEnd) {
                                             val ml = monthOptions[i].label
                                             val existing = studentAllFees.firstOrNull { f ->
@@ -712,7 +756,8 @@ fun UnifiedCollectScreen(
                                                     f.feePeriod.equals(ml, ignoreCase = true) && f.cancelledAtMs == null
                                             }
                                             val paid = existing?.paidAmount ?: 0.0
-                                            val required = existing?.totalAmount ?: monthlyFee
+                                            val required = existing?.totalAmount
+                                                ?: requiredMonthlyAmount(selectedBatch, ml)
                                             outstandingTotal += (required - paid).coerceAtLeast(0.0)
                                         }
                                         baseAmount = amountText(rawBase)
@@ -746,7 +791,6 @@ fun UnifiedCollectScreen(
                                         } else {
                                             val realStart = minOf(startMonthIdx, endMonthIdx)
                                             val realEnd = maxOf(startMonthIdx, endMonthIdx)
-                                            val monthlyFee = selectedBatch?.monthlyFeeAmount ?: 0.0
                                             var outstandingTotal = 0.0
                                             for (i in realStart..realEnd) {
                                                 val ml = monthOptions[i].label
@@ -755,7 +799,8 @@ fun UnifiedCollectScreen(
                                                         f.feePeriod.equals(ml, ignoreCase = true) && f.cancelledAtMs == null
                                                 }
                                                 val paid = existing?.paidAmount ?: 0.0
-                                                val required = existing?.totalAmount ?: monthlyFee
+                                                val required = existing?.totalAmount
+                                                    ?: requiredMonthlyAmount(selectedBatch, ml)
                                                 outstandingTotal += (required - paid).coerceAtLeast(0.0)
                                             }
                                             collectAmount = amountText((outstandingTotal - (outstandingTotal * discountPercent / 100.0)).coerceAtLeast(0.0))
@@ -840,7 +885,8 @@ fun UnifiedCollectScreen(
                                                     fee.cancelledAtMs == null
                                             }
                                             val paid = existing?.paidAmount ?: 0.0
-                                            val required = existing?.totalAmount ?: (selectedBatch?.monthlyFeeAmount ?: 0.0)
+                                            val required = existing?.totalAmount
+                                                ?: requiredMonthlyAmount(selectedBatch, monthLabel)
                                             val remaining = (required - paid).coerceAtLeast(0.0)
                                             totalOutstandingInRange += remaining
                                         }
@@ -927,10 +973,6 @@ fun UnifiedCollectScreen(
                                                 if (months > 1) {
                                                     var remainingPayment = collecting
                                                     // Distribute discount proportionally per month
-                                                    val totalBase = months * (selectedBatch?.monthlyFeeAmount ?: 0.0)
-                                                    val discPerMonth = if (totalBase > 0.0) {
-                                                        kotlin.math.round(discountAmount / months * 100.0) / 100.0
-                                                    } else 0.0
                                                     for (i in realStart..realEnd) {
                                                         if (remainingPayment <= 0.0) break
                                                         val monthLabel = monthOptions[i].label
@@ -940,9 +982,12 @@ fun UnifiedCollectScreen(
                                                                 fee.feePeriod.equals(monthLabel, ignoreCase = true) &&
                                                                 fee.cancelledAtMs == null
                                                         }
-                                                        val monthlyAmount = selectedBatch?.monthlyFeeAmount ?: 0.0
+                                                        val monthlyAmount = requiredMonthlyAmount(selectedBatch, monthLabel)
                                                         val paidSoFar = existingFee?.paidAmount ?: 0.0
-                                                        val monthTotal = (monthlyAmount - discPerMonth).coerceAtLeast(0.0)
+                                                        val discountForMonth = kotlin.math.round(
+                                                            monthlyAmount * discountPercent
+                                                        ) / 100.0
+                                                        val monthTotal = (monthlyAmount - discountForMonth).coerceAtLeast(0.0)
                                                         val remainingThisMonth = (monthTotal - paidSoFar).coerceAtLeast(0.0)
                                                         val monthPayment = minOf(remainingPayment, remainingThisMonth)
                                                         if (monthPayment <= 0.0) continue
@@ -969,7 +1014,7 @@ fun UnifiedCollectScreen(
                                                                 feeType = "monthly_fee",
                                                                 dueDateMs = now,
                                                                 baseAmount = monthlyAmount,
-                                                                discountAmount = discPerMonth,
+                                                                discountAmount = discountForMonth,
                                                                 lateFeeAmount = 0.0,
                                                                 collectedAmount = monthPayment,
                                                                 paymentMethod = paymentMethod,
@@ -1963,7 +2008,8 @@ private fun ExistingDueSelector(
         border = BorderStroke(1.dp, BorderSub)
     ) {
         Column(Modifier.padding(16.dp)) {
-            Text("Select Due Fee", color = TextWhite, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            Text("Select Fee to Collect", color = TextWhite, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            Text("Exam, admission and monthly fees are listed here.", color = TextMuted, fontSize = 11.sp)
             Spacer(Modifier.height(10.dp))
             if (dues.isEmpty()) {
                 Text("No pending due fee. Use Running month or Advance fee.", color = TextMuted, fontSize = 13.sp)
@@ -1982,7 +2028,11 @@ private fun ExistingDueSelector(
                     ) {
                         Column(Modifier.weight(1f)) {
                             Text(due.fee.feePeriod, color = TextWhite, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                            Text(due.batchName ?: due.fee.feeType, color = TextMuted, fontSize = 11.sp)
+                            Text(
+                                listOfNotNull(due.batchName, due.fee.feeType.toCollectionFeeLabel())
+                                    .joinToString(" · "),
+                                color = TextMuted, fontSize = 11.sp
+                            )
                         }
                         Text(formatSmartAmount(due.fee.dueAmount), color = AccentRed, fontWeight = FontWeight.Bold)
                     }
@@ -1991,6 +2041,14 @@ private fun ExistingDueSelector(
             }
         }
     }
+}
+
+private fun String.toCollectionFeeLabel(): String = when (trim().lowercase(Locale.US)) {
+    "exam_fee", "exam" -> "Exam fee"
+    "admission_fee", "admission" -> "Admission fee"
+    "advance_fee", "advance" -> "Advance fee"
+    "monthly_fee", "monthly" -> "Monthly fee"
+    else -> replace('_', ' ').replaceFirstChar { it.uppercase() }
 }
 
 @Composable
@@ -2002,6 +2060,7 @@ private fun NewFeeForm(
     monthOptions: List<UcMonthYear> = emptyList(),
     feeType: String,
     baseAmount: String,
+    calculatedBase: Double,
     discountPercent: Double,
     admissionDateMs: Long = 0L,
     lockedMonthIndices: Set<Int> = emptySet(),
@@ -2071,7 +2130,6 @@ private fun NewFeeForm(
             val startLabel = monthOptions.getOrNull(startMonthIdx)?.label ?: "—"
             val endLabel = monthOptions.getOrNull(endMonthIdx)?.label ?: "—"
             val monthlyFee = batches.firstOrNull { it.id == selectedBatchId }?.monthlyFeeAmount ?: 0.0
-            val calculatedBase = monthlyFee * monthCount
 
             Column(
                 modifier = Modifier

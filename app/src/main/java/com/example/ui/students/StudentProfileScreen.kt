@@ -128,6 +128,7 @@ fun StudentProfileScreen(
     var totalPaid by remember { mutableStateOf(0.0) }
     var totalDue by remember { mutableStateOf(0.0) }
     var batches by remember { mutableStateOf<List<BatchEntity>>(emptyList()) }
+    var activeEnrollments by remember { mutableStateOf<List<BatchStudentEntity>>(emptyList()) }
     var enrolledBatchIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var feeHistory by remember { mutableStateOf<List<FeeEntity>>(emptyList()) }
     var paymentHistory by remember { mutableStateOf<List<PaymentEntity>>(emptyList()) }
@@ -205,6 +206,11 @@ fun StudentProfileScreen(
                     enrolledBatchIds = it.map { b -> b.id }.toSet()
                 }
             }
+            launch {
+                db.batchStudentDao().getActiveEnrollmentsForStudent(studentId, instId).collect {
+                    activeEnrollments = it
+                }
+            }
         }
     }
 
@@ -245,21 +251,23 @@ fun StudentProfileScreen(
             }
         } else {
             val s = student!!
-            val computedTotalDue = remember(s.admissionDateMs, feeHistory, batches) {
+            val computedTotalDue = remember(feeHistory, batches, activeEnrollments) {
                 var computed = feeHistory.filter { !MonthlyDueCalculator.isMonthlyFeeType(it.feeType) }.sumOf { it.dueAmount }
-                if (s.admissionDateMs > 0L) {
-                    batches.forEach { batch ->
-                        if (batch.monthlyFeeAmount > 0.0) {
-                            val batchFees = feeHistory.filter { it.batchId == batch.id }
-                            val items = MonthlyDueCalculator.computeMonthlyOutstandingItems(
-                                admissionDateMs = s.admissionDateMs,
-                                monthlyFeeAmount = batch.monthlyFeeAmount,
-                                batchId = batch.id,
-                                batchName = batch.name,
-                                existingMonthlyFees = batchFees
-                            )
-                            computed += items.sumOf { it.outstanding }
-                        }
+                batches.forEach { batch ->
+                    val enrollment = activeEnrollments.firstOrNull { it.batchId == batch.id }
+                        ?: return@forEach
+                    if (batch.monthlyFeeAmount > 0.0) {
+                        val batchFees = feeHistory.filter { it.batchId == batch.id }
+                        val items = MonthlyDueCalculator.computeMonthlyOutstandingItems(
+                            admissionDateMs = enrollment.joinedAtMs,
+                            monthlyFeeAmount = batch.monthlyFeeAmount,
+                            batchId = batch.id,
+                            batchName = batch.name,
+                            existingMonthlyFees = batchFees,
+                            firstMonthFeePeriod = enrollment.firstMonthFeePeriod,
+                            firstMonthFeeAmount = enrollment.firstMonthFeeAmount
+                        )
+                        computed += items.sumOf { it.outstanding }
                     }
                 }
                 computed
@@ -1021,14 +1029,21 @@ fun StudentProfileScreen(
                                             .clickable {
                                                 if (!isEnrolled && instId != null) {
                                                     scope.launch {
+                                                        val enrollmentStart = s.admissionDateMs.takeIf { it > 0L }
+                                                            ?: System.currentTimeMillis()
                                                         val enrollment = BatchStudentEntity(
                                                             id = UUID.randomUUID().toString(),
                                                             instituteId = instId!!,
                                                             batchId = batch.id,
                                                             studentId = studentId,
-                                                            joinedAtMs = System.currentTimeMillis(),
+                                                            joinedAtMs = enrollmentStart,
                                                             status = "active",
-                                                            leftAtMs = null
+                                                            leftAtMs = null,
+                                                            firstMonthFeePeriod = MonthlyDueCalculator.periodFor(enrollmentStart),
+                                                            firstMonthFeeAmount = MonthlyDueCalculator.calculateFirstMonthFee(
+                                                                batch.monthlyFeeAmount,
+                                                                enrollmentStart
+                                                            )
                                                         )
                                                         BatchStudentSyncHelper.upsertEnrollment(enrollment)
                                                         db.batchStudentDao().enrollStudent(enrollment)

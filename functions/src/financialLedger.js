@@ -308,6 +308,7 @@ function createFinancialLedgerHandler({ db }) {
         const batchId = optionalString(data, "batchId", 128);
         const feePeriod = requiredString(data, "feePeriod", 80);
         const feeType = requiredString(data, "feeType", 40).toLowerCase();
+        const sourceId = optionalString(data, "sourceId", 128);
         const dueDateMs = requiredTimestamp(data, "dueDateMs");
         const baseAmount = money(data, "baseAmount");
         const discountAmount = money(data, "discountAmount");
@@ -320,7 +321,7 @@ function createFinancialLedgerHandler({ db }) {
         if (initialAmount - totalAmount > MONEY_EPSILON) {
           throw new HttpsError("failed-precondition", "Payment exceeds remaining due.");
         }
-        const businessKey = feeBusinessKey({ studentId, batchId, feePeriod, feeType });
+        const businessKey = feeBusinessKey({ studentId, batchId, feePeriod, feeType, sourceId });
         const feeId = compactId("fee", `${instituteId}:${businessKey}`);
         const feeRef = instituteRef.collection("fees").doc(feeId);
         const keyRef = instituteRef.collection("ledger_internal").doc(`fee_key_${businessKey}`);
@@ -346,6 +347,7 @@ function createFinancialLedgerHandler({ db }) {
             batchId: doc.get("batchId"),
             feePeriod: doc.get("feePeriod"),
             feeType: doc.get("feeType"),
+            sourceId: doc.get("sourceId"),
           }) === businessKey);
         if (feeSnap.exists || keySnap.exists || duplicate) {
           throw new HttpsError("already-exists", "This fee already exists.");
@@ -383,6 +385,7 @@ function createFinancialLedgerHandler({ db }) {
           batchId,
           feePeriod,
           feeType,
+          sourceId,
           dueDateMs,
           baseAmount,
           discountAmount,
@@ -596,6 +599,7 @@ function createFinancialLedgerHandler({ db }) {
               batchId: doc.get("batchId"),
               feePeriod: doc.get("feePeriod"),
               feeType: doc.get("feeType"),
+              sourceId: doc.get("sourceId"),
             }) === targetBusinessKey,
           );
           if (keySnap.exists && keySnap.get("feeId") !== deterministicTargetId &&

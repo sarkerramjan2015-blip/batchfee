@@ -9,7 +9,8 @@ import androidx.room.PrimaryKey
     indices = [
         Index(value = ["instituteId", "businessKey"], unique = true),
         Index(value = ["instituteId", "cancelledAtMs", "dueDateMs"]),
-        Index(value = ["instituteId", "studentId", "cancelledAtMs"])
+        Index(value = ["instituteId", "studentId", "cancelledAtMs"]),
+        Index(value = ["instituteId", "sourceId"])
     ]
 )
 data class FeeEntity(
@@ -31,6 +32,8 @@ data class FeeEntity(
     val createdAtMs: Long,
     val updatedAtMs: Long,
     val cancelledAtMs: Long?,
+    /** Stable source link for generated fees, such as the exam that created an exam fee. */
+    val sourceId: String? = null,
     val businessKey: String? = null,
     val ledgerVersion: Int = 0
 )

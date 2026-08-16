@@ -11,6 +11,7 @@ import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
 import com.batchfee.edu.data.models.BatchEntity
 import com.batchfee.edu.data.repository.SafeDeletionRepository
 import com.batchfee.edu.data.repository.EntitledCreationRepository
+import com.batchfee.edu.domain.MonthlyDueCalculator
 import com.batchfee.edu.domain.SessionManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -180,7 +181,12 @@ class BatchViewModel(private val db: AppDatabase) : ViewModel() {
                             studentId = student.id,
                             joinedAtMs = now,
                             status = "active",
-                            leftAtMs = null
+                            leftAtMs = null,
+                            firstMonthFeePeriod = MonthlyDueCalculator.periodFor(now),
+                            firstMonthFeeAmount = MonthlyDueCalculator.calculateFirstMonthFee(
+                                toBatch.monthlyFeeAmount,
+                                now
+                            )
                         )
                         db.batchStudentDao().enrollStudent(enrollment)
                     }

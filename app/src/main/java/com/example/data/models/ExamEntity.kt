@@ -13,6 +13,7 @@ data class ExamEntity(
     val examDateMs: Long,
     val totalMarks: Double,
     val passingMarks: Double,
+    val examFeeAmount: Double = 0.0,
     val teacherName: String?,
     val note: String?,
     val status: String,

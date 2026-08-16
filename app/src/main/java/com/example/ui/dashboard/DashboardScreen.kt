@@ -101,11 +101,23 @@ private val AccentRed = Color(0xFFEF4444)
 private val AccentAmber = Color(0xFFF59E0B)
 private val WarningAmber   = Color(0xFFD97706)
 private val AccentOrange   = Color(0xFFF97316)
+private val AccentPink = Color(0xFFEC4899)
 private val TextPrimary = Color(0xFFF8FAFC)
 private val TextSecondary = Color(0xFF94A3B8)
 private val TextMuted = Color(0xFF64748B)
 
-data class UpcomingBirthday(val studentName: String, val daysUntil: Int, val photoUri: String?)
+data class UpcomingBirthday(
+    val studentName: String,
+    val className: String?,
+    val daysUntil: Int,
+    val photoUri: String?
+)
+
+data class BirthdayReminderSummary(
+    val today: List<UpcomingBirthday> = emptyList(),
+    val tomorrowCount: Int = 0,
+    val upcomingCount: Int = 0
+)
 data class ActivityItem(val title: String, val subtitle: String, val timeMs: Long, val icon: ImageVector)
 private data class AddMenuOption(
     val title: String,
@@ -185,10 +197,12 @@ private fun isClosedStudentStatus(status: String?): Boolean {
 private fun calculateDashboardDue(input: DashboardDueInput): DashboardDueResult {
     val studentsById = input.students.associateBy { it.id }
     val batchesById = input.batches.associateBy { it.id }
-    val batchesByStudent = input.activeEnrollments
+    val enrollmentsByStudent = input.activeEnrollments
         .groupBy { it.studentId }
         .mapValues { (_, enrollments) ->
-            enrollments.mapNotNull { enrollment -> batchesById[enrollment.batchId] }
+            enrollments.mapNotNull { enrollment ->
+                batchesById[enrollment.batchId]?.let { batch -> enrollment to batch }
+            }
         }
     val feesByStudentAndBatch = input.fees.groupBy { fee -> fee.studentId to fee.batchId }
 
@@ -203,7 +217,8 @@ private fun calculateDashboardDue(input: DashboardDueInput): DashboardDueResult 
         .filter { fee ->
             fee.dueAmount > 0.0 &&
                 !MonthlyDueCalculator.isMonthlyFeeType(fee.feeType) &&
-                MonthlyDueCalculator.isPastMonth(fee.feePeriod)
+                (fee.feeType.equals("exam_fee", ignoreCase = true) ||
+                    MonthlyDueCalculator.isPastMonth(fee.feePeriod))
         }
         .forEach { fee ->
             // Ignore orphaned historic records, matching the Due Fees screen.
@@ -218,16 +233,17 @@ private fun calculateDashboardDue(input: DashboardDueInput): DashboardDueResult 
         }
 
     input.students.forEach { student ->
-        if (student.admissionDateMs <= 0L) return@forEach
         val isClosed = isClosedStudentStatus(student.status)
-        batchesByStudent[student.id].orEmpty().forEach { batch ->
+        enrollmentsByStudent[student.id].orEmpty().forEach { (enrollment, batch) ->
             if (batch.monthlyFeeAmount <= 0.0) return@forEach
             val items = MonthlyDueCalculator.computeMonthlyOutstandingItems(
-                admissionDateMs = student.admissionDateMs,
+                admissionDateMs = enrollment.joinedAtMs,
                 monthlyFeeAmount = batch.monthlyFeeAmount,
                 batchId = batch.id,
                 batchName = batch.name,
-                existingMonthlyFees = feesByStudentAndBatch[student.id to batch.id].orEmpty()
+                existingMonthlyFees = feesByStudentAndBatch[student.id to batch.id].orEmpty(),
+                firstMonthFeePeriod = enrollment.firstMonthFeePeriod,
+                firstMonthFeeAmount = enrollment.firstMonthFeeAmount
             )
             items.forEach { item ->
                 if (isClosed) {
@@ -293,20 +309,32 @@ private fun calculateFinancialSummary(
     )
 }
 
+/**
+ * Birthdays are calendar dates, never times.  Normalising both values to the
+ * start of the local day prevents a birthday from disappearing after midnight.
+ */
 private fun daysUntilNextBirthday(dobMs: Long, today: java.util.Calendar): Int {
     val dob = java.util.Calendar.getInstance().apply { timeInMillis = dobMs }
+    val startOfToday = (today.clone() as java.util.Calendar).apply {
+        set(java.util.Calendar.HOUR_OF_DAY, 0)
+        set(java.util.Calendar.MINUTE, 0)
+        set(java.util.Calendar.SECOND, 0)
+        set(java.util.Calendar.MILLISECOND, 0)
+    }
     val next = java.util.Calendar.getInstance().apply {
         val month = dob.get(java.util.Calendar.MONTH)
         val day = dob.get(java.util.Calendar.DAY_OF_MONTH)
         val isFeb29 = month == java.util.Calendar.FEBRUARY && day == 29
-        val year = today.get(java.util.Calendar.YEAR)
+        val year = startOfToday.get(java.util.Calendar.YEAR)
+        clear()
         if (isFeb29 && !isLeapYear(year)) {
             set(year, java.util.Calendar.FEBRUARY, 28)
         } else {
             set(year, month, day)
         }
-        if (before(today)) {
+        if (before(startOfToday)) {
             val nextYear = year + 1
+            clear()
             if (isFeb29 && !isLeapYear(nextYear)) {
                 set(nextYear, java.util.Calendar.FEBRUARY, 28)
             } else {
@@ -314,7 +342,7 @@ private fun daysUntilNextBirthday(dobMs: Long, today: java.util.Calendar): Int {
             }
         }
     }
-    return ((next.timeInMillis - today.timeInMillis) / (1000 * 60 * 60 * 24)).toInt()
+    return ((next.timeInMillis - startOfToday.timeInMillis) / (1000 * 60 * 60 * 24)).toInt()
 }
 
 private fun isLeapYear(year: Int) =
@@ -357,8 +385,8 @@ class DashboardViewModel(private val db: AppDatabase) : ViewModel() {
     private val _examCount = MutableStateFlow(0)
     val examCount = _examCount.asStateFlow()
 
-    private val _birthdayCount = MutableStateFlow(0)
-    val birthdayCount = _birthdayCount.asStateFlow()
+    private val _birthdaySummary = MutableStateFlow(BirthdayReminderSummary())
+    val birthdaySummary = _birthdaySummary.asStateFlow()
 
     private val _enquirySummary = MutableStateFlow(EnquirySummary())
     val enquirySummary = _enquirySummary.asStateFlow()
@@ -473,11 +501,24 @@ class DashboardViewModel(private val db: AppDatabase) : ViewModel() {
             launch {
                 db.studentDao().getStudentsByInstitute(instId).collect { students ->
                     val today = java.util.Calendar.getInstance()
-                    _birthdayCount.value = students.count { student ->
+                    val upcoming = students.mapNotNull { student ->
                         student.dateOfBirthMs?.let { dob ->
-                            daysUntilNextBirthday(dob, today) in 0..30
-                        } ?: false
-                    }
+                            val daysUntil = daysUntilNextBirthday(dob, today)
+                            if (daysUntil in 0..30) {
+                                UpcomingBirthday(
+                                    studentName = student.fullName,
+                                    className = student.className,
+                                    daysUntil = daysUntil,
+                                    photoUri = student.photoUri
+                                )
+                            } else null
+                        }
+                    }.sortedBy { it.daysUntil }
+                    _birthdaySummary.value = BirthdayReminderSummary(
+                        today = upcoming.filter { it.daysUntil == 0 },
+                        tomorrowCount = upcoming.count { it.daysUntil == 1 },
+                        upcomingCount = upcoming.size
+                    )
                 }
             }
             launch {
@@ -856,7 +897,7 @@ fun DashboardScreen(
     val pendingFeesCount by viewModel.pendingFeesCount.collectAsState()
     val dueFeeSummary by viewModel.dueFeeSummary.collectAsState()
     val examCount by viewModel.examCount.collectAsState()
-    val birthdayCount by viewModel.birthdayCount.collectAsState()
+    val birthdaySummary by viewModel.birthdaySummary.collectAsState()
     val enquirySummary by viewModel.enquirySummary.collectAsState()
     val homeWorkCount by viewModel.homeWorkCount.collectAsState()
     val assignmentCount by viewModel.assignmentCount.collectAsState()
@@ -1206,7 +1247,7 @@ fun DashboardScreen(
                 Spacer(modifier = Modifier.height(10.dp))
                 HomeEngagementSection(
                     examCount = examCount,
-                    birthdayCount = birthdayCount,
+                    birthdaySummary = birthdaySummary,
                     homeWorkCount = homeWorkCount,
                     assignmentCount = assignmentCount,
                     enquirySummary = enquirySummary,
@@ -2579,7 +2620,7 @@ private fun DueSummaryBlock(count: Int, amount: Double, label: String, modifier:
 @Composable
 private fun HomeEngagementSection(
     examCount: Int,
-    birthdayCount: Int,
+    birthdaySummary: BirthdayReminderSummary,
     homeWorkCount: Int,
     assignmentCount: Int,
     enquirySummary: EnquirySummary,
@@ -2603,10 +2644,8 @@ private fun HomeEngagementSection(
                 modifier = Modifier.fillMaxWidth(),
                 onClick = onOpenExams
             )
-            HomeFeatureTile(
-                title = "Birthdays",
-                count = birthdayCount,
-                icon = Icons.Filled.Cake,
+            BirthdayHomeFeatureTile(
+                summary = birthdaySummary,
                 modifier = Modifier.fillMaxWidth(),
                 onClick = onOpenBirthdays
             )
@@ -2645,10 +2684,8 @@ private fun HomeEngagementSection(
                     modifier = Modifier.weight(1f),
                     onClick = onOpenExams
                 )
-                HomeFeatureTile(
-                    title = "Birthdays",
-                    count = birthdayCount,
-                    icon = Icons.Filled.Cake,
+                BirthdayHomeFeatureTile(
+                    summary = birthdaySummary,
                     modifier = Modifier.weight(1f),
                     onClick = onOpenBirthdays
                 )
@@ -2673,7 +2710,6 @@ private fun HomeEngagementSection(
                     onClick = onOpenAssignments
                 )
             }
-
             EnquirySummaryCard(
                 summary = enquirySummary,
                 onClick = onOpenEnquiry
@@ -2840,6 +2876,259 @@ private fun EnquirySummaryCard(
                 EnquiryStat(summary.active, "Active", Modifier.weight(1f))
                 EnquiryStat(summary.close, "Close", Modifier.weight(1f))
                 EnquiryStat(summary.followUp, "Follow up", Modifier.weight(1f), AccentAmber)
+            }
+        }
+    }
+}
+
+/** Keeps the original compact dashboard tile; the badge only signals birthdays due today. */
+@Composable
+private fun BirthdayHomeFeatureTile(
+    summary: BirthdayReminderSummary,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Card(
+        modifier = modifier
+            .height(68.dp)
+            .premiumClickable(onClick),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = DashboardCardAlt),
+        border = borderStroke()
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Filled.Cake, contentDescription = null, tint = AccentPink, modifier = Modifier.size(24.dp))
+            Spacer(Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "Birthdays",
+                    color = TextPrimary,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    if (summary.today.isNotEmpty()) "Today" else "Next 30 days",
+                    color = if (summary.today.isNotEmpty()) AccentPink else TextSecondary,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1
+                )
+            }
+            TodayBirthdayBeacon(summary.today.size)
+        }
+    }
+}
+
+@Composable
+private fun BirthdayReminderCard(
+    summary: BirthdayReminderSummary,
+    onClick: () -> Unit
+) {
+    val todayCount = summary.today.size
+    val hasBirthdayToday = todayCount > 0
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .premiumClickable(onClick),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = DashboardCardAlt),
+        border = BorderStroke(
+            1.dp,
+            if (hasBirthdayToday) AccentPink.copy(alpha = 0.42f) else DashboardStroke
+        )
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(13.dp))
+                        .background(AccentPink.copy(alpha = 0.14f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        Icons.Filled.Cake,
+                        contentDescription = null,
+                        tint = AccentPink,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "Today's birthdays",
+                        color = TextPrimary,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        if (hasBirthdayToday) "Make their day special" else "No birthday to celebrate today",
+                        color = TextSecondary,
+                        fontSize = 11.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                TodayBirthdayBeacon(todayCount)
+                Spacer(Modifier.width(8.dp))
+                Icon(
+                    Icons.Filled.ChevronRight,
+                    contentDescription = "Open birthday reminders",
+                    tint = if (hasBirthdayToday) AccentPink else AccentCyan,
+                    modifier = Modifier.size(21.dp)
+                )
+            }
+
+            Spacer(Modifier.height(12.dp))
+            if (hasBirthdayToday) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(13.dp))
+                        .background(AccentPink.copy(alpha = 0.09f))
+                        .border(1.dp, AccentPink.copy(alpha = 0.26f), RoundedCornerShape(13.dp))
+                        .padding(horizontal = 10.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    BirthdayAvatarStack(summary.today.take(3))
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            summary.today.take(2).joinToString(" · ") { it.studentName } +
+                                if (todayCount > 2) " +${todayCount - 2} more" else "",
+                            color = TextPrimary,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            "$todayCount student${if (todayCount == 1) "" else "s"} celebrating today",
+                            color = TextSecondary,
+                            fontSize = 11.sp
+                        )
+                    }
+                    Text(
+                        "Wish",
+                        color = AccentPink,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            } else {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(13.dp))
+                        .background(DashboardBg.copy(alpha = 0.55f))
+                        .border(1.dp, DashboardStroke.copy(alpha = 0.72f), RoundedCornerShape(13.dp))
+                        .padding(horizontal = 11.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Filled.EventAvailable,
+                        contentDescription = null,
+                        tint = AccentCyan,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(Modifier.width(9.dp))
+                    Text(
+                        when {
+                            summary.tomorrowCount > 0 -> "${summary.tomorrowCount} birthday${if (summary.tomorrowCount == 1) "" else "s"} tomorrow"
+                            summary.upcomingCount > 0 -> "Upcoming birthdays are ready to view"
+                            else -> "Add students' dates of birth to see reminders"
+                        },
+                        color = TextSecondary,
+                        fontSize = 12.sp,
+                        modifier = Modifier.weight(1f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text("View", color = AccentCyan, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BirthdayAvatarStack(students: List<UpcomingBirthday>) {
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        students.forEach { student ->
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .clip(CircleShape)
+                    .background(Brush.linearGradient(listOf(AccentPink, AccentOrange)))
+                    .border(1.dp, DashboardCardAlt, CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                if (!student.photoUri.isNullOrBlank()) {
+                    AsyncImage(
+                        model = student.photoUri,
+                        contentDescription = student.studentName,
+                        modifier = Modifier.fillMaxSize().clip(CircleShape)
+                    )
+                } else {
+                    Text(
+                        student.studentName.trim().firstOrNull()?.uppercase() ?: "?",
+                        color = Color.White,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TodayBirthdayBeacon(count: Int) {
+    val pulseTransition = rememberInfiniteTransition(label = "todayBirthdayPulse")
+    val pulseScale by pulseTransition.animateFloat(
+        initialValue = 0.92f,
+        targetValue = 1.14f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 900, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "todayBirthdayScale"
+    )
+    val hasBirthdayToday = count > 0
+    Box(
+        modifier = Modifier.size(38.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        if (hasBirthdayToday) {
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .graphicsLayer(scaleX = pulseScale, scaleY = pulseScale)
+                    .clip(CircleShape)
+                    .background(AccentPink.copy(alpha = 0.22f))
+            )
+        }
+        Box(
+            modifier = Modifier
+                .size(32.dp)
+                .clip(CircleShape)
+                .background(
+                    if (hasBirthdayToday) Brush.linearGradient(listOf(AccentPink, AccentOrange))
+                    else Brush.linearGradient(listOf(AccentCyan.copy(alpha = 0.28f), AccentBlue.copy(alpha = 0.22f)))
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            if (hasBirthdayToday) {
+                Text(count.toString(), color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 14.sp)
+            } else {
+                Icon(Icons.Filled.Cake, contentDescription = "No birthdays today", tint = AccentCyan, modifier = Modifier.size(17.dp))
             }
         }
     }

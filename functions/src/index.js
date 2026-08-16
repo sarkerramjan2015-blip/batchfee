@@ -18,6 +18,7 @@ const {
   verifyPassword,
 } = require("./studentAuthCore");
 const { createFinancialLedgerHandler } = require("./financialLedger");
+const { createExamFeeBillingHandler } = require("./examFeeBilling");
 const { createMediaSecurityHandlers } = require("./mediaSecurity");
 const { createSafeDeletionHandler } = require("./safeDeletion");
 const { createPermanentStudentPurgeHandler } = require("./permanentStudentPurge");
@@ -1064,6 +1065,10 @@ exports.expireElapsedSubscriptions = onSchedule(
 exports.commitFinancialOperation = onCall(
   { ...callableOptions, timeoutSeconds: 60 },
   guarded(createFinancialLedgerHandler({ db })),
+);
+exports.createExamWithFees = onCall(
+  { ...callableOptions, timeoutSeconds: 60, memory: "512MiB" },
+  guarded(createExamFeeBillingHandler({ db })),
 );
 exports.commitSubscriptionOperation = onCall(
   { ...callableOptions, timeoutSeconds: 60 },

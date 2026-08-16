@@ -120,6 +120,7 @@ private fun parseFee(data: Map<String, Any?>) = FeeEntity(
     createdAtMs = data.long("createdAtMs"),
     updatedAtMs = data.long("updatedAtMs"),
     cancelledAtMs = data.optionalLong("cancelledAtMs"),
+    sourceId = data.optionalString("sourceId"),
     businessKey = data.optionalString("businessKey"),
     ledgerVersion = data.int("ledgerVersion")
 )

@@ -61,7 +61,7 @@ import java.util.Locale
         com.batchfee.edu.data.models.HomeworkSubmissionEntity::class,
         com.batchfee.edu.data.models.AssignmentSubmissionEntity::class
     ],
-    version = 25,
+    version = 27,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -367,6 +367,23 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** Links generated exam fees to their exam without changing historic fee records. */
+        internal val MIGRATION_25_26 = object : androidx.room.migration.Migration(25, 26) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE exams ADD COLUMN examFeeAmount REAL NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE fees ADD COLUMN sourceId TEXT")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_fees_instituteId_sourceId ON fees(instituteId, sourceId)")
+            }
+        }
+
+        /** Stores the frozen, pro-rated first-month fee for new enrollments. */
+        internal val MIGRATION_26_27 = object : androidx.room.migration.Migration(26, 27) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE batch_students ADD COLUMN firstMonthFeePeriod TEXT")
+                db.execSQL("ALTER TABLE batch_students ADD COLUMN firstMonthFeeAmount REAL")
+            }
+        }
+
         fun getDatabase(context: Context, scope: CoroutineScope): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val builder = Room.databaseBuilder(
@@ -374,7 +391,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "batchfee_database"
                 )
-                .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25)
+                .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27)
 
                 if (BuildConfig.DEBUG) {
                     builder.fallbackToDestructiveMigration()

@@ -18,6 +18,9 @@ data class BatchStudentEntity(
     val studentId: String,
     val joinedAtMs: Long,
     val status: String, // active, removed
-    val leftAtMs: Long?
+    val leftAtMs: Long?,
+    /** Frozen when this enrollment is created so the first month's fee is stable. */
+    val firstMonthFeePeriod: String? = null,
+    val firstMonthFeeAmount: Double? = null
 )
 

@@ -21,6 +21,13 @@ test("fee business keys are normalized and tenant-local inputs remain determinis
   assert.notEqual(first, feeBusinessKey({
     studentId: "student-1", batchId: "batch-2", feePeriod: "may 2026", feeType: "monthly_fee",
   }));
+  const examOne = feeBusinessKey({
+    studentId: "student-1", batchId: "batch-1", feePeriod: "Final Exam", feeType: "exam_fee", sourceId: "exam-one",
+  });
+  const examTwo = feeBusinessKey({
+    studentId: "student-1", batchId: "batch-1", feePeriod: "Final Exam", feeType: "exam_fee", sourceId: "exam-two",
+  });
+  assert.notEqual(examOne, examTwo);
 });
 
 test("money and ledger calculations use bounded two-decimal values", () => {

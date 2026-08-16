@@ -21,14 +21,18 @@ function toMoney(value, field = "amount", { allowZero = true } = {}) {
   return minorUnits / 100;
 }
 
-function feeBusinessKey({ studentId, batchId, feePeriod, feeType }) {
+function feeBusinessKey({ studentId, batchId, feePeriod, feeType, sourceId }) {
   const source = [
     normalizedText(studentId),
     normalizedText(batchId || "direct"),
     normalizedText(feePeriod),
     normalizedText(feeType || "monthly_fee"),
-  ].join("\u001f");
-  return createHash("sha256").update(source).digest("hex");
+  ];
+  // Preserve legacy business keys when a fee has no source. New generated
+  // fees can safely reuse the same human-readable period by adding sourceId.
+  const normalizedSourceId = normalizedText(sourceId);
+  if (normalizedSourceId) source.push(`source:${normalizedSourceId}`);
+  return createHash("sha256").update(source.join("\u001f")).digest("hex");
 }
 
 function paymentReferenceKey(paymentMethod, transactionId) {

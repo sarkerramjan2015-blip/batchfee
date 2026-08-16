@@ -63,18 +63,26 @@ class BirthdayViewModel(private val db: AppDatabase) : ViewModel() {
 
     private fun daysUntilNextBirthday(dobMs: Long, today: Calendar): Int {
         val dob = Calendar.getInstance().apply { timeInMillis = dobMs }
+        val startOfToday = (today.clone() as Calendar).apply {
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
         val next = Calendar.getInstance().apply {
             val month = dob.get(Calendar.MONTH)
             val day = dob.get(Calendar.DAY_OF_MONTH)
             val isFeb29 = month == Calendar.FEBRUARY && day == 29
-            val year = today.get(Calendar.YEAR)
+            val year = startOfToday.get(Calendar.YEAR)
+            clear()
             if (isFeb29 && !isLeapYear(year)) {
                 set(year, Calendar.FEBRUARY, 28)
             } else {
                 set(year, month, day)
             }
-            if (before(today)) {
+            if (before(startOfToday)) {
                 val nextYear = year + 1
+                clear()
                 if (isFeb29 && !isLeapYear(nextYear)) {
                     set(nextYear, Calendar.FEBRUARY, 28)
                 } else {
@@ -82,7 +90,7 @@ class BirthdayViewModel(private val db: AppDatabase) : ViewModel() {
                 }
             }
         }
-        return ((next.timeInMillis - today.timeInMillis) / (1000 * 60 * 60 * 24)).toInt()
+        return ((next.timeInMillis - startOfToday.timeInMillis) / (1000 * 60 * 60 * 24)).toInt()
     }
 
     private fun isLeapYear(year: Int) = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0

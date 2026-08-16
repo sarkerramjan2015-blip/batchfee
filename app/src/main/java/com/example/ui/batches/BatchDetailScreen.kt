@@ -40,6 +40,7 @@ import com.batchfee.edu.data.models.PaymentEntity
 import com.batchfee.edu.data.models.StaffEntity
 import com.batchfee.edu.domain.appendInstituteSignature
 import com.batchfee.edu.domain.loadInstituteSignature
+import com.batchfee.edu.domain.MonthlyDueCalculator
 import com.batchfee.edu.domain.SessionManager
 import com.batchfee.edu.ui.components.buildWhatsAppUrl
 import kotlinx.coroutines.launch
@@ -1326,6 +1327,7 @@ fun EnrollStudentsScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
     val instId = SessionManager.currentInstituteId.collectAsState().value
     var allStudents by remember { mutableStateOf<List<com.batchfee.edu.data.models.StudentEntity>>(emptyList()) }
     var enrolledStudents by remember { mutableStateOf<List<com.batchfee.edu.data.models.StudentEntity>>(emptyList()) }
+    var batchMonthlyFee by remember { mutableStateOf(0.0) }
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(instId, batchId) {
@@ -1336,6 +1338,9 @@ fun EnrollStudentsScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
             }
             launch {
                 db.batchStudentDao().getStudentsForBatch(batchId, instId).collect { enrolledStudents = it }
+            }
+            launch {
+                db.batchDao().getBatchById(batchId, instId).collect { batchMonthlyFee = it?.monthlyFeeAmount ?: 0.0 }
             }
         }
     }
@@ -1365,14 +1370,21 @@ fun EnrollStudentsScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
                             Button(onClick = {
                                 if (instId != null) {
                                     scope.launch {
+                                        val enrollmentStart = s.admissionDateMs.takeIf { it > 0L }
+                                            ?: System.currentTimeMillis()
                                         val enrollment = com.batchfee.edu.data.models.BatchStudentEntity(
                                             id = UUID.randomUUID().toString(),
                                             instituteId = instId,
                                             batchId = batchId,
                                             studentId = s.id,
-                                            joinedAtMs = System.currentTimeMillis(),
+                                            joinedAtMs = enrollmentStart,
                                             status = "active",
-                                            leftAtMs = null
+                                            leftAtMs = null,
+                                            firstMonthFeePeriod = MonthlyDueCalculator.periodFor(enrollmentStart),
+                                            firstMonthFeeAmount = MonthlyDueCalculator.calculateFirstMonthFee(
+                                                batchMonthlyFee,
+                                                enrollmentStart
+                                            )
                                         )
                                         BatchStudentSyncHelper.upsertEnrollment(enrollment)
                                         db.batchStudentDao().enrollStudent(enrollment)

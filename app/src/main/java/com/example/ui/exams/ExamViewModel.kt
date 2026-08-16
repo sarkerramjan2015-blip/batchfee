@@ -12,6 +12,7 @@ import com.batchfee.edu.data.models.ExamEntity
 import com.batchfee.edu.data.models.InstituteEntity
 import com.batchfee.edu.data.models.ResultEntity
 import com.batchfee.edu.data.models.StudentEntity
+import com.batchfee.edu.data.repository.ExamFeeRepository
 import com.batchfee.edu.domain.SessionManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -29,6 +30,7 @@ data class StudentResultItem(
 )
 
 class ExamViewModel(private val db: AppDatabase) : ViewModel() {
+    private val examFeeRepository = ExamFeeRepository(db)
     private val _exams = MutableStateFlow<List<ExamEntity>>(emptyList())
     val exams = _exams.asStateFlow()
 
@@ -122,6 +124,10 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
         passingMarks: Double,
         examDateMs: Long,
         teacherName: String?,
+        note: String? = null,
+        examFeeAmount: Double = 0.0,
+        examId: String = UUID.randomUUID().toString(),
+        operationId: String = UUID.randomUUID().toString(),
         onSuccess: () -> Unit,
         onError: (String) -> Unit = {}
     ) {
@@ -130,25 +136,42 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
         if (examName.isBlank()) { onError("Exam name is required."); return }
         if (totalMarks <= 0) { onError("Total marks must be greater than 0."); return }
         if (passingMarks > totalMarks) { onError("Passing marks cannot exceed total marks."); return }
+        if (examFeeAmount < 0 || examFeeAmount > 1_000_000_000) { onError("Exam fee is invalid."); return }
 
+        val now = System.currentTimeMillis()
         val exam = ExamEntity(
-            id = UUID.randomUUID().toString(), instituteId = instId,
+            id = examId, instituteId = instId,
             batchId = batchId, examName = examName,
             subject = subject?.trim()?.takeIf { it.isNotEmpty() },
             examDateMs = examDateMs, totalMarks = totalMarks,
-            passingMarks = passingMarks,
+            passingMarks = passingMarks, examFeeAmount = examFeeAmount,
             teacherName = teacherName?.trim()?.takeIf { it.isNotEmpty() },
-            note = null, status = "scheduled",
-            createdAtMs = System.currentTimeMillis(),
-            updatedAtMs = System.currentTimeMillis(), archivedAtMs = null
+            note = note?.trim()?.takeIf { it.isNotEmpty() }, status = "scheduled",
+            createdAtMs = now, updatedAtMs = now, archivedAtMs = null
         )
         viewModelScope.launch {
-            ExamSyncHelper.upsertExam(exam)
-            db.examDao().insertExam(exam)
-            StaffActivityLogger.logCompletedAction(
-                db, "exam_created", "exams", "Created exam ${exam.examName}"
-            )
-            onSuccess()
+            try {
+                val billedStudentCount = if (exam.examFeeAmount > 0.0) {
+                    examFeeRepository.createExamWithFees(
+                        instituteId = instId, batchId = exam.batchId, examName = exam.examName,
+                        subject = exam.subject, totalMarks = exam.totalMarks,
+                        passingMarks = exam.passingMarks, examDateMs = exam.examDateMs,
+                        examFeeAmount = exam.examFeeAmount, teacherName = exam.teacherName,
+                        note = exam.note, examId = exam.id, operationId = operationId
+                    ).billedStudentCount
+                } else {
+                    ExamSyncHelper.upsertExam(exam)
+                    db.examDao().insertExam(exam)
+                    0
+                }
+                val message = if (exam.examFeeAmount > 0.0) {
+                    "Created exam ${exam.examName} with fees for $billedStudentCount students"
+                } else "Created exam ${exam.examName}"
+                StaffActivityLogger.logCompletedAction(db, "exam_created", "exams", message)
+                onSuccess()
+            } catch (e: Exception) {
+                onError(e.message ?: "Failed to create exam")
+            }
         }
     }
 
@@ -161,6 +184,7 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
         passingMarks: Double,
         examDateMs: Long,
         teacherName: String?,
+        note: String? = null,
         onSuccess: () -> Unit,
         onError: (String) -> Unit = {}
     ) {
@@ -176,6 +200,15 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
         if (passingMarks > totalMarks) { onError("Passing marks cannot exceed total marks."); return }
 
         viewModelScope.launch {
+            val hasGeneratedFees = db.feeDao().getActiveFeesBySource(instId, examId).isNotEmpty()
+            if (hasGeneratedFees && (
+                    batchId != currentExam.batchId ||
+                    examName.trim() != currentExam.examName ||
+                    examDateMs != currentExam.examDateMs
+                )) {
+                onError("This exam already has fee records. Batch, exam name, and date are locked to keep every fee correct.")
+                return@launch
+            }
             val updated = currentExam.copy(
                 instituteId = instId,
                 batchId = batchId,
@@ -185,6 +218,7 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
                 totalMarks = totalMarks,
                 passingMarks = passingMarks,
                 teacherName = teacherName?.trim()?.takeIf { it.isNotEmpty() },
+                note = note?.trim()?.takeIf { it.isNotEmpty() },
                 updatedAtMs = System.currentTimeMillis()
             )
             ExamSyncHelper.upsertExam(updated)
@@ -200,6 +234,10 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
         val instId = SessionManager.currentInstituteId.value ?: return
         viewModelScope.launch {
             try {
+                if (db.feeDao().getActiveFeesBySource(instId, examId).isNotEmpty()) {
+                    onError("This exam has fee records, so it cannot be deleted. This keeps all student payment history safe.")
+                    return@launch
+                }
                 val now = System.currentTimeMillis()
                 _selectedExam.value?.copy(archivedAtMs = now, updatedAtMs = now)?.let {
                     ExamSyncHelper.upsertExam(it)

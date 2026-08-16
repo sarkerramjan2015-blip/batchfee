@@ -96,11 +96,13 @@ class FeeViewModel(private val db: AppDatabase) : ViewModel() {
         var total = 0.0
         val details = mutableListOf<DueFeeDetail>()
 
-        // Non-monthly due fees — only include past months, never current or future
+        // Exam fees are due as soon as the exam is created. Other non-monthly
+        // fees keep the existing past-month rule.
         fees.filter {
             !MonthlyDueCalculator.isMonthlyFeeType(it.feeType)
             && it.dueAmount > 0.0
-            && MonthlyDueCalculator.isPastMonth(it.feePeriod)
+            && (it.feeType.equals("exam_fee", ignoreCase = true) ||
+                MonthlyDueCalculator.isPastMonth(it.feePeriod))
         }.forEach { fee ->
             val student = allStudents[fee.studentId] ?: return@forEach
             val batchName = fee.batchId?.let { allBatches[it]?.name } ?: ""
@@ -115,19 +117,23 @@ class FeeViewModel(private val db: AppDatabase) : ViewModel() {
             )
         }
 
-        // Monthly due items — computed from admission date for every enrolled student+batch
+        // Monthly due items — calculated from the actual enrollment date for
+        // each batch. New enrollments carry a frozen, pro-rated first month.
         allStudents.values.forEach { student ->
-            if (student.admissionDateMs <= 0L) return@forEach
-            val enrolledBatches = db.batchStudentDao().getBatchesForStudent(student.id, instId).firstOrNull() ?: return@forEach
-            enrolledBatches.forEach { batch ->
+            val enrollments = db.batchStudentDao()
+                .getActiveEnrollmentsForStudentOnce(student.id, instId)
+            enrollments.forEach { enrollment ->
+                val batch = allBatches[enrollment.batchId] ?: return@forEach
                 if (batch.monthlyFeeAmount <= 0.0) return@forEach
                 val batchFees = fees.filter { it.studentId == student.id && it.batchId == batch.id }
                 val items = MonthlyDueCalculator.computeMonthlyOutstandingItems(
-                    admissionDateMs = student.admissionDateMs,
+                    admissionDateMs = enrollment.joinedAtMs,
                     monthlyFeeAmount = batch.monthlyFeeAmount,
                     batchId = batch.id,
                     batchName = batch.name,
-                    existingMonthlyFees = batchFees
+                    existingMonthlyFees = batchFees,
+                    firstMonthFeePeriod = enrollment.firstMonthFeePeriod,
+                    firstMonthFeeAmount = enrollment.firstMonthFeeAmount
                 )
                 items.forEach { item ->
                     total += item.outstanding

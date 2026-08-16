@@ -11,6 +11,7 @@ import com.batchfee.edu.data.firestore.StudentSyncHelper
 import com.batchfee.edu.data.models.BatchEntity
 import com.batchfee.edu.data.models.StudentEntity
 import com.batchfee.edu.domain.SessionManager
+import com.batchfee.edu.domain.MonthlyDueCalculator
 import com.batchfee.edu.domain.StudentIdGenerator
 import com.batchfee.edu.data.firestore.InstituteSyncHelper
 import com.batchfee.edu.data.firestore.BatchStudentSyncHelper
@@ -357,7 +358,12 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
                     db.batchStudentDao().removeStudentFromBatch(oldBatchId, studentId, instId, now)
                 }
 
-                // Step 2: Enroll in new batch (local)
+                // Step 2: Enroll in new batch (local). Freeze the first-month
+                // amount now; future batch price edits must not alter it.
+                val targetBatch = withContext(Dispatchers.IO) {
+                    db.batchDao().getBatchesByInstituteOnce(instId)
+                        .firstOrNull { it.id == newBatchId }
+                }
                 val enrollment = BatchStudentEntity(
                     id = UUID.randomUUID().toString(),
                     instituteId = instId,
@@ -365,7 +371,12 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
                     studentId = studentId,
                     joinedAtMs = now,
                     status = "active",
-                    leftAtMs = null
+                    leftAtMs = null,
+                    firstMonthFeePeriod = MonthlyDueCalculator.periodFor(now),
+                    firstMonthFeeAmount = MonthlyDueCalculator.calculateFirstMonthFee(
+                        targetBatch?.monthlyFeeAmount ?: 0.0,
+                        now
+                    )
                 )
                 withContext(Dispatchers.IO) {
                     db.batchStudentDao().enrollStudent(enrollment)
