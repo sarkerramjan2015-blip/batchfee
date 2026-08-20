@@ -54,7 +54,12 @@ const callableOptions = {
   region: REGION,
   timeoutSeconds: 30,
   memory: "256MiB",
-  enforceAppCheck: true,
+  // Keep App Check tokens observable while the signed app is being validated
+  // outside Google Play. Every callable still requires Firebase Auth and its
+  // own tenant/role checks, so an invalid attestation cannot grant access.
+  // Re-enable strict enforcement after the Play Console cloud-project link is
+  // completed and verified with the Play-distributed build.
+  enforceAppCheck: false,
 };
 const registrationRateLimitSecret = defineSecret("REGISTRATION_RATE_LIMIT_SECRET");
 

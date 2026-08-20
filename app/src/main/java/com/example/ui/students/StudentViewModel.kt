@@ -18,6 +18,7 @@ import com.batchfee.edu.data.firestore.BatchStudentSyncHelper
 import com.batchfee.edu.data.models.BatchStudentEntity
 import com.batchfee.edu.data.repository.StudentAccountRepository
 import com.batchfee.edu.data.repository.EntitledCreationRepository
+import com.batchfee.edu.data.repository.FeeCollectionRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -30,6 +31,7 @@ import java.util.*
 class StudentViewModel(private val db: AppDatabase) : ViewModel() {
     private val studentAccountRepository = StudentAccountRepository()
     private val entitledCreationRepository = EntitledCreationRepository()
+    private val feeCollectionRepository = FeeCollectionRepository(db)
     private val _studentList = MutableStateFlow<List<StudentEntity>>(emptyList())
     val studentList = _studentList.asStateFlow()
 
@@ -295,6 +297,19 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
                 isAppAccessEnabled = existing.isAppAccessEnabled
             )
             try {
+                val admissionDateChanged = existing.admissionDateMs != admissionDateMs
+                if (admissionDateChanged) {
+                    // The admission date is part of the financial contract. Let the
+                    // trusted ledger update the cloud profile, every active batch
+                    // enrollment, and only unpaid monthly rows as one operation.
+                    // Paid receipts are intentionally never touched here.
+                    feeCollectionRepository.updateStudentAdmissionDate(
+                        instituteId = instId,
+                        studentId = id,
+                        admissionDateMs = admissionDateMs
+                    )
+                    syncLocalActiveEnrollmentDates(instId, id, admissionDateMs)
+                }
                 // An ordinary profile update must reach Firestore before the screen reports
                 // success. The previous best-effort path could look saved on this device while
                 // leaving the cloud record (and every other device) unchanged.
@@ -330,6 +345,27 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
             } catch (error: Exception) {
                 onError(accountErrorMessage(error, "Student account could not be updated."))
             }
+        }
+    }
+
+    private suspend fun syncLocalActiveEnrollmentDates(
+        instituteId: String,
+        studentId: String,
+        admissionDateMs: Long
+    ) = withContext(Dispatchers.IO) {
+        val batchesById = db.batchDao().getBatchesByInstituteOnce(instituteId).associateBy { it.id }
+        db.batchStudentDao().getActiveEnrollmentsForStudentOnce(studentId, instituteId).forEach { enrollment ->
+            val batch = batchesById[enrollment.batchId] ?: return@forEach
+            db.batchStudentDao().enrollStudent(
+                enrollment.copy(
+                    joinedAtMs = admissionDateMs,
+                    firstMonthFeePeriod = MonthlyDueCalculator.periodFor(admissionDateMs),
+                    firstMonthFeeAmount = MonthlyDueCalculator.calculateFirstMonthFee(
+                        batch.monthlyFeeAmount,
+                        admissionDateMs
+                    )
+                )
+            )
         }
     }
 

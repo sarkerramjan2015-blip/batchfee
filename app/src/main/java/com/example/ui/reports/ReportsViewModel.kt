@@ -108,10 +108,12 @@ class ReportsViewModel(private val db: AppDatabase, private val period: String =
         val sdfMonth = SimpleDateFormat("MMM yyyy", Locale.ENGLISH)
         val sdfMonthKey = SimpleDateFormat("yyyyMM", Locale.ENGLISH)
 
+        // Reversed payments are audit history, not collected income.
+        val completedPayments = allPayments.filter { it.status == "completed" }
         val filtered = when (period) {
-            "month" -> allPayments.filter { it.paymentDateMs > 0 && it.paymentDateMs >= monthStart }
-            "lifetime" -> allPayments.filter { it.paymentDateMs > 0 }
-            else -> allPayments.filter { it.paymentDateMs > 0 && it.paymentDateMs >= todayStart }
+            "month" -> completedPayments.filter { it.paymentDateMs > 0 && it.paymentDateMs >= monthStart }
+            "lifetime" -> completedPayments.filter { it.paymentDateMs > 0 }
+            else -> completedPayments.filter { it.paymentDateMs > 0 && it.paymentDateMs >= todayStart }
         }
 
         val items = filtered.sortedByDescending { it.paymentDateMs }.map { p ->

@@ -17,7 +17,11 @@ object MonthlyDueCalculator {
     private val monthNames = listOf("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
     /**
-     * Returns per-month outstanding items for one batch from admission to current month.
+     * Returns per-month outstanding items for one batch from admission through
+     * the last completed billing month. The running month is never a due yet;
+     * it becomes due only after that month ends. A removed enrollment is capped before its
+     * departure month, so an old batch keeps its historic arrears without
+     * charging that same month again after a batch shift.
      * Never creates or modifies database rows.
      */
     fun computeMonthlyOutstandingItems(
@@ -27,43 +31,69 @@ object MonthlyDueCalculator {
         batchName: String,
         existingMonthlyFees: List<FeeEntity>,
         firstMonthFeePeriod: String? = null,
-        firstMonthFeeAmount: Double? = null
+        firstMonthFeeAmount: Double? = null,
+        customMonthlyFeeAmount: Double? = null,
+        customFeeEffectiveFromPeriod: String? = null,
+        billingEndedAtMs: Long? = null,
+        asOfMs: Long = System.currentTimeMillis()
     ): List<ComputedMonthDue> {
         if (admissionDateMs <= 0L || monthlyFeeAmount <= 0.0) return emptyList()
 
         val startCal = Calendar.getInstance().apply { timeInMillis = admissionDateMs }
-        val currentCal = Calendar.getInstance()
-        if (startCal.timeInMillis > currentCal.timeInMillis) return emptyList()
+        val endCal = Calendar.getInstance().apply { timeInMillis = asOfMs }
+        if (billingEndedAtMs != null && billingEndedAtMs > 0L) {
+            // A student who left during August remains responsible for all
+            // completed months up to July. The departure month itself belongs
+            // to the new batch (or is not due yet), so the normal strict
+            // before-month loop must stop at the departure month.
+            val endedCal = Calendar.getInstance().apply {
+                timeInMillis = billingEndedAtMs
+                set(Calendar.DAY_OF_MONTH, 1)
+            }
+            if (endedCal.timeInMillis < endCal.timeInMillis) {
+                endCal.timeInMillis = endedCal.timeInMillis
+            }
+        }
+        if (startCal.timeInMillis > endCal.timeInMillis) return emptyList()
 
-        val paidByPeriod = existingMonthlyFees.associate { it.feePeriod to it.paidAmount }
-        val feeByPeriod = existingMonthlyFees.associate { it.feePeriod to it }
-
-        val targetYear = currentCal.get(Calendar.YEAR)
-        val targetMonth = currentCal.get(Calendar.MONTH)
+        val targetYear = endCal.get(Calendar.YEAR)
+        val targetMonth = endCal.get(Calendar.MONTH)
         var year = startCal.get(Calendar.YEAR)
         var month = startCal.get(Calendar.MONTH)
         val result = mutableListOf<ComputedMonthDue>()
 
+        // Monthly fees are arrears: only months strictly before the current
+        // billing month can become outstanding. One-time fees (exam/admission)
+        // are handled by their own callers and remain due immediately.
         while (year < targetYear || (year == targetYear && month < targetMonth)) {
             val period = "${monthNames[month]} $year"
-            val paid = paidByPeriod[period] ?: 0.0
-            val existingFee = feeByPeriod[period]
-            val required = existingFee?.totalAmount ?: monthlyFeeAmountForPeriod(
-                period = period,
-                monthlyFeeAmount = monthlyFeeAmount,
-                firstMonthFeePeriod = firstMonthFeePeriod,
-                firstMonthFeeAmount = firstMonthFeeAmount
-            )
-            val outstanding = (required - paid).coerceAtLeast(0.0)
-            if (outstanding > 0.0) {
-                result += ComputedMonthDue(
+            // A real monthly/advance record owns every month written in its
+            // label. It is displayed as that same record when due; never make
+            // a second virtual fee for one of its covered months.
+            val hasActualRecord = existingMonthlyFees.any { fee ->
+                billingPeriodsCoveredBy(fee.feePeriod).any { covered ->
+                    covered.equals(period, ignoreCase = true)
+                }
+            }
+            if (!hasActualRecord) {
+                val required = monthlyFeeAmountForPeriod(
                     period = period,
-                    monthlyFeeAmount = required,
-                    paidAmount = paid,
-                    outstanding = outstanding,
-                    batchId = batchId,
-                    batchName = batchName
+                    monthlyFeeAmount = monthlyFeeAmount,
+                    firstMonthFeePeriod = firstMonthFeePeriod,
+                    firstMonthFeeAmount = firstMonthFeeAmount,
+                    customMonthlyFeeAmount = customMonthlyFeeAmount,
+                    customFeeEffectiveFromPeriod = customFeeEffectiveFromPeriod
                 )
+                if (required > 0.0) {
+                    result += ComputedMonthDue(
+                        period = period,
+                        monthlyFeeAmount = required,
+                        paidAmount = 0.0,
+                        outstanding = required,
+                        batchId = batchId,
+                        batchName = batchName
+                    )
+                }
             }
             month++
             if (month > 11) { month = 0; year++ }
@@ -99,8 +129,16 @@ object MonthlyDueCalculator {
         period: String,
         monthlyFeeAmount: Double,
         firstMonthFeePeriod: String?,
-        firstMonthFeeAmount: Double?
-    ): Double = if (
+        firstMonthFeeAmount: Double?,
+        customMonthlyFeeAmount: Double? = null,
+        customFeeEffectiveFromPeriod: String? = null
+    ): Double {
+        val customApplies = customMonthlyFeeAmount != null && customMonthlyFeeAmount > 0.0 &&
+            !customFeeEffectiveFromPeriod.isNullOrBlank() &&
+            comparePeriods(period, customFeeEffectiveFromPeriod) >= 0
+        return if (customApplies) {
+            customMonthlyFeeAmount
+        } else if (
         !firstMonthFeePeriod.isNullOrBlank() &&
         firstMonthFeeAmount != null &&
         period.equals(firstMonthFeePeriod, ignoreCase = true)
@@ -109,16 +147,71 @@ object MonthlyDueCalculator {
     } else {
         monthlyFeeAmount
     }
+    }
 
+    /** Compares "MMM yyyy" values without relying on the phone locale. */
+    private fun comparePeriods(left: String, right: String): Int {
+        fun key(value: String): Int? {
+            val cleaned = value.trim()
+            val month = monthNames.indexOfFirst { cleaned.startsWith(it, ignoreCase = true) }
+            val year = Regex("\\d{4}").find(cleaned)?.value?.toIntOrNull()
+            return if (month >= 0 && year != null) year * 12 + month else null
+        }
+        val leftKey = key(left)
+        val rightKey = key(right)
+        return if (leftKey != null && rightKey != null) leftKey.compareTo(rightKey) else -1
+    }
+
+    /**
+     * All of these are installment labels, not one-time charges. Older builds
+     * saved a manually selected future month as `advance_fee`; it must follow
+     * the same month-end rule as a normal monthly fee, otherwise September or
+     * October leaks into the Due Fees reminder list during August.
+     */
     fun isMonthlyFeeType(feeType: String): Boolean =
-        feeType.trim().lowercase() in setOf("monthly", "monthly_fee", "monthly fee")
+        feeType.trim().lowercase() in setOf(
+            "monthly", "monthly_fee", "monthly fee",
+            "advance", "advance_fee", "advance fee",
+            "due", "due_fee", "due fee",
+            "running_month", "running month",
+            "mixed_period", "mixed period",
+            "overdue"
+        )
+
+    /**
+     * Expands a saved label such as "Aug 2026 - Sep 2026" to its monthly
+     * installments. A single label returns one canonical period. Invalid
+     * labels deliberately return no periods so they cannot be reminded early.
+     */
+    fun billingPeriodsCoveredBy(feePeriod: String): List<String> {
+        val regex = Regex("""(?i)\b([a-z]{3,9})\s+(\d{4})\b""")
+        val matches = regex.findAll(feePeriod).mapNotNull { match ->
+            val month = monthNames.indexOfFirst { it.equals(match.groupValues[1].take(3), ignoreCase = true) }
+            val year = match.groupValues[2].toIntOrNull()
+            if (month >= 0 && year != null) year * 12 + month else null
+        }.toList()
+        val first = matches.firstOrNull() ?: return emptyList()
+        val last = matches.lastOrNull() ?: first
+        if (last < first || last - first > 35) return emptyList()
+        return (first..last).map { key ->
+            "${monthNames[key % 12]} ${key / 12}"
+        }
+    }
+
+    /** A monthly installment is due only after the final month it covers ends. */
+    fun isMonthlyInstallmentDue(
+        feeType: String,
+        feePeriod: String,
+        asOfMs: Long = System.currentTimeMillis()
+    ): Boolean = isMonthlyFeeType(feeType) &&
+        billingPeriodsCoveredBy(feePeriod).lastOrNull()?.let { isPastMonth(it, asOfMs) } == true
 
     /**
      * Checks whether a fee period string (e.g. "Jul 2026") represents a month
      * that is strictly BEFORE the current month.
      * Returns false for the current month and all future months.
      */
-    fun isPastMonth(period: String): Boolean {
+    fun isPastMonth(period: String, asOfMs: Long = System.currentTimeMillis()): Boolean {
         // Parse "MMM yyyy" or "MMM-yyyy" or similar
         val cleaned = period.trim().take(3) + " " + period.trim().filter { it.isDigit() }.take(4)
         val parts = cleaned.split(" ")
@@ -127,7 +220,7 @@ object MonthlyDueCalculator {
         val year = parts[1].toIntOrNull() ?: return false
         if (monthIdx < 0) return false
 
-        val now = Calendar.getInstance()
+        val now = Calendar.getInstance().apply { timeInMillis = asOfMs }
         val feeYearMonth = year * 12 + monthIdx
         val currentYearMonth = now.get(Calendar.YEAR) * 12 + now.get(Calendar.MONTH)
         return feeYearMonth < currentYearMonth

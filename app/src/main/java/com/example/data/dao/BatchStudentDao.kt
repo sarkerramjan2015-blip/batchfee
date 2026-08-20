@@ -32,6 +32,23 @@ interface BatchStudentDao {
         instituteId: String
     ): List<BatchStudentEntity>
 
+    // A removed enrollment still owns its completed-month arrears. Keep it in
+    // finance calculations until those historic dues are reconciled.
+    @Query("SELECT * FROM batch_students WHERE instituteId = :instituteId AND studentId = :studentId AND (status = 'active' OR (status = 'removed' AND leftAtMs IS NOT NULL))")
+    suspend fun getBillingEnrollmentsForStudentOnce(
+        studentId: String,
+        instituteId: String
+    ): List<BatchStudentEntity>
+
+    @Query("SELECT * FROM batch_students WHERE instituteId = :instituteId AND studentId = :studentId AND (status = 'active' OR (status = 'removed' AND leftAtMs IS NOT NULL))")
+    fun getBillingEnrollmentsForStudent(
+        studentId: String,
+        instituteId: String
+    ): Flow<List<BatchStudentEntity>>
+
+    @Query("SELECT * FROM batch_students WHERE instituteId = :instituteId AND (status = 'active' OR (status = 'removed' AND leftAtMs IS NOT NULL))")
+    fun getBillingEnrollmentsForInstitute(instituteId: String): Flow<List<BatchStudentEntity>>
+
     @Query("SELECT COUNT(*) FROM batch_students WHERE batchId = :batchId AND studentId = :studentId AND instituteId = :instituteId AND status = 'active'")
     suspend fun isStudentInBatch(batchId: String, studentId: String, instituteId: String): Int
 

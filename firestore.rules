@@ -341,7 +341,12 @@ service cloud.firestore {
           'studentCount', 'staffCount', 'batchCount'
         ])
         && data.role == 'owner'
-        && data.email == request.auth.token.email
+        // Firebase Auth may take a moment to refresh optional token claims
+        // immediately after an account is created. The UID/document binding is
+        // the ownership check; email remains validated profile data.
+        && data.email is string
+        && data.email.size() > 0
+        && data.email.size() <= 254
         && data.createdAt is int
         && data.createdAt >= nowMs - 900000
         && data.createdAt <= nowMs + 60000
@@ -480,7 +485,8 @@ service cloud.firestore {
 
     match /institutes/{instituteId}/batches/{batchId} {
       allow read: if (isStudentAuthRequest() && isStudentOf(instituteId))
-        || (!isStudentAuthRequest() && canReadBatchData(instituteId));
+        || (!isStudentAuthRequest()
+          && (isActiveInstitutePrincipal(instituteId) || canReadBatchData(instituteId)));
       allow create: if false;
       allow update: if (isSuperAdmin()
         || isActiveInstitutePrincipal(instituteId)
@@ -490,7 +496,8 @@ service cloud.firestore {
 
     match /institutes/{instituteId}/batch_students/{enrollmentId} {
       allow read: if isStudentRecordOwner(instituteId, resource.data.studentId)
-        || (!isStudentAuthRequest() && canReadBatchData(instituteId));
+        || (!isStudentAuthRequest()
+          && (isActiveInstitutePrincipal(instituteId) || canReadBatchData(instituteId)));
       allow create, update: if isSuperAdmin()
         || isActiveInstitutePrincipal(instituteId)
         || hasStaffPermission(instituteId, 'manage_batch');
@@ -533,6 +540,37 @@ service cloud.firestore {
 
     match /institutes/{instituteId}/receipts/{receiptId} {
       allow read: if canReadFinancialRecord(instituteId, resource.data.studentId);
+      // A new owner may write only the zero-value receipt for their own
+      // automatically-created free trial. Paid receipt writes stay server-only.
+      allow create: if isActiveInstitutePrincipal(instituteId)
+        && get(institutePath(instituteId)).data.currentPlanId == 'plan_free_trial'
+        && get(institutePath(instituteId)).data.subscriptionStatus == 'trial'
+        && request.resource.data.keys().hasOnly([
+          'receiptNumber', 'instituteId', 'instituteName', 'ownerName', 'ownerEmail',
+          'ownerPhone', 'instituteCode', 'instituteAddress', 'planId', 'planName',
+          'durationMonths', 'amountPaid', 'paymentMethod', 'transactionLast4',
+          'startDateMs', 'endDateMs', 'approvedAt', 'status'
+        ])
+        && request.resource.data.receiptNumber == receiptId
+        && request.resource.data.receiptNumber is string
+        && request.resource.data.receiptNumber.matches('^TRIAL-[0-9]+$')
+        && request.resource.data.instituteId == instituteId
+        && request.resource.data.instituteName == get(institutePath(instituteId)).data.instituteName
+        && request.resource.data.ownerName == get(institutePath(instituteId)).data.ownerName
+        && request.resource.data.ownerEmail == get(institutePath(instituteId)).data.email
+        && request.resource.data.ownerPhone == ''
+        && request.resource.data.instituteCode == ''
+        && request.resource.data.instituteAddress == ''
+        && request.resource.data.planId == 'plan_free_trial'
+        && request.resource.data.planName == 'Free Trial'
+        && request.resource.data.durationMonths == 1
+        && request.resource.data.amountPaid == 0
+        && request.resource.data.paymentMethod == 'free_trial'
+        && request.resource.data.transactionLast4 == ''
+        && request.resource.data.startDateMs == get(institutePath(instituteId)).data.createdAt
+        && request.resource.data.endDateMs == get(institutePath(instituteId)).data.currentPeriodEndMs
+        && request.resource.data.approvedAt == get(institutePath(instituteId)).data.createdAt
+        && request.resource.data.status == 'approved';
     }
 
     match /institutes/{instituteId}/payment_reversals/{reversalId} {

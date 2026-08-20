@@ -240,7 +240,9 @@ fun UnifiedCollectScreen(
             period = period,
             monthlyFeeAmount = safeBatch.monthlyFeeAmount,
             firstMonthFeePeriod = enrollment?.firstMonthFeePeriod,
-            firstMonthFeeAmount = enrollment?.firstMonthFeeAmount
+            firstMonthFeeAmount = enrollment?.firstMonthFeeAmount,
+            customMonthlyFeeAmount = enrollment?.customMonthlyFeeAmount,
+            customFeeEffectiveFromPeriod = enrollment?.customFeeEffectiveFromPeriod
         )
     }
 
@@ -325,6 +327,9 @@ fun UnifiedCollectScreen(
             val enrollments = withContext(Dispatchers.IO) {
                 db.batchStudentDao().getActiveEnrollmentsForStudentOnce(student.id, instId)
             }
+            val billingEnrollments = withContext(Dispatchers.IO) {
+                db.batchStudentDao().getBillingEnrollmentsForStudentOnce(student.id, instId)
+            }
             val batchMap = withContext(Dispatchers.IO) {
                 db.batchDao().getBatchesByInstituteOnce(instId).associateBy { it.id }
             }
@@ -347,11 +352,13 @@ fun UnifiedCollectScreen(
             }
 
             // ── Monthly dues ──
-            val monthlyDues = batches.flatMap { batch ->
+            val monthlyDues = billingEnrollments.flatMap { enrollment ->
+                val batch = batchMap[enrollment.batchId] ?: return@flatMap emptyList<EnrichedDue>()
                 if (batch.monthlyFeeAmount <= 0.0) return@flatMap emptyList<EnrichedDue>()
-                val enrollment = enrollments.firstOrNull { it.batchId == batch.id }
-                    ?: return@flatMap emptyList<EnrichedDue>()
-                val batchFees = allFees.filter { it.batchId == batch.id && it.studentId == student.id }
+                val batchFees = allFees.filter {
+                    it.batchId == batch.id && it.studentId == student.id &&
+                        MonthlyDueCalculator.isMonthlyFeeType(it.feeType)
+                }
                 val items = MonthlyDueCalculator.computeMonthlyOutstandingItems(
                     admissionDateMs = enrollment.joinedAtMs,
                     monthlyFeeAmount = batch.monthlyFeeAmount,
@@ -359,7 +366,10 @@ fun UnifiedCollectScreen(
                     batchName = batch.name,
                     existingMonthlyFees = batchFees,
                     firstMonthFeePeriod = enrollment.firstMonthFeePeriod,
-                    firstMonthFeeAmount = enrollment.firstMonthFeeAmount
+                    firstMonthFeeAmount = enrollment.firstMonthFeeAmount,
+                    customMonthlyFeeAmount = enrollment.customMonthlyFeeAmount,
+                    customFeeEffectiveFromPeriod = enrollment.customFeeEffectiveFromPeriod,
+                    billingEndedAtMs = enrollment.leftAtMs
                 )
                 items.map { item ->
                     val existingFee = batchFees.firstOrNull { it.feePeriod.equals(item.period, ignoreCase = true) }
@@ -408,8 +418,7 @@ fun UnifiedCollectScreen(
             // updates the exact record and creates its normal receipt.
             val generatedOneTimeDues = allFees.filter { fee ->
                 fee.dueAmount > 0.0 &&
-                    !fee.feeType.equals("monthly_fee", ignoreCase = true) &&
-                    !fee.feeType.equals("monthly", ignoreCase = true) &&
+                    !MonthlyDueCalculator.isMonthlyFeeType(fee.feeType) &&
                     !fee.feeType.equals("admission_fee", ignoreCase = true) &&
                     !fee.feeType.equals("admission", ignoreCase = true)
             }.map { fee ->
@@ -423,7 +432,7 @@ fun UnifiedCollectScreen(
             studentDues = (monthlyDues + admissionDues + generatedOneTimeDues)
                 .filter { it.fee.dueAmount > 0.0 }
                 .sortedBy { it.fee.feePeriod }
-            paymentHistory = payments.map { payment ->
+            paymentHistory = payments.filter { it.status == "completed" }.map { payment ->
                 val fee = allFees.firstOrNull { it.id == payment.feeId }
                 StudentPaymentHistory(
                     payment = payment,

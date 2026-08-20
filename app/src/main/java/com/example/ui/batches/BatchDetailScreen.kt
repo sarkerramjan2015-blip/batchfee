@@ -419,7 +419,7 @@ fun BatchDetailScreen(
                                     val allFees = db.feeDao().getAllFeesOnce(instId)
                                     val feeIds = allFees.filter { it.studentId == swf.student.id }.map { it.id }.toSet()
                                     historyPayments = db.paymentDao().getAllPaymentsOnce(instId)
-                                        .filter { p -> p.feeId in feeIds }
+                                        .filter { p -> p.feeId in feeIds && p.status == "completed" }
                                 }
                             }
                         )
@@ -1060,7 +1060,7 @@ private fun StaffEntity.isAssignedToBatch(batchId: String): Boolean =
     assignedBatchIds?.split(",")?.map { it.trim() }?.any { it == batchId } ?: false
 
 private fun List<PaymentEntity>.sumByDateRange(range: Pair<Long, Long>): Double =
-    filter { it.paymentDateMs in range.first..range.second }.sumOf { it.amount }
+    filter { it.status == "completed" && it.paymentDateMs in range.first..range.second }.sumOf { it.amount }
 
 private fun dayRange(timeMs: Long): Pair<Long, Long> {
     val calendar = Calendar.getInstance().apply {

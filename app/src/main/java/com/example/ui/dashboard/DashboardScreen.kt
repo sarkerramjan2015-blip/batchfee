@@ -65,7 +65,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -137,7 +139,7 @@ private data class DashboardDueInput(
     val fees: List<FeeEntity>,
     val students: List<StudentEntity>,
     val batches: List<BatchEntity>,
-    val activeEnrollments: List<BatchStudentEntity>
+    val billingEnrollments: List<BatchStudentEntity>
 )
 
 private data class DashboardDueResult(
@@ -188,6 +190,18 @@ private fun dashboardStartOfDay(timeMs: Long): Long = Calendar.getInstance().app
     set(Calendar.MILLISECOND, 0)
 }.timeInMillis
 
+private fun dashboardMillisecondsUntilNextDay(now: Long): Long {
+    val next = Calendar.getInstance().apply {
+        timeInMillis = now
+        set(Calendar.HOUR_OF_DAY, 0)
+        set(Calendar.MINUTE, 0)
+        set(Calendar.SECOND, 0)
+        set(Calendar.MILLISECOND, 0)
+        add(Calendar.DAY_OF_YEAR, 1)
+    }
+    return (next.timeInMillis - now).coerceAtLeast(1_000L)
+}
+
 private fun isClosedStudentStatus(status: String?): Boolean {
     val normalized = status.orEmpty().trim().lowercase()
     return normalized == "close" || normalized == "closed" || normalized == "inactive"
@@ -197,14 +211,16 @@ private fun isClosedStudentStatus(status: String?): Boolean {
 private fun calculateDashboardDue(input: DashboardDueInput): DashboardDueResult {
     val studentsById = input.students.associateBy { it.id }
     val batchesById = input.batches.associateBy { it.id }
-    val enrollmentsByStudent = input.activeEnrollments
+    val enrollmentsByStudent = input.billingEnrollments
         .groupBy { it.studentId }
         .mapValues { (_, enrollments) ->
             enrollments.mapNotNull { enrollment ->
                 batchesById[enrollment.batchId]?.let { batch -> enrollment to batch }
             }
         }
-    val feesByStudentAndBatch = input.fees.groupBy { fee -> fee.studentId to fee.batchId }
+    val monthlyFeesByStudentAndBatch = input.fees
+        .filter { fee -> MonthlyDueCalculator.isMonthlyFeeType(fee.feeType) }
+        .groupBy { fee -> fee.studentId to fee.batchId }
 
     val activeStudentIds = mutableSetOf<String>()
     val closedStudentIds = mutableSetOf<String>()
@@ -214,12 +230,7 @@ private fun calculateDashboardDue(input: DashboardDueInput): DashboardDueResult 
     var closedMonthlyDue = 0.0
 
     input.fees.asSequence()
-        .filter { fee ->
-            fee.dueAmount > 0.0 &&
-                !MonthlyDueCalculator.isMonthlyFeeType(fee.feeType) &&
-                (fee.feeType.equals("exam_fee", ignoreCase = true) ||
-                    MonthlyDueCalculator.isPastMonth(fee.feePeriod))
-        }
+        .filter { fee -> fee.dueAmount > 0.0 && !MonthlyDueCalculator.isMonthlyFeeType(fee.feeType) }
         .forEach { fee ->
             // Ignore orphaned historic records, matching the Due Fees screen.
             val student = studentsById[fee.studentId] ?: return@forEach
@@ -228,6 +239,22 @@ private fun calculateDashboardDue(input: DashboardDueInput): DashboardDueResult 
                 closedStudentIds += student.id
             } else {
                 activeNonMonthlyDue += fee.dueAmount
+                activeStudentIds += student.id
+            }
+        }
+
+    input.fees.asSequence()
+        .filter { fee ->
+            fee.dueAmount > 0.0 &&
+                MonthlyDueCalculator.isMonthlyInstallmentDue(fee.feeType, fee.feePeriod)
+        }
+        .forEach { fee ->
+            val student = studentsById[fee.studentId] ?: return@forEach
+            if (isClosedStudentStatus(student.status)) {
+                closedMonthlyDue += fee.dueAmount
+                closedStudentIds += student.id
+            } else {
+                activeMonthlyDue += fee.dueAmount
                 activeStudentIds += student.id
             }
         }
@@ -241,9 +268,12 @@ private fun calculateDashboardDue(input: DashboardDueInput): DashboardDueResult 
                 monthlyFeeAmount = batch.monthlyFeeAmount,
                 batchId = batch.id,
                 batchName = batch.name,
-                existingMonthlyFees = feesByStudentAndBatch[student.id to batch.id].orEmpty(),
+                existingMonthlyFees = monthlyFeesByStudentAndBatch[student.id to batch.id].orEmpty(),
                 firstMonthFeePeriod = enrollment.firstMonthFeePeriod,
-                firstMonthFeeAmount = enrollment.firstMonthFeeAmount
+                firstMonthFeeAmount = enrollment.firstMonthFeeAmount,
+                customMonthlyFeeAmount = enrollment.customMonthlyFeeAmount,
+                customFeeEffectiveFromPeriod = enrollment.customFeeEffectiveFromPeriod,
+                billingEndedAtMs = enrollment.leftAtMs
             )
             items.forEach { item ->
                 if (isClosed) {
@@ -251,6 +281,23 @@ private fun calculateDashboardDue(input: DashboardDueInput): DashboardDueResult 
                     closedStudentIds += student.id
                 } else {
                     activeMonthlyDue += item.outstanding
+                    activeStudentIds += student.id
+                }
+            }
+
+            // Admission fee is immediately due for an active enrollment even
+            // before its first collection creates the canonical fee document.
+            val admissionAlreadyCreated = input.fees.any { fee ->
+                fee.studentId == student.id && fee.batchId == batch.id &&
+                    fee.feeType.equals("admission_fee", ignoreCase = true)
+            }
+            if (enrollment.status.equals("active", ignoreCase = true) &&
+                batch.admissionFeeAmount > 0.0 && !admissionAlreadyCreated) {
+                if (isClosed) {
+                    closedNonMonthlyDue += batch.admissionFeeAmount
+                    closedStudentIds += student.id
+                } else {
+                    activeNonMonthlyDue += batch.admissionFeeAmount
                     activeStudentIds += student.id
                 }
             }
@@ -294,7 +341,8 @@ private fun calculateFinancialSummary(
     var lifetimeIncome = 0.0
     var lifetimeExpense = 0.0
 
-    payments.forEach { payment ->
+    // A reversed payment remains in history for audit, but it is not income.
+    payments.filter { it.status == "completed" }.forEach { payment ->
         lifetimeIncome += payment.amount
         if (payment.paymentDateMs >= startOfMonth) monthIncome += payment.amount
         if (payment.paymentDateMs >= startOfDay) todayIncome += payment.amount
@@ -387,6 +435,7 @@ class DashboardViewModel(private val db: AppDatabase) : ViewModel() {
 
     private val _birthdaySummary = MutableStateFlow(BirthdayReminderSummary())
     val birthdaySummary = _birthdaySummary.asStateFlow()
+    private val birthdayDayTick = MutableStateFlow(System.currentTimeMillis())
 
     private val _enquirySummary = MutableStateFlow(EnquirySummary())
     val enquirySummary = _enquirySummary.asStateFlow()
@@ -405,6 +454,13 @@ class DashboardViewModel(private val db: AppDatabase) : ViewModel() {
     val currentPlan = _currentPlan.asStateFlow()
 
     init {
+        viewModelScope.launch {
+            while (true) {
+                val now = System.currentTimeMillis()
+                birthdayDayTick.value = now
+                delay(dashboardMillisecondsUntilNextDay(now))
+            }
+        }
         loadData()
     }
 
@@ -499,9 +555,13 @@ class DashboardViewModel(private val db: AppDatabase) : ViewModel() {
                 }
             }
             launch {
-                db.studentDao().getStudentsByInstitute(instId).collect { students ->
-                    val today = java.util.Calendar.getInstance()
+                db.studentDao().getStudentsByInstitute(instId)
+                    .combine(birthdayDayTick) { students, now ->
+                        students to java.util.Calendar.getInstance().apply { timeInMillis = now }
+                    }
+                    .collect { (students, today) ->
                     val upcoming = students.mapNotNull { student ->
+                        if (isClosedStudentStatus(student.status)) return@mapNotNull null
                         student.dateOfBirthMs?.let { dob ->
                             val daysUntil = daysUntilNextBirthday(dob, today)
                             if (daysUntil in 0..30) {
@@ -569,9 +629,9 @@ class DashboardViewModel(private val db: AppDatabase) : ViewModel() {
                     db.feeDao().getAllFees(instId),
                     db.studentDao().getStudentsByInstitute(instId),
                     db.batchDao().getBatchesByInstitute(instId),
-                    db.batchStudentDao().getActiveEnrollmentsForInstitute(instId)
-                ) { fees, students, batches, activeEnrollments ->
-                    DashboardDueInput(fees, students, batches, activeEnrollments)
+                    db.batchStudentDao().getBillingEnrollmentsForInstitute(instId)
+                ) { fees, students, batches, billingEnrollments ->
+                    DashboardDueInput(fees, students, batches, billingEnrollments)
                 }.collectLatest { input ->
                     val result = withContext(Dispatchers.Default) {
                         calculateDashboardDue(input)

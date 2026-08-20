@@ -21,6 +21,14 @@ data class BatchStudentEntity(
     val leftAtMs: Long?,
     /** Frozen when this enrollment is created so the first month's fee is stable. */
     val firstMonthFeePeriod: String? = null,
-    val firstMonthFeeAmount: Double? = null
+    val firstMonthFeeAmount: Double? = null,
+    /** Optional owner-set monthly amount for this student in this specific batch. */
+    val customMonthlyFeeAmount: Double? = null,
+    /** Owner-only explanation for the custom amount; never shown in student receipts. */
+    val customFeeReason: String? = null,
+    /** The first billing period to which the custom monthly amount applies. */
+    val customFeeEffectiveFromPeriod: String? = null,
+    /** Marks that the trusted ledger has reconciled this custom-fee policy. */
+    val customFeePolicySyncedAtMs: Long? = null
 )
 

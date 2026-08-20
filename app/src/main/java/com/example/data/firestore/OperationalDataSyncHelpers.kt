@@ -52,7 +52,11 @@ object BatchStudentSyncHelper {
                         "status" to enrollment.status,
                         "leftAtMs" to enrollment.leftAtMs,
                         "firstMonthFeePeriod" to enrollment.firstMonthFeePeriod,
-                        "firstMonthFeeAmount" to enrollment.firstMonthFeeAmount
+                        "firstMonthFeeAmount" to enrollment.firstMonthFeeAmount,
+                        "customMonthlyFeeAmount" to enrollment.customMonthlyFeeAmount,
+                        "customFeeReason" to enrollment.customFeeReason,
+                        "customFeeEffectiveFromPeriod" to enrollment.customFeeEffectiveFromPeriod,
+                        "customFeePolicySyncedAtMs" to enrollment.customFeePolicySyncedAtMs
                     )
                 ).await()
         } catch (e: Exception) {
@@ -102,7 +106,11 @@ object BatchStudentSyncHelper {
                     status = doc.getString("status") ?: "active",
                     leftAtMs = (doc.get("leftAtMs") as? Number).asLong(),
                     firstMonthFeePeriod = doc.getString("firstMonthFeePeriod"),
-                    firstMonthFeeAmount = (doc.get("firstMonthFeeAmount") as? Number).asDouble()
+                    firstMonthFeeAmount = (doc.get("firstMonthFeeAmount") as? Number).asDouble(),
+                    customMonthlyFeeAmount = (doc.get("customMonthlyFeeAmount") as? Number).asDouble(),
+                    customFeeReason = doc.getString("customFeeReason"),
+                    customFeeEffectiveFromPeriod = doc.getString("customFeeEffectiveFromPeriod"),
+                    customFeePolicySyncedAtMs = (doc.get("customFeePolicySyncedAtMs") as? Number).asLong()
                 )
             }.forEach { db.batchStudentDao().enrollStudent(it) }
         } catch (e: Exception) {

@@ -356,6 +356,7 @@ fun BirthdayReminderScreen(db: AppDatabase, onBack: () -> Unit, onNavigateToPric
     val viewModel: BirthdayViewModel = viewModel(factory = BirthdayViewModelFactory(db))
     val todayBirthdays by viewModel.todayBirthdays.collectAsState()
     val upcomingBirthdays by viewModel.upcomingBirthdays.collectAsState()
+    val dayTick by viewModel.dayTick.collectAsState()
     val context = LocalContext.current
     val instId = SessionManager.currentInstituteId.value
     val scope = rememberCoroutineScope()
@@ -429,6 +430,7 @@ fun BirthdayReminderScreen(db: AppDatabase, onBack: () -> Unit, onNavigateToPric
                     BirthdayCard(
                         student = student,
                         viewModel = viewModel,
+                        dayTick = dayTick,
                         onWishClick = { wishDialogTarget = student }
                     )
                     Spacer(Modifier.height(10.dp))
@@ -444,6 +446,7 @@ fun BirthdayReminderScreen(db: AppDatabase, onBack: () -> Unit, onNavigateToPric
                     BirthdayCard(
                         student = student,
                         viewModel = viewModel,
+                        dayTick = dayTick,
                         onWishClick = { wishDialogTarget = student }
                     )
                     Spacer(Modifier.height(10.dp))
@@ -457,7 +460,9 @@ fun BirthdayReminderScreen(db: AppDatabase, onBack: () -> Unit, onNavigateToPric
     // ── Wish dialog ──────────────────────────────────
     if (wishDialogTarget != null) {
         val student = wishDialogTarget!!
-        val age = viewModel.calculateAge(student.dateOfBirthMs ?: 0)
+        val age = remember(student.dateOfBirthMs, dayTick) {
+            viewModel.calculateAge(student.dateOfBirthMs ?: 0)
+        }
         val birthDateStr = remember(student.dateOfBirthMs) {
             student.dateOfBirthMs?.let {
                 SimpleDateFormat("dd MMM", Locale.getDefault()).format(Date(it))
@@ -596,12 +601,13 @@ private fun SectionHeader(title: String, accent: Color) {
 private fun BirthdayCard(
     student: StudentEntity,
     viewModel: BirthdayViewModel,
+    dayTick: Long,
     onWishClick: () -> Unit
 ) {
-    val daysUntil = remember(student.dateOfBirthMs) {
+    val daysUntil = remember(student.dateOfBirthMs, dayTick) {
         student.dateOfBirthMs?.let { viewModel.daysUntil(it) } ?: 0
     }
-    val age = remember(student.dateOfBirthMs) {
+    val age = remember(student.dateOfBirthMs, dayTick) {
         student.dateOfBirthMs?.let { viewModel.calculateAge(it) } ?: 0
     }
     val birthDateStr = remember(student.dateOfBirthMs) {

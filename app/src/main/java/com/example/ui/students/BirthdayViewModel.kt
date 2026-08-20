@@ -7,8 +7,10 @@ import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
 import com.batchfee.edu.data.models.StudentEntity
 import com.batchfee.edu.domain.SessionManager
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import java.util.Calendar
 
@@ -19,18 +21,37 @@ class BirthdayViewModel(private val db: AppDatabase) : ViewModel() {
     private val _upcomingBirthdays = MutableStateFlow<List<StudentEntity>>(emptyList())
     val upcomingBirthdays = _upcomingBirthdays.asStateFlow()
 
+    // Emits now and once at every local midnight so an open Birthday screen
+    // never keeps yesterday's count after the date changes.
+    private val _dayTick = MutableStateFlow(System.currentTimeMillis())
+    val dayTick = _dayTick.asStateFlow()
+
     init {
+        startDayTicker()
         loadData()
+    }
+
+    private fun startDayTicker() {
+        viewModelScope.launch {
+            while (true) {
+                val now = System.currentTimeMillis()
+                _dayTick.value = now
+                delay(millisecondsUntilNextLocalDay(now))
+            }
+        }
     }
 
     private fun loadData() {
         val instId = SessionManager.currentInstituteId.value ?: return
         viewModelScope.launch {
             InstituteCacheRefreshManager.refreshIfStaleInBackground(db, instId)
-            db.studentDao().getStudentsByInstitute(instId).collect { students ->
-                val today = Calendar.getInstance()
+            db.studentDao().getStudentsByInstitute(instId)
+                .combine(_dayTick) { students, now ->
+                    students to Calendar.getInstance().apply { timeInMillis = now }
+                }
+                .collect { (students, today) ->
                 val withDays = students
-                    .filter { it.dateOfBirthMs != null }
+                    .filter { it.dateOfBirthMs != null && it.isBirthdayEligible() }
                     .map { student ->
                         val diff = daysUntilNextBirthday(student.dateOfBirthMs!!, today)
                         student to diff
@@ -50,14 +71,23 @@ class BirthdayViewModel(private val db: AppDatabase) : ViewModel() {
     }
 
     fun daysUntil(dobMs: Long): Int {
-        return daysUntilNextBirthday(dobMs, Calendar.getInstance())
+        return daysUntilNextBirthday(dobMs, Calendar.getInstance().apply { timeInMillis = _dayTick.value })
     }
 
     fun calculateAge(dobMs: Long): Int {
         val dob = Calendar.getInstance().apply { timeInMillis = dobMs }
-        val today = Calendar.getInstance()
+        val today = Calendar.getInstance().apply { timeInMillis = _dayTick.value }
         var age = today.get(Calendar.YEAR) - dob.get(Calendar.YEAR)
-        if (today.get(Calendar.DAY_OF_YEAR) < dob.get(Calendar.DAY_OF_YEAR)) age--
+        val birthdayThisYear = Calendar.getInstance().apply {
+            clear()
+            val isFeb29 = dob.get(Calendar.MONTH) == Calendar.FEBRUARY && dob.get(Calendar.DAY_OF_MONTH) == 29
+            set(
+                today.get(Calendar.YEAR),
+                dob.get(Calendar.MONTH),
+                if (isFeb29 && !isLeapYear(today.get(Calendar.YEAR))) 28 else dob.get(Calendar.DAY_OF_MONTH)
+            )
+        }
+        if (today.before(birthdayThisYear)) age--
         return age.coerceAtLeast(0)
     }
 
@@ -94,6 +124,21 @@ class BirthdayViewModel(private val db: AppDatabase) : ViewModel() {
     }
 
     private fun isLeapYear(year: Int) = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+
+    private fun millisecondsUntilNextLocalDay(now: Long): Long {
+        val next = Calendar.getInstance().apply {
+            timeInMillis = now
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+            add(Calendar.DAY_OF_YEAR, 1)
+        }
+        return (next.timeInMillis - now).coerceAtLeast(1_000L)
+    }
+
+    private fun StudentEntity.isBirthdayEligible(): Boolean =
+        status.trim().lowercase() !in setOf("inactive", "closed", "close", "removed")
 }
 
 class BirthdayViewModelFactory(private val db: AppDatabase) : ViewModelProvider.Factory {

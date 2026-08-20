@@ -170,6 +170,50 @@ class FeeCollectionRepository(
         return result.asCollectionResult()
     }
 
+    /**
+     * Saves a student's reduced monthly fee through the trusted ledger. The
+     * backend updates only unpaid running/future monthly fee records; paid
+     * receipts and past arrears are deliberately immutable.
+     */
+    suspend fun setCustomMonthlyFee(
+        instituteId: String,
+        enrollmentId: String,
+        studentId: String,
+        batchId: String,
+        customMonthlyFeeAmount: Double?,
+        customFeeReason: String?,
+        now: Long = System.currentTimeMillis(),
+        operationId: String = UUID.randomUUID().toString()
+    ): FinancialOperationResult = execute(
+        request = baseRequest(operationId, instituteId, "set_custom_monthly_fee") + mapOf(
+            "enrollmentId" to enrollmentId,
+            "studentId" to studentId,
+            "batchId" to batchId,
+            "customMonthlyFeeAmount" to customMonthlyFeeAmount,
+            "customFeeReason" to customFeeReason
+        ),
+        queuedAtMs = now
+    )
+
+    /**
+     * Reconciles an owner's admission-date correction through the trusted
+     * ledger. The server updates active enrollments and only fully unpaid
+     * monthly rows; receipts and paid history remain immutable.
+     */
+    suspend fun updateStudentAdmissionDate(
+        instituteId: String,
+        studentId: String,
+        admissionDateMs: Long,
+        now: Long = System.currentTimeMillis(),
+        operationId: String = UUID.randomUUID().toString()
+    ): FinancialOperationResult = execute(
+        request = baseRequest(operationId, instituteId, "update_student_admission_date") + mapOf(
+            "studentId" to studentId,
+            "admissionDateMs" to admissionDateMs
+        ),
+        queuedAtMs = now
+    )
+
     suspend fun reversePayment(
         paymentId: String,
         instituteId: String,
@@ -364,7 +408,9 @@ class FeeCollectionRepository(
                 }
             }) { "Ledger response crossed the institute boundary." }
 
-        check(result.fees.isNotEmpty()) { "Ledger response must contain a canonical fee." }
+        if (action !in setOf("set_custom_monthly_fee", "update_student_admission_date")) {
+            check(result.fees.isNotEmpty()) { "Ledger response must contain a canonical fee." }
+        }
         result.fees.forEach { fee ->
             check(abs((fee.totalAmount - fee.paidAmount) - fee.dueAmount) <= 0.001) {
                 "Ledger response contains inconsistent fee totals."
@@ -391,6 +437,14 @@ class FeeCollectionRepository(
             "owner_delete_payment" -> {
                 check(result.fees.size == 1 && result.payments.isEmpty() && result.receipts.isEmpty())
                 check(result.reversals.isEmpty() && result.deletedPaymentIds == listOf(request["paymentId"] as String))
+            }
+            "set_custom_monthly_fee" -> {
+                check(result.payments.isEmpty() && result.receipts.isEmpty() && result.reversals.isEmpty())
+                check(result.deletedPaymentIds.isEmpty() && result.deletedReceiptIds.isEmpty())
+            }
+            "update_student_admission_date" -> {
+                check(result.payments.isEmpty() && result.receipts.isEmpty() && result.reversals.isEmpty())
+                check(result.deletedPaymentIds.isEmpty() && result.deletedReceiptIds.isEmpty())
             }
             else -> error("Unsupported ledger response action.")
         }

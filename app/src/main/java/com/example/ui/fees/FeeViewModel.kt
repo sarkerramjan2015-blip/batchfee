@@ -85,6 +85,13 @@ class FeeViewModel(private val db: AppDatabase) : ViewModel() {
                 }
             }
             launch {
+                // A batch shift changes virtual historic dues even when no
+                // payment document changed, so refresh the due summary too.
+                db.batchStudentDao().getBillingEnrollmentsForInstitute(instId).collect {
+                    enrichDueFees(instId, _feeList.value)
+                }
+            }
+            launch {
                 db.feeDao().getTotalCollected(instId).collect { _totalCollected.value = it ?: 0.0 }
             }
         }
@@ -96,13 +103,11 @@ class FeeViewModel(private val db: AppDatabase) : ViewModel() {
         var total = 0.0
         val details = mutableListOf<DueFeeDetail>()
 
-        // Exam fees are due as soon as the exam is created. Other non-monthly
-        // fees keep the existing past-month rule.
+        // A real fee record is already an owner-approved charge. Show every
+        // outstanding one-time fee immediately, not only after its month ends.
         fees.filter {
             !MonthlyDueCalculator.isMonthlyFeeType(it.feeType)
             && it.dueAmount > 0.0
-            && (it.feeType.equals("exam_fee", ignoreCase = true) ||
-                MonthlyDueCalculator.isPastMonth(it.feePeriod))
         }.forEach { fee ->
             val student = allStudents[fee.studentId] ?: return@forEach
             val batchName = fee.batchId?.let { allBatches[it]?.name } ?: ""
@@ -117,15 +122,38 @@ class FeeViewModel(private val db: AppDatabase) : ViewModel() {
             )
         }
 
-        // Monthly due items — calculated from the actual enrollment date for
-        // each batch. New enrollments carry a frozen, pro-rated first month.
+        // Pre-created installment records (including an advance that covers
+        // several months) keep their original amount and fee ID. They become
+        // due only when the final month in the saved period has completed.
+        fees.filter {
+            it.dueAmount > 0.0 &&
+                MonthlyDueCalculator.isMonthlyInstallmentDue(it.feeType, it.feePeriod)
+        }.forEach { fee ->
+            val student = allStudents[fee.studentId] ?: return@forEach
+            val batchName = fee.batchId?.let { allBatches[it]?.name } ?: ""
+            total += fee.dueAmount
+            details += DueFeeDetail(
+                feeId = fee.id, studentId = fee.studentId,
+                studentName = student.fullName, studentPhone = student.phone,
+                batchName = batchName, feePeriod = fee.feePeriod,
+                dueAmount = fee.dueAmount, totalAmount = fee.totalAmount,
+                paidAmount = fee.paidAmount, dueDateMs = fee.dueDateMs,
+                status = fee.status, studentStatus = student.status
+            )
+        }
+
+        // Monthly dues include a removed enrollment through its last completed
+        // month, so a batch shift can never hide an old balance.
         allStudents.values.forEach { student ->
             val enrollments = db.batchStudentDao()
-                .getActiveEnrollmentsForStudentOnce(student.id, instId)
+                .getBillingEnrollmentsForStudentOnce(student.id, instId)
             enrollments.forEach { enrollment ->
                 val batch = allBatches[enrollment.batchId] ?: return@forEach
                 if (batch.monthlyFeeAmount <= 0.0) return@forEach
-                val batchFees = fees.filter { it.studentId == student.id && it.batchId == batch.id }
+                val batchFees = fees.filter {
+                    it.studentId == student.id && it.batchId == batch.id &&
+                        MonthlyDueCalculator.isMonthlyFeeType(it.feeType)
+                }
                 val items = MonthlyDueCalculator.computeMonthlyOutstandingItems(
                     admissionDateMs = enrollment.joinedAtMs,
                     monthlyFeeAmount = batch.monthlyFeeAmount,
@@ -133,7 +161,10 @@ class FeeViewModel(private val db: AppDatabase) : ViewModel() {
                     batchName = batch.name,
                     existingMonthlyFees = batchFees,
                     firstMonthFeePeriod = enrollment.firstMonthFeePeriod,
-                    firstMonthFeeAmount = enrollment.firstMonthFeeAmount
+                    firstMonthFeeAmount = enrollment.firstMonthFeeAmount,
+                    customMonthlyFeeAmount = enrollment.customMonthlyFeeAmount,
+                    customFeeEffectiveFromPeriod = enrollment.customFeeEffectiveFromPeriod,
+                    billingEndedAtMs = enrollment.leftAtMs
                 )
                 items.forEach { item ->
                     total += item.outstanding
@@ -150,6 +181,24 @@ class FeeViewModel(private val db: AppDatabase) : ViewModel() {
                         dueDateMs = 0L,
                         status = if (item.paidAmount > 0.0) "partially_paid" else "unpaid",
                         studentStatus = student.status
+                    )
+                }
+
+                val admissionAlreadyCreated = fees.any { fee ->
+                    fee.studentId == student.id && fee.batchId == batch.id &&
+                        fee.feeType.equals("admission_fee", ignoreCase = true)
+                }
+                if (enrollment.status.equals("active", ignoreCase = true) &&
+                    batch.admissionFeeAmount > 0.0 && !admissionAlreadyCreated) {
+                    total += batch.admissionFeeAmount
+                    details += DueFeeDetail(
+                        feeId = "", studentId = student.id,
+                        studentName = student.fullName, studentPhone = student.phone,
+                        batchName = batch.name, feePeriod = "Admission",
+                        dueAmount = batch.admissionFeeAmount,
+                        totalAmount = batch.admissionFeeAmount,
+                        paidAmount = 0.0, dueDateMs = 0L,
+                        status = "unpaid", studentStatus = student.status
                     )
                 }
             }

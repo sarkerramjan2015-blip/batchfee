@@ -461,6 +461,8 @@ describe("P0-02 owner and staff security boundary", { concurrency: false }, () =
 
   test("owners cannot bypass trusted quota creation with direct student, batch, or staff writes", async () => {
     const db = authDb(OWNER_A);
+    await assertSucceeds(getDoc(tenantDoc(db, OWNER_A, "batches", "batch-a")));
+    await assertSucceeds(getDoc(tenantDoc(db, OWNER_A, "batch_students", "enrollment-a")));
     await assertFails(setDoc(tenantDoc(db, OWNER_A, "students", "direct-student"), {
       instituteId: OWNER_A, studentCode: "DIRECT-1", fullName: "Denied", status: "active",
     }));

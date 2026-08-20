@@ -52,6 +52,7 @@ private val DsMuted = Color(0xFF94A3B8)
 /** Immutable, student-readable receipt data. A student never writes these records. */
 internal data class StudentReceiptDocument(
     val id: String,
+    val paymentId: String,
     val feeId: String,
     val receiptNumber: String,
     val dateMs: Long,
@@ -87,6 +88,7 @@ fun StudentDocumentsScreen(onBack: () -> Unit) {
     var student by remember(studentId) { mutableStateOf<StudentEntity?>(null) }
     var institute by remember(instituteId) { mutableStateOf<InstituteEntity?>(null) }
     var receipts by remember(studentId, instituteId) { mutableStateOf(emptyList<StudentReceiptDocument>()) }
+    var completedPaymentIds by remember(studentId, instituteId) { mutableStateOf(emptySet<String>()) }
     var feesById by remember(studentId, instituteId) { mutableStateOf(emptyMap<String, StudentFeeDocument>()) }
     var rawResults by remember(studentId, instituteId) { mutableStateOf(emptyList<RawStudentResult>()) }
     var exams by remember(instituteId) { mutableStateOf(emptyMap<String, StudentExamDocument>()) }
@@ -147,6 +149,7 @@ fun StudentDocumentsScreen(onBack: () -> Unit) {
                         receipts = snapshot?.documents.orEmpty().map { doc ->
                             StudentReceiptDocument(
                                 id = doc.id,
+                                paymentId = doc.getString("paymentId") ?: "",
                                 feeId = doc.getString("feeId") ?: "",
                                 receiptNumber = doc.getString("receiptNumber") ?: doc.id,
                                 dateMs = (doc.get("receiptDateMs") as? Number)?.toLong() ?: 0L,
@@ -157,6 +160,16 @@ fun StudentDocumentsScreen(onBack: () -> Unit) {
                                 feeLabel = doc.getString("feeLabel") ?: doc.getString("feePeriod") ?: "Fee payment"
                             )
                         }.sortedByDescending { it.dateMs }
+                    }
+                }
+            listeners += instituteRef.collection("payments").whereEqualTo("studentId", studentId)
+                .addSnapshotListener { snapshot, error ->
+                    listenerError(error)
+                    if (error == null) {
+                        completedPaymentIds = snapshot?.documents.orEmpty()
+                            .filter { it.getString("status") == "completed" }
+                            .map { it.id }
+                            .toSet()
                     }
                 }
             listeners += instituteRef.collection("results").whereEqualTo("studentId", studentId)
@@ -198,9 +211,11 @@ fun StudentDocumentsScreen(onBack: () -> Unit) {
             position = raw.position
         )
     }.sortedByDescending { it.dateMs ?: 0L }
-    val receiptCards = receipts.map { receipt ->
+    val receiptCards = receipts
+        .filter { it.paymentId in completedPaymentIds }
+        .map { receipt ->
         receipt.copy(feeLabel = feesById[receipt.feeId]?.label ?: receipt.feeLabel)
-    }
+        }
 
     fun openDocument(label: String, producer: suspend () -> File) {
         scope.launch {
