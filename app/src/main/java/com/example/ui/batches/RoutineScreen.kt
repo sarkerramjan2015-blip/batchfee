@@ -2,6 +2,7 @@ package com.batchfee.edu.ui.batches
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -30,6 +31,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
@@ -43,6 +45,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.OutlinedTextField
@@ -83,7 +86,7 @@ private val RoutineGreen = Color(0xFF22C55E)
 private val RoutineText = Color(0xFFF8FAFC)
 private val RoutineMuted = Color(0xFF94A3B8)
 
-private enum class RoutineScope { SINGLE, ALL }
+private enum class RoutineScope { SINGLE, SELECTED, ALL }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -100,6 +103,9 @@ fun RoutineScreen(db: AppDatabase, onBack: () -> Unit) {
     var institute by remember { mutableStateOf<InstituteEntity?>(null) }
     var routineScope by remember { mutableStateOf(RoutineScope.SINGLE) }
     var selectedBatchId by remember { mutableStateOf<String?>(null) }
+    var selectedBatchIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var batchPickerDraft by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var showBatchPicker by remember { mutableStateOf(false) }
     var batchMenuExpanded by remember { mutableStateOf(false) }
     var isGenerating by remember { mutableStateOf(false) }
 
@@ -112,10 +118,16 @@ fun RoutineScreen(db: AppDatabase, onBack: () -> Unit) {
 
     val activeBatches = remember(batches) { batches.filter { it.status == "active" && it.archivedAtMs == null } }
     LaunchedEffect(activeBatches) {
-        if (selectedBatchId !in activeBatches.map { it.id }) selectedBatchId = activeBatches.firstOrNull()?.id
+        val activeIds = activeBatches.map { it.id }.toSet()
+        if (selectedBatchId !in activeIds) selectedBatchId = activeBatches.firstOrNull()?.id
+        selectedBatchIds = selectedBatchIds.intersect(activeIds)
     }
     val selectedBatch = activeBatches.firstOrNull { it.id == selectedBatchId }
-    val exportBatches = if (routineScope == RoutineScope.ALL) activeBatches else listOfNotNull(selectedBatch)
+    val exportBatches = when (routineScope) {
+        RoutineScope.SINGLE -> listOfNotNull(selectedBatch)
+        RoutineScope.SELECTED -> activeBatches.filter { it.id in selectedBatchIds }
+        RoutineScope.ALL -> activeBatches
+    }
     val isOwner = SessionManager.isAdmin()
 
     fun createPdf(action: (java.io.File, String) -> Boolean) {
@@ -131,11 +143,24 @@ fun RoutineScreen(db: AppDatabase, onBack: () -> Unit) {
         scope.launch {
             isGenerating = true
             try {
-                val allBatches = routineScope == RoutineScope.ALL
-                val file = withContext(Dispatchers.IO) {
-                    generateRoutinePdf(context, currentInstitute, exportBatches, allBatches)
+                val routineTitle = when (routineScope) {
+                    RoutineScope.SINGLE -> "BATCH CLASS ROUTINE"
+                    RoutineScope.SELECTED -> "SELECTED BATCH CLASS ROUTINE"
+                    RoutineScope.ALL -> "ALL BATCH CLASS ROUTINE"
                 }
-                val label = if (allBatches) "${currentInstitute.name} class routine" else "${selectedBatch!!.name} class routine"
+                val fileSuffix = when (routineScope) {
+                    RoutineScope.SINGLE -> selectedBatch?.name.orEmpty()
+                    RoutineScope.SELECTED -> "selected_${exportBatches.size}_batches"
+                    RoutineScope.ALL -> "all_batches"
+                }
+                val file = withContext(Dispatchers.IO) {
+                    generateRoutinePdf(context, currentInstitute, exportBatches, routineTitle, fileSuffix)
+                }
+                val label = when (routineScope) {
+                    RoutineScope.SINGLE -> "${selectedBatch!!.name} class routine"
+                    RoutineScope.SELECTED -> "${currentInstitute.name} class routine (${exportBatches.size} batches)"
+                    RoutineScope.ALL -> "${currentInstitute.name} class routine"
+                }
                 if (!action(file, label)) snackbarHostState.showSnackbar("Could not open this option on the device.")
             } catch (_: Exception) {
                 snackbarHostState.showSnackbar("Routine PDF could not be created. Please try again.")
@@ -177,12 +202,31 @@ fun RoutineScreen(db: AppDatabase, onBack: () -> Unit) {
             item {
                 Text("Create routine for", color = RoutineText, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     FilterChip(
                         selected = routineScope == RoutineScope.SINGLE,
                         onClick = { routineScope = RoutineScope.SINGLE },
                         label = { Text("One batch") },
                         leadingIcon = if (routineScope == RoutineScope.SINGLE) {{ Icon(Icons.Filled.Schedule, null, Modifier.size(16.dp)) }} else null,
+                        colors = routineChipColors()
+                    )
+                    FilterChip(
+                        selected = routineScope == RoutineScope.SELECTED,
+                        onClick = {
+                            routineScope = RoutineScope.SELECTED
+                            val activeIds = activeBatches.map { it.id }.toSet()
+                            batchPickerDraft = when {
+                                selectedBatchIds.isNotEmpty() -> selectedBatchIds.intersect(activeIds)
+                                selectedBatchId != null -> setOf(selectedBatchId!!).intersect(activeIds)
+                                else -> emptySet()
+                            }
+                            showBatchPicker = true
+                        },
+                        label = { Text("Choose batches") },
+                        leadingIcon = if (routineScope == RoutineScope.SELECTED) {{ Icon(Icons.Filled.Schedule, null, Modifier.size(16.dp)) }} else null,
                         colors = routineChipColors()
                     )
                     FilterChip(
@@ -232,7 +276,11 @@ fun RoutineScreen(db: AppDatabase, onBack: () -> Unit) {
             } else {
                 item {
                     Text(
-                        if (routineScope == RoutineScope.ALL) "Routine preview (${exportBatches.size} batches)" else "Routine preview",
+                        when (routineScope) {
+                            RoutineScope.SINGLE -> "Routine preview"
+                            RoutineScope.SELECTED -> "Selected routine (${exportBatches.size} batches)"
+                            RoutineScope.ALL -> "Routine preview (${exportBatches.size} batches)"
+                        },
                         color = RoutineText,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.SemiBold
@@ -272,6 +320,71 @@ fun RoutineScreen(db: AppDatabase, onBack: () -> Unit) {
             }
             item { Spacer(Modifier.height(18.dp)) }
         }
+    }
+
+    if (showBatchPicker) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = {
+                showBatchPicker = false
+                if (selectedBatchIds.isEmpty()) routineScope = RoutineScope.SINGLE
+            },
+            containerColor = RoutineCard,
+            title = { Text("Choose batches", color = RoutineText, fontWeight = FontWeight.Bold) },
+            text = {
+                Column {
+                    Text("Tick the batches you want in this routine.", color = RoutineMuted, fontSize = 12.sp)
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        TextButton(onClick = { batchPickerDraft = activeBatches.map { it.id }.toSet() }) {
+                            Text("Select all")
+                        }
+                        TextButton(onClick = { batchPickerDraft = emptySet() }) {
+                            Text("Clear")
+                        }
+                    }
+                    LazyColumn(modifier = Modifier.height(260.dp)) {
+                        items(activeBatches, key = { it.id }) { batch ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        batchPickerDraft = if (batch.id in batchPickerDraft) {
+                                            batchPickerDraft - batch.id
+                                        } else {
+                                            batchPickerDraft + batch.id
+                                        }
+                                    }
+                                    .padding(vertical = 3.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Checkbox(checked = batch.id in batchPickerDraft, onCheckedChange = null)
+                                Column(Modifier.weight(1f)) {
+                                    Text(batch.name, color = RoutineText, fontWeight = FontWeight.Medium)
+                                    Text(listOfNotNull(batch.className, batch.subject).joinToString(" - ").ifBlank { "Batch schedule" }, color = RoutineMuted, fontSize = 11.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        selectedBatchIds = batchPickerDraft
+                        showBatchPicker = false
+                    },
+                    enabled = batchPickerDraft.isNotEmpty(),
+                    colors = ButtonDefaults.buttonColors(containerColor = RoutineBlue),
+                ) {
+                    Text("Use ${batchPickerDraft.size} batches")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showBatchPicker = false
+                    if (selectedBatchIds.isEmpty()) routineScope = RoutineScope.SINGLE
+                }) { Text("Cancel") }
+            },
+        )
     }
 }
 

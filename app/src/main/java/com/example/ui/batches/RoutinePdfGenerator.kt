@@ -37,7 +37,8 @@ internal suspend fun generateRoutinePdf(
     context: Context,
     institute: InstituteEntity,
     batches: List<BatchEntity>,
-    isAllBatches: Boolean
+    title: String,
+    fileSuffix: String,
 ): File {
     require(batches.isNotEmpty()) { "Choose at least one batch." }
 
@@ -56,7 +57,7 @@ internal suspend fun generateRoutinePdf(
             institute = institute,
             logo = logo,
             batches = pageBatches,
-            title = if (isAllBatches) "ALL BATCH CLASS ROUTINE" else "BATCH CLASS ROUTINE",
+            title = title,
             generatedAt = generatedAt,
             pageNumber = pageIndex + 1,
             totalPages = chunks.size
@@ -66,7 +67,7 @@ internal suspend fun generateRoutinePdf(
 
     val directory = File(context.cacheDir, "exports").apply { mkdirs() }
     val safeName = institute.name.ifBlank { "institute" }.replace(Regex("[^A-Za-z0-9_-]"), "_")
-    val suffix = if (isAllBatches) "all_batches" else batches.first().name.replace(Regex("[^A-Za-z0-9_-]"), "_")
+    val suffix = fileSuffix.ifBlank { batches.first().name }.replace(Regex("[^A-Za-z0-9_-]"), "_")
     val file = File(directory, "class_routine_${safeName}_${suffix}.pdf")
     file.outputStream().use(document::writeTo)
     document.close()
