@@ -128,6 +128,14 @@ private data class AddMenuOption(
     val route: String
 )
 
+private data class MoreFeature(
+    val title: String,
+    val subtitle: String,
+    val icon: ImageVector,
+    val accent: Color,
+    val route: String,
+)
+
 private data class DashboardBootstrapSnapshot(
     val institute: InstituteEntity,
     val studentCount: Int,
@@ -221,6 +229,18 @@ private fun calculateDashboardDue(input: DashboardDueInput): DashboardDueResult 
     val monthlyFeesByStudentAndBatch = input.fees
         .filter { fee -> MonthlyDueCalculator.isMonthlyFeeType(fee.feeType) }
         .groupBy { fee -> fee.studentId to fee.batchId }
+    fun isEligibleMonthlyFee(fee: FeeEntity): Boolean {
+        val student = studentsById[fee.studentId] ?: return false
+        return enrollmentsByStudent[student.id].orEmpty().any { (enrollment, _) ->
+            enrollment.batchId == fee.batchId && MonthlyDueCalculator.isMonthlyFeeWithinEnrollmentWindow(
+                feePeriod = fee.feePeriod,
+                studentAdmissionDateMs = student.admissionDateMs,
+                enrollmentJoinedAtMs = enrollment.joinedAtMs,
+                firstMonthFeePeriod = enrollment.firstMonthFeePeriod,
+                billingEndedAtMs = enrollment.leftAtMs
+            )
+        }
+    }
 
     val activeStudentIds = mutableSetOf<String>()
     val closedStudentIds = mutableSetOf<String>()
@@ -246,7 +266,8 @@ private fun calculateDashboardDue(input: DashboardDueInput): DashboardDueResult 
     input.fees.asSequence()
         .filter { fee ->
             fee.dueAmount > 0.0 &&
-                MonthlyDueCalculator.isMonthlyInstallmentDue(fee.feeType, fee.feePeriod)
+                MonthlyDueCalculator.isMonthlyInstallmentDue(fee.feeType, fee.feePeriod) &&
+                isEligibleMonthlyFee(fee)
         }
         .forEach { fee ->
             val student = studentsById[fee.studentId] ?: return@forEach
@@ -263,8 +284,13 @@ private fun calculateDashboardDue(input: DashboardDueInput): DashboardDueResult 
         val isClosed = isClosedStudentStatus(student.status)
         enrollmentsByStudent[student.id].orEmpty().forEach { (enrollment, batch) ->
             if (batch.monthlyFeeAmount <= 0.0) return@forEach
+            val billingStartMs = MonthlyDueCalculator.effectiveBillingStartMs(
+                student.admissionDateMs,
+                enrollment.joinedAtMs,
+                enrollment.firstMonthFeePeriod
+            )
             val items = MonthlyDueCalculator.computeMonthlyOutstandingItems(
-                admissionDateMs = enrollment.joinedAtMs,
+                admissionDateMs = billingStartMs,
                 monthlyFeeAmount = batch.monthlyFeeAmount,
                 batchId = batch.id,
                 batchName = batch.name,
@@ -607,10 +633,20 @@ class DashboardViewModel(private val db: AppDatabase) : ViewModel() {
                     )
                 }
             }
+            // Homework and assignments have dedicated stores. The old `works`
+            // table was kept for legacy screens, so reading it here made the
+            // dashboard remain at zero after a new homework/assignment was
+            // created. Keep these counts tied to exactly what the new list
+            // screens and student app can publish.
             launch {
-                db.workDao().getActiveWorks(instId).collect { works ->
-                    _homeWorkCount.value = works.count { it.type == "HOMEWORK" }
-                    _assignmentCount.value = works.count { it.type == "ASSIGNMENT" }
+                kotlinx.coroutines.flow.combine(
+                    db.homeworkDao().getActive(instId),
+                    db.assignmentDao().getPublished(instId),
+                ) { homeworks, assignments ->
+                    homeworks.count { it.status.equals("active", ignoreCase = true) } to assignments.size
+                }.collect { (homeworkCount, assignmentCount) ->
+                    _homeWorkCount.value = homeworkCount
+                    _assignmentCount.value = assignmentCount
                 }
             }
             launch {
@@ -1644,6 +1680,23 @@ fun DashboardScreen(
                                     )
                                 }
                                 Spacer(Modifier.height(6.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Filled.Groups, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(13.dp))
+                                        Spacer(Modifier.width(5.dp))
+                                        Text("Unlimited batches", color = AccentCyan, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                                    }
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Filled.Badge, contentDescription = null, tint = AccentGreen, modifier = Modifier.size(13.dp))
+                                        Spacer(Modifier.width(5.dp))
+                                        Text("Unlimited staff", color = AccentGreen, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                                    }
+                                }
+                                Spacer(Modifier.height(7.dp))
                                 HorizontalDivider(color = Color(0xFF1E2A45))
                                 Spacer(Modifier.height(6.dp))
                                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1995,7 +2048,6 @@ fun DashboardScreen(
                             try {
                                 val profilePhotoUri = when {
                                     editProfilePhotoUri == null -> {
-                                        deleteLocalInstituteProfilePhoto(inst.profilePhotoUri)
                                         null
                                     }
                                     editProfilePhotoUri.toString() == inst.profilePhotoUri -> inst.profilePhotoUri
@@ -2012,25 +2064,35 @@ fun DashboardScreen(
                                     address = editAddress.trim().ifBlank { null },
                                     profilePhotoUri = profilePhotoUri
                                 )
+                                val logoChanged = profilePhotoUri != inst.profilePhotoUri
+
+                                if (logoChanged) {
+                                    syncInstituteLogoBeforeLocalSuccess(updated)
+                                }
 
                                 // Save locally FIRST — Firestore sync is best-effort after
                                 db.instituteDao().updateInstitute(updated)
                                 db.userDao().updateUser(owner.copy(name = editOwnerName.trim()))
-                                if (profilePhotoUri != inst.profilePhotoUri) {
+                                if (logoChanged) {
                                     deleteLocalInstituteProfilePhoto(inst.profilePhotoUri)
                                 }
 
                                 // Firestore sync in background — don't block UI
-                                try {
-                                    withContext(Dispatchers.IO) {
-                                        com.batchfee.edu.data.firestore.InstituteSyncHelper.syncInstituteToFirestore(updated)
-                                    }
-                                } catch (_: Exception) {
+                                if (!logoChanged) {
+                                    try {
+                                        withContext(Dispatchers.IO) {
+                                            com.batchfee.edu.data.firestore.InstituteSyncHelper.syncInstituteToFirestore(updated)
+                                        }
+                                    } catch (_: Exception) {
                                     // Local is already saved — Firestore will sync on next refresh
                                 }
 
+                                }
+
                                 showEditDialog = false
-                                snackbarHostState.showSnackbar("Institute information updated.")
+                                snackbarHostState.showSnackbar(
+                                    if (logoChanged) "Institute logo updated." else "Institute information updated."
+                                )
                             } catch (e: Exception) {
                                 snackbarHostState.showSnackbar(e.message ?: "Failed to update institute information.")
                             } finally {
@@ -2062,6 +2124,30 @@ private fun deleteLocalInstituteProfilePhoto(photoUri: String?) {
     if (uri.scheme == "file") {
         uri.path?.let(::File)?.delete()
     }
+}
+
+/**
+ * The logo asset has uploaded before this function runs. Retrying only the
+ * profile write prevents a false local success when Firebase has not accepted
+ * the new logo reference yet.
+ */
+private suspend fun syncInstituteLogoBeforeLocalSuccess(institute: InstituteEntity) {
+    var lastError: Exception? = null
+    repeat(3) { attempt ->
+        try {
+            withContext(Dispatchers.IO) {
+                com.batchfee.edu.data.firestore.InstituteSyncHelper.syncInstituteToFirestore(institute)
+            }
+            return
+        } catch (error: Exception) {
+            lastError = error
+            if (attempt < 2) delay(600L * (attempt + 1))
+        }
+    }
+    throw IllegalStateException(
+        "Logo could not be saved to Firebase. Check your internet and try again.",
+        lastError,
+    )
 }
 
 @Composable
@@ -4045,59 +4131,116 @@ fun MoreScreen(
     var showLogoutConfirmation by remember { mutableStateOf(false) }
     val moreItems = remember(currentRole, currentStaffPermissions) {
         listOf(
-            "Staff Management" to "StaffRoute",
-            "Staff Attendance" to "StaffAttendanceRoute",
-            "Salary Management" to "SalaryRoute",
-            "All Archives" to "AllArchivesRoute",
-            "Expenses" to "ExpensesRoute",
-            "Profit & Loss" to "ProfitLossRoute",
-            "ID Card Generator" to "IdCardGeneratorRoute",
-            "Take Attendance" to "AttendanceRoute",
-            "Attendance Reports" to "AttendanceReportRoute",
-            "Settings" to "SettingsRoute",
-            "Reminder Templates" to "ReminderTemplatesRoute"
-        ).filter { AccessControl.canAccessRoute(it.second) }
+            MoreFeature(
+                "Student Activity",
+                "Student login, last active and app activity",
+                Icons.Filled.Visibility,
+                AccentSky,
+                "StudentActivityRoute",
+            ),
+            MoreFeature(
+                "Salary Management",
+                "Salary, partial payments and staff expenses",
+                Icons.Filled.Payments,
+                AccentCyan,
+                "SalaryRoute",
+            ),
+            MoreFeature(
+                "All Archives",
+                "Restore or permanently remove records",
+                Icons.Filled.Archive,
+                AccentAmber,
+                "AllArchivesRoute",
+            ),
+            MoreFeature(
+                "Profit & Loss",
+                "Institute income, expenses and profit overview",
+                Icons.Filled.TrendingUp,
+                AccentGreen,
+                "ProfitLossRoute",
+            ),
+            MoreFeature(
+                "Settings",
+                "Institute, account and app preferences",
+                Icons.Filled.Settings,
+                AccentViolet,
+                "SettingsRoute",
+            ),
+            MoreFeature(
+                "Reminder Templates",
+                "Ready messages for students and guardians",
+                Icons.Filled.NotificationsActive,
+                AccentSky,
+                "ReminderTemplatesRoute",
+            ),
+        ).filter { AccessControl.canAccessRoute(it.route) }
     }
 
-    Column(modifier = Modifier.fillMaxSize().background(DashboardBg).padding(16.dp).verticalScroll(rememberScrollState())) {
-        Text("More Features", style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold), color = TextPrimary)
-        Spacer(Modifier.height(16.dp))
-        
-        Card(
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(DashboardBg)
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+    ) {
+        MorePremiumHero(availableCount = moreItems.size)
+        Spacer(Modifier.height(20.dp))
+        Row(
             modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = DashboardCard),
-            border = borderStroke()
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Column {
-                if (moreItems.isEmpty()) {
-                    Text(
-                        "Your admin has not enabled any work permissions for this account yet.",
-                        color = TextSecondary,
-                        fontSize = 13.sp,
-                        modifier = Modifier.padding(16.dp)
-                    )
-                } else {
-                    moreItems.forEachIndexed { index, item ->
-                        ListItem(
-                            headlineContent = { Text(item.first, color = TextPrimary) },
-                            modifier = Modifier.fillMaxWidth().clickable { onNavigate(item.second) },
-                            colors = ListItemDefaults.colors(containerColor = Color.Transparent)
-                        )
-                        if (index != moreItems.lastIndex) {
-                            HorizontalDivider(color = DashboardStroke)
-                        }
-                    }
+            Text("Advanced tools", color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            Text("${moreItems.size} available", color = AccentCyan, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+        }
+        Spacer(Modifier.height(10.dp))
+
+        if (moreItems.isEmpty()) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = DashboardCard),
+                border = borderStroke(),
+            ) {
+                Text(
+                    "Your admin has not enabled any advanced tools for this account yet.",
+                    color = TextSecondary,
+                    fontSize = 13.sp,
+                    modifier = Modifier.padding(18.dp),
+                )
+            }
+        } else {
+            moreItems.forEachIndexed { index, item ->
+                var visible by remember(item.route) { mutableStateOf(false) }
+                LaunchedEffect(item.route) {
+                    delay(index * 70L)
+                    visible = true
                 }
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = visible,
+                    enter = androidx.compose.animation.fadeIn(animationSpec = tween(230)) +
+                        androidx.compose.animation.slideInVertically(
+                            initialOffsetY = { it / 5 },
+                            animationSpec = tween(280, easing = FastOutSlowInEasing),
+                        ),
+                ) {
+                    MorePremiumFeatureCard(feature = item, onClick = { onNavigate(item.route) })
+                }
+                Spacer(Modifier.height(10.dp))
             }
         }
-        Spacer(Modifier.height(24.dp))
-        Button(
+
+        Spacer(Modifier.height(12.dp))
+        OutlinedButton(
             onClick = { showLogoutConfirmation = true },
-            modifier = Modifier.fillMaxWidth().height(48.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = AccentRed),
-            shape = RoundedCornerShape(12.dp)
+            modifier = Modifier.fillMaxWidth().height(50.dp),
+            shape = RoundedCornerShape(14.dp),
+            border = BorderStroke(1.dp, AccentRed.copy(alpha = 0.7f)),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentRed),
         ) {
-            Text("Logout", fontWeight = FontWeight.Bold, color = TextPrimary)
+            Icon(Icons.Filled.Logout, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("Logout", fontWeight = FontWeight.Bold)
         }
         Spacer(Modifier.height(100.dp))
     }
@@ -4122,6 +4265,182 @@ fun MoreScreen(
                 }
             }
         )
+    }
+}
+
+@Composable
+private fun MorePremiumHero(availableCount: Int) {
+    val transition = rememberInfiniteTransition(label = "morePremiumHero")
+    val glowPosition by transition.animateFloat(
+        initialValue = -160f,
+        targetValue = 520f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(5200, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart,
+        ),
+        label = "moreHeroGlowPosition",
+    )
+    val orbitAlpha by transition.animateFloat(
+        initialValue = 0.22f,
+        targetValue = 0.52f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(2100, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "moreHeroOrbitAlpha",
+    )
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(142.dp)
+            .clip(RoundedCornerShape(22.dp))
+            .background(
+                Brush.linearGradient(
+                    listOf(Color(0xFF10264A), Color(0xFF111C38), Color(0xFF0E1830)),
+                ),
+            )
+            .border(1.dp, AccentCyan.copy(alpha = 0.34f), RoundedCornerShape(22.dp)),
+    ) {
+        Canvas(Modifier.matchParentSize()) {
+            val largeRadius = size.minDimension * 0.54f
+            drawCircle(
+                color = AccentBlue.copy(alpha = orbitAlpha * 0.36f),
+                radius = largeRadius,
+                center = Offset(size.width * 0.96f, size.height * 0.05f),
+            )
+            drawCircle(
+                color = AccentCyan.copy(alpha = orbitAlpha * 0.24f),
+                radius = largeRadius * 0.46f,
+                center = Offset(size.width * 0.86f, size.height * 0.28f),
+            )
+        }
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .background(
+                    Brush.linearGradient(
+                        colors = listOf(
+                            Color.Transparent,
+                            Color.White.copy(alpha = 0.035f),
+                            AccentCyan.copy(alpha = 0.10f),
+                            Color.White.copy(alpha = 0.035f),
+                            Color.Transparent,
+                        ),
+                        start = Offset(glowPosition - 75f, 0f),
+                        end = Offset(glowPosition + 75f, 142f),
+                    ),
+                ),
+        )
+        Column(
+            modifier = Modifier.fillMaxSize().padding(18.dp),
+            verticalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier.size(42.dp).clip(RoundedCornerShape(14.dp))
+                        .background(AccentCyan.copy(alpha = 0.16f))
+                        .border(1.dp, AccentCyan.copy(alpha = 0.46f), RoundedCornerShape(14.dp)),
+                    contentAlignment = Alignment.Center,
+                ) { Icon(Icons.Filled.AutoAwesome, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(22.dp)) }
+                Spacer(Modifier.width(11.dp))
+                Column {
+                    Text("More", color = TextPrimary, fontSize = 23.sp, fontWeight = FontWeight.ExtraBold)
+                    Text("Your institute command centre", color = TextSecondary, fontSize = 12.sp)
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier.clip(RoundedCornerShape(9.dp)).background(AccentCyan.copy(alpha = 0.14f))
+                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                ) {
+                    Text("$availableCount premium tools", color = AccentCyan, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+                Spacer(Modifier.width(9.dp))
+                Text("Tap any card to continue", color = TextSecondary, fontSize = 11.sp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun MorePremiumFeatureCard(feature: MoreFeature, onClick: () -> Unit) {
+    val transition = rememberInfiniteTransition(label = "moreFeatureShine_${feature.route}")
+    val shineOffset by transition.animateFloat(
+        initialValue = -220f,
+        targetValue = 640f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(5800, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart,
+        ),
+        label = "moreFeatureShineOffset",
+    )
+    val iconPulse by transition.animateFloat(
+        initialValue = 0.72f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1800, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "moreFeatureIconPulse",
+    )
+
+    Card(
+        modifier = Modifier.fillMaxWidth().height(86.dp).premiumClickable(onClick),
+        shape = RoundedCornerShape(17.dp),
+        colors = CardDefaults.cardColors(containerColor = DashboardCard),
+        border = BorderStroke(1.dp, feature.accent.copy(alpha = 0.32f)),
+    ) {
+        Box(Modifier.fillMaxSize()) {
+            Canvas(Modifier.matchParentSize()) {
+                drawCircle(
+                    color = feature.accent.copy(alpha = 0.085f),
+                    radius = size.height * 0.9f,
+                    center = Offset(size.width * 0.98f, size.height * 0.1f),
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .background(
+                        Brush.linearGradient(
+                            colors = listOf(
+                                Color.Transparent,
+                                feature.accent.copy(alpha = 0.025f),
+                                feature.accent.copy(alpha = 0.12f),
+                                feature.accent.copy(alpha = 0.025f),
+                                Color.Transparent,
+                            ),
+                            start = Offset(shineOffset - 60f, 0f),
+                            end = Offset(shineOffset + 60f, 86f),
+                        ),
+                    ),
+            )
+            Row(
+                modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(46.dp)
+                        .graphicsLayer { scaleX = iconPulse; scaleY = iconPulse }
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(feature.accent.copy(alpha = 0.15f))
+                        .border(1.dp, feature.accent.copy(alpha = 0.42f), RoundedCornerShape(14.dp)),
+                    contentAlignment = Alignment.Center,
+                ) { Icon(feature.icon, contentDescription = null, tint = feature.accent, modifier = Modifier.size(23.dp)) }
+                Spacer(Modifier.width(13.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(feature.title, color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(3.dp))
+                    Text(feature.subtitle, color = TextSecondary, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                Box(
+                    modifier = Modifier.size(32.dp).clip(CircleShape).background(feature.accent.copy(alpha = 0.13f)),
+                    contentAlignment = Alignment.Center,
+                ) { Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Open ${feature.title}", tint = feature.accent, modifier = Modifier.size(18.dp)) }
+            }
+        }
     }
 }
 

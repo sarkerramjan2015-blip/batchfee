@@ -8,6 +8,7 @@ const { studentLoginDocumentId } = require("./studentAuthCore");
 const STUDENT_COLLECTIONS = [
   "batch_students", "attendance", "fees", "payments", "receipts", "results",
   "absent_messages", "homework_submissions", "assignment_submissions",
+  "student_activity",
 ];
 
 function requireString(data, key, max = 256) {
@@ -77,13 +78,17 @@ function createPermanentStudentPurgeHandler({ db, adminAuth, bucket }) {
       throw new HttpsError("failed-precondition", "Subscription has expired. Renew the plan to continue.");
     }
     const student = studentSnap.data();
-    if (student.archivedAtMs == null || student.status !== "archived") {
+    // `archivedAtMs` is the canonical archive marker. Older app versions did
+    // not consistently update the legacy `status` field, so requiring both
+    // leaves legitimately archived records impossible to remove.
+    if (student.archivedAtMs == null) {
       throw new HttpsError("failed-precondition", "Archive the student before permanently deleting their data.");
     }
     // Remove every application record keyed by this student before deleting the profile.
     await Promise.all(STUDENT_COLLECTIONS.map((collection) =>
       deleteQuery(db, instituteRef.collection(collection).where("studentId", "==", studentId))
     ));
+    await instituteRef.collection("student_activity_presence").doc(studentId).delete().catch(() => {});
 
     const media = parseMediaReference(student.photoUri);
     if (media && media.instituteId === instituteId) {

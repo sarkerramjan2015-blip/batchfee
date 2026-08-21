@@ -126,10 +126,20 @@ object FinanceSyncHelper {
 
     suspend fun syncAllFromFirestore(db: AppDatabase, instituteId: String) = withContext(Dispatchers.IO) {
         try {
-            val feeDocuments = instituteCollection(instituteId, FEES).get().await().documents
-            val paymentDocuments = instituteCollection(instituteId, PAYMENTS).get().await().documents
-            val receiptDocuments = instituteCollection(instituteId, RECEIPTS).get().await().documents
-            val reversalDocuments = instituteCollection(instituteId, "payment_reversals").get().await().documents
+            val feeSnapshot = instituteCollection(instituteId, FEES).get().await()
+            val paymentSnapshot = instituteCollection(instituteId, PAYMENTS).get().await()
+            val receiptSnapshot = instituteCollection(instituteId, RECEIPTS).get().await()
+            val reversalSnapshot = instituteCollection(instituteId, "payment_reversals").get().await()
+            val feeDocuments = feeSnapshot.documents
+            val paymentDocuments = paymentSnapshot.documents
+            val receiptDocuments = receiptSnapshot.documents
+            val reversalDocuments = reversalSnapshot.documents
+            val hasAuthoritativeFinanceSnapshot = listOf(
+                feeSnapshot,
+                paymentSnapshot,
+                receiptSnapshot,
+                reversalSnapshot
+            ).none { it.metadata.isFromCache }
 
             val fees = feeDocuments.mapNotNull { doc ->
                 val studentId = doc.getString("studentId") ?: return@mapNotNull null
@@ -286,6 +296,27 @@ object FinanceSyncHelper {
                 }
 
             db.withTransaction {
+                // Firestore is the canonical ledger. A normal upsert-only sync leaves a
+                // payment visible in Room after it was deleted in the cloud, causing the
+                // next delete attempt to fail with "Payment not found". Only prune after
+                // every finance query is server-confirmed; cached/offline snapshots must
+                // never erase local history.
+                if (hasAuthoritativeFinanceSnapshot) {
+                    val remotePaymentIds = payments.mapTo(hashSetOf()) { it.id }
+                    db.paymentDao().getAllPaymentsOnce(instituteId)
+                        .filterNot { it.id in remotePaymentIds }
+                        .forEach { db.paymentDao().deletePaymentById(instituteId, it.id) }
+
+                    val remoteReceiptIds = receipts.mapTo(hashSetOf()) { it.id }
+                    db.receiptDao().getAllReceiptsOnce(instituteId)
+                        .filterNot { it.id in remoteReceiptIds }
+                        .forEach { db.receiptDao().deleteReceiptById(instituteId, it.id) }
+
+                    val remoteReversalIds = reversals.mapTo(hashSetOf()) { it.id }
+                    db.financialLedgerDao().getReversals(instituteId)
+                        .filterNot { it.id in remoteReversalIds }
+                        .forEach { db.financialLedgerDao().deleteReversalById(instituteId, it.id) }
+                }
                 fees.forEach { fee ->
                     fee.businessKey?.let { businessKey ->
                         val existing = db.feeDao().getFeeByBusinessKey(fee.instituteId, businessKey)
@@ -714,38 +745,78 @@ object ExpenseSyncHelper {
 object SalarySyncHelper {
     private const val COLLECTION = "salaries"
 
+    private fun salaryFields(salary: SalaryEntity) = mapOf(
+        "instituteId" to salary.instituteId,
+        "staffId" to salary.staffId,
+        "salaryMonth" to salary.salaryMonth,
+        "basicSalary" to salary.basicSalary,
+        "bonusAmount" to salary.bonusAmount,
+        "deductionAmount" to salary.deductionAmount,
+        "advanceAmount" to salary.advanceAmount,
+        "netSalary" to salary.netSalary,
+        "paidAmount" to salary.paidAmount,
+        "paymentMethod" to salary.paymentMethod,
+        "paymentDateMs" to salary.paymentDateMs,
+        "status" to salary.status,
+        "salarySlipNumber" to salary.salarySlipNumber,
+        "note" to salary.note,
+        "createdAtMs" to salary.createdAtMs,
+        "updatedAtMs" to salary.updatedAtMs,
+        "cancelledAtMs" to salary.cancelledAtMs
+    )
+
+    private fun expenseFields(expense: ExpenseEntity) = mapOf(
+        "instituteId" to expense.instituteId,
+        "category" to expense.category,
+        "title" to expense.title,
+        "amount" to expense.amount,
+        "expenseDateMs" to expense.expenseDateMs,
+        "paymentMethod" to expense.paymentMethod,
+        "description" to expense.description,
+        "attachmentUri" to expense.attachmentUri,
+        "createdByUserId" to expense.createdByUserId,
+        "createdAtMs" to expense.createdAtMs,
+        "updatedAtMs" to expense.updatedAtMs,
+        "archivedAtMs" to expense.archivedAtMs
+    )
+
     suspend fun upsertSalary(salary: SalaryEntity) = withContext(Dispatchers.IO) {
         try {
-            instituteCollection(salary.instituteId, COLLECTION).document(salary.id).set(
-                mapOf(
-                    "instituteId" to salary.instituteId,
-                    "staffId" to salary.staffId,
-                    "salaryMonth" to salary.salaryMonth,
-                    "basicSalary" to salary.basicSalary,
-                    "bonusAmount" to salary.bonusAmount,
-                    "deductionAmount" to salary.deductionAmount,
-                    "advanceAmount" to salary.advanceAmount,
-                    "netSalary" to salary.netSalary,
-                    "paymentMethod" to salary.paymentMethod,
-                    "paymentDateMs" to salary.paymentDateMs,
-                    "status" to salary.status,
-                    "salarySlipNumber" to salary.salarySlipNumber,
-                    "note" to salary.note,
-                    "createdAtMs" to salary.createdAtMs,
-                    "updatedAtMs" to salary.updatedAtMs,
-                    "cancelledAtMs" to salary.cancelledAtMs
-                )
-            ).await()
+            instituteCollection(salary.instituteId, COLLECTION).document(salary.id)
+                .set(salaryFields(salary)).await()
         } catch (e: Exception) {
             recordException(e)
             throw e
         }
     }
 
+    /**
+     * A salary payment changes two financial records. Commit both cloud writes
+     * together so an expense can never be recorded without its salary state
+     * (or the other way around).
+     */
+    suspend fun upsertSalaryWithExpense(salary: SalaryEntity, expense: ExpenseEntity): Unit =
+        withContext(Dispatchers.IO) {
+            try {
+                firestore.runBatch { batch ->
+                    batch.set(instituteCollection(salary.instituteId, COLLECTION).document(salary.id), salaryFields(salary))
+                    batch.set(instituteCollection(expense.instituteId, "expenses").document(expense.id), expenseFields(expense))
+                }.await()
+            } catch (e: Exception) {
+                recordException(e)
+                throw e
+            }
+        }
+
     suspend fun syncAllFromFirestore(db: AppDatabase, instituteId: String) = withContext(Dispatchers.IO) {
         try {
             instituteCollection(instituteId, COLLECTION).get().await().documents.mapNotNull { doc ->
                 val staffId = doc.getString("staffId") ?: return@mapNotNull null
+                val status = doc.getString("status") ?: "unpaid"
+                val netSalary = (doc.get("netSalary") as? Number).asDouble() ?: 0.0
+                val paidAmount = (doc.get("paidAmount") as? Number).asDouble()
+                    // Paid salaries from earlier versions had no paidAmount field.
+                    ?: if (status.equals("paid", ignoreCase = true)) netSalary else 0.0
                 SalaryEntity(
                     id = doc.id,
                     instituteId = doc.getString("instituteId") ?: instituteId,
@@ -755,10 +826,11 @@ object SalarySyncHelper {
                     bonusAmount = (doc.get("bonusAmount") as? Number).asDouble() ?: 0.0,
                     deductionAmount = (doc.get("deductionAmount") as? Number).asDouble() ?: 0.0,
                     advanceAmount = (doc.get("advanceAmount") as? Number).asDouble() ?: 0.0,
-                    netSalary = (doc.get("netSalary") as? Number).asDouble() ?: 0.0,
+                    netSalary = netSalary,
+                    paidAmount = paidAmount.coerceIn(0.0, netSalary),
                     paymentMethod = doc.getString("paymentMethod"),
                     paymentDateMs = (doc.get("paymentDateMs") as? Number).asLong(),
-                    status = doc.getString("status") ?: "unpaid",
+                    status = status,
                     salarySlipNumber = doc.getString("salarySlipNumber") ?: "",
                     note = doc.getString("note"),
                     createdAtMs = (doc.get("createdAtMs") as? Number).asLong() ?: System.currentTimeMillis(),

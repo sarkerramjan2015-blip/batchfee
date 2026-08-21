@@ -85,6 +85,83 @@ class MonthlyDueCalculatorTest {
     }
 
     @Test
+    fun `legacy enrollment without frozen terms still uses the admission month pro rata amount`() {
+        val admitted = date(2026, Calendar.JULY, 10)
+
+        val dues = MonthlyDueCalculator.computeMonthlyOutstandingItems(
+            admissionDateMs = admitted,
+            monthlyFeeAmount = 1_000.0,
+            batchId = "batch-a",
+            batchName = "HSC",
+            existingMonthlyFees = emptyList(),
+            asOfMs = date(2026, Calendar.AUGUST, 15)
+        )
+
+        assertEquals(listOf("Jul 2026"), dues.map { it.period })
+        assertEquals(700.0, dues.single().outstanding, 0.0)
+    }
+
+    @Test
+    fun `legacy enrollment uses admission month even when cloud join sync happened later`() {
+        val admitted = date(2026, Calendar.JUNE, 1)
+        val joined = date(2026, Calendar.JULY, 25)
+
+        assertEquals(false, MonthlyDueCalculator.isMonthlyFeeWithinEnrollmentWindow(
+            feePeriod = "Apr 2026", studentAdmissionDateMs = admitted, enrollmentJoinedAtMs = joined
+        ))
+        assertEquals(true, MonthlyDueCalculator.isMonthlyFeeWithinEnrollmentWindow(
+            feePeriod = "Jun 2026", studentAdmissionDateMs = admitted, enrollmentJoinedAtMs = joined
+        ))
+        assertEquals(true, MonthlyDueCalculator.isMonthlyFeeWithinEnrollmentWindow(
+            feePeriod = "Jul 2026", studentAdmissionDateMs = admitted, enrollmentJoinedAtMs = joined
+        ))
+    }
+
+    @Test
+    fun `shifted enrollment uses its frozen first period instead of old admission date`() {
+        val admitted = date(2026, Calendar.JUNE, 1)
+        val shifted = date(2026, Calendar.AUGUST, 15)
+
+        assertEquals(false, MonthlyDueCalculator.isMonthlyFeeWithinEnrollmentWindow(
+            feePeriod = "Jul 2026",
+            studentAdmissionDateMs = admitted,
+            enrollmentJoinedAtMs = shifted,
+            firstMonthFeePeriod = "Aug 2026"
+        ))
+        assertEquals(true, MonthlyDueCalculator.isMonthlyFeeWithinEnrollmentWindow(
+            feePeriod = "Aug 2026",
+            studentAdmissionDateMs = admitted,
+            enrollmentJoinedAtMs = shifted,
+            firstMonthFeePeriod = "Aug 2026"
+        ))
+        assertEquals(
+            "Aug 2026",
+            MonthlyDueCalculator.periodFor(
+                MonthlyDueCalculator.effectiveBillingStartMs(admitted, shifted, "Aug 2026")
+            )
+        )
+    }
+
+    @Test
+    fun `legacy student admitted in june has june and july due during august`() {
+        val dues = MonthlyDueCalculator.computeMonthlyOutstandingItems(
+            admissionDateMs = MonthlyDueCalculator.effectiveBillingStartMs(
+                date(2026, Calendar.JUNE, 1),
+                date(2026, Calendar.AUGUST, 10),
+                firstMonthFeePeriod = null
+            ),
+            monthlyFeeAmount = 1_000.0,
+            batchId = "batch-a",
+            batchName = "HSC",
+            existingMonthlyFees = emptyList(),
+            asOfMs = date(2026, Calendar.AUGUST, 22)
+        )
+
+        assertEquals(listOf("Jun 2026", "Jul 2026"), dues.map { it.period })
+        assertEquals(listOf(1_000.0, 1_000.0), dues.map { it.outstanding })
+    }
+
+    @Test
     fun `custom monthly fee starts from its saved period and never rewrites earlier months`() {
         assertEquals(
             1_000.0,
@@ -150,6 +227,35 @@ class MonthlyDueCalculatorTest {
         )
 
         assertEquals(listOf("Jul 2026"), computed.map { it.period })
+    }
+
+    @Test
+    fun `paid monthly record suppresses duplicate virtual due and running month stays hidden`() {
+        val paidJuly = FeeEntity(
+            id = "paid-july", instituteId = "inst", studentId = "student", batchId = "batch",
+            feePeriod = "Jul 2026", feeType = "monthly_fee",
+            dueDateMs = 0L, baseAmount = 1_000.0, discountAmount = 0.0, lateFeeAmount = 0.0,
+            totalAmount = 1_000.0, paidAmount = 1_000.0, dueAmount = 0.0,
+            status = "paid", note = null, createdAtMs = 0L, updatedAtMs = 0L, cancelledAtMs = null
+        )
+
+        val dues = MonthlyDueCalculator.computeMonthlyOutstandingItems(
+            admissionDateMs = date(2026, Calendar.JULY, 1),
+            monthlyFeeAmount = 1_000.0,
+            batchId = "batch",
+            batchName = "HSC",
+            existingMonthlyFees = listOf(paidJuly),
+            asOfMs = date(2026, Calendar.AUGUST, 22)
+        )
+
+        assertEquals(emptyList<String>(), dues.map { it.period })
+        assertEquals(false, MonthlyDueCalculator.isMonthlyInstallmentDue(
+            "monthly_fee", "Aug 2026", date(2026, Calendar.AUGUST, 22)
+        ))
+        assertEquals(true, MonthlyDueCalculator.isMonthlyInstallmentDue(
+            "monthly_fee", "Jul 2026", date(2026, Calendar.AUGUST, 22)
+        ))
+        assertEquals(false, MonthlyDueCalculator.isMonthlyFeeType("exam_fee"))
     }
 
     private fun date(year: Int, month: Int, day: Int): Long = Calendar.getInstance().apply {

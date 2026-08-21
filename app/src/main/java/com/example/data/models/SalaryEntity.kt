@@ -14,6 +14,8 @@ data class SalaryEntity(
     val deductionAmount: Double,
     val advanceAmount: Double,
     val netSalary: Double,
+    /** Total cash actually paid so far. It keeps partial salary payments auditable. */
+    val paidAmount: Double = 0.0,
     val paymentMethod: String?,
     val paymentDateMs: Long?,
     val status: String,

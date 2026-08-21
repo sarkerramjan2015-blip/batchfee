@@ -34,6 +34,11 @@ const {
 const { createSubscriptionBillingHandler } = require("./subscriptionBilling");
 const { createPlatformAdminHandler } = require("./platformAdmin");
 const {
+  createStudentActivityHandler,
+  createStudentActivityFeedHandler,
+  writeStudentActivity,
+} = require("./studentActivity");
+const {
   FREE_TRIAL_DURATION_MS,
   FREE_TRIAL_STUDENT_LIMIT,
   hasCurrentSubscription,
@@ -296,10 +301,12 @@ function optionalDocumentId(data, field) {
   return id;
 }
 
-function planLimit(institute, plan, kind) {
-  const stored = kind === "student" ? institute.studentLimit : kind === "staff" ? institute.staffLimit : null;
+// Subscription capacity is intentionally measured only in active student
+// seats. Batches and staff remain unlimited for every active institute.
+function studentPlanLimit(institute, plan) {
+  const stored = institute.studentLimit;
   if (Number.isSafeInteger(stored) && stored > 0) return stored;
-  const fromPlan = kind === "student" ? plan.maxStudents : kind === "batch" ? plan.maxBatches : plan.maxUsers;
+  const fromPlan = plan.maxStudents;
   if (!Number.isSafeInteger(fromPlan) || fromPlan < 1) {
     throw new HttpsError("failed-precondition", "The subscription plan has no valid limit configuration.");
   }
@@ -384,7 +391,7 @@ async function createEntitledStudentHandler(request) {
     if (existingSnap.exists) throw new HttpsError("already-exists", "Student already exists.");
     const count = studentCountSnap.data().count;
     const unlimitedTrialStudents = hasUnlimitedTrialStudents(instituteSnap.data());
-    const limit = unlimitedTrialStudents ? null : planLimit(instituteSnap.data(), plan, "student");
+    const limit = unlimitedTrialStudents ? null : studentPlanLimit(instituteSnap.data(), plan);
     if (limit != null && count >= limit) {
       throw new HttpsError("resource-exhausted", `Student limit (${limit}) has been reached.`);
     }
@@ -491,20 +498,15 @@ async function createEntitledBatchHandler(request) {
     if (!instituteSnap.exists || !hasActiveSubscription(instituteSnap.data())) {
       throw new HttpsError("failed-precondition", "Subscription has expired. Renew the plan to continue.");
     }
-    const planSnap = await transaction.get(db.collection("subscription_plans").doc(instituteSnap.get("currentPlanId") || "plan_free_trial"));
-    const plan = planFromSnapshot(planSnap, instituteSnap.get("currentPlanId") || "plan_free_trial");
-    if (!plan) throw new HttpsError("failed-precondition", "Subscription plan is unavailable.");
     if (existingSnap.exists) throw new HttpsError("already-exists", "Batch already exists.");
     const count = batchCountSnap.data().count;
-    const limit = planLimit(instituteSnap.data(), plan, "batch");
-    if (count >= limit) throw new HttpsError("resource-exhausted", `Batch limit (${limit}) has been reached.`);
     const now = Date.now();
     transaction.create(batchRef, {
       ...copyFields(entity, allowed), instituteId, batchCode, name,
       status: "active", archivedAtMs: null, createdAtMs: now, updatedAtMs: now,
     });
     transaction.update(instituteRef, { batchCount: count + 1, updatedAtMs: now });
-    return { batchId, batchCount: count + 1, batchLimit: limit };
+    return { batchId, batchCount: count + 1, unlimitedBatches: true };
   });
 }
 
@@ -534,20 +536,15 @@ async function createEntitledStaffHandler(request) {
     if (!instituteSnap.exists || !hasActiveSubscription(instituteSnap.data())) {
       throw new HttpsError("failed-precondition", "Subscription has expired. Renew the plan to continue.");
     }
-    const planSnap = await transaction.get(db.collection("subscription_plans").doc(instituteSnap.get("currentPlanId") || "plan_free_trial"));
-    const plan = planFromSnapshot(planSnap, instituteSnap.get("currentPlanId") || "plan_free_trial");
-    if (!plan) throw new HttpsError("failed-precondition", "Subscription plan is unavailable.");
     if (existingSnap.exists) throw new HttpsError("already-exists", "Staff already exists.");
     const count = staffCountSnap.data().count;
-    const limit = planLimit(instituteSnap.data(), plan, "staff");
-    if (count >= limit) throw new HttpsError("resource-exhausted", `Staff limit (${limit}) has been reached.`);
     const now = Date.now();
     transaction.create(staffRef, {
       ...copyFields(entity, allowed), instituteId, staffCode, fullName,
       status: "active", archivedAtMs: null, createdAtMs: now, updatedAtMs: now,
     });
     transaction.update(instituteRef, { staffCount: count + 1, updatedAtMs: now });
-    return { staffId, staffCount: count + 1, staffLimit: limit };
+    return { staffId, staffCount: count + 1, unlimitedStaff: true };
   });
 }
 
@@ -975,6 +972,21 @@ async function loginStudentHandler(request) {
   }
 
   await attemptRef.delete().catch(() => {});
+  // Credential verification above is the authoritative login event. Writing
+  // here means the owner feed is not dependent on a later client page opening.
+  await writeStudentActivity({
+    db,
+    instituteId,
+    studentId,
+    eventType: "login",
+    now,
+  }).catch((error) => {
+    logger.warn("Student login activity could not be recorded", {
+      instituteId,
+      studentId,
+      errorCode: error && error.code,
+    });
+  });
   const sessionExpiresAtMs = now + SESSION_DURATION_MS;
   const sessionClaims = {
     studentManaged: true,
@@ -1023,6 +1035,21 @@ exports.disableStudentAccount = onCall(callableOptions, guarded(disableStudentAc
 exports.deleteStudentAccount = onCall(callableOptions, guarded(disableStudentAccountHandler));
 exports.getStudentAccountStatus = onCall(callableOptions, guarded(getStudentAccountStatusHandler));
 exports.loginStudent = onCall(callableOptions, guarded(loginStudentHandler));
+exports.recordStudentActivity = onCall(
+  callableOptions,
+  guarded(createStudentActivityHandler({ db, hasActiveSubscription })),
+);
+exports.getStudentActivity = onCall(
+  callableOptions,
+  guarded(createStudentActivityFeedHandler({
+    db,
+    now: () => Date.now(),
+    // This feed intentionally stays owner/admin-only. Staff do not receive a
+    // shortcut to app-behaviour history simply by holding student permissions.
+    assertCanRead: (auth, instituteId) =>
+      assertCanManageTenantResource(auth, instituteId, "manage_student", false),
+  })),
+);
 exports.createEntitledStudent = onCall(
   { ...callableOptions, timeoutSeconds: 60 },
   guarded(createEntitledStudentHandler),

@@ -24,6 +24,9 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.batchfee.edu.data.activity.StudentActivityTracker
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 
 // Student app dark palette
 private val StuBg    = Color(0xFF07111F)
@@ -52,6 +55,27 @@ fun StudentMainScaffold(onLogout: () -> Unit) {
     val currentRoute = backStackEntry?.destination?.route
 
     val showBottomBar = currentRoute in bottomItems.map { it.route }
+
+    // Track only meaningful destinations and send a sparse heartbeat while the
+    // app is foregrounded. This powers owner-side activity without slowing the
+    // student app or producing a log for every tap.
+    LaunchedEffect(currentRoute) {
+        when (currentRoute) {
+            "student_dash" -> StudentActivityTracker.recordScreen("home_opened")
+            "student_works" -> StudentActivityTracker.recordScreen("work_opened")
+            "student_fees" -> StudentActivityTracker.recordScreen("fees_opened")
+            "student_attendance" -> StudentActivityTracker.recordScreen("attendance_opened")
+            "student_results" -> StudentActivityTracker.recordScreen("results_opened")
+            "student_profile" -> StudentActivityTracker.recordScreen("profile_opened")
+            "student_documents" -> StudentActivityTracker.recordScreen("documents_opened")
+        }
+    }
+    LaunchedEffect(Unit) {
+        while (isActive) {
+            StudentActivityTracker.heartbeat()
+            delay(2 * 60 * 1000L)
+        }
+    }
 
     Scaffold(
         containerColor = StuBg,

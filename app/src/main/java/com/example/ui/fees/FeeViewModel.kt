@@ -17,10 +17,13 @@ import com.batchfee.edu.domain.loadInstituteSignature
 import com.batchfee.edu.domain.MonthlyDueCalculator
 import com.batchfee.edu.domain.ComputedMonthDue
 import com.batchfee.edu.domain.SessionManager
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.firstOrNull
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.net.URLEncoder
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -47,8 +50,27 @@ data class MonthWiseDue(
     val totalDue: Double
 )
 
+/**
+ * A single Room snapshot for the due report.  Keeping all four sources in the
+ * same snapshot prevents a late student/batch sync from leaving the report
+ * behind the dashboard total.
+ */
+private data class DueFeeDataSnapshot(
+    val fees: List<FeeEntity>,
+    val students: List<com.batchfee.edu.data.models.StudentEntity>,
+    val batches: List<com.batchfee.edu.data.models.BatchEntity>,
+    val billingEnrollments: List<com.batchfee.edu.data.models.BatchStudentEntity>
+)
+
+private data class DueFeeReport(
+    val details: List<DueFeeDetail>,
+    val totalDue: Double,
+    val monthWiseDues: List<MonthWiseDue>
+)
+
 class FeeViewModel(private val db: AppDatabase) : ViewModel() {
     private val feeRepository = FeeCollectionRepository(db)
+    private val monthlyRepairAttemptedStudentIds = mutableSetOf<String>()
 
     private val _feeList = MutableStateFlow<List<FeeEntity>>(emptyList())
     val feeList = _feeList.asStateFlow()
@@ -77,18 +99,31 @@ class FeeViewModel(private val db: AppDatabase) : ViewModel() {
             val instId = SessionManager.currentInstituteId.value ?: return@launch
             InstituteCacheRefreshManager.refreshIfStaleInBackground(db, instId)
             launch {
-                db.feeDao().getAllFees(instId).collect { allFees ->
-                    _feeList.value = allFees
-                    val dueFees = allFees.filter { it.dueAmount > 0.0 }
-                    _dueFeeList.value = dueFees
-                    enrichDueFees(instId, allFees)
-                }
-            }
-            launch {
-                // A batch shift changes virtual historic dues even when no
-                // payment document changed, so refresh the due summary too.
-                db.batchStudentDao().getBillingEnrollmentsForInstitute(instId).collect {
-                    enrichDueFees(instId, _feeList.value)
+                combine(
+                    db.feeDao().getAllFees(instId),
+                    db.studentDao().getStudentsByInstitute(instId),
+                    db.batchDao().getBatchesByInstitute(instId),
+                    db.batchStudentDao().getBillingEnrollmentsForInstitute(instId)
+                ) { fees, students, batches, billingEnrollments ->
+                    DueFeeDataSnapshot(
+                        fees = fees,
+                        students = students,
+                        batches = batches,
+                        billingEnrollments = billingEnrollments
+                    )
+                }.collectLatest { snapshot ->
+                    // Do all aggregation off the UI thread. collectLatest
+                    // ensures an older Room snapshot can never publish after
+                    // a newer Firebase sync has arrived.
+                    val report = withContext(Dispatchers.Default) {
+                        calculateDueFeeReport(snapshot)
+                    }
+                    _feeList.value = snapshot.fees
+                    _dueFeeList.value = snapshot.fees.filter { it.dueAmount > 0.0 }
+                    _dueFeesWithDetails.value = report.details
+                    _totalDueAmount.value = report.totalDue
+                    _monthWiseDues.value = report.monthWiseDues
+                    scheduleLegacyMonthlyFeeReconciliation(instId, snapshot)
                 }
             }
             launch {
@@ -97,9 +132,25 @@ class FeeViewModel(private val db: AppDatabase) : ViewModel() {
         }
     }
 
-    private suspend fun enrichDueFees(instId: String, fees: List<FeeEntity>) {
-        val allStudents = db.studentDao().getStudentsByInstituteOnce(instId).associateBy { it.id }
-        val allBatches = db.batchDao().getBatchesByInstituteOnce(instId).associateBy { it.id }
+    private fun calculateDueFeeReport(snapshot: DueFeeDataSnapshot): DueFeeReport {
+        val fees = snapshot.fees
+        val allStudents = snapshot.students.associateBy { it.id }
+        val allBatches = snapshot.batches.associateBy { it.id }
+        val enrollmentsByStudent = snapshot.billingEnrollments.groupBy { it.studentId }
+        fun isEligibleMonthlyFee(fee: FeeEntity): Boolean {
+            val student = allStudents[fee.studentId] ?: return false
+            return enrollmentsByStudent[student.id].orEmpty()
+                .filter { it.batchId == fee.batchId }
+                .any { enrollment ->
+                    MonthlyDueCalculator.isMonthlyFeeWithinEnrollmentWindow(
+                        feePeriod = fee.feePeriod,
+                        studentAdmissionDateMs = student.admissionDateMs,
+                        enrollmentJoinedAtMs = enrollment.joinedAtMs,
+                        firstMonthFeePeriod = enrollment.firstMonthFeePeriod,
+                        billingEndedAtMs = enrollment.leftAtMs
+                    )
+                }
+        }
         var total = 0.0
         val details = mutableListOf<DueFeeDetail>()
 
@@ -127,7 +178,8 @@ class FeeViewModel(private val db: AppDatabase) : ViewModel() {
         // due only when the final month in the saved period has completed.
         fees.filter {
             it.dueAmount > 0.0 &&
-                MonthlyDueCalculator.isMonthlyInstallmentDue(it.feeType, it.feePeriod)
+                MonthlyDueCalculator.isMonthlyInstallmentDue(it.feeType, it.feePeriod) &&
+                isEligibleMonthlyFee(it)
         }.forEach { fee ->
             val student = allStudents[fee.studentId] ?: return@forEach
             val batchName = fee.batchId?.let { allBatches[it]?.name } ?: ""
@@ -145,17 +197,20 @@ class FeeViewModel(private val db: AppDatabase) : ViewModel() {
         // Monthly dues include a removed enrollment through its last completed
         // month, so a batch shift can never hide an old balance.
         allStudents.values.forEach { student ->
-            val enrollments = db.batchStudentDao()
-                .getBillingEnrollmentsForStudentOnce(student.id, instId)
-            enrollments.forEach { enrollment ->
+            enrollmentsByStudent[student.id].orEmpty().forEach { enrollment ->
                 val batch = allBatches[enrollment.batchId] ?: return@forEach
                 if (batch.monthlyFeeAmount <= 0.0) return@forEach
+                val billingStartMs = MonthlyDueCalculator.effectiveBillingStartMs(
+                    student.admissionDateMs,
+                    enrollment.joinedAtMs,
+                    enrollment.firstMonthFeePeriod
+                )
                 val batchFees = fees.filter {
                     it.studentId == student.id && it.batchId == batch.id &&
                         MonthlyDueCalculator.isMonthlyFeeType(it.feeType)
                 }
                 val items = MonthlyDueCalculator.computeMonthlyOutstandingItems(
-                    admissionDateMs = enrollment.joinedAtMs,
+                    admissionDateMs = billingStartMs,
                     monthlyFeeAmount = batch.monthlyFeeAmount,
                     batchId = batch.id,
                     batchName = batch.name,
@@ -204,9 +259,51 @@ class FeeViewModel(private val db: AppDatabase) : ViewModel() {
             }
         }
 
-        _dueFeesWithDetails.value = details
-        _totalDueAmount.value = total
-        _monthWiseDues.value = buildMonthWiseDues(details)
+        return DueFeeReport(
+            details = details,
+            totalDue = total,
+            monthWiseDues = buildMonthWiseDues(details)
+        )
+    }
+
+    /**
+     * Old demo/legacy rows can predate both the student's admission and their
+     * batch join. The UI never counts them, then this owner-authorized repair
+     * removes only fully unpaid invalid rows from the cloud and Room.
+     */
+    private fun scheduleLegacyMonthlyFeeReconciliation(
+        instituteId: String,
+        snapshot: DueFeeDataSnapshot
+    ) {
+        val studentsById = snapshot.students.associateBy { it.id }
+        val enrollmentsByStudent = snapshot.billingEnrollments.groupBy { it.studentId }
+        val candidateStudentIds = snapshot.fees.asSequence()
+            .filter { it.dueAmount > 0.0 && MonthlyDueCalculator.isMonthlyFeeType(it.feeType) }
+            .mapNotNull { fee ->
+                val student = studentsById[fee.studentId] ?: return@mapNotNull null
+                val validForAnyEnrollment = enrollmentsByStudent[student.id].orEmpty()
+                    .filter { it.batchId == fee.batchId }
+                    .any { enrollment ->
+                        MonthlyDueCalculator.isMonthlyFeeWithinEnrollmentWindow(
+                            feePeriod = fee.feePeriod,
+                            studentAdmissionDateMs = student.admissionDateMs,
+                            enrollmentJoinedAtMs = enrollment.joinedAtMs,
+                            firstMonthFeePeriod = enrollment.firstMonthFeePeriod,
+                            billingEndedAtMs = enrollment.leftAtMs
+                        )
+                    }
+                fee.studentId.takeUnless { validForAnyEnrollment }
+            }
+            .toSet()
+
+        candidateStudentIds.forEach { studentId ->
+            if (!monthlyRepairAttemptedStudentIds.add(studentId)) return@forEach
+            viewModelScope.launch {
+                runCatching {
+                    feeRepository.reconcileInvalidMonthlyFees(instituteId, studentId)
+                }
+            }
+        }
     }
 
     private fun buildMonthWiseDues(details: List<DueFeeDetail>): List<MonthWiseDue> {

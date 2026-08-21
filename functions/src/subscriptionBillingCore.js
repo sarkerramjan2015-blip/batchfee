@@ -73,10 +73,28 @@ function maskedTransactionReference(reference) {
   return normalized.slice(-4);
 }
 
+/**
+ * Normalise a Bangladeshi mobile number to +8801XXXXXXXXX.
+ * A sender number identifies the payer for manual verification; it is not a
+ * transaction identifier and must never be used as a global duplicate key.
+ */
+function normalizeBangladeshiMobileNumber(value) {
+  if (typeof value !== "string") throw new RangeError("Enter a valid Bangladeshi sending number.");
+  let digits = value.trim().replace(/[\s()\-]/g, "");
+  if (digits.startsWith("+")) digits = digits.slice(1);
+  if (digits.startsWith("880")) digits = `0${digits.slice(3)}`;
+  if (digits.startsWith("1") && digits.length === 10) digits = `0${digits}`;
+  if (!/^01[3-9]\d{8}$/.test(digits)) {
+    throw new RangeError("Enter a valid Bangladeshi sending number.");
+  }
+  return `+88${digits}`;
+}
+
 module.exports = {
   DAY_MS,
   addCalendarMonths,
   maskedTransactionReference,
+  normalizeBangladeshiMobileNumber,
   normalizeTransactionReference,
   quoteForPlan,
   subscriptionStartMs,

@@ -58,6 +58,7 @@ private val TextWhite = Color(0xFFF8FAFC)
 private val TextMuted = Color(0xFF94A3B8)
 private val Cyan = Color(0xFF22D3EE)
 private val ElectricBlue = Color(0xFF3B82F6)
+private val SkyBlue = Color(0xFF38BDF8)
 private val Amber = Color(0xFFF59E0B)
 private val Green = Color(0xFF22C55E)
 private val AccentRed = Color(0xFFF87171)
@@ -229,37 +230,116 @@ fun BillingScreen(
                 .padding(16.dp)
                 .verticalScroll(rememberScrollState())
         ) {
+            val isTrial = institute?.subscriptionStatus == "trial"
+            val planTitle = plan?.name ?: fallbackPlanName
+            val studentEntitlement = when {
+                isTrial -> "Unlimited"
+                plan != null -> "Up to ${plan!!.maxStudents}"
+                else -> "Plan limit"
+            }
+            val entitlementTransition = rememberInfiniteTransition(label = "billingEntitlementGlow")
+            val entitlementGlow by entitlementTransition.animateFloat(
+                initialValue = 0.16f,
+                targetValue = 0.42f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(2200, easing = LinearEasing),
+                    repeatMode = RepeatMode.Reverse
+                ),
+                label = "billingEntitlementGlowAlpha"
+            )
             Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(
+                        1.dp,
+                        Brush.horizontalGradient(
+                            listOf(ElectricBlue.copy(alpha = entitlementGlow), Cyan.copy(alpha = entitlementGlow), BorderSub)
+                        ),
+                        RoundedCornerShape(16.dp)
+                    ),
+                shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = CardBg)
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text("Current Plan", color = TextMuted, fontSize = 12.sp)
-                    Spacer(Modifier.height(4.dp))
-                    Text(plan?.name ?: fallbackPlanName, color = TextWhite, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                    Spacer(Modifier.height(8.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        val status = institute?.subscriptionStatus ?: ""
-                        val chipColor = when (status) {
-                            "active" -> Green
-                            "trial" -> Cyan
-                            "expired" -> AccentRed
-                            else -> TextMuted
+                Box {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(70.dp)
+                            .background(
+                                Brush.linearGradient(
+                                    listOf(ElectricBlue.copy(alpha = 0.15f), Cyan.copy(alpha = 0.06f), Color.Transparent)
+                                )
+                            )
+                    )
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Current Plan", color = TextMuted, fontSize = 12.sp)
+                                Spacer(Modifier.height(3.dp))
+                                Text(planTitle, color = TextWhite, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                            }
+                            val status = institute?.subscriptionStatus.orEmpty()
+                            val chipColor = when (status) {
+                                "active" -> Green
+                                "trial" -> Cyan
+                                "expired" -> AccentRed
+                                else -> TextMuted
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(chipColor.copy(alpha = 0.15f))
+                                    .border(1.dp, chipColor.copy(alpha = 0.30f), RoundedCornerShape(8.dp))
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                Text(status.uppercase().ifBlank { "UNKNOWN" }, color = chipColor, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            }
                         }
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(chipColor.copy(alpha = 0.15f))
-                                .padding(horizontal = 8.dp, vertical = 3.dp)
-                        ) {
-                            Text(status.uppercase(), color = chipColor, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(10.dp))
+                        Text(
+                            if (isTrial) {
+                                "Free Trial includes full access while you evaluate BatchFee."
+                            } else {
+                                "Your student seat limit is protected by this plan."
+                            },
+                            color = TextMuted,
+                            fontSize = 11.sp
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            SubscriptionEntitlementCell(
+                                modifier = Modifier.weight(1f),
+                                icon = Icons.Filled.Group,
+                                label = "Students",
+                                value = studentEntitlement,
+                                accent = SkyBlue
+                            )
+                            SubscriptionEntitlementCell(
+                                modifier = Modifier.weight(1f),
+                                icon = Icons.Filled.Groups,
+                                label = "Batches",
+                                value = "Unlimited",
+                                accent = Cyan
+                            )
                         }
-                        Spacer(Modifier.width(12.dp))
-                        if (institute?.subscriptionStatus == "trial") {
-                            Text("Trial Ends: ${institute?.let { dateFormat.format(Date(it.trialEndDateMs)) }}", color = TextMuted, fontSize = 12.sp)
-                        } else {
-                            Text("Next Billing: ${institute?.let { dateFormat.format(Date(it.currentPeriodEndMs)) }}", color = TextMuted, fontSize = 12.sp)
+                        Spacer(Modifier.height(8.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            SubscriptionEntitlementCell(
+                                modifier = Modifier.weight(1f),
+                                icon = Icons.Filled.Badge,
+                                label = "Staff",
+                                value = "Unlimited",
+                                accent = Green
+                            )
+                            SubscriptionEntitlementCell(
+                                modifier = Modifier.weight(1f),
+                                icon = Icons.Filled.CalendarToday,
+                                label = if (isTrial) "Trial ends" else "Renews",
+                                value = institute?.let {
+                                    dateFormat.format(Date(if (isTrial) it.trialEndDateMs else it.currentPeriodEndMs))
+                                } ?: "—",
+                                accent = if (isTrial) Cyan else Green
+                            )
                         }
                     }
                 }
@@ -304,6 +384,12 @@ fun BillingScreen(
                         Spacer(Modifier.height(6.dp))
                         Text("Plan: ${req.requestedPlanId} · ${req.durationMonths} Month(s)", color = TextMuted, fontSize = 12.sp)
                         Text("Amount: BDT ${"%.0f".format(req.amountPaid)} · ${req.paymentMethod}", color = TextMuted, fontSize = 12.sp)
+                        if (req.studentLimitAtRequest > 0) {
+                            Text("Student access: Up to ${req.studentLimitAtRequest} students", color = Cyan, fontSize = 11.sp)
+                        }
+                        if (req.senderPhone.isNotBlank()) {
+                            Text("Sent from: ${req.senderPhone}", color = TextMuted, fontSize = 11.sp)
+                        }
                         if (req.reviewerNote != null) {
                             Spacer(Modifier.height(4.dp))
                             Text("Note: ${req.reviewerNote}", color = TextMuted, fontSize = 11.sp)
@@ -421,6 +507,31 @@ fun BillingScreen(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun SubscriptionEntitlementCell(
+    modifier: Modifier = Modifier,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    value: String,
+    accent: Color
+) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(11.dp))
+            .background(accent.copy(alpha = 0.08f))
+            .border(1.dp, accent.copy(alpha = 0.20f), RoundedCornerShape(11.dp))
+            .padding(horizontal = 9.dp, vertical = 8.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(icon, contentDescription = null, tint = accent, modifier = Modifier.size(14.dp))
+            Spacer(Modifier.width(5.dp))
+            Text(label, color = TextMuted, fontSize = 9.sp)
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(value, color = accent, fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1)
     }
 }
 

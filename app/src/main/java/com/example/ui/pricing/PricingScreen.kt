@@ -9,6 +9,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -20,8 +21,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
@@ -258,12 +261,14 @@ fun PricingScreen(
 
     // Payment submission state
     var selectedPaymentMethod by remember { mutableStateOf("bkash") }
-    var transactionReference by remember { mutableStateOf("") }
+    var senderPhone by remember { mutableStateOf("") }
+    var senderPhoneError by remember { mutableStateOf<String?>(null) }
     var isSubmitting by remember { mutableStateOf(false) }
     var submitSuccess by remember { mutableStateOf(false) }
     var submitError by remember { mutableStateOf<String?>(null) }
     var selectedPlanId by remember { mutableStateOf<String?>(null) }
     var showPaymentDialog by remember { mutableStateOf(false) }
+    var showPaymentConfirmation by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     val durationOptions = listOf("1 Month", "6 Months", "1 Year")
@@ -436,8 +441,11 @@ fun PricingScreen(
                             unavailableLabel = if (lowerPlanBeforeRenewal) "At renewal" else null,
                             onChoose = {
                                 selectedPlanId = plan.id
+                                senderPhone = ""
+                                senderPhoneError = null
                                 submitSuccess = false
                                 submitError = null
+                                showPaymentConfirmation = false
                                 showPaymentDialog = true
                             }
                         )
@@ -616,23 +624,36 @@ fun PricingScreen(
                                 }
                             }
 
-                            // The Function stores only a hash and the final four characters.
                             OutlinedTextField(
-                                value = transactionReference,
+                                value = senderPhone,
                                 onValueChange = {
-                                    if (it.length <= 64 && it.all { c ->
-                                        c.isLetterOrDigit() || c == '-' || c == '_' || c.isWhitespace()
-                                    }) transactionReference = it
+                                    if (it.length <= 20 && it.all { c ->
+                                        c.isDigit() || c == '+' || c == '-' || c == ' ' || c == '(' || c == ')'
+                                    }) {
+                                        senderPhone = it
+                                        senderPhoneError = null
+                                    }
                                 },
-                                label = { Text("Payment transaction ID", color = TextMuted) },
-                                placeholder = { Text("e.g. 8N7A9BC123", color = TextMuted.copy(alpha = 0.5f)) },
+                                label = { Text("Sending number", color = TextMuted) },
+                                placeholder = { Text("e.g. 01712345678", color = TextMuted.copy(alpha = 0.5f)) },
+                                supportingText = {
+                                    Text(
+                                        senderPhoneError ?: "Use the number you paid from. It helps us verify your payment.",
+                                        color = if (senderPhoneError == null) TextMuted else AccentRed,
+                                        fontSize = 10.sp
+                                    )
+                                },
+                                isError = senderPhoneError != null,
                                 modifier = Modifier.fillMaxWidth(),
                                 singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                                leadingIcon = { Icon(Icons.Filled.Phone, contentDescription = null, tint = Cyan) },
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedTextColor = TextWhite,
                                     unfocusedTextColor = TextWhite,
                                     focusedBorderColor = Cyan,
-                                    unfocusedBorderColor = BorderSub
+                                    unfocusedBorderColor = BorderSub,
+                                    errorBorderColor = AccentRed
                                 )
                             )
 
@@ -640,56 +661,159 @@ fun PricingScreen(
                             if (submitError != null) {
                                 Text(submitError!!, color = AccentRed, fontSize = 12.sp)
                             }
-                            if (submitSuccess) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = Green, modifier = Modifier.size(16.dp))
-                                    Spacer(Modifier.width(6.dp))
-                                    Text("Payment submitted. Admin will review and approve your request.", color = Green, fontSize = 12.sp)
-                                }
-                            }
+                            Text("You will review the plan, student access and payment details before sending.", color = Cyan.copy(alpha = 0.85f), fontSize = 11.sp)
                         }
                     },
                     confirmButton = {
                         Button(
                             onClick = {
-                                scope.launch {
-                                    if (instituteId == null) {
-                                        submitError = "Institute not found. Try restarting the app."
-                                        return@launch
-                                    }
-                                    isSubmitting = true
+                                if (normalizeBangladeshiMobileForSubmission(senderPhone) == null) {
+                                    senderPhoneError = "Enter a valid Bangladeshi sending number."
+                                } else {
+                                    senderPhoneError = null
                                     submitError = null
-                                    try {
-                                        SubscriptionRepository().submitRequest(
-                                            instituteId = instituteId!!,
-                                            requestedPlanId = selPlan.id,
-                                            durationMonths = durationMonths,
-                                            paymentMethod = selectedPaymentMethod,
-                                            transactionReference = transactionReference
-                                        )
-                                        submitSuccess = true
-                                        transactionReference = ""
-                                    } catch (e: Exception) {
-                                        submitError = e.message ?: "Submission failed. Try again."
-                                    } finally {
-                                        isSubmitting = false
-                                    }
+                                    showPaymentDialog = false
+                                    showPaymentConfirmation = true
                                 }
                             },
-                            enabled = !isSubmitting && transactionReference.trim().length >= 6 && !submitSuccess,
                             colors = ButtonDefaults.buttonColors(containerColor = Cyan),
                             shape = RoundedCornerShape(10.dp)
                         ) {
-                            if (isSubmitting) {
-                                CircularProgressIndicator(color = Color.White, modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                            } else {
-                                Text("Submit Request", color = Color.White, fontWeight = FontWeight.Bold)
-                            }
+                            Text("Continue", color = Color.White, fontWeight = FontWeight.Bold)
                         }
                     },
                     dismissButton = {
                         TextButton(onClick = { showPaymentDialog = false }, enabled = !isSubmitting) {
                             Text("Close", color = TextMuted)
+                        }
+                    }
+                )
+            }
+
+            if (showPaymentConfirmation && selectedPlanId != null) {
+                val selPlan = plans.find { it.id == selectedPlanId } ?: return@Scaffold
+                val selPrice = remember(selectedDuration) { viewModel.priceFor(selPlan) }
+                val durationMonths = when (selectedDuration) { 0 -> 1; 1 -> 6; 2 -> 12; else -> 1 }
+                val normalizedSenderPhone = normalizeBangladeshiMobileForSubmission(senderPhone).orEmpty()
+                val accessPeriod = when (durationMonths) {
+                    12 -> "1 year from approval"
+                    6 -> "6 months from approval"
+                    else -> "1 month from approval"
+                }
+
+                AlertDialog(
+                    onDismissRequest = { if (!isSubmitting) showPaymentConfirmation = false },
+                    containerColor = CardBg,
+                    shape = RoundedCornerShape(18.dp),
+                    title = {
+                        if (submitSuccess) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    Modifier.size(34.dp).clip(RoundedCornerShape(10.dp)).background(Green.copy(alpha = 0.16f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = Green, modifier = Modifier.size(20.dp))
+                                }
+                                Spacer(Modifier.width(10.dp))
+                                Text("Request sent", color = TextWhite, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                            }
+                        } else {
+                            Text("Confirm subscription request", color = TextWhite, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                        }
+                    },
+                    text = {
+                        if (submitSuccess) {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text("Your request is now visible to the Super Admin for review.", color = Green, fontSize = 13.sp)
+                                Text("${selPlan.name} will activate after the payment is verified.", color = TextMuted, fontSize = 12.sp)
+                            }
+                        } else {
+                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Text("Review everything before sending it for approval.", color = TextMuted, fontSize = 12.sp)
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(CardBgAlt)
+                                        .border(1.dp, BorderSub, RoundedCornerShape(12.dp))
+                                        .padding(12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    PaymentConfirmationRow("Plan", selPlan.name, Cyan)
+                                    PaymentConfirmationRow("Student access", "Up to ${selPlan.studentCount} students", SkyBlue)
+                                    PaymentConfirmationRow("Access period", accessPeriod, Green)
+                                    PaymentConfirmationRow("Amount", "BDT ${"%.0f".format(selPrice)}", TextWhite)
+                                    PaymentConfirmationRow("Payment", selectedPaymentMethod.replaceFirstChar { it.uppercase() }, Cyan)
+                                    PaymentConfirmationRow("Sent from", normalizedSenderPhone, WarningAmber)
+                                }
+                                submitError?.let { Text(it, color = AccentRed, fontSize = 12.sp) }
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        if (submitSuccess) {
+                            Button(
+                                onClick = {
+                                    showPaymentConfirmation = false
+                                    showPaymentDialog = false
+                                    senderPhone = ""
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = Green),
+                                shape = RoundedCornerShape(10.dp)
+                            ) { Text("Done", color = Color.White, fontWeight = FontWeight.Bold) }
+                        } else {
+                            Button(
+                                onClick = {
+                                    scope.launch {
+                                        if (instituteId == null) {
+                                            submitError = "Institute not found. Try restarting the app."
+                                            return@launch
+                                        }
+                                        if (normalizedSenderPhone.isBlank()) {
+                                            submitError = "Enter a valid Bangladeshi sending number."
+                                            showPaymentConfirmation = false
+                                            showPaymentDialog = true
+                                            return@launch
+                                        }
+                                        isSubmitting = true
+                                        submitError = null
+                                        try {
+                                            SubscriptionRepository().submitRequest(
+                                                instituteId = instituteId!!,
+                                                requestedPlanId = selPlan.id,
+                                                durationMonths = durationMonths,
+                                                paymentMethod = selectedPaymentMethod,
+                                                senderPhone = normalizedSenderPhone
+                                            )
+                                            submitSuccess = true
+                                        } catch (error: Exception) {
+                                            submitError = error.message ?: "Submission failed. Try again."
+                                        } finally {
+                                            isSubmitting = false
+                                        }
+                                    }
+                                },
+                                enabled = !isSubmitting,
+                                colors = ButtonDefaults.buttonColors(containerColor = Cyan),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                if (isSubmitting) {
+                                    CircularProgressIndicator(color = Color.White, modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                                } else {
+                                    Text("Confirm & Submit", color = Color.White, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    },
+                    dismissButton = {
+                        if (!submitSuccess) {
+                            TextButton(
+                                onClick = {
+                                    showPaymentConfirmation = false
+                                    showPaymentDialog = true
+                                },
+                                enabled = !isSubmitting
+                            ) { Text("Back", color = TextMuted) }
                         }
                     }
                 )
@@ -714,13 +838,27 @@ private fun PlanCard(
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "planGlow")
     val glowAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.2f,
-        targetValue = 0.6f,
+        initialValue = 0.26f,
+        targetValue = 0.72f,
         animationSpec = infiniteRepeatable(
-            animation = tween(2000, easing = LinearEasing),
+            animation = tween(2200, easing = LinearEasing),
             repeatMode = RepeatMode.Reverse
         ),
         label = "glowAlpha"
+    )
+    val shineProgress by infiniteTransition.animateFloat(
+        initialValue = -0.35f,
+        targetValue = 1.35f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(3400, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "planShine"
+    )
+    val selectedScale by animateFloatAsState(
+        targetValue = if (isSelected) 1.015f else 1f,
+        animationSpec = tween(220),
+        label = "selectedPlanScale"
     )
 
     val borderColors = if (plan.isPopular) {
@@ -731,30 +869,64 @@ private fun PlanCard(
         listOf(Color.Transparent, Color.Transparent)
     }
 
-    val showGlowBorder = plan.isPopular || plan.isPremium
+    val showGlowBorder = plan.isPopular || plan.isPremium || isSelected
+    val accentColor = when {
+        plan.isPremium -> VioletBlue
+        plan.isPopular || isSelected -> Cyan
+        else -> SkyBlue
+    }
+    val cardShape = RoundedCornerShape(18.dp)
 
     Box(
         modifier = Modifier
-            .width(220.dp)
-            .clip(RoundedCornerShape(14.dp))
-            .background(CardBg)
+            .width(232.dp)
+            .graphicsLayer {
+                scaleX = selectedScale
+                scaleY = selectedScale
+            }
+            .clip(cardShape)
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(
+                        if (plan.isPremium) Color(0xFF191B45) else CardBgAlt,
+                        CardBg
+                    )
+                )
+            )
             .then(
                 if (showGlowBorder) Modifier.border(
-                    width = 1.5.dp,
+                    width = if (isSelected) 2.dp else 1.5.dp,
                     brush = Brush.verticalGradient(
                         colors = listOf(
-                            borderColors[0].copy(alpha = glowAlpha),
-                            borderColors[1].copy(alpha = glowAlpha),
-                            borderColors[0].copy(alpha = glowAlpha)
+                            (if (isSelected) Cyan else borderColors[0]).copy(alpha = glowAlpha),
+                            (if (isSelected) ElectricBlue else borderColors[1]).copy(alpha = glowAlpha),
+                            (if (isSelected) Cyan else borderColors[0]).copy(alpha = glowAlpha)
                         )
                     ),
-                    shape = RoundedCornerShape(14.dp)
+                    shape = cardShape
                 )
-                else Modifier.border(1.dp, BorderSub, RoundedCornerShape(14.dp))
+                else Modifier.border(1.dp, BorderSub, cardShape)
             )
     ) {
+        // A low-contrast sheen makes the catalogue feel premium without obscuring text.
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(82.dp)
+                .background(
+                    Brush.linearGradient(
+                        colors = listOf(
+                            Color.Transparent,
+                            Color.White.copy(alpha = if (plan.isPopular || plan.isPremium) 0.10f else 0.045f),
+                            Color.Transparent
+                        ),
+                        start = androidx.compose.ui.geometry.Offset(232f * shineProgress - 120f, 0f),
+                        end = androidx.compose.ui.geometry.Offset(232f * shineProgress + 80f, 82f)
+                    )
+                )
+        )
         Column(
-            modifier = Modifier.padding(12.dp)
+            modifier = Modifier.padding(14.dp)
         ) {
             // Badge
             if (plan.isPopular || plan.isPremium) {
@@ -786,29 +958,47 @@ private fun PlanCard(
                 Spacer(Modifier.height(1.dp))
             }
 
-            // Plan Name + Student Limit
+            // Plan name
             Text(
                 plan.name,
                 color = TextWhite,
-                fontSize = 17.sp,
+                fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.fillMaxWidth(),
                 textAlign = TextAlign.Center
             )
             Spacer(Modifier.height(3.dp))
-            Row(
+            Text(
+                "Everything your institute needs",
+                color = TextMuted,
+                fontSize = 10.sp,
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(Icons.Filled.Group, contentDescription = null, tint = SkyBlue, modifier = Modifier.size(15.dp))
-                Spacer(Modifier.width(4.dp))
-                Text(plan.studentLabel, color = SkyBlue, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-            }
-            Spacer(Modifier.height(10.dp))
+                textAlign = TextAlign.Center
+            )
+            Spacer(Modifier.height(12.dp))
 
-            HorizontalDivider(color = BorderSub)
-            Spacer(Modifier.height(9.dp))
+            // These three items are the actual subscription capacity contract.
+            PlanEntitlementRow(
+                icon = Icons.Filled.Group,
+                title = "Student seats",
+                value = plan.studentLabel,
+                accent = SkyBlue
+            )
+            Spacer(Modifier.height(6.dp))
+            PlanEntitlementRow(
+                icon = Icons.Filled.Groups,
+                title = "Batches",
+                value = "Unlimited",
+                accent = Cyan
+            )
+            Spacer(Modifier.height(6.dp))
+            PlanEntitlementRow(
+                icon = Icons.Filled.Badge,
+                title = "Staff",
+                value = "Unlimited",
+                accent = Green
+            )
+            Spacer(Modifier.height(12.dp))
 
             // Price
             Row(
@@ -855,13 +1045,14 @@ private fun PlanCard(
 
             Spacer(Modifier.height(10.dp))
 
-            // Feature list
-            allPlanFeatures.forEach { (label, icon) ->
+            Text("All core tools included", color = TextMuted, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(5.dp))
+            allPlanFeatures.take(3).forEach { (label, icon) ->
                 Row(
-                    modifier = Modifier.padding(vertical = 2.dp),
+                    modifier = Modifier.padding(vertical = 1.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(icon, contentDescription = null, tint = Cyan.copy(alpha = 0.75f), modifier = Modifier.size(13.dp))
+                    Icon(icon, contentDescription = null, tint = accentColor.copy(alpha = 0.82f), modifier = Modifier.size(13.dp))
                     Spacer(Modifier.width(5.dp))
                     Text(label, color = TextMuted, fontSize = 10.sp)
                 }
@@ -900,6 +1091,56 @@ private fun PlanCard(
             }
         }
     }
+}
+
+@Composable
+private fun PlanEntitlementRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    value: String,
+    accent: Color
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(accent.copy(alpha = 0.09f))
+            .border(1.dp, accent.copy(alpha = 0.22f), RoundedCornerShape(10.dp))
+            .padding(horizontal = 9.dp, vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(24.dp)
+                .clip(RoundedCornerShape(7.dp))
+                .background(accent.copy(alpha = 0.16f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(icon, contentDescription = null, tint = accent, modifier = Modifier.size(14.dp))
+        }
+        Spacer(Modifier.width(8.dp))
+        Text(title, color = TextMuted, fontSize = 10.sp, modifier = Modifier.weight(1f))
+        Text(value, color = accent, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+private fun PaymentConfirmationRow(label: String, value: String, accent: Color) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(label, color = TextMuted, fontSize = 11.sp)
+        Text(value, color = accent, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.End)
+    }
+}
+
+private fun normalizeBangladeshiMobileForSubmission(value: String): String? {
+    var digits = value.filter(Char::isDigit)
+    if (digits.startsWith("880")) digits = "0${digits.drop(3)}"
+    if (digits.startsWith("1") && digits.length == 10) digits = "0$digits"
+    return if (Regex("^01[3-9]\\d{8}$").matches(digits)) "+88$digits" else null
 }
 
 private fun formatPrice(price: Double): String {

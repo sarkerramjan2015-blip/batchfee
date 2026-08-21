@@ -214,6 +214,23 @@ class FeeCollectionRepository(
         queuedAtMs = now
     )
 
+    /**
+     * Repairs only impossible, fully unpaid legacy monthly rows that fall
+     * before the student's admission/batch window. The trusted server keeps
+     * every payment and receipt immutable.
+     */
+    suspend fun reconcileInvalidMonthlyFees(
+        instituteId: String,
+        studentId: String,
+        now: Long = System.currentTimeMillis(),
+        operationId: String = UUID.randomUUID().toString()
+    ): FinancialOperationResult = execute(
+        request = baseRequest(operationId, instituteId, "reconcile_invalid_monthly_fees") + mapOf(
+            "studentId" to studentId
+        ),
+        queuedAtMs = now
+    )
+
     suspend fun reversePayment(
         paymentId: String,
         instituteId: String,
@@ -408,7 +425,11 @@ class FeeCollectionRepository(
                 }
             }) { "Ledger response crossed the institute boundary." }
 
-        if (action !in setOf("set_custom_monthly_fee", "update_student_admission_date")) {
+        if (action !in setOf(
+                "set_custom_monthly_fee",
+                "update_student_admission_date",
+                "reconcile_invalid_monthly_fees"
+            )) {
             check(result.fees.isNotEmpty()) { "Ledger response must contain a canonical fee." }
         }
         result.fees.forEach { fee ->
@@ -445,6 +466,11 @@ class FeeCollectionRepository(
             "update_student_admission_date" -> {
                 check(result.payments.isEmpty() && result.receipts.isEmpty() && result.reversals.isEmpty())
                 check(result.deletedPaymentIds.isEmpty() && result.deletedReceiptIds.isEmpty())
+            }
+            "reconcile_invalid_monthly_fees" -> {
+                check(result.payments.isEmpty() && result.receipts.isEmpty() && result.reversals.isEmpty())
+                check(result.deletedPaymentIds.isEmpty() && result.deletedReceiptIds.isEmpty())
+                check(result.fees.all { it.status == "cancelled" && it.dueAmount == 0.0 })
             }
             else -> error("Unsupported ledger response action.")
         }

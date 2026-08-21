@@ -5,11 +5,10 @@ const { HttpsError } = require("firebase-functions/v2/https");
 const {
   DAY_MS,
   addCalendarMonths,
-  maskedTransactionReference,
+  normalizeBangladeshiMobileNumber,
   quoteForPlan,
   subscriptionStartMs,
   subscriptionStatusFor,
-  transactionReferenceHash,
 } = require("./subscriptionBillingCore");
 const { planFromSnapshot } = require("./defaultSubscriptionPlans");
 const { FREE_TRIAL_STUDENT_LIMIT } = require("./subscriptionPolicy");
@@ -362,25 +361,33 @@ function createSubscriptionBillingHandler({ db, FieldValue }) {
         if (!PAYMENT_METHODS.has(normalizedPaymentMethod) || ![1, 6, 12].includes(durationMonths)) {
           throw new HttpsError("invalid-argument", "Unsupported payment method or subscription duration.");
         }
-        const transactionReference = requiredString(data, "transactionReference", 80);
-        let paymentReferenceHash;
-        let transactionLast4;
+        const senderPhone = requiredString(data, "senderPhone", 32);
+        let normalizedSenderPhone;
         try {
-          paymentReferenceHash = transactionReferenceHash(transactionReference);
-          transactionLast4 = maskedTransactionReference(transactionReference);
+          normalizedSenderPhone = normalizeBangladeshiMobileNumber(senderPhone);
         } catch (error) {
           throw new HttpsError("invalid-argument", error.message);
         }
         const planRef = db.collection("subscription_plans").doc(requestedPlanId);
         const activeStudentCount = activeStudentCountQuery(instituteRef);
-        const duplicateQuery = db.collection("subscriptionRequests")
-          .where("paymentReferenceHash", "==", paymentReferenceHash)
-          .limit(1);
-        const [planSnap, duplicateSnap, studentCountSnap] = await Promise.all([
+        const pendingPointerRef = instituteRef.collection("subscription_state").doc("pending_request");
+        const [planSnap, studentCountSnap, pendingPointerSnap] = await Promise.all([
           transaction.get(planRef),
-          transaction.get(duplicateQuery),
           transaction.get(activeStudentCount),
+          transaction.get(pendingPointerRef),
         ]);
+        if (pendingPointerSnap.exists) {
+          const pendingRequestId = pendingPointerSnap.get("requestId");
+          if (typeof pendingRequestId === "string" && pendingRequestId) {
+            const pendingRequestSnap = await transaction.get(db.collection("subscriptionRequests").doc(pendingRequestId));
+            if (pendingRequestSnap.exists && pendingRequestSnap.get("status") === "pending") {
+              throw new HttpsError(
+                "failed-precondition",
+                "You already have a payment request waiting for review. Please wait for the Super Admin response.",
+              );
+            }
+          }
+        }
         const plan = planFromSnapshot(planSnap, requestedPlanId);
         if (!plan) throw new HttpsError("not-found", "Selected subscription plan is no longer available.");
         if (isFreeTrialPlan(requestedPlanId) || Number(plan.priceBdt) <= 0) {
@@ -389,9 +396,6 @@ function createSubscriptionBillingHandler({ db, FieldValue }) {
         const currentStudentCount = studentCountSnap.data().count;
         assertPlanSupportsStudentCount(plan, currentStudentCount);
         assertNoEarlyCapacityDowngrade(authority.institute, plan.maxStudents, now);
-        if (!duplicateSnap.empty) {
-          throw new HttpsError("already-exists", "This payment transaction was already submitted.");
-        }
         let amountPaid;
         try {
           amountPaid = quoteForPlan(plan.priceBdt, durationMonths);
@@ -413,8 +417,8 @@ function createSubscriptionBillingHandler({ db, FieldValue }) {
           durationMonths,
           amountPaid,
           paymentMethod: normalizedPaymentMethod,
-          transactionLast4,
-          paymentReferenceHash,
+          senderPhone: normalizedSenderPhone,
+          studentLimitAtRequest: plan.maxStudents,
           quote: {
             monthlyPriceBdt: Number(plan.priceBdt),
             amountBdt: amountPaid,
@@ -429,11 +433,18 @@ function createSubscriptionBillingHandler({ db, FieldValue }) {
           reviewerNote: "",
         };
         transaction.create(requestRef, requestData);
+        const pendingPointer = {
+          requestId,
+          status: "pending",
+          createdAtMs: now,
+        };
+        if (pendingPointerSnap.exists) transaction.update(pendingPointerRef, pendingPointer);
+        else transaction.create(pendingPointerRef, pendingPointer);
         applyOperationAudit(transaction, instituteRef, operationId, action, actorUid, now, {}, {
           requestId,
           requestedPlanId,
           amountPaid,
-        }, { paymentMethod: normalizedPaymentMethod, transactionLast4 });
+        }, { paymentMethod: normalizedPaymentMethod, senderPhone: normalizedSenderPhone, studentLimitAtRequest: plan.maxStudents });
         const result = requestResult(requestId, requestData);
         completedOperation(transaction, instituteRef, operationId, actorUid, hash, action, result, now);
         return result;
@@ -442,9 +453,11 @@ function createSubscriptionBillingHandler({ db, FieldValue }) {
       if (action === "approve_request") {
         const requestId = requiredString(data, "requestId");
         const requestRef = db.collection("subscriptionRequests").doc(requestId);
-        const [requestSnap, studentCountSnap] = await Promise.all([
+        const pendingPointerRef = instituteRef.collection("subscription_state").doc("pending_request");
+        const [requestSnap, studentCountSnap, pendingPointerSnap] = await Promise.all([
           transaction.get(requestRef),
           transaction.get(activeStudentCountQuery(instituteRef)),
+          transaction.get(pendingPointerRef),
         ]);
         const subscriptionRequest = requirePendingRequest(requestSnap);
         if (subscriptionRequest.instituteId !== instituteId) {
@@ -481,7 +494,12 @@ function createSubscriptionBillingHandler({ db, FieldValue }) {
           durationMonths: subscriptionRequest.durationMonths,
           amountPaid: subscriptionRequest.amountPaid,
           paymentMethod: subscriptionRequest.paymentMethod,
-          transactionLast4: subscriptionRequest.transactionLast4,
+          // New requests identify the payer by sender number. Keep the legacy
+          // masked reference field only for old records so receipt generation
+          // remains compatible with historical payments.
+          senderPhone: typeof subscriptionRequest.senderPhone === "string" ? subscriptionRequest.senderPhone : "",
+          transactionLast4: typeof subscriptionRequest.transactionLast4 === "string"
+            ? subscriptionRequest.transactionLast4 : "",
           startDateMs,
           endDateMs,
           approvedAt: now,
@@ -507,6 +525,9 @@ function createSubscriptionBillingHandler({ db, FieldValue }) {
           instituteCode: receipt.instituteCode,
           instituteAddress: receipt.instituteAddress,
         });
+        if (pendingPointerSnap.exists && pendingPointerSnap.get("requestId") === requestId) {
+          transaction.update(pendingPointerRef, { status: "approved", resolvedAtMs: now });
+        }
         transaction.update(instituteRef, afterInstitute);
         transaction.create(receiptRef, receipt);
         applyOperationAudit(transaction, instituteRef, operationId, action, actorUid, now,
@@ -527,13 +548,20 @@ function createSubscriptionBillingHandler({ db, FieldValue }) {
         const requestId = requiredString(data, "requestId");
         const note = optionalString(data, "note", 500) || "Rejected by Super Admin.";
         const requestRef = db.collection("subscriptionRequests").doc(requestId);
-        const requestSnap = await transaction.get(requestRef);
+        const pendingPointerRef = instituteRef.collection("subscription_state").doc("pending_request");
+        const [requestSnap, pendingPointerSnap] = await Promise.all([
+          transaction.get(requestRef),
+          transaction.get(pendingPointerRef),
+        ]);
         const subscriptionRequest = requirePendingRequest(requestSnap);
         if (subscriptionRequest.instituteId !== instituteId) {
           throw new HttpsError("permission-denied", "Subscription request belongs to another institute.");
         }
         const after = { status: "rejected", reviewedBy: actorUid, reviewedAt: now, reviewerNote: note };
         transaction.update(requestRef, after);
+        if (pendingPointerSnap.exists && pendingPointerSnap.get("requestId") === requestId) {
+          transaction.update(pendingPointerRef, { status: "rejected", resolvedAtMs: now });
+        }
         applyOperationAudit(transaction, instituteRef, operationId, action, actorUid, now,
           { requestId, status: "pending" }, { requestId, ...after });
         const result = { request: { requestId, ...subscriptionRequest, ...after } };

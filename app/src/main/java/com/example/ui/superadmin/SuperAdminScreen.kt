@@ -118,10 +118,10 @@ private fun planStudentCapacityLabel(plan: SubscriptionPlanEntity): String =
     if (plan.id == DEFAULT_TRIAL_PLAN_ID) "Unlimited students" else "${plan.maxStudents} students"
 
 private fun planBatchCapacityLabel(plan: SubscriptionPlanEntity): String =
-    "${plan.maxBatches} ${if (plan.maxBatches == 1) "batch" else "batches"}"
+    "Unlimited batches"
 
 private fun planUserCapacityLabel(plan: SubscriptionPlanEntity): String =
-    "${plan.maxUsers} ${if (plan.maxUsers == 1) "user" else "users"}"
+    "Unlimited staff"
 
 private fun planDisplayDetails(planId: String, plans: List<SubscriptionPlanEntity>): SubscriptionPlanEntity? =
     plans.firstOrNull { it.id == planId }
@@ -1709,7 +1709,20 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
                                         Text(requestedPlanName, color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
                                         Text("BDT ${"%,.0f".format(req.amountPaid)}", color = AccentGreen, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                                     }
-                                    Text("${req.durationMonths} month(s) · ${req.paymentMethod.uppercase()} · Ref: ••••${req.transactionLast4}", color = TextMuted, fontSize = 11.sp)
+                                    Text(
+                                        "${req.durationMonths} month(s) · ${if (req.studentLimitAtRequest > 0) "Up to ${req.studentLimitAtRequest} students" else "Plan capacity"}",
+                                        color = TextMuted,
+                                        fontSize = 11.sp
+                                    )
+                                    Text(
+                                        if (req.senderPhone.isNotBlank()) {
+                                            "${req.paymentMethod.uppercase()} · Sent from ${req.senderPhone}"
+                                        } else {
+                                            "${req.paymentMethod.uppercase()} · Ref: ••••${req.transactionLast4}"
+                                        },
+                                        color = TextMuted,
+                                        fontSize = 11.sp
+                                    )
                                 }
                             }
                             Spacer(Modifier.height(8.dp))
@@ -2316,7 +2329,15 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
                                 Spacer(Modifier.height(4.dp))
                                 Text("BDT ${"%,.0f".format(r.amountPaid)}", color = AccentGreen, fontSize = 22.sp, fontWeight = FontWeight.Bold)
                                 Spacer(Modifier.height(2.dp))
-                                Text("${r.paymentMethod.uppercase()} · Trx: ***${r.transactionLast4}", color = TextMuted, fontSize = 11.sp)
+                                Text(
+                                    if (r.transactionLast4.isNotBlank()) {
+                                        "${r.paymentMethod.uppercase()} · Trx: ***${r.transactionLast4}"
+                                    } else {
+                                        r.paymentMethod.uppercase()
+                                    },
+                                    color = TextMuted,
+                                    fontSize = 11.sp
+                                )
                                 Text("${SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(r.startDateMs))} — ${SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(r.endDateMs))}", color = TextMuted, fontSize = 11.sp)
                             }
                         }
@@ -2525,7 +2546,20 @@ private fun PendingSubscriptionRequestCard(
                         Text(planName, color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
                         Text("BDT ${"%,.0f".format(request.amountPaid)}", color = AccentGreen, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                     }
-                    Text("${request.durationMonths} month(s) · ${request.paymentMethod.uppercase()} · Ref: ••••${request.transactionLast4}", color = TextMuted, fontSize = 11.sp)
+                    Text(
+                        "${request.durationMonths} month(s) · ${if (request.studentLimitAtRequest > 0) "Up to ${request.studentLimitAtRequest} students" else "Plan capacity"}",
+                        color = TextMuted,
+                        fontSize = 11.sp
+                    )
+                    Text(
+                        if (request.senderPhone.isNotBlank()) {
+                            "${request.paymentMethod.uppercase()} · Sent from ${request.senderPhone}"
+                        } else {
+                            "${request.paymentMethod.uppercase()} · Ref: ••••${request.transactionLast4}"
+                        },
+                        color = TextMuted,
+                        fontSize = 11.sp
+                    )
                 }
             }
 
@@ -3041,7 +3075,7 @@ private fun SubscriptionPlanSection(
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 PlanMetricChip("BDT ${formatMoneyValue(plan.priceBdt)}")
                                 PlanMetricChip(planStudentCapacityLabel(plan))
-                                PlanMetricChip("${plan.maxUsers} users")
+                                PlanMetricChip(planUserCapacityLabel(plan))
                                 (planUsage[plan.id] ?: 0).takeIf { it > 0 }?.let { count ->
                                     PlanMetricChip("$count institutes")
                                 }
@@ -3097,10 +3131,10 @@ private fun SubscriptionPlanDetailsDialog(
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     PlanMetricChip("BDT ${formatMoneyValue(plan.priceBdt)}")
                     PlanMetricChip(planStudentCapacityLabel(plan))
-                    PlanMetricChip("${plan.maxBatches} batches")
+                    PlanMetricChip(planBatchCapacityLabel(plan))
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    PlanMetricChip("${plan.maxUsers} users")
+                    PlanMetricChip(planUserCapacityLabel(plan))
                     if (assignedInstituteCount > 0) PlanMetricChip("$assignedInstituteCount institutes")
                 }
                 Text(
@@ -3160,8 +3194,6 @@ private fun SubscriptionPlanEditorDialog(
     var priceBdt by remember(initialPlan) { mutableStateOf(initialPlan?.priceBdt?.toString() ?: "") }
     var priceInr by remember(initialPlan) { mutableStateOf(initialPlan?.priceInr?.toString() ?: "") }
     var maxStudents by remember(initialPlan) { mutableStateOf(initialPlan?.maxStudents?.toString() ?: "100") }
-    var maxBatches by remember(initialPlan) { mutableStateOf(initialPlan?.maxBatches?.toString() ?: "10") }
-    var maxUsers by remember(initialPlan) { mutableStateOf(initialPlan?.maxUsers?.toString() ?: "3") }
     var maxBranches by remember(initialPlan) { mutableStateOf(initialPlan?.maxBranches?.toString() ?: "1") }
     var tag by remember(initialPlan) { mutableStateOf(initialPlan?.tag ?: "") }
     var tierLevel by remember(initialPlan) { mutableStateOf(initialPlan?.tierLevel?.toString() ?: "1") }
@@ -3219,33 +3251,15 @@ private fun SubscriptionPlanEditorDialog(
                         modifier = Modifier.weight(1f)
                     )
                 }
+                OutlinedTextField(
+                    value = maxStudents,
+                    onValueChange = { if (it.isEmpty() || it.matches(Regex("^\\d+$"))) maxStudents = it },
+                    label = { Text("Student limit") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = maxStudents,
-                        onValueChange = { if (it.isEmpty() || it.matches(Regex("^\\d+$"))) maxStudents = it },
-                        label = { Text("Students") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        singleLine = true,
-                        modifier = Modifier.weight(1f)
-                    )
-                    OutlinedTextField(
-                        value = maxBatches,
-                        onValueChange = { if (it.isEmpty() || it.matches(Regex("^\\d+$"))) maxBatches = it },
-                        label = { Text("Batches") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        singleLine = true,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = maxUsers,
-                        onValueChange = { if (it.isEmpty() || it.matches(Regex("^\\d+$"))) maxUsers = it },
-                        label = { Text("Users") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        singleLine = true,
-                        modifier = Modifier.weight(1f)
-                    )
                     OutlinedTextField(
                         value = maxBranches,
                         onValueChange = { if (it.isEmpty() || it.matches(Regex("^\\d+$"))) maxBranches = it },
@@ -3280,8 +3294,6 @@ private fun SubscriptionPlanEditorDialog(
                 val parsedPriceBdt = priceBdt.toDoubleOrNull()
                 val parsedPriceInr = priceInr.toDoubleOrNull() ?: 0.0
                 val parsedMaxStudents = maxStudents.toIntOrNull()
-                val parsedMaxBatches = maxBatches.toIntOrNull()
-                val parsedMaxUsers = maxUsers.toIntOrNull()
                 val parsedMaxBranches = maxBranches.toIntOrNull()
                 val parsedTierLevel = tierLevel.toIntOrNull()
                 validationError = when {
@@ -3290,8 +3302,6 @@ private fun SubscriptionPlanEditorDialog(
                     description.isBlank() -> "Description is required."
                     parsedPriceBdt == null -> "Valid BDT price is required."
                     parsedMaxStudents == null -> "Student limit is required."
-                    parsedMaxBatches == null -> "Batch limit is required."
-                    parsedMaxUsers == null -> "User limit is required."
                     parsedMaxBranches == null -> "Branch limit is required."
                     parsedTierLevel == null -> "Tier level is required."
                     else -> null
@@ -3306,8 +3316,11 @@ private fun SubscriptionPlanEditorDialog(
                             priceBdt = parsedPriceBdt!!,
                             priceInr = parsedPriceInr,
                             maxStudents = parsedMaxStudents!!,
-                            maxBatches = parsedMaxBatches!!,
-                            maxUsers = parsedMaxUsers!!,
+                            // Legacy fields are retained for existing cloud
+                            // records, but batch and staff capacity is now
+                            // unlimited and never enforced.
+                            maxBatches = initialPlan?.maxBatches ?: 1,
+                            maxUsers = initialPlan?.maxUsers ?: 1,
                             maxBranches = parsedMaxBranches!!,
                             tag = tag.trim(),
                             tierLevel = parsedTierLevel!!
@@ -4324,7 +4337,6 @@ private fun InstituteCard(
         var editMonth by remember { mutableIntStateOf(cal.get(Calendar.MONTH)) }
         var editDay by remember { mutableIntStateOf(cal.get(Calendar.DAY_OF_MONTH)) }
         var editStudentLimit by remember { mutableStateOf("50") }
-        var editStaffLimit by remember { mutableStateOf("10") }
         var editIsActive by remember { mutableStateOf(inst.subscriptionStatus != "blocked") }
         var editAddMonths by remember { mutableStateOf("0") }
 
@@ -4343,7 +4355,6 @@ private fun InstituteCard(
         LaunchedEffect(selectedPlanDetail) {
             if (selectedPlanDetail != null && showManageDialog) {
                 editStudentLimit = selectedPlanDetail!!.maxStudents.toString()
-                editStaffLimit = selectedPlanDetail!!.maxUsers.toString()
             }
         }
 
@@ -4423,7 +4434,7 @@ private fun InstituteCard(
                                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                     PlanMetricChip("BDT ${formatMoneyValue(selectedPlanDetail!!.priceBdt)}")
                                     PlanMetricChip(planStudentCapacityLabel(selectedPlanDetail!!))
-                                    PlanMetricChip("${selectedPlanDetail!!.maxUsers} users")
+                                    PlanMetricChip(planUserCapacityLabel(selectedPlanDetail!!))
                                 }
                                 if (selectedPlanDetail!!.description.isNotBlank()) {
                                     Spacer(Modifier.height(6.dp))
@@ -4460,10 +4471,9 @@ private fun InstituteCard(
                         Column(Modifier.padding(12.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Filled.Groups, null, tint = AccentPink, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(8.dp)); Text("Institute Limits", color = TextMuted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold) }
                             Spacer(Modifier.height(10.dp))
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                OutlinedTextField(value = editStudentLimit, onValueChange = { if (it.isEmpty() || it.matches(Regex("^\\d+$"))) editStudentLimit = it }, label = { Text("Students", fontSize = 10.sp) }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true, modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp), colors = OutlinedTextFieldDefaults.colors(focusedContainerColor = CardBg, unfocusedContainerColor = CardBg, focusedBorderColor = AccentPink, unfocusedBorderColor = BorderSub, focusedTextColor = TextWhite, unfocusedTextColor = TextWhite, cursorColor = AccentPink, focusedLabelColor = AccentPink, unfocusedLabelColor = TextMuted))
-                                OutlinedTextField(value = editStaffLimit, onValueChange = { if (it.isEmpty() || it.matches(Regex("^\\d+$"))) editStaffLimit = it }, label = { Text("Staff", fontSize = 10.sp) }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true, modifier = Modifier.weight(1f), shape = RoundedCornerShape(10.dp), colors = OutlinedTextFieldDefaults.colors(focusedContainerColor = CardBg, unfocusedContainerColor = CardBg, focusedBorderColor = AccentPink, unfocusedBorderColor = BorderSub, focusedTextColor = TextWhite, unfocusedTextColor = TextWhite, cursorColor = AccentPink, focusedLabelColor = AccentPink, unfocusedLabelColor = TextMuted))
-                            }
+                            OutlinedTextField(value = editStudentLimit, onValueChange = { if (it.isEmpty() || it.matches(Regex("^\\d+$"))) editStudentLimit = it }, label = { Text("Students", fontSize = 10.sp) }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(10.dp), colors = OutlinedTextFieldDefaults.colors(focusedContainerColor = CardBg, unfocusedContainerColor = CardBg, focusedBorderColor = AccentPink, unfocusedBorderColor = BorderSub, focusedTextColor = TextWhite, unfocusedTextColor = TextWhite, cursorColor = AccentPink, focusedLabelColor = AccentPink, unfocusedLabelColor = TextMuted))
+                            Spacer(Modifier.height(8.dp))
+                            Text("Batches and staff are unlimited for every active institute.", color = AccentCyan, fontSize = 11.sp)
                         }
                     }
 
@@ -4477,7 +4487,7 @@ private fun InstituteCard(
                 }
             },
             confirmButton = {
-                Button(onClick = { val studentLimit = if (selectedPlanId == DEFAULT_TRIAL_PLAN_ID) 0 else (editStudentLimit.toIntOrNull()?.coerceAtLeast(1) ?: 50); val staffLimit = editStaffLimit.toIntOrNull()?.coerceAtLeast(1) ?: 10; viewModel.manageInstitute(inst.id, computedExpiryMs(), studentLimit, staffLimit, selectedPlanId, editIsActive) { showManageDialog = false } }, modifier = Modifier.fillMaxWidth().height(44.dp), shape = RoundedCornerShape(12.dp), colors = ButtonDefaults.buttonColors(containerColor = AccentViolet)) {
+                Button(onClick = { val studentLimit = if (selectedPlanId == DEFAULT_TRIAL_PLAN_ID) 0 else (editStudentLimit.toIntOrNull()?.coerceAtLeast(1) ?: 50); val legacyStaffLimit = 1; viewModel.manageInstitute(inst.id, computedExpiryMs(), studentLimit, legacyStaffLimit, selectedPlanId, editIsActive) { showManageDialog = false } }, modifier = Modifier.fillMaxWidth().height(44.dp), shape = RoundedCornerShape(12.dp), colors = ButtonDefaults.buttonColors(containerColor = AccentViolet)) {
                     Icon(Icons.Filled.Save, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Save Changes", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = TextWhite)
                 }
             },

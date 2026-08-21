@@ -20,6 +20,7 @@ const ALLOWED_ACTIONS = new Set([
   "adjust_and_collect",
   "set_custom_monthly_fee",
   "update_student_admission_date",
+  "reconcile_invalid_monthly_fees",
   "reverse_payment",
   "owner_edit_payment",
   "owner_delete_payment",
@@ -28,6 +29,7 @@ const ALLOWED_ACTIONS = new Set([
 const OWNER_ONLY_ACTIONS = new Set([
   "set_custom_monthly_fee",
   "update_student_admission_date",
+  "reconcile_invalid_monthly_fees",
   "owner_edit_payment",
   "owner_delete_payment",
 ]);
@@ -97,6 +99,11 @@ function monthPeriodKey(value) {
   return month >= 0 && Number.isSafeInteger(year) ? year * 12 + month : null;
 }
 
+function enrollmentBillingStartPeriodKey(enrollment, admissionPeriodKey) {
+  const frozenPeriodKey = monthPeriodKey(enrollment?.firstMonthFeePeriod);
+  return frozenPeriodKey ?? admissionPeriodKey;
+}
+
 function currentBillingPeriod(now) {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: "Asia/Dhaka",
@@ -157,6 +164,12 @@ function firstMonthAmount(monthlyFeeAmount, admissionDateMs) {
     Math.round((monthlyFeeAmount / 30) * billableDays),
     "first month fee",
   );
+}
+
+function hasEligibleCoveredMonth(coveredPeriods, windows) {
+  return windows.some((window) => coveredPeriods.some((periodKey) =>
+    periodKey >= window.startPeriodKey &&
+    (window.endPeriodKey == null || periodKey < window.endPeriodKey)));
 }
 
 function monthAmountForEnrollment({ enrollment, monthlyFeeAmount, periodKey, firstPeriodKey, firstFeeAmount }) {
@@ -388,7 +401,7 @@ function createFinancialLedgerHandler({ db }) {
       if (OWNER_ONLY_ACTIONS.has(action) && !authority.canManagePaymentHistory) {
         throw new HttpsError(
           "permission-denied",
-          "Only the institute owner can edit or permanently delete a saved payment.",
+          "Only the institute owner can perform this financial correction.",
         );
       }
       const operationRef = instituteRef.collection("financial_operations").doc(operationId);
@@ -499,6 +512,86 @@ function createFinancialLedgerHandler({ db }) {
           },
         );
         result = publicResult(operationId, action, updatedFees);
+      } else if (action === "reconcile_invalid_monthly_fees") {
+        const studentId = requiredString(data, "studentId");
+        const studentRef = instituteRef.collection("students").doc(studentId);
+        const enrollmentsQuery = instituteRef.collection("batch_students").where("studentId", "==", studentId);
+        const studentFeesQuery = instituteRef.collection("fees").where("studentId", "==", studentId);
+        const [studentSnap, enrollmentSnap, studentFeesSnap] = await Promise.all([
+          transaction.get(studentRef),
+          transaction.get(enrollmentsQuery),
+          transaction.get(studentFeesQuery),
+        ]);
+        if (!studentSnap.exists || studentSnap.get("archivedAtMs") != null) {
+          throw new HttpsError("not-found", "Student profile was not found.");
+        }
+        const admissionPeriodKey = periodForBangladeshTimestamp(Number(studentSnap.get("admissionDateMs") || 0));
+        if (admissionPeriodKey == null) {
+          throw new HttpsError("failed-precondition", "Student admission date is unavailable.");
+        }
+        const enrollmentsByBatchId = new Map();
+        enrollmentSnap.docs.forEach((doc) => {
+          const batchId = doc.get("batchId");
+          if (!batchId) return;
+          const endPeriodKey = doc.get("leftAtMs") == null
+            ? null : periodForBangladeshTimestamp(Number(doc.get("leftAtMs") || 0));
+          const window = {
+            startPeriodKey: enrollmentBillingStartPeriodKey(doc.data(), admissionPeriodKey),
+            endPeriodKey,
+          };
+          const existing = enrollmentsByBatchId.get(batchId) || [];
+          existing.push(window);
+          enrollmentsByBatchId.set(batchId, existing);
+        });
+
+        // Firestore transactions require every read to happen before the first
+        // write. Build the safe-cancellation list (including receipt totals)
+        // up front, then update the selected rows in a separate pass.
+        const invalidUnpaidFees = [];
+        for (const feeDoc of studentFeesSnap.docs) {
+          const fee = { id: feeDoc.id, ...feeDoc.data() };
+          if (fee.cancelledAtMs != null || !isMonthlyFeeType(fee.feeType)) continue;
+          const windows = enrollmentsByBatchId.get(fee.batchId) || [];
+          const coveredPeriods = billingPeriodsCoveredBy(fee.feePeriod);
+          if (windows.length === 0 || coveredPeriods.length === 0) continue;
+          if (hasEligibleCoveredMonth(coveredPeriods, windows)) continue;
+          const effectivePaid = await readEffectivePaid(transaction, instituteRef, fee.id);
+          // Paid receipts and even a partial collection are contractual history;
+          // this repair only cancels a completely unpaid, impossible month.
+          if (effectivePaid > MONEY_EPSILON) continue;
+          invalidUnpaidFees.push({ feeDoc, fee });
+        }
+
+        const cancelledFees = [];
+        for (const { feeDoc, fee } of invalidUnpaidFees) {
+          const cancelledFee = {
+            ...fee,
+            baseAmount: 0,
+            discountAmount: 0,
+            lateFeeAmount: 0,
+            totalAmount: 0,
+            paidAmount: 0,
+            dueAmount: 0,
+            status: "cancelled",
+            cancelledAtMs: now,
+            updatedAtMs: now,
+            ledgerVersion: 1,
+          };
+          transaction.update(feeDoc.ref, {
+            baseAmount: 0,
+            discountAmount: 0,
+            lateFeeAmount: 0,
+            totalAmount: 0,
+            paidAmount: 0,
+            dueAmount: 0,
+            status: "cancelled",
+            cancelledAtMs: now,
+            updatedAtMs: now,
+            ledgerVersion: 1,
+          });
+          cancelledFees.push(cancelledFee);
+        }
+        result = publicResult(operationId, action, cancelledFees);
       } else if (action === "update_student_admission_date") {
         const studentId = requiredString(data, "studentId");
         const admissionDateMs = requiredTimestamp(data, "admissionDateMs");
@@ -515,7 +608,18 @@ function createFinancialLedgerHandler({ db }) {
         }
 
         const activeEnrollmentDocs = enrollmentSnap.docs.filter((doc) => doc.get("status") === "active");
-        const batchRefs = [...new Map(activeEnrollmentDocs.map((doc) => [
+        const previousAdmissionPeriodKey = periodForBangladeshTimestamp(
+          Number(studentSnap.get("admissionDateMs") || 0),
+        );
+        // A later/shifted batch freezes its own first period. Editing the
+        // student-level admission date must not backdate that new contract or
+        // duplicate the previous batch's arrears.
+        const admissionLinkedEnrollmentDocs = activeEnrollmentDocs.filter((doc) => {
+          const frozenPeriodKey = monthPeriodKey(doc.get("firstMonthFeePeriod"));
+          return frozenPeriodKey == null || previousAdmissionPeriodKey == null ||
+            frozenPeriodKey === previousAdmissionPeriodKey;
+        });
+        const batchRefs = [...new Map(admissionLinkedEnrollmentDocs.map((doc) => [
           doc.get("batchId"), instituteRef.collection("batches").doc(doc.get("batchId")),
         ])).values()];
         const batchSnaps = await Promise.all(batchRefs.map((ref) => transaction.get(ref)));
@@ -524,7 +628,7 @@ function createFinancialLedgerHandler({ db }) {
         if (firstPeriodKey == null) throw new HttpsError("invalid-argument", "Invalid admission date.");
 
         const enrollmentByBatchId = new Map();
-        for (const enrollmentDoc of activeEnrollmentDocs) {
+        for (const enrollmentDoc of admissionLinkedEnrollmentDocs) {
           const batchId = enrollmentDoc.get("batchId");
           const batchSnap = batchById.get(batchId);
           if (!batchId || !batchSnap?.exists) {
@@ -624,7 +728,6 @@ function createFinancialLedgerHandler({ db }) {
         transaction.update(studentRef, { admissionDateMs, updatedAtMs: now });
         for (const enrollmentInfo of enrollmentByBatchId.values()) {
           transaction.update(enrollmentInfo.doc.ref, {
-            joinedAtMs: admissionDateMs,
             firstMonthFeePeriod: monthLabel(firstPeriodKey),
             firstMonthFeeAmount: enrollmentInfo.firstMonthFeeAmount,
           });
@@ -703,7 +806,7 @@ function createFinancialLedgerHandler({ db }) {
             studentId,
             previousAdmissionDateMs: Number(studentSnap.get("admissionDateMs") || 0),
             admissionDateMs,
-            enrollmentIds: activeEnrollmentDocs.map((doc) => doc.id),
+            enrollmentIds: admissionLinkedEnrollmentDocs.map((doc) => doc.id),
             adjustedUnpaidFeeIds: adjustedFees.map((fee) => fee.id),
             cancelledUnpaidFeeIds: plans.filter((plan) => plan.type === "cancel").map((plan) => plan.fee.id),
             preservedPaidFeeIds: monthlyFeeDocs
@@ -1297,4 +1400,8 @@ function createFinancialLedgerHandler({ db }) {
   };
 }
 
-module.exports = { createFinancialLedgerHandler };
+module.exports = {
+  createFinancialLedgerHandler,
+  hasEligibleCoveredMonth,
+  enrollmentBillingStartPeriodKey,
+};

@@ -1,6 +1,7 @@
 package com.batchfee.edu
 
 import android.os.Bundle
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
@@ -16,6 +17,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.fragment.app.FragmentActivity
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
 import com.batchfee.edu.domain.AccessControl
@@ -89,6 +91,7 @@ class MainActivity : FragmentActivity() {
 @Composable
 private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
     val navController = rememberNavController()
+    val currentBackStackEntry by navController.currentBackStackEntryAsState()
     val lifecycleOwner = LocalLifecycleOwner.current
     val isLoggedIn by SessionManager.currentUserId.collectAsState()
     val sessionRole by SessionManager.currentUserRole.collectAsState()
@@ -291,6 +294,11 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
         
         composable<DashboardRoute> {
             var currentTab by rememberSaveable { mutableStateOf("DashboardRoute") }
+            // More is a dashboard tab rather than a separate navigation entry. Without
+            // this handler Android sees the dashboard as the root and closes the app.
+            BackHandler(enabled = currentTab == "More") {
+                currentTab = "DashboardRoute"
+            }
             com.batchfee.edu.ui.dashboard.DashboardTabsScreen(
                 db = appDb,
                 currentRoute = currentTab,
@@ -320,6 +328,7 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
                             "StaffRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.StaffRoute)
                             "AddStaffRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.AddStaffRoute)
                             "StaffActivityRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.StaffActivityRoute)
+                            "StudentActivityRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.StudentActivityRoute)
                             "RoutineRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.RoutineRoute)
                             "StaffAttendanceRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.StaffAttendanceRoute)
                             "SalaryRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.SalaryRoute)
@@ -568,6 +577,13 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
             )
         }
 
+        composable<StudentActivityRoute> {
+            com.batchfee.edu.ui.students.StudentActivityScreen(
+                db = appDb,
+                onBack = { navController.popBackStack() }
+            )
+        }
+
         composable<RoutineRoute> {
             com.batchfee.edu.ui.batches.RoutineScreen(
                 db = appDb,
@@ -810,6 +826,24 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
                 db = appDb,
                 onBack = { navController.popBackStack() }
             )
+        }
+    }
+
+    // Android can restore a detail destination as the only entry after the process
+    // is recreated. In that case the normal NavController back action would close
+    // the app although the user is still inside a signed-in owner flow. Return them
+    // to the dashboard instead. True root screens keep Android's normal exit behavior.
+    val routeWithoutHistory = currentBackStackEntry?.destination?.route
+    val isRecoverableOwnerDetail = isLoggedIn != null &&
+        navController.previousBackStackEntry == null &&
+        routeWithoutHistory !in setOf(
+            DashboardRoute::class.qualifiedName,
+            SuperAdminRoute::class.qualifiedName,
+            SubscriptionExpiredRoute::class.qualifiedName,
+        )
+    BackHandler(enabled = isRecoverableOwnerDetail) {
+        navController.navigate(DashboardRoute) {
+            popUpTo(navController.graph.id) { inclusive = true }
         }
     }
 }

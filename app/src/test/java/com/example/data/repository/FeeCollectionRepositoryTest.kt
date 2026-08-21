@@ -181,6 +181,44 @@ class FeeCollectionRepositoryTest {
     }
 
     @Test
+    fun ownerDeleteRemovesPaymentAndReceiptAndRestoresOutstandingDue() = runTest {
+        val postedFee = fee(id = "fee-delete").copy(
+            paidAmount = 400.0,
+            dueAmount = 600.0,
+            status = "partially_paid"
+        )
+        val postedPayment = payment(id = "payment-delete", feeId = postedFee.id)
+        val postedReceipt = receipt(id = "receipt-delete", paymentId = postedPayment.id, feeId = postedFee.id)
+        db.feeDao().insertFee(postedFee)
+        db.paymentDao().insertPayment(postedPayment)
+        db.receiptDao().insertReceipt(postedReceipt)
+        gateway.responder = {
+            FinancialOperationResult(
+                operationId = OPERATION_ID,
+                action = "owner_delete_payment",
+                fees = listOf(postedFee.copy(paidAmount = 0.0, dueAmount = 1_000.0, status = "unpaid")),
+                deletedPaymentIds = listOf(postedPayment.id),
+                deletedReceiptIds = listOf(postedReceipt.id)
+            )
+        }
+
+        repository.ownerDeletePayment(
+            paymentId = postedPayment.id,
+            instituteId = INSTITUTE_ID,
+            reason = "Deleted by institute owner",
+            now = 4_000L,
+            operationId = OPERATION_ID
+        )
+
+        assertNull(db.paymentDao().getPaymentById(postedPayment.id, INSTITUTE_ID))
+        assertNull(db.receiptDao().getReceiptByPaymentIdOnce(INSTITUTE_ID, postedPayment.id))
+        val reopenedFee = db.feeDao().getFeeById(postedFee.id, INSTITUTE_ID)!!
+        assertEquals(0.0, reopenedFee.paidAmount, MONEY_DELTA)
+        assertEquals(1_000.0, reopenedFee.dueAmount, MONEY_DELTA)
+        assertEquals("unpaid", reopenedFee.status)
+    }
+
+    @Test
     fun trustedRejectionIsNotRetriedAutomatically() = runTest {
         gateway.responder = {
             throw FinancialOperationRejectedException("Duplicate fee")

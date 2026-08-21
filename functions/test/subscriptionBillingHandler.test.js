@@ -120,7 +120,7 @@ function handlerFor(db) {
   });
 }
 
-test("server creates a canonical quote and rejects a duplicate payment reference", async () => {
+test("server stores a canonical sender number and keeps one pending request per institute", async () => {
   const db = seededDb(Date.now());
   const handler = handlerFor(db);
   const result = await handler({
@@ -132,14 +132,15 @@ test("server creates a canonical quote and rejects a duplicate payment reference
       requestedPlanId: "plan_growth",
       durationMonths: 6,
       paymentMethod: "bKash",
-      transactionReference: "ABCD-123456",
+      senderPhone: "01710000000",
     },
   });
   assert.equal(result.request.amountPaid, 5394.6);
-  assert.equal(result.request.transactionLast4, "3456");
+  assert.equal(result.request.senderPhone, "+8801710000000");
+  assert.equal(result.request.studentLimitAtRequest, 500);
   const storedRequest = db.documents.get(`subscriptionRequests/${result.request.requestId}`);
   assert.equal(storedRequest.transactionReference, undefined);
-  assert.equal(typeof storedRequest.paymentReferenceHash, "string");
+  assert.equal(storedRequest.paymentReferenceHash, undefined);
 
   await assert.rejects(
     handler({
@@ -151,11 +152,34 @@ test("server creates a canonical quote and rejects a duplicate payment reference
         requestedPlanId: "plan_growth",
         durationMonths: 6,
         paymentMethod: "bkash",
-        transactionReference: "ABCD123456",
+        senderPhone: "+8801710000000",
       },
     }),
-    (error) => error.code === "already-exists",
+    (error) => error.code === "failed-precondition" && error.message.includes("waiting for review"),
   );
+
+  await handler({
+    auth: { uid: "super-admin" },
+    data: {
+      action: "reject_request",
+      instituteId: "institute-a",
+      operationId: "sub_operation_00000012",
+      requestId: result.request.requestId,
+    },
+  });
+  const renewal = await handler({
+    auth: { uid: "institute-a" },
+    data: {
+      action: "submit_request",
+      instituteId: "institute-a",
+      operationId: "sub_operation_00000013",
+      requestedPlanId: "plan_growth",
+      durationMonths: 6,
+      paymentMethod: "bkash",
+      senderPhone: "01710000000",
+    },
+  });
+  assert.equal(renewal.request.senderPhone, "+8801710000000");
 });
 
 test("approval preserves trial history, starts after paid access, and writes no student-fee receipt", async () => {
@@ -171,7 +195,7 @@ test("approval preserves trial history, starts after paid access, and writes no 
       requestedPlanId: "plan_growth",
       durationMonths: 1,
       paymentMethod: "nagad",
-      transactionReference: "NAGAD-ABC12345",
+      senderPhone: "01810000000",
     },
   });
   const result = await handler({
@@ -214,7 +238,7 @@ test("request rejects a plan that cannot support legacy active students without 
         requestedPlanId: "plan_growth",
         durationMonths: 1,
         paymentMethod: "bkash",
-        transactionReference: "COUNT-ABC12345",
+        senderPhone: "01910000000",
       },
     }),
     (error) => error.code === "failed-precondition" && error.message.includes("501 active students"),
@@ -242,7 +266,7 @@ test("a lower plan cannot reduce a live paid institute before its current period
         requestedPlanId: "plan_basic",
         durationMonths: 1,
         paymentMethod: "bkash",
-        transactionReference: "DOWNGRADE-ABC12345",
+        senderPhone: "01710000001",
       },
     }),
     assertEarlyDowngrade,
@@ -302,7 +326,7 @@ test("a Free Trial cannot be submitted as a paid subscription request", async ()
         requestedPlanId: "plan_free_trial",
         durationMonths: 1,
         paymentMethod: "bkash",
-        transactionReference: "FREE-ABC12345",
+        senderPhone: "01610000000",
       },
     }),
     (error) => error.code === "failed-precondition" && error.message.includes("Free Trial"),

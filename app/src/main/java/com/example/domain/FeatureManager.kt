@@ -50,8 +50,9 @@ object FeatureManager {
     }
     
     fun canAddBatch(currentCount: Int, plan: SubscriptionPlanEntity?): Boolean {
-        if (plan == null) return false
-        return currentCount < plan.maxBatches
+        // Batch capacity is not part of any subscription plan. The trusted
+        // backend still checks that the institute subscription is active.
+        return plan != null
     }
 }
 

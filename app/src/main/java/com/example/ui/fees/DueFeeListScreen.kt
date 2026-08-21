@@ -112,7 +112,6 @@ private data class DueStudentGroup(
     val items: List<DueFeeDetail>
 ) {
     val totalDue: Double = items.sumOf { it.dueAmount }
-    val monthCount: Int = items.map { it.feePeriod }.distinct().size
 }
 
 private data class BatchDueStat(val batchName: String, val amount: Double)
@@ -521,12 +520,12 @@ private fun DueStudentCard(group: DueStudentGroup, onSms: () -> Unit, onWhatsApp
                     Spacer(Modifier.height(6.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         TinyStatusChip(if (group.studentStatus.isClosedStatus()) "Close" else "Active", if (group.studentStatus.isClosedStatus()) AccentRed else WAGreen)
-                        TinyStatusChip("${group.monthCount} month${if (group.monthCount == 1) "" else "s"}", AccentCyan)
+                        TinyStatusChip("${group.items.size} due item${if (group.items.size == 1) "" else "s"}", AccentCyan)
                     }
                 }
                 Column(horizontalAlignment = Alignment.End) {
                     Text(formatCurrency(group.totalDue), color = AccentRed, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                    Text("${group.items.size} due item${if (group.items.size == 1) "" else "s"}", color = TextMuted, fontSize = 11.sp)
+                    Text("Total due", color = TextMuted, fontSize = 11.sp)
                 }
             }
 

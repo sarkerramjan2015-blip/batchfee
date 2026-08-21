@@ -2,6 +2,7 @@ package com.batchfee.edu.domain
 
 import com.batchfee.edu.data.models.FeeEntity
 import java.util.Calendar
+import java.util.TimeZone
 import kotlin.math.round
 
 data class ComputedMonthDue(
@@ -15,6 +16,7 @@ data class ComputedMonthDue(
 
 object MonthlyDueCalculator {
     private val monthNames = listOf("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+    private val billingTimeZone: TimeZone = TimeZone.getTimeZone("Asia/Dhaka")
 
     /**
      * Returns per-month outstanding items for one batch from admission through
@@ -39,14 +41,14 @@ object MonthlyDueCalculator {
     ): List<ComputedMonthDue> {
         if (admissionDateMs <= 0L || monthlyFeeAmount <= 0.0) return emptyList()
 
-        val startCal = Calendar.getInstance().apply { timeInMillis = admissionDateMs }
-        val endCal = Calendar.getInstance().apply { timeInMillis = asOfMs }
+        val startCal = Calendar.getInstance(billingTimeZone).apply { timeInMillis = admissionDateMs }
+        val endCal = Calendar.getInstance(billingTimeZone).apply { timeInMillis = asOfMs }
         if (billingEndedAtMs != null && billingEndedAtMs > 0L) {
             // A student who left during August remains responsible for all
             // completed months up to July. The departure month itself belongs
             // to the new batch (or is not due yet), so the normal strict
             // before-month loop must stop at the departure month.
-            val endedCal = Calendar.getInstance().apply {
+            val endedCal = Calendar.getInstance(billingTimeZone).apply {
                 timeInMillis = billingEndedAtMs
                 set(Calendar.DAY_OF_MONTH, 1)
             }
@@ -65,6 +67,13 @@ object MonthlyDueCalculator {
         // Monthly fees are arrears: only months strictly before the current
         // billing month can become outstanding. One-time fees (exam/admission)
         // are handled by their own callers and remain due immediately.
+        val resolvedFirstMonthPeriod = firstMonthFeePeriod
+            ?.takeIf { it.equals(periodFor(admissionDateMs), ignoreCase = true) }
+            ?: periodFor(admissionDateMs)
+        val resolvedFirstMonthAmount = firstMonthFeeAmount
+            ?.takeIf { firstMonthFeePeriod.equals(resolvedFirstMonthPeriod, ignoreCase = true) }
+            ?: calculateFirstMonthFee(monthlyFeeAmount, admissionDateMs)
+
         while (year < targetYear || (year == targetYear && month < targetMonth)) {
             val period = "${monthNames[month]} $year"
             // A real monthly/advance record owns every month written in its
@@ -79,8 +88,8 @@ object MonthlyDueCalculator {
                 val required = monthlyFeeAmountForPeriod(
                     period = period,
                     monthlyFeeAmount = monthlyFeeAmount,
-                    firstMonthFeePeriod = firstMonthFeePeriod,
-                    firstMonthFeeAmount = firstMonthFeeAmount,
+                    firstMonthFeePeriod = resolvedFirstMonthPeriod,
+                    firstMonthFeeAmount = resolvedFirstMonthAmount,
                     customMonthlyFeeAmount = customMonthlyFeeAmount,
                     customFeeEffectiveFromPeriod = customFeeEffectiveFromPeriod
                 )
@@ -108,7 +117,7 @@ object MonthlyDueCalculator {
      */
     fun calculateFirstMonthFee(monthlyFeeAmount: Double, admissionDateMs: Long): Double {
         if (monthlyFeeAmount <= 0.0 || admissionDateMs <= 0L) return 0.0
-        val calendar = Calendar.getInstance().apply { timeInMillis = admissionDateMs }
+        val calendar = Calendar.getInstance(billingTimeZone).apply { timeInMillis = admissionDateMs }
         val admissionDay = calendar.get(Calendar.DAY_OF_MONTH).coerceAtMost(30)
         val billableDays = (31 - admissionDay).coerceAtLeast(1)
         return round((monthlyFeeAmount / 30.0) * billableDays)
@@ -116,8 +125,56 @@ object MonthlyDueCalculator {
 
     fun periodFor(admissionDateMs: Long): String {
         if (admissionDateMs <= 0L) return ""
-        val calendar = Calendar.getInstance().apply { timeInMillis = admissionDateMs }
+        val calendar = Calendar.getInstance(billingTimeZone).apply { timeInMillis = admissionDateMs }
         return "${monthNames[calendar.get(Calendar.MONTH)]} ${calendar.get(Calendar.YEAR)}"
+    }
+
+    /**
+     * Resolves the contractual start of one batch enrollment.
+     *
+     * New and shifted enrollments freeze their own first billing period, which
+     * must win over the student-level admission date. Legacy enrollments have
+     * no frozen terms, so the admission date is their source of truth; their
+     * later local/cloud sync timestamp must not silently erase valid dues.
+     */
+    fun effectiveBillingStartMs(
+        studentAdmissionDateMs: Long,
+        enrollmentJoinedAtMs: Long,
+        firstMonthFeePeriod: String? = null
+    ): Long {
+        periodStartMs(firstMonthFeePeriod)?.let { return it }
+        return studentAdmissionDateMs.takeIf { it > 0L }
+            ?: enrollmentJoinedAtMs.takeIf { it > 0L }
+            ?: 0L
+    }
+
+    /**
+     * Returns true only when every month in a saved monthly/advance fee sits
+     * inside its enrollment's valid billing window.  A mixed old record is
+     * deliberately hidden rather than asking the owner to collect an amount
+     * containing an invalid month. Fully invalid unpaid legacy rows are then
+     * safely cancelled by the trusted ledger repair.
+     */
+    fun isMonthlyFeeWithinEnrollmentWindow(
+        feePeriod: String,
+        studentAdmissionDateMs: Long,
+        enrollmentJoinedAtMs: Long,
+        firstMonthFeePeriod: String? = null,
+        billingEndedAtMs: Long? = null
+    ): Boolean {
+        val startMs = effectiveBillingStartMs(
+            studentAdmissionDateMs,
+            enrollmentJoinedAtMs,
+            firstMonthFeePeriod
+        )
+        val startKey = periodKey(periodFor(startMs)) ?: return false
+        val endKey = billingEndedAtMs
+            ?.takeIf { it > 0L }
+            ?.let { periodKey(periodFor(it)) }
+        val coveredKeys = billingPeriodsCoveredBy(feePeriod).mapNotNull { periodKey(it) }
+        return coveredKeys.isNotEmpty() && coveredKeys.all { key ->
+            key >= startKey && (endKey == null || key < endKey)
+        }
     }
 
     /**
@@ -151,15 +208,24 @@ object MonthlyDueCalculator {
 
     /** Compares "MMM yyyy" values without relying on the phone locale. */
     private fun comparePeriods(left: String, right: String): Int {
-        fun key(value: String): Int? {
-            val cleaned = value.trim()
-            val month = monthNames.indexOfFirst { cleaned.startsWith(it, ignoreCase = true) }
-            val year = Regex("\\d{4}").find(cleaned)?.value?.toIntOrNull()
-            return if (month >= 0 && year != null) year * 12 + month else null
-        }
-        val leftKey = key(left)
-        val rightKey = key(right)
+        val leftKey = periodKey(left)
+        val rightKey = periodKey(right)
         return if (leftKey != null && rightKey != null) leftKey.compareTo(rightKey) else -1
+    }
+
+    private fun periodKey(value: String): Int? {
+        val cleaned = value.trim()
+        val month = monthNames.indexOfFirst { cleaned.startsWith(it, ignoreCase = true) }
+        val year = Regex("\\d{4}").find(cleaned)?.value?.toIntOrNull()
+        return if (month >= 0 && year != null) year * 12 + month else null
+    }
+
+    private fun periodStartMs(value: String?): Long? {
+        val key = value?.let(::periodKey) ?: return null
+        return Calendar.getInstance(billingTimeZone).apply {
+            clear()
+            set(key / 12, key % 12, 1, 12, 0, 0)
+        }.timeInMillis
     }
 
     /**
@@ -220,7 +286,7 @@ object MonthlyDueCalculator {
         val year = parts[1].toIntOrNull() ?: return false
         if (monthIdx < 0) return false
 
-        val now = Calendar.getInstance().apply { timeInMillis = asOfMs }
+        val now = Calendar.getInstance(billingTimeZone).apply { timeInMillis = asOfMs }
         val feeYearMonth = year * 12 + monthIdx
         val currentYearMonth = now.get(Calendar.YEAR) * 12 + now.get(Calendar.MONTH)
         return feeYearMonth < currentYearMonth

@@ -81,6 +81,7 @@ fun StudentFeeScreen(onBack: () -> Unit, onOpenDocuments: () -> Unit) {
     var actualFees by remember(studentId, instituteId) { mutableStateOf<List<FeeCardInfo>>(emptyList()) }
     var billingEnrollments by remember(studentId, instituteId) { mutableStateOf<List<StudentBillingEnrollment>>(emptyList()) }
     var billingBatches by remember(studentId, instituteId) { mutableStateOf<Map<String, StudentBillingBatch>>(emptyMap()) }
+    var studentAdmissionDateMs by remember(studentId, instituteId) { mutableLongStateOf(0L) }
     var receipts by remember(studentId, instituteId) { mutableStateOf<List<PaymentReceipt>>(emptyList()) }
     var totalAmount by remember(studentId) { mutableStateOf(0.0) }
     var totalPaid by remember(studentId) { mutableStateOf(0.0) }
@@ -101,17 +102,28 @@ fun StudentFeeScreen(onBack: () -> Unit, onOpenDocuments: () -> Unit) {
         }
     }
 
-    LaunchedEffect(actualFees, billingEnrollments, billingBatches) {
+    LaunchedEffect(actualFees, billingEnrollments, billingBatches, studentAdmissionDateMs) {
         // The current month's monthly fee is not overdue. Keep one-time fees
         // (including exam fees) immediately visible, and retain paid monthly
         // history, but do not present an unpaid running-month fee as due.
-        val visibleActualFees = actualFees.filterNot { fee ->
+        fun isEligibleMonthlyFee(fee: FeeCardInfo): Boolean = billingEnrollments
+            .filter { it.batchId == fee.batchId }
+            .any { enrollment ->
+                MonthlyDueCalculator.isMonthlyFeeWithinEnrollmentWindow(
+                    feePeriod = fee.monthYear.orEmpty(),
+                    studentAdmissionDateMs = studentAdmissionDateMs,
+                    enrollmentJoinedAtMs = enrollment.joinedAtMs,
+                    firstMonthFeePeriod = enrollment.firstMonthFeePeriod,
+                    billingEndedAtMs = enrollment.leftAtMs
+                )
+            }
+        val activeActualFees = actualFees.filterNot { it.status.equals("cancelled", ignoreCase = true) }
+        val visibleActualFees = activeActualFees.filterNot { fee ->
             MonthlyDueCalculator.isMonthlyFeeType(fee.feeType.orEmpty()) &&
                 fee.dueAmount > 0.0 &&
-                !MonthlyDueCalculator.isMonthlyInstallmentDue(
-                    fee.feeType.orEmpty(),
-                    fee.monthYear.orEmpty()
-                )
+                (!MonthlyDueCalculator.isMonthlyInstallmentDue(
+                    fee.feeType.orEmpty(), fee.monthYear.orEmpty()
+                ) || !isEligibleMonthlyFee(fee))
         }
         val actualMonthlyKeys = visibleActualFees
             .filter { MonthlyDueCalculator.isMonthlyFeeType(it.feeType.orEmpty()) }
@@ -119,14 +131,19 @@ fun StudentFeeScreen(onBack: () -> Unit, onOpenDocuments: () -> Unit) {
             .toSet()
         val virtualMonthly = billingEnrollments.flatMap { enrollment ->
             val batch = billingBatches[enrollment.batchId] ?: return@flatMap emptyList()
-            val existingMonthly = actualFees
+            val existingMonthly = activeActualFees
                 .filter {
                     it.batchId == batch.id &&
                         MonthlyDueCalculator.isMonthlyFeeType(it.feeType.orEmpty())
                 }
                 .map { it.toLedgerFee(instituteId, studentId) }
+            val billingStartMs = MonthlyDueCalculator.effectiveBillingStartMs(
+                studentAdmissionDateMs,
+                enrollment.joinedAtMs,
+                enrollment.firstMonthFeePeriod
+            )
             MonthlyDueCalculator.computeMonthlyOutstandingItems(
-                admissionDateMs = enrollment.joinedAtMs,
+                admissionDateMs = billingStartMs,
                 monthlyFeeAmount = batch.monthlyFeeAmount,
                 batchId = batch.id,
                 batchName = batch.name,
@@ -156,7 +173,7 @@ fun StudentFeeScreen(onBack: () -> Unit, onOpenDocuments: () -> Unit) {
             .filter { it.status.equals("active", ignoreCase = true) }
             .mapNotNull { enrollment ->
                 val batch = billingBatches[enrollment.batchId] ?: return@mapNotNull null
-                val alreadyCreated = actualFees.any {
+                val alreadyCreated = activeActualFees.any {
                     it.batchId == batch.id && it.feeType.equals("admission_fee", ignoreCase = true)
                 }
                 if (batch.admissionFeeAmount <= 0.0 || alreadyCreated) null else FeeCardInfo(
@@ -186,6 +203,13 @@ fun StudentFeeScreen(onBack: () -> Unit, onOpenDocuments: () -> Unit) {
         } else {
         val fs = FirebaseFirestore.getInstance()
         val listeners = mutableListOf<ListenerRegistration>()
+        listeners += fs.collection("institutes").document(instituteId).collection("students")
+            .document(studentId)
+            .addSnapshotListener { doc, error ->
+                reportListenerError(error)
+                if (error != null) return@addSnapshotListener
+                studentAdmissionDateMs = (doc?.get("admissionDateMs") as? Number)?.toLong() ?: 0L
+            }
         listeners += fs.collection("institutes").document(instituteId).collection("batch_students")
             .whereEqualTo("studentId", studentId)
             .addSnapshotListener { snap, error ->

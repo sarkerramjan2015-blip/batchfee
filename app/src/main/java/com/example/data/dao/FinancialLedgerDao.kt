@@ -17,6 +17,9 @@ interface FinancialLedgerDao {
     @Query("SELECT * FROM payment_reversals WHERE instituteId = :instituteId AND paymentId = :paymentId LIMIT 1")
     suspend fun getReversalForPayment(instituteId: String, paymentId: String): PaymentReversalEntity?
 
+    @Query("DELETE FROM payment_reversals WHERE instituteId = :instituteId AND id = :reversalId")
+    suspend fun deleteReversalById(instituteId: String, reversalId: String)
+
     @Upsert
     suspend fun upsertOutbox(operation: FinancialOutboxEntity)
 

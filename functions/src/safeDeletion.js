@@ -87,12 +87,12 @@ function seatCollection(instituteRef, entityType) {
   return null;
 }
 
-function seatLimit(institute, plan, entityType) {
-  const stored = entityType === "student" ? institute.studentLimit
-    : entityType === "staff" ? institute.staffLimit : null;
+// Only student seats are subscription-controlled. Archived batches and staff
+// can always be restored while the institute subscription itself is active.
+function studentSeatLimit(institute, plan) {
+  const stored = institute.studentLimit;
   if (Number.isSafeInteger(stored) && stored > 0) return stored;
-  const configured = entityType === "student" ? plan.maxStudents
-    : entityType === "staff" ? plan.maxUsers : plan.maxBatches;
+  const configured = plan.maxStudents;
   if (!Number.isSafeInteger(configured) || configured < 1) {
     throw new HttpsError("failed-precondition", "The subscription plan has no valid limit configuration.");
   }
@@ -407,9 +407,9 @@ function createSafeDeletionHandler({ db, adminAuth }) {
         const previous = stateSnap.get("previous") || {};
         authUid = stateSnap.get("authUid") || authUid;
         restoreStudentAccess = stateSnap.get("restoreStudentAccess") === true;
-        const unlimitedTrialStudents = parsed.entityType === "student" &&
-          hasUnlimitedTrialStudents(institute, now);
-        if (seatCountSnap && !unlimitedTrialStudents) {
+        const needsStudentSeatCheck = parsed.entityType === "student" &&
+          !hasUnlimitedTrialStudents(institute, now);
+        if (seatCountSnap && needsStudentSeatCheck) {
           const planSnap = await transaction.get(
             db.collection("subscription_plans").doc(institute.currentPlanId || "plan_free_trial"),
           );
@@ -417,7 +417,7 @@ function createSafeDeletionHandler({ db, adminAuth }) {
             throw new HttpsError("failed-precondition", "Subscription plan is unavailable.");
           }
           const count = seatCountSnap.data().count;
-          const limit = seatLimit(institute, planSnap.data(), parsed.entityType);
+          const limit = studentSeatLimit(institute, planSnap.data());
           if (count >= limit) {
             throw new HttpsError("resource-exhausted", `Cannot restore: ${parsed.entityType} limit (${limit}) has been reached.`);
           }

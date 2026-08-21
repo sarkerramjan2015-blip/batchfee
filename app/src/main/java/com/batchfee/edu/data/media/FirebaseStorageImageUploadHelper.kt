@@ -5,6 +5,8 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Matrix
+import android.media.ExifInterface
 import android.net.Uri
 import android.util.Base64
 import com.batchfee.edu.domain.SessionManager
@@ -61,12 +63,6 @@ object FirebaseStorageImageUploadHelper {
         if (!cachedPath.isNullOrBlank()) {
             val file = File(cachedPath)
             if (file.isFile && file.length() > 0L) return Uri.fromFile(file).toString()
-        }
-        // Earlier app versions kept the newly chosen institute logo only in cache.
-        // Adopt that most recent copy once so existing installations can render
-        // their current logo in PDFs even before the next logo change.
-        if (reference.startsWith("https://") || reference.startsWith("http://")) {
-            recoverRecentInstituteLogo(context, reference)?.let { return it }
         }
         return reference
     }
@@ -158,22 +154,6 @@ object FirebaseStorageImageUploadHelper {
         }
     }
 
-    private fun recoverRecentInstituteLogo(context: Context, reference: String): String? = runCatching {
-        val candidate = context.cacheDir.listFiles()
-            ?.asSequence()
-            ?.filter { it.isFile && it.length() > 0L && it.name.startsWith("institute_logo_") }
-            ?.maxByOrNull(File::lastModified)
-            ?: return null
-        val directory = File(context.filesDir, "secure_media").apply { mkdirs() }
-        val target = File(directory, "${cacheKey(reference)}.jpg")
-        candidate.inputStream().use { input -> target.outputStream().use { input.copyTo(it) } }
-        context.getSharedPreferences("secure_media_cache", Context.MODE_PRIVATE)
-            .edit()
-            .putString(cacheKey(reference), target.absolutePath)
-            .apply()
-        Uri.fromFile(target).toString()
-    }.getOrNull()
-
     private fun cacheKey(reference: String): String = MessageDigest.getInstance("SHA-256")
         .digest(reference.toByteArray(Charsets.UTF_8))
         .joinToString("") { "%02x".format(it) }
@@ -204,6 +184,20 @@ object FirebaseStorageImageUploadHelper {
         } ?: throw IllegalArgumentException("Unable to decode the selected image.")
 
         var working = scaleToLimit(decoded, policy.maxDimension)
+        val orientationCorrected = applyExifOrientation(
+            bitmap = working,
+            // This recovery is intentionally limited to institute branding;
+            // student and staff photo flows keep their existing behavior.
+            orientation = if (policy == ImagePolicy.INSTITUTE_LOGO) {
+                readExifOrientation(context, sourceUri)
+            } else {
+                ExifInterface.ORIENTATION_NORMAL
+            },
+        )
+        if (orientationCorrected !== working && working !== decoded) {
+            working.recycle()
+        }
+        working = orientationCorrected
         if (working.hasAlpha()) {
             val withWhiteBackground = Bitmap.createBitmap(
                 working.width,
@@ -274,6 +268,39 @@ object FirebaseStorageImageUploadHelper {
             (bitmap.height * scale).toInt().coerceAtLeast(1),
             true
         )
+    }
+
+    private fun readExifOrientation(context: Context, sourceUri: Uri): Int = runCatching {
+        context.contentResolver.openInputStream(sourceUri)?.use { input ->
+            ExifInterface(input).getAttributeInt(
+                ExifInterface.TAG_ORIENTATION,
+                ExifInterface.ORIENTATION_NORMAL,
+            )
+        } ?: ExifInterface.ORIENTATION_NORMAL
+    }.getOrDefault(ExifInterface.ORIENTATION_NORMAL)
+
+    private fun applyExifOrientation(bitmap: Bitmap, orientation: Int): Bitmap {
+        val matrix = Matrix()
+        when (orientation) {
+            ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.setScale(-1f, 1f)
+            ExifInterface.ORIENTATION_ROTATE_180 -> matrix.setRotate(180f)
+            ExifInterface.ORIENTATION_FLIP_VERTICAL -> {
+                matrix.setRotate(180f)
+                matrix.postScale(-1f, 1f)
+            }
+            ExifInterface.ORIENTATION_TRANSPOSE -> {
+                matrix.setRotate(90f)
+                matrix.postScale(-1f, 1f)
+            }
+            ExifInterface.ORIENTATION_ROTATE_90 -> matrix.setRotate(90f)
+            ExifInterface.ORIENTATION_TRANSVERSE -> {
+                matrix.setRotate(-90f)
+                matrix.postScale(-1f, 1f)
+            }
+            ExifInterface.ORIENTATION_ROTATE_270 -> matrix.setRotate(-90f)
+            else -> return bitmap
+        }
+        return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
     }
 
     private enum class ImagePolicy(

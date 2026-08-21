@@ -139,6 +139,25 @@ test("permanent purge clears student authentication artifacts", async () => {
   assert.deepEqual(deletedAuthUsers, ["student-auth-uid"]);
 });
 
+test("permanent purge accepts an older archived record without a legacy status value", async () => {
+  const now = Date.now();
+  const student = archivedStudent();
+  delete student.status;
+  const db = new FakeDb({
+    "institutes/institute-a": liveInstitute(now),
+    "institutes/institute-a/students/student-a": student,
+  });
+  const handler = createPermanentStudentPurgeHandler({
+    db,
+    adminAuth: { deleteUser: async () => {} },
+    bucket: { name: "bucket", file: () => ({ delete: async () => {} }) },
+  });
+
+  const result = await handler(request());
+  assert.deepEqual(result, { studentId: "student-a", permanentlyDeleted: true });
+  assert.equal(db.documents.has("institutes/institute-a/students/student-a"), false);
+});
+
 test("managed institute owner can purge an archived student", async () => {
   const now = Date.now();
   const db = new FakeDb({

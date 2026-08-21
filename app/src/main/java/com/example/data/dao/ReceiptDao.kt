@@ -8,6 +8,9 @@ import kotlinx.coroutines.flow.Flow
 interface ReceiptDao {
     @Upsert
     suspend fun insertReceipt(receipt: ReceiptEntity)
+
+    @Query("SELECT * FROM receipts WHERE instituteId = :instituteId")
+    suspend fun getAllReceiptsOnce(instituteId: String): List<ReceiptEntity>
     
     @Query("SELECT * FROM receipts WHERE instituteId = :instituteId AND paymentId = :paymentId LIMIT 1")
     fun getReceiptByPaymentId(instituteId: String, paymentId: String): Flow<ReceiptEntity?>

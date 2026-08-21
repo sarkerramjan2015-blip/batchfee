@@ -61,7 +61,7 @@ import java.util.Locale
         com.batchfee.edu.data.models.HomeworkSubmissionEntity::class,
         com.batchfee.edu.data.models.AssignmentSubmissionEntity::class
     ],
-    version = 29,
+    version = 30,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -400,6 +400,16 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** Adds an auditable running amount for unpaid, partial and fully-paid salaries. */
+        internal val MIGRATION_29_30 = object : androidx.room.migration.Migration(29, 30) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE salaries ADD COLUMN paidAmount REAL NOT NULL DEFAULT 0")
+                // Earlier releases only stored a paid/unpaid flag. Preserve those paid
+                // records as fully paid instead of showing their complete salary as due.
+                db.execSQL("UPDATE salaries SET paidAmount = netSalary WHERE status = 'paid' AND paidAmount = 0")
+            }
+        }
+
         fun getDatabase(context: Context, scope: CoroutineScope): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val builder = Room.databaseBuilder(
@@ -407,7 +417,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "batchfee_database"
                 )
-                .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_18_19, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29)
+                .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_18_19, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30)
 
                 if (BuildConfig.DEBUG) {
                     builder.fallbackToDestructiveMigration()
@@ -1200,6 +1210,7 @@ abstract class AppDatabase : RoomDatabase() {
                             basicSalary = s.salary, bonusAmount = if (mi == 0) 0.0 else 1000.0,
                             deductionAmount = 0.0, advanceAmount = 0.0,
                             netSalary = if (mi == 0) s.salary else s.salary + 1000.0,
+                            paidAmount = if (status == "paid") (if (mi == 0) s.salary else s.salary + 1000.0) else 0.0,
                             paymentMethod = "bank_transfer",
                             paymentDateMs = if (status == "paid") now - (mi * 30L * dayMs) else null,
                             status = status, salarySlipNumber = slipNo,

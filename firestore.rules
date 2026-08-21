@@ -675,6 +675,19 @@ service cloud.firestore {
         && request.resource.data.userId == request.auth.uid;
     }
 
+    // Student app activity is written only by a trusted Callable Function after
+    // verifying the short-lived student token. Owners have a realtime,
+    // read-only view; students and staff cannot forge or alter it.
+    match /institutes/{instituteId}/student_activity/{activityId} {
+      allow read: if !isStudentAuthRequest() && isActiveInstitutePrincipal(instituteId);
+      allow write: if false;
+    }
+
+    match /institutes/{instituteId}/student_activity_presence/{studentId} {
+      allow read: if !isStudentAuthRequest() && isActiveInstitutePrincipal(instituteId);
+      allow write: if false;
+    }
+
     match /institutes/{instituteId}/works/{workId} {
       allow read: if (isStudentAuthRequest() && isStudentOf(instituteId))
         || (!isStudentAuthRequest()

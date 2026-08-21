@@ -308,7 +308,12 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
                         studentId = id,
                         admissionDateMs = admissionDateMs
                     )
-                    syncLocalActiveEnrollmentDates(instId, id, admissionDateMs)
+                    syncLocalActiveEnrollmentDates(
+                        instituteId = instId,
+                        studentId = id,
+                        previousAdmissionDateMs = existing.admissionDateMs,
+                        admissionDateMs = admissionDateMs
+                    )
                 }
                 // An ordinary profile update must reach Firestore before the screen reports
                 // success. The previous best-effort path could look saved on this device while
@@ -351,14 +356,18 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
     private suspend fun syncLocalActiveEnrollmentDates(
         instituteId: String,
         studentId: String,
+        previousAdmissionDateMs: Long,
         admissionDateMs: Long
     ) = withContext(Dispatchers.IO) {
         val batchesById = db.batchDao().getBatchesByInstituteOnce(instituteId).associateBy { it.id }
         db.batchStudentDao().getActiveEnrollmentsForStudentOnce(studentId, instituteId).forEach { enrollment ->
+            val previousAdmissionPeriod = MonthlyDueCalculator.periodFor(previousAdmissionDateMs)
+            val admissionLinked = enrollment.firstMonthFeePeriod.isNullOrBlank() ||
+                enrollment.firstMonthFeePeriod.equals(previousAdmissionPeriod, ignoreCase = true)
+            if (!admissionLinked) return@forEach
             val batch = batchesById[enrollment.batchId] ?: return@forEach
             db.batchStudentDao().enrollStudent(
                 enrollment.copy(
-                    joinedAtMs = admissionDateMs,
                     firstMonthFeePeriod = MonthlyDueCalculator.periodFor(admissionDateMs),
                     firstMonthFeeAmount = MonthlyDueCalculator.calculateFirstMonthFee(
                         batch.monthlyFeeAmount,

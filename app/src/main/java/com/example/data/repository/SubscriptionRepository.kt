@@ -41,15 +41,15 @@ class SubscriptionRepository(
 
     /**
      * The Function, not the mobile app, resolves the current plan price and owns
-     * duplicate-payment checks. A raw transaction reference is never persisted;
-     * the Function stores only its hash and last four characters.
+     * sender-number validation, plan quote, and one-pending-request protection.
+     * The owner never chooses the paid amount or student capacity.
      */
     suspend fun submitRequest(
         instituteId: String,
         requestedPlanId: String,
         durationMonths: Int,
         paymentMethod: String,
-        transactionReference: String,
+        senderPhone: String,
         operationId: String = UUID.randomUUID().toString()
     ): SubscriptionRequest {
         val result = commit(
@@ -60,7 +60,7 @@ class SubscriptionRepository(
                 "requestedPlanId" to requestedPlanId,
                 "durationMonths" to durationMonths,
                 "paymentMethod" to paymentMethod,
-                "transactionReference" to transactionReference
+                "senderPhone" to senderPhone
             )
         )
         return SubscriptionRequest.fromFirestore(

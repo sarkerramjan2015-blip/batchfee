@@ -5,6 +5,7 @@ const test = require("node:test");
 const {
   addCalendarMonths,
   maskedTransactionReference,
+  normalizeBangladeshiMobileNumber,
   quoteForPlan,
   subscriptionStartMs,
   subscriptionStatusFor,
@@ -37,6 +38,13 @@ test("payment references are normalized, hashed, and only their last four charac
     transactionReferenceHash("AB12CD34"),
   );
   assert.throws(() => transactionReferenceHash("short"), /Invalid transaction reference/);
+});
+
+test("sender numbers accept common Bangladeshi formats and keep one canonical value", () => {
+  assert.equal(normalizeBangladeshiMobileNumber("01710000000"), "+8801710000000");
+  assert.equal(normalizeBangladeshiMobileNumber("+880 1710-000000"), "+8801710000000");
+  assert.throws(() => normalizeBangladeshiMobileNumber("01110000000"), /valid Bangladeshi sending number/);
+  assert.throws(() => normalizeBangladeshiMobileNumber("0171000"), /valid Bangladeshi sending number/);
 });
 
 test("paid expiry controls the effective status", () => {

@@ -298,21 +298,35 @@ fun StudentProfileScreen(
             }
         } else {
             val s = student!!
-            val computedTotalDue = remember(feeHistory, batches, billingEnrollments) {
+            val computedTotalDue = remember(feeHistory, batches, billingEnrollments, s.admissionDateMs) {
                 var computed = feeHistory.filter { !MonthlyDueCalculator.isMonthlyFeeType(it.feeType) }.sumOf { it.dueAmount }
                 computed += feeHistory.filter {
                     it.dueAmount > 0.0 &&
-                        MonthlyDueCalculator.isMonthlyInstallmentDue(it.feeType, it.feePeriod)
+                        MonthlyDueCalculator.isMonthlyInstallmentDue(it.feeType, it.feePeriod) &&
+                        billingEnrollments.filter { enrollment -> enrollment.batchId == it.batchId }.any { enrollment ->
+                            MonthlyDueCalculator.isMonthlyFeeWithinEnrollmentWindow(
+                                feePeriod = it.feePeriod,
+                                studentAdmissionDateMs = s.admissionDateMs,
+                                enrollmentJoinedAtMs = enrollment.joinedAtMs,
+                                firstMonthFeePeriod = enrollment.firstMonthFeePeriod,
+                                billingEndedAtMs = enrollment.leftAtMs
+                            )
+                        }
                 }.sumOf { it.dueAmount }
                 billingEnrollments.forEach { enrollment ->
                     val batch = batches.firstOrNull { it.id == enrollment.batchId }
                         ?: return@forEach
                     if (batch.monthlyFeeAmount > 0.0) {
+                        val billingStartMs = MonthlyDueCalculator.effectiveBillingStartMs(
+                            s.admissionDateMs,
+                            enrollment.joinedAtMs,
+                            enrollment.firstMonthFeePeriod
+                        )
                         val batchFees = feeHistory.filter {
                             it.batchId == batch.id && MonthlyDueCalculator.isMonthlyFeeType(it.feeType)
                         }
                         val items = MonthlyDueCalculator.computeMonthlyOutstandingItems(
-                            admissionDateMs = enrollment.joinedAtMs,
+                            admissionDateMs = billingStartMs,
                             monthlyFeeAmount = batch.monthlyFeeAmount,
                             batchId = batch.id,
                             batchName = batch.name,
@@ -2126,6 +2140,9 @@ private fun copyTextToClipboard(context: android.content.Context, label: String,
     Toast.makeText(context, "$label copied", Toast.LENGTH_SHORT).show()
 }
 
+private const val BATCHFEE_PLAY_STORE_URL =
+    "https://play.google.com/store/apps/details?id=com.batchfee.edu"
+
 private fun buildStudentLoginInfoText(
     student: StudentEntity,
     instituteSignature: String,
@@ -2142,6 +2159,10 @@ private fun buildStudentLoginInfoText(
         } else {
             append("For security, the current password is not shared. Reset it from Login Access if needed.")
         }
+        appendLine()
+        appendLine()
+        appendLine("Download BatchFee App:")
+        append(BATCHFEE_PLAY_STORE_URL)
     },
     instituteSignature
 )

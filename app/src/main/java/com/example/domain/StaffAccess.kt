@@ -67,6 +67,7 @@ object AccessControl {
         "PricingRoute",
         "BackupRestoreRoute",
         "StaffActivityRoute",
+        "StudentActivityRoute",
         "RoutineRoute",
         "AllArchivesRoute"
     )

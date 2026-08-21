@@ -77,6 +77,9 @@ fun SalaryDashboardScreen(
     val isAdmin = remember { SessionManager.isAdmin() }
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
+    var receiptTarget by remember { mutableStateOf<SalaryEntity?>(null) }
+    var receiptStaffName by remember { mutableStateOf("Staff") }
+    var paymentTarget by remember { mutableStateOf<SalaryEntity?>(null) }
 
     // Pre-fetch institute info once
     var instName by remember { mutableStateOf("BatchFee Institute") }
@@ -132,8 +135,31 @@ fun SalaryDashboardScreen(
                 .fillMaxSize()
                 .padding(horizontal = 20.dp, vertical = 8.dp)
         ) {
-            Text("${salaries.size} salaries", color = TextMuted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(8.dp))
+            val payableSalaries = salaries.filter { it.cancelledAtMs == null }
+            val totalNet = payableSalaries.sumOf { it.netSalary }
+            val totalPaid = payableSalaries.sumOf { it.paidAmount.coerceIn(0.0, it.netSalary) }
+            val totalDue = (totalNet - totalPaid).coerceAtLeast(0.0)
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = CardBg),
+                border = BorderStroke(1.dp, BorderSub),
+            ) {
+                Column(Modifier.padding(14.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Salary overview", color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        Text("${payableSalaries.size} records", color = TextMuted, fontSize = 11.sp)
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        SalaryMetric("Salary", totalNet, Cyan)
+                        SalaryMetric("Paid", totalPaid, WAGreen)
+                        SalaryMetric("Due", totalDue, if (totalDue > 0) AccentAmber else WAGreen)
+                    }
+                }
+            }
+            Spacer(Modifier.height(12.dp))
 
             if (salaries.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -145,17 +171,29 @@ fun SalaryDashboardScreen(
                     contentPadding = PaddingValues(bottom = 80.dp)
                 ) {
                     items(salaries, key = { it.id }) { s ->
-                        val isPaid = s.status == "paid"
-                        val statusColor = if (isPaid) WAGreen else AccentAmber
+                        val paidAmount = s.paidAmount.coerceIn(0.0, s.netSalary)
+                        val dueAmount = (s.netSalary - paidAmount).coerceAtLeast(0.0)
+                        val isPaid = dueAmount <= 0.009 && paidAmount > 0.0
+                        val isPartial = paidAmount > 0.0 && !isPaid
+                        val statusLabel = when {
+                            isPaid -> "PAID"
+                            isPartial -> "PARTIAL"
+                            else -> "UNPAID"
+                        }
+                        val statusColor = when {
+                            isPaid -> WAGreen
+                            isPartial -> AccentAmber
+                            else -> AccentRed
+                        }
                         val staff = staffList.firstOrNull { it.id == s.staffId }
                         Card(
                             modifier = Modifier.fillMaxWidth()
-                                .shadow(3.dp, RoundedCornerShape(12.dp), spotColor = statusColor.copy(alpha = 0.15f)),
-                            shape = RoundedCornerShape(12.dp),
+                                .shadow(4.dp, RoundedCornerShape(16.dp), spotColor = statusColor.copy(alpha = 0.14f)),
+                            shape = RoundedCornerShape(16.dp),
                             colors = CardDefaults.cardColors(containerColor = CardBg),
                             border = BorderStroke(1.dp, BorderSub)
                         ) {
-                            Column(modifier = Modifier.padding(14.dp)) {
+                            Column(modifier = Modifier.padding(15.dp)) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -171,69 +209,67 @@ fun SalaryDashboardScreen(
                                             .background(statusColor.copy(alpha = 0.15f))
                                             .padding(horizontal = 8.dp, vertical = 2.dp)
                                     ) {
-                                        Text(s.status.uppercase(), color = statusColor, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                        Text(statusLabel, color = statusColor, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                                     }
                                 }
-                                Spacer(Modifier.height(4.dp))
-                                Text("Net: BDT ${s.netSalary}", color = TextMuted, fontSize = 14.sp)
-                                var showReceipt by remember { mutableStateOf(false) }
-                                var showPaymentChoice by remember { mutableStateOf(false) }
-                                if (showReceipt) {
-                                    SalaryReceiptDialog(
-                                        salary = s, staffName = staff?.fullName ?: "Staff",
-                                        instName = instName, instCode = instCode, instPhone = instPhone,
-                                        onDismiss = { showReceipt = false }
+                                Spacer(Modifier.height(12.dp))
+                                Row(
+                                    Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    SalaryMiniAmount("Salary", s.netSalary, TextMuted, Modifier.weight(1f))
+                                    SalaryMiniAmount("Paid", paidAmount, WAGreen, Modifier.weight(1f))
+                                    SalaryMiniAmount("Due", dueAmount, if (dueAmount > 0) AccentAmber else WAGreen, Modifier.weight(1f))
+                                }
+                                s.paymentDateMs?.let { paidAt ->
+                                    Spacer(Modifier.height(9.dp))
+                                    Text(
+                                        "Last payment · ${SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(paidAt))} · ${s.paymentMethod?.replace('_', ' ')?.replaceFirstChar { it.uppercase() } ?: "Payment"}",
+                                        color = TextMuted,
+                                        fontSize = 11.sp,
                                     )
                                 }
-                                if (!isPaid && isAdmin) {
-                                    Spacer(Modifier.height(8.dp))
-                                    if (showPaymentChoice) {
-                                        AlertDialog(
-                                            onDismissRequest = { showPaymentChoice = false },
-                                            containerColor = CardBg,
-                                            title = { Text("Payment Method", color = TextWhite, fontWeight = FontWeight.Bold) },
-                                            text = {
-                                                Column {
-                                                    listOf("cash" to "Cash", "bank_transfer" to "Bank Transfer", "cheque" to "Cheque", "mobile_banking" to "Mobile Banking").forEach { (key, label) ->
-                                                        OutlinedButton(
-                                                            onClick = { viewModel.markAsPaid(s.id, key); showPaymentChoice = false; showReceipt = true },
-                                                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                                                            shape = RoundedCornerShape(10.dp)
-                                                        ) { Text(label, color = TextWhite) }
-                                                    }
-                                                }
+                                Spacer(Modifier.height(12.dp))
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            receiptTarget = s
+                                            receiptStaffName = staff?.fullName ?: "Staff"
+                                        },
+                                        modifier = Modifier.weight(1f).height(40.dp),
+                                        shape = RoundedCornerShape(11.dp),
+                                        border = BorderStroke(1.dp, Cyan.copy(alpha = 0.55f)),
+                                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Cyan),
+                                    ) {
+                                        Icon(Icons.Filled.ReceiptLong, null, modifier = Modifier.size(16.dp))
+                                        Spacer(Modifier.width(6.dp))
+                                        Text("Receipt", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                    if (isAdmin && dueAmount > 0.009) {
+                                        Button(
+                                            onClick = { paymentTarget = s },
+                                            modifier = Modifier.weight(1f).height(40.dp),
+                                            shape = RoundedCornerShape(11.dp),
+                                            colors = ButtonDefaults.buttonColors(containerColor = ElectricBlue),
+                                        ) {
+                                            Icon(Icons.Filled.Payments, null, modifier = Modifier.size(16.dp))
+                                            Spacer(Modifier.width(6.dp))
+                                            Text(if (isPartial) "Pay Due" else "Record Payment", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                    if (isAdmin && paidAmount <= 0.009) {
+                                        IconButton(
+                                            onClick = {
+                                                viewModel.cancelSalary(
+                                                    s.id,
+                                                    onSuccess = { scope.launch { snackbarHostState.showSnackbar("Salary cancelled") } },
+                                                    onError = { message -> scope.launch { snackbarHostState.showSnackbar(message) } },
+                                                )
                                             },
-                                            confirmButton = {},
-                                            dismissButton = { TextButton(onClick = { showPaymentChoice = false }) { Text("Cancel", color = TextMuted) } }
-                                        )
-                                    }
-                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        Box(
-                                            modifier = Modifier.weight(1f).height(36.dp).clip(RoundedCornerShape(10.dp))
-                                                .background(brush = Brush.horizontalGradient(listOf(ElectricBlue, Cyan)))
-                                                .clickable { showPaymentChoice = true },
-                                            contentAlignment = Alignment.Center
-                                        ) { Text("Mark Paid", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold) }
-                                        Box(
-                                            modifier = Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(AccentRed.copy(alpha = 0.2f))
-                                                .clickable { viewModel.cancelSalary(s.id); scope.launch { snackbarHostState.showSnackbar("Salary cancelled") } },
-                                            contentAlignment = Alignment.Center
-                                        ) { Icon(Icons.Filled.Close, null, tint = AccentRed, modifier = Modifier.size(18.dp)) }
-                                    }
-                                } else if (isPaid && isAdmin) {
-                                    Spacer(Modifier.height(8.dp))
-                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        Box(
-                                            modifier = Modifier.weight(1f).height(36.dp).clip(RoundedCornerShape(10.dp))
-                                                .background(brush = Brush.horizontalGradient(listOf(ElectricBlue, Cyan)))
-                                                .clickable { showReceipt = true },
-                                            contentAlignment = Alignment.Center
-                                        ) { Text("Receipt", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold) }
-                                        Box(
-                                            modifier = Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(AccentRed.copy(alpha = 0.2f))
-                                                .clickable { viewModel.cancelSalary(s.id); scope.launch { snackbarHostState.showSnackbar("Salary cancelled") } },
-                                            contentAlignment = Alignment.Center
-                                        ) { Icon(Icons.Filled.Close, null, tint = AccentRed, modifier = Modifier.size(18.dp)) }
+                                            modifier = Modifier.size(40.dp).clip(RoundedCornerShape(11.dp)).background(AccentRed.copy(alpha = 0.12f)),
+                                        ) {
+                                            Icon(Icons.Filled.Close, "Cancel unpaid salary", tint = AccentRed, modifier = Modifier.size(18.dp))
+                                        }
                                     }
                                 }
                             }
@@ -242,6 +278,38 @@ fun SalaryDashboardScreen(
                 }
             }
         }
+    }
+
+    receiptTarget?.let { salary ->
+        SalaryReceiptDialog(
+            salary = salary,
+            staffName = receiptStaffName,
+            instName = instName,
+            instCode = instCode,
+            instPhone = instPhone,
+            onDismiss = { receiptTarget = null },
+        )
+    }
+    paymentTarget?.let { salary ->
+        SalaryPaymentDialog(
+            salary = salary,
+            onDismiss = { paymentTarget = null },
+            onSubmit = { amount, method, note ->
+                viewModel.recordPayment(
+                    salaryId = salary.id,
+                    amount = amount,
+                    paymentMethod = method,
+                    note = note,
+                    onSuccess = { updated ->
+                        paymentTarget = null
+                        receiptTarget = updated
+                        receiptStaffName = staffList.firstOrNull { it.id == updated.staffId }?.fullName ?: "Staff"
+                        scope.launch { snackbarHostState.showSnackbar("Salary payment saved; Institute Expense updated") }
+                    },
+                    onError = { message -> scope.launch { snackbarHostState.showSnackbar(message) } },
+                )
+            },
+        )
     }
 }
 
@@ -431,8 +499,125 @@ fun GenerateSalaryScreen(db: AppDatabase, onBack: () -> Unit) {
 }
 
 @Composable
+private fun SalaryMetric(label: String, amount: Double, color: Color) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text("BDT ${salaryAmount(amount)}", color = color, fontSize = 16.sp, fontWeight = FontWeight.ExtraBold)
+        Spacer(Modifier.height(2.dp))
+        Text(label, color = TextMuted, fontSize = 10.sp)
+    }
+}
+
+@Composable
+private fun SalaryMiniAmount(label: String, amount: Double, color: Color, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(CardBgAlt)
+            .padding(horizontal = 9.dp, vertical = 8.dp),
+    ) {
+        Text(label, color = TextMuted, fontSize = 10.sp)
+        Spacer(Modifier.height(3.dp))
+        Text("BDT ${salaryAmount(amount)}", color = color, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+    }
+}
+
+private fun salaryAmount(value: Double): String = String.format(Locale.US, "%,.0f", value.coerceAtLeast(0.0))
+
+@Composable
+private fun SalaryPaymentDialog(
+    salary: SalaryEntity,
+    onDismiss: () -> Unit,
+    onSubmit: (amount: Double, method: String, note: String?) -> Unit,
+) {
+    val paid = salary.paidAmount.coerceIn(0.0, salary.netSalary)
+    val due = (salary.netSalary - paid).coerceAtLeast(0.0)
+    var amountText by remember(salary.id, salary.paidAmount) { mutableStateOf(salaryAmount(due)) }
+    var method by remember(salary.id) { mutableStateOf("cash") }
+    var note by remember(salary.id) { mutableStateOf("") }
+    var validationError by remember(salary.id) { mutableStateOf<String?>(null) }
+    val amount = amountText.replace(",", "").toDoubleOrNull()
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = CardBg,
+        shape = RoundedCornerShape(20.dp),
+        title = {
+            Column {
+                Text("Record salary payment", color = TextWhite, fontWeight = FontWeight.Bold, fontSize = 19.sp)
+                Text(salary.salaryMonth, color = TextMuted, fontSize = 12.sp)
+            }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(11.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(CardBgAlt).padding(12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Column { Text("Paid so far", color = TextMuted, fontSize = 11.sp); Text("BDT ${salaryAmount(paid)}", color = WAGreen, fontWeight = FontWeight.Bold) }
+                    Column(horizontalAlignment = Alignment.End) { Text("Remaining due", color = TextMuted, fontSize = 11.sp); Text("BDT ${salaryAmount(due)}", color = AccentAmber, fontWeight = FontWeight.Bold) }
+                }
+                OutlinedTextField(
+                    value = amountText,
+                    onValueChange = { amountText = it.filter { c -> c.isDigit() || c == '.' || c == ',' }; validationError = null },
+                    label = { Text("Payment amount (BDT)") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    colors = darkFieldColors(),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text("Payment method", color = TextMuted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("cash" to "Cash", "bank_transfer" to "Bank", "mobile_banking" to "Mobile").forEach { (key, label) ->
+                        FilterChip(
+                            selected = method == key,
+                            onClick = { method = key },
+                            label = { Text(label, fontSize = 11.sp) },
+                            modifier = Modifier.weight(1f),
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = ElectricBlue.copy(alpha = 0.22f),
+                                selectedLabelColor = Cyan,
+                            ),
+                        )
+                    }
+                }
+                OutlinedTextField(
+                    value = note,
+                    onValueChange = { note = it },
+                    label = { Text("Note (optional)") },
+                    minLines = 1,
+                    maxLines = 2,
+                    colors = darkFieldColors(),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                validationError?.let { Text(it, color = AccentRed, fontSize = 12.sp) }
+                Text("This updates the matching Institute Expense; no duplicate will be created.", color = Cyan, fontSize = 11.sp)
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    when {
+                        amount == null || amount <= 0.0 -> validationError = "Enter a valid payment amount."
+                        amount > due + 0.009 -> validationError = "Amount cannot exceed the remaining due."
+                        else -> onSubmit(amount, method, note.takeIf { it.isNotBlank() })
+                    }
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = ElectricBlue),
+            ) {
+                Icon(Icons.Filled.Payments, null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Save payment", fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel", color = TextMuted) } },
+    )
+}
+
+@Composable
 private fun SalaryReceiptDialog(
-    salary: com.batchfee.edu.data.models.SalaryEntity,
+    salary: SalaryEntity,
     staffName: String,
     instName: String,
     instCode: String,
@@ -440,79 +625,134 @@ private fun SalaryReceiptDialog(
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
-    var showPrintDialog by remember { mutableStateOf(true) }
+    val paid = salary.paidAmount.coerceIn(0.0, salary.netSalary)
+    val due = (salary.netSalary - paid).coerceAtLeast(0.0)
+    val isPaid = paid > 0.0 && due <= 0.009
+    val status = when {
+        isPaid -> "PAID"
+        paid > 0.0 -> "PARTIAL PAYMENT"
+        else -> "PAYMENT PENDING"
+    }
+    val statusColor = when {
+        isPaid -> WAGreen
+        paid > 0.0 -> AccentAmber
+        else -> AccentRed
+    }
 
-    if (showPrintDialog) {
-        AlertDialog(
-            onDismissRequest = { showPrintDialog = false; onDismiss() },
-            title = {
-                Text("Salary Receipt Ready", color = TextWhite, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-            },
-            text = {
-                Column(modifier = Modifier.padding(4.dp)) {
-                    Text("$staffName", color = TextWhite, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                    Text("BDT ${salary.netSalary}", color = Cyan, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                    Text(salary.salaryMonth, color = TextMuted, fontSize = 12.sp)
-                    Spacer(Modifier.height(12.dp))
-                    Text("You can print the receipt or share it via WhatsApp.", color = TextMuted, fontSize = 13.sp)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = CardBg,
+        shape = RoundedCornerShape(20.dp),
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier.size(40.dp).clip(RoundedCornerShape(12.dp))
+                        .background(ElectricBlue.copy(alpha = 0.2f)),
+                    contentAlignment = Alignment.Center,
+                ) { Icon(Icons.Filled.ReceiptLong, null, tint = Cyan) }
+                Spacer(Modifier.width(10.dp))
+                Column {
+                    Text("Salary receipt", color = TextWhite, fontWeight = FontWeight.Bold, fontSize = 19.sp)
+                    Text(salary.salarySlipNumber, color = TextMuted, fontSize = 11.sp)
                 }
-            },
-            confirmButton = {
+            }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(11.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                        .background(CardBgAlt).padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(staffName, color = TextWhite, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        Text("Salary period: ${salary.salaryMonth}", color = TextMuted, fontSize = 11.sp)
+                    }
+                    Text(
+                        status,
+                        color = statusColor,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(statusColor.copy(alpha = 0.14f))
+                            .padding(horizontal = 7.dp, vertical = 4.dp),
+                    )
+                }
+                ReceiptLine("Basic salary", salary.basicSalary)
+                if (salary.bonusAmount > 0) ReceiptLine("Bonus", salary.bonusAmount, WAGreen)
+                if (salary.deductionAmount > 0) ReceiptLine("Deduction", salary.deductionAmount, AccentRed)
+                if (salary.advanceAmount > 0) ReceiptLine("Advance", salary.advanceAmount, AccentRed)
+                HorizontalDivider(color = BorderSub)
+                ReceiptLine("Net salary", salary.netSalary, Cyan, bold = true)
+                ReceiptLine("Paid to date", paid, WAGreen, bold = true)
+                ReceiptLine("Remaining due", due, if (due > 0) AccentAmber else WAGreen, bold = true)
+                Text(
+                    if (paid > 0) "Last payment: ${SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault()).format(Date(salary.paymentDateMs ?: System.currentTimeMillis()))}"
+                    else "No payment has been recorded yet.",
+                    color = TextMuted,
+                    fontSize = 11.sp,
+                )
+                Text("Available anytime from Salary Management.", color = Cyan, fontSize = 11.sp)
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                try {
+                    val file = generateSalaryReceiptPdf(context, salary, staffName, instName, instCode, instPhone)
+                    val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+                    context.startActivity(Intent(Intent.ACTION_VIEW).apply {
+                        setDataAndType(uri, "application/pdf")
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    })
+                } catch (_: Exception) {
+                    Toast.makeText(context, "Could not open the receipt.", Toast.LENGTH_SHORT).show()
+                }
+            }) {
+                Icon(Icons.Filled.Print, null, modifier = Modifier.size(18.dp), tint = ElectricBlue)
+                Spacer(Modifier.width(5.dp))
+                Text("Print", color = ElectricBlue, fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            Row {
                 TextButton(onClick = {
-                    showPrintDialog = false
                     try {
                         val file = generateSalaryReceiptPdf(context, salary, staffName, instName, instCode, instPhone)
                         val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-                        context.startActivity(Intent(Intent.ACTION_VIEW).apply {
-                            setDataAndType(uri, "application/pdf")
+                        context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+                            type = "application/pdf"
+                            putExtra(Intent.EXTRA_STREAM, uri)
+                            putExtra(Intent.EXTRA_TEXT, "Salary receipt - $staffName - ${salary.salaryMonth}")
                             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                        })
-                    } catch (_: Exception) { }
-                    onDismiss()
+                        }, "Share salary receipt"))
+                    } catch (_: Exception) {
+                        Toast.makeText(context, "Could not share the receipt.", Toast.LENGTH_SHORT).show()
+                    }
                 }) {
-                    Icon(Icons.Filled.Print, null, modifier = Modifier.size(18.dp), tint = ElectricBlue)
+                    Icon(Icons.Filled.Share, null, modifier = Modifier.size(17.dp), tint = Cyan)
                     Spacer(Modifier.width(4.dp))
-                    Text("Print", color = ElectricBlue)
+                    Text("Share", color = Cyan, fontWeight = FontWeight.Bold)
                 }
-            },
-            dismissButton = {
-                Row {
-                    TextButton(onClick = {
-                        showPrintDialog = false
-                        var handled = false
-                        try {
-                            val file = generateSalaryReceiptPdf(context, salary, staffName, instName, instCode, instPhone)
-                            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-                            val intent = Intent(Intent.ACTION_SEND)
-                            intent.type = "application/pdf"
-                            intent.putExtra(Intent.EXTRA_STREAM, uri)
-                            intent.putExtra(Intent.EXTRA_TEXT, "Salary Receipt - $staffName - ${salary.salaryMonth}")
-                            intent.setPackage("com.whatsapp")
-                            if (intent.resolveActivity(context.packageManager) != null) {
-                                context.startActivity(intent)
-                                handled = true
-                            }
-                        } catch (_: Exception) { }
-                        if (!handled) Toast.makeText(context, "WhatsApp not installed. Use Print to share.", Toast.LENGTH_SHORT).show()
-                        onDismiss()
-                    }) {
-                        Text("WhatsApp", color = Color(0xFF25D366))
-                    }
-                    TextButton(onClick = {
-                        showPrintDialog = false
-                        onDismiss()
-                    }) {
-                        Text("Close", color = TextMuted)
-                    }
-                }
-            },
-            containerColor = CardBg,
-            shape = RoundedCornerShape(16.dp)
+                TextButton(onClick = onDismiss) { Text("Close", color = TextMuted) }
+            }
+        },
+    )
+}
+
+@Composable
+private fun ReceiptLine(label: String, amount: Double, color: Color = TextWhite, bold: Boolean = false) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text(label, color = TextMuted, fontSize = 12.sp)
+        Text(
+            "BDT ${salaryAmount(amount)}",
+            color = color,
+            fontSize = 13.sp,
+            fontWeight = if (bold) FontWeight.ExtraBold else FontWeight.SemiBold,
         )
     }
 }
 
-private fun generateSalaryReceiptPdf(context: Context, salary: com.batchfee.edu.data.models.SalaryEntity, staffName: String, instName: String, instCode: String, instPhone: String): File {
+private fun generateSalaryReceiptPdf(context: Context, salary: SalaryEntity, staffName: String, instName: String, instCode: String, instPhone: String): File {
     val document = PdfDocument()
     val page = document.startPage(PdfDocument.PageInfo.Builder(340, 544, 1).create())
     val canvas = page.canvas
@@ -521,6 +761,8 @@ private fun generateSalaryReceiptPdf(context: Context, salary: com.batchfee.edu.
     val blue = AndroidColor.rgb(37, 99, 235)
     val textDark = AndroidColor.rgb(30, 41, 59)
     val textMuted = AndroidColor.rgb(71, 85, 105)
+    val paid = salary.paidAmount.coerceIn(0.0, salary.netSalary)
+    val due = (salary.netSalary - paid).coerceAtLeast(0.0)
 
     val fill = Paint().apply { style = Paint.Style.FILL }
     val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 11f; color = textDark }
@@ -553,14 +795,16 @@ private fun generateSalaryReceiptPdf(context: Context, salary: com.batchfee.edu.
 
     // Salary breakdown
     val rows = listOf(
-        "Basic Salary" to "BDT ${salary.basicSalary}",
-        "Bonus" to "BDT ${salary.bonusAmount}",
-        "Deduction" to "BDT ${salary.deductionAmount}",
-        "Advance" to "BDT ${salary.advanceAmount}",
-        "Net Salary" to "BDT ${salary.netSalary}"
+        "Basic Salary" to "BDT ${salaryAmount(salary.basicSalary)}",
+        "Bonus" to "BDT ${salaryAmount(salary.bonusAmount)}",
+        "Deduction" to "BDT ${salaryAmount(salary.deductionAmount)}",
+        "Advance" to "BDT ${salaryAmount(salary.advanceAmount)}",
+        "Net Salary" to "BDT ${salaryAmount(salary.netSalary)}",
+        "Paid to Date" to "BDT ${salaryAmount(paid)}",
+        "Remaining Due" to "BDT ${salaryAmount(due)}"
     )
     rows.forEach { (label, value) ->
-        val isNet = label == "Net Salary"
+        val isNet = label == "Net Salary" || label == "Paid to Date" || label == "Remaining Due"
         if (isNet) {
             y += 5
             fill.color = android.graphics.Color.rgb(226, 232, 240)
@@ -570,7 +814,11 @@ private fun generateSalaryReceiptPdf(context: Context, salary: com.batchfee.edu.
         val labelColor = if (isNet) darkBlue else textMuted
         text.color = labelColor
         canvas.drawText(label, 20f, y + 10f, text)
-        val valColor = if (isNet) darkBlue else textDark
+        val valColor = when (label) {
+            "Paid to Date" -> AndroidColor.rgb(22, 163, 74)
+            "Remaining Due" -> if (due > 0) AndroidColor.rgb(217, 119, 6) else AndroidColor.rgb(22, 163, 74)
+            else -> if (isNet) darkBlue else textDark
+        }
         text.color = valColor
         text.isFakeBoldText = isNet
         canvas.drawText(value, 300f, y + 10f, text)
