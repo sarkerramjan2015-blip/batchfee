@@ -395,6 +395,38 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
         }
     }
 
+    /** Updates only the photo after a new staff account has received its Firebase UID. */
+    fun updateStaffPhoto(
+        staffId: String,
+        photoUri: String,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit,
+    ) {
+        if (!SessionManager.isAdmin()) {
+            onError("Only admins can update staff photos.")
+            return
+        }
+        viewModelScope.launch {
+            val instituteId = SessionManager.currentInstituteId.value ?: run {
+                onError("Institute session was not found.")
+                return@launch
+            }
+            val existing = db.staffDao().getStaffByIdOnce(staffId, instituteId) ?: run {
+                onError("Staff profile was not found after account creation.")
+                return@launch
+            }
+            val updated = existing.copy(photoUri = photoUri, updatedAtMs = System.currentTimeMillis())
+            try {
+                db.staffDao().updateStaff(updated)
+                // The local update is immediate; Firestore publishes the same photo for other devices.
+                launch { StaffSyncHelper.updateStaff(updated) }
+                onSuccess()
+            } catch (error: Exception) {
+                onError(error.message ?: "Could not save staff photo.")
+            }
+        }
+    }
+
     fun archiveStaff(staffId: String, onSuccess: () -> Unit) {
         if (!SessionManager.isAdmin()) return
         viewModelScope.launch {

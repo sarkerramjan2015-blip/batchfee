@@ -44,6 +44,23 @@
     .photo-preview img { width: 54px; height: 54px; flex: 0 0 auto; border: 1px solid #22d3ee; border-radius: 50%; object-fit: cover; background: #111827; }
     .photo-preview-copy { min-width: 0; flex: 1; color: #cbd5e1; font-size: .8rem; line-height: 1.35; }
     .photo-remove { width: auto; min-height: 36px; margin: 0; padding: 7px 10px; border: 1px solid #475569; border-radius: 8px; color: #cbd5e1; background: transparent; font-size: .78rem; font-weight: 700; }
+    body.crop-open { overflow: hidden; }
+    .photo-crop-modal { position: fixed; inset: 0; z-index: 30; display: grid; grid-template-rows: 62px minmax(0, 1fr) auto; background: #020913; }
+    .photo-crop-modal[hidden] { display: none; }
+    .crop-topbar { display: flex; align-items: center; gap: 10px; padding: 0 12px; background: #073642; }
+    .crop-topbar h2 { flex: 1; margin: 0; color: #fff; font-size: 1.05rem; }
+    .crop-topbar button, .crop-toolbar button { width: auto; min-height: 42px; margin: 0; background: transparent; }
+    .crop-nav-button { padding: 7px 10px; color: #b7f5ff; font-size: 1.7rem; line-height: 1; }
+    .crop-confirm { padding: 7px 12px; color: #06141b; background: #20d7f5 !important; font-size: .88rem; }
+    .crop-stage { display: flex; min-height: 0; flex-direction: column; align-items: center; justify-content: center; padding: 16px; background: #020913; }
+    .crop-instruction { margin: 0 0 13px; color: #a7b7c9; font-size: .82rem; text-align: center; }
+    #studentPhotoCropCanvas { display: block; width: min(100%, 560px, calc(100dvh - 210px)); aspect-ratio: 1; touch-action: none; border: 2px solid #f8fafc; background: #111827; }
+    .crop-caption { margin: 12px 0 0; color: #7f93aa; font-size: .72rem; text-align: center; }
+    .crop-toolbar { display: flex; align-items: center; justify-content: center; gap: 9px; padding: 12px 14px max(12px, env(safe-area-inset-bottom)); background: #061d29; }
+    .crop-tool { display: grid; min-width: 58px; gap: 3px; justify-items: center; padding: 5px 4px !important; color: #b6cbd7; font-size: .64rem; line-height: 1.1; }
+    .crop-tool .crop-icon { display: grid; width: 35px; height: 35px; place-items: center; border-radius: 50%; color: #9defff; background: #0b3342; font-size: 1.25rem; }
+    .crop-use { padding: 9px 12px !important; color: #06141b; background: #20d7f5 !important; font-size: .78rem; white-space: nowrap; }
+    @media (max-width: 390px) { .crop-toolbar { gap: 3px; padding-inline: 7px; } .crop-tool { min-width: 51px; } .crop-use { padding-inline: 8px !important; } }
     .honeypot { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0, 0, 0, 0) !important; white-space: nowrap !important; border: 0 !important; }
     footer { margin-top: 18px; color: #64748b; text-align: center; font-size: .76rem; }
   </style>
@@ -130,6 +147,25 @@
     <footer>Powered by BatchFee</footer>
   </main>
 
+  <section id="photoCropModal" class="photo-crop-modal" role="dialog" aria-modal="true" aria-labelledby="photoCropTitle" hidden>
+    <div class="crop-topbar">
+      <button id="cancelStudentPhotoCrop" class="crop-nav-button" type="button" aria-label="Cancel photo crop">&#8592;</button>
+      <h2 id="photoCropTitle">Adjust photo</h2>
+      <button id="confirmStudentPhotoCropTop" class="crop-confirm" type="button">Done &#10003;</button>
+    </div>
+    <div class="crop-stage">
+      <p class="crop-instruction">Pinch to zoom &bull; Drag to position</p>
+      <canvas id="studentPhotoCropCanvas" aria-label="Student photo crop area"></canvas>
+      <p class="crop-caption">The square frame is used for profile, ID card and documents.</p>
+    </div>
+    <div class="crop-toolbar" aria-label="Photo crop tools">
+      <button id="rotateStudentPhotoLeft" class="crop-tool" type="button"><span class="crop-icon">&#8634;</span>Rotate</button>
+      <button id="resetStudentPhotoCrop" class="crop-tool" type="button"><span class="crop-icon">&#10227;</span>Reset</button>
+      <button id="rotateStudentPhotoRight" class="crop-tool" type="button"><span class="crop-icon">&#8635;</span>Rotate</button>
+      <button id="confirmStudentPhotoCrop" class="crop-use" type="button">Use photo</button>
+    </div>
+  </section>
+
   <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore-compat.js"></script>
   <script>
@@ -153,10 +189,15 @@
       const studentPhotoInput = document.getElementById("studentPhoto");
       const studentPhotoPreview = document.getElementById("studentPhotoPreview");
       const studentPhotoPreviewImage = document.getElementById("studentPhotoPreviewImage");
+      const photoCropModal = document.getElementById("photoCropModal");
+      const studentPhotoCropCanvas = document.getElementById("studentPhotoCropCanvas");
+      const cropContext = studentPhotoCropCanvas.getContext("2d");
       let activeProfile = null;
       let formStartedAtMs = 0;
       let studentPhotoData = null;
       let studentPhotoPreparation = null;
+      let photoCropSession = null;
+      const cropPointers = new Map();
 
       function showStatus(message, kind = "") {
         status.textContent = message;
@@ -336,37 +377,146 @@
         const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
         return Math.floor(base64.length * 3 / 4) - padding;
       }
-      async function compressStudentPhoto(file) {
-        if (!file) return null;
+      function validStudentPhotoFile(file) {
+        if (!file) throw new Error("Choose a photo first.");
         if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
           throw new Error("Choose a JPEG, PNG, or WebP photo.");
         }
         if (file.size > 10 * 1024 * 1024) throw new Error("Choose a photo smaller than 10 MB.");
-        const image = await loadImage(await fileDataUrl(file));
-        const sourceWidth = image.naturalWidth || image.width;
-        const sourceHeight = image.naturalHeight || image.height;
-        if (!sourceWidth || !sourceHeight) throw new Error("Choose a valid photo.");
-        // Keep all student images consistent for profiles, ID cards and documents.
-        // A centered square crop is shown in the preview, then encoded as a small JPEG.
-        const cropSize = Math.min(sourceWidth, sourceHeight);
-        const cropLeft = Math.max(0, Math.round((sourceWidth - cropSize) / 2));
-        const cropTop = Math.max(0, Math.round((sourceHeight - cropSize) / 2));
-        let scale = Math.min(1, 720 / cropSize);
-        let quality = 0.82;
+      }
+      function cropViewport() {
+        const bounds = studentPhotoCropCanvas.getBoundingClientRect();
+        return { width: Math.max(1, bounds.width), height: Math.max(1, bounds.height) };
+      }
+      function cropLayout(session) {
+        const viewport = cropViewport();
+        const sourceWidth = session.image.naturalWidth || session.image.width;
+        const sourceHeight = session.image.naturalHeight || session.image.height;
+        const scale = Math.max(viewport.width / sourceWidth, viewport.height / sourceHeight) * session.zoom;
+        const drawWidth = sourceWidth * scale;
+        const drawHeight = sourceHeight * scale;
+        return {
+          viewport, scale, drawWidth, drawHeight,
+          maxPanX: Math.max(0, (drawWidth - viewport.width) / 2),
+          maxPanY: Math.max(0, (drawHeight - viewport.height) / 2)
+        };
+      }
+      function constrainCropPan() {
+        if (!photoCropSession) return;
+        const layout = cropLayout(photoCropSession);
+        photoCropSession.panX = Math.max(-layout.maxPanX, Math.min(layout.maxPanX, photoCropSession.panX));
+        photoCropSession.panY = Math.max(-layout.maxPanY, Math.min(layout.maxPanY, photoCropSession.panY));
+      }
+      function drawStudentPhotoCrop() {
+        const session = photoCropSession;
+        if (!session || !cropContext) return;
+        const layout = cropLayout(session);
+        const pixelRatio = window.devicePixelRatio || 1;
+        const pixelWidth = Math.round(layout.viewport.width * pixelRatio);
+        const pixelHeight = Math.round(layout.viewport.height * pixelRatio);
+        if (studentPhotoCropCanvas.width !== pixelWidth || studentPhotoCropCanvas.height !== pixelHeight) {
+          studentPhotoCropCanvas.width = pixelWidth;
+          studentPhotoCropCanvas.height = pixelHeight;
+        }
+        cropContext.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+        cropContext.clearRect(0, 0, layout.viewport.width, layout.viewport.height);
+        cropContext.fillStyle = "#111827";
+        cropContext.fillRect(0, 0, layout.viewport.width, layout.viewport.height);
+        const left = (layout.viewport.width - layout.drawWidth) / 2 + session.panX;
+        const top = (layout.viewport.height - layout.drawHeight) / 2 + session.panY;
+        cropContext.drawImage(session.image, left, top, layout.drawWidth, layout.drawHeight);
+        cropContext.strokeStyle = "rgba(255,255,255,.58)";
+        cropContext.lineWidth = 1;
+        for (let index = 1; index <= 2; index += 1) {
+          const fraction = index / 3;
+          cropContext.beginPath();
+          cropContext.moveTo(layout.viewport.width * fraction, 0);
+          cropContext.lineTo(layout.viewport.width * fraction, layout.viewport.height);
+          cropContext.moveTo(0, layout.viewport.height * fraction);
+          cropContext.lineTo(layout.viewport.width, layout.viewport.height * fraction);
+          cropContext.stroke();
+        }
+        cropContext.strokeStyle = "rgba(255,255,255,.95)";
+        cropContext.lineWidth = 2;
+        cropContext.strokeRect(1, 1, layout.viewport.width - 2, layout.viewport.height - 2);
+        cropContext.fillStyle = "#fff";
+        [[0, 0], [layout.viewport.width, 0], [0, layout.viewport.height], [layout.viewport.width, layout.viewport.height]].forEach(([x, y]) => {
+          cropContext.beginPath();
+          cropContext.arc(x, y, 8, 0, Math.PI * 2);
+          cropContext.fill();
+        });
+      }
+      function openStudentPhotoCrop(image) {
+        return new Promise((resolve, reject) => {
+          photoCropSession = { image, resolve, reject, zoom: 1, panX: 0, panY: 0 };
+          photoCropModal.hidden = false;
+          document.body.classList.add("crop-open");
+          requestAnimationFrame(drawStudentPhotoCrop);
+        });
+      }
+      function closeStudentPhotoCrop() {
+        photoCropModal.hidden = true;
+        document.body.classList.remove("crop-open");
+        cropPointers.clear();
+      }
+      function cropSourceRect(session) {
+        const layout = cropLayout(session);
+        const left = (layout.viewport.width - layout.drawWidth) / 2 + session.panX;
+        const top = (layout.viewport.height - layout.drawHeight) / 2 + session.panY;
+        const sourceWidth = session.image.naturalWidth || session.image.width;
+        const sourceHeight = session.image.naturalHeight || session.image.height;
+        const width = Math.min(sourceWidth, layout.viewport.width / layout.scale);
+        const height = Math.min(sourceHeight, layout.viewport.height / layout.scale);
+        return {
+          x: Math.max(0, Math.min(sourceWidth - width, -left / layout.scale)),
+          y: Math.max(0, Math.min(sourceHeight - height, -top / layout.scale)),
+          width, height
+        };
+      }
+      function compressedCropDataUrl(session) {
+        const source = cropSourceRect(session);
+        let size = 720;
+        let quality = 0.86;
         for (let attempt = 0; attempt < 5; attempt += 1) {
-          const size = Math.max(1, Math.round(cropSize * scale));
           const canvas = document.createElement("canvas");
           canvas.width = size;
           canvas.height = size;
           const context = canvas.getContext("2d");
           if (!context) throw new Error("This browser could not prepare the selected photo.");
-          context.drawImage(image, cropLeft, cropTop, cropSize, cropSize, 0, 0, size, size);
+          context.drawImage(session.image, source.x, source.y, source.width, source.height, 0, 0, size, size);
           const result = canvas.toDataURL("image/jpeg", quality);
           if (dataUrlByteLength(result) <= 360 * 1024) return result;
-          scale *= 0.72;
+          size = Math.max(320, Math.round(size * 0.72));
           quality = Math.max(0.58, quality - 0.07);
         }
         throw new Error("This photo is too detailed. Please choose another clear photo.");
+      }
+      async function rotateCropImage(degrees) {
+        const session = photoCropSession;
+        if (!session) return;
+        const sourceWidth = session.image.naturalWidth || session.image.width;
+        const sourceHeight = session.image.naturalHeight || session.image.height;
+        const canvas = document.createElement("canvas");
+        canvas.width = sourceHeight;
+        canvas.height = sourceWidth;
+        const context = canvas.getContext("2d");
+        if (!context) return;
+        context.translate(canvas.width / 2, canvas.height / 2);
+        context.rotate((degrees * Math.PI) / 180);
+        context.drawImage(session.image, -sourceWidth / 2, -sourceHeight / 2);
+        session.image = await loadImage(canvas.toDataURL("image/jpeg", 0.96));
+        session.zoom = 1;
+        session.panX = 0;
+        session.panY = 0;
+        drawStudentPhotoCrop();
+      }
+      async function cropStudentPhoto(file) {
+        validStudentPhotoFile(file);
+        const image = await loadImage(await fileDataUrl(file));
+        const sourceWidth = image.naturalWidth || image.width;
+        const sourceHeight = image.naturalHeight || image.height;
+        if (!sourceWidth || !sourceHeight) throw new Error("Choose a valid photo.");
+        return openStudentPhotoCrop(image);
       }
       studentPhotoInput.addEventListener("change", () => {
         const file = studentPhotoInput.files && studentPhotoInput.files[0];
@@ -374,7 +524,7 @@
         if (!file) { clearStudentPhoto(); return; }
         studentPhotoData = null;
         studentPhotoPreview.hidden = true;
-        const preparation = compressStudentPhoto(file)
+        const preparation = cropStudentPhoto(file)
           .then((dataUrl) => {
             if (studentPhotoPreparation === preparation) {
               studentPhotoData = dataUrl;
@@ -384,11 +534,76 @@
           .catch((error) => {
             if (studentPhotoPreparation === preparation) {
               clearStudentPhoto();
-              showFieldError("studentPhoto", error instanceof Error ? error.message : "The selected photo could not be prepared.");
+              if (!(error && error.code === "crop_cancelled")) {
+                showFieldError("studentPhoto", error instanceof Error ? error.message : "The selected photo could not be prepared.");
+              }
             }
           });
         studentPhotoPreparation = preparation;
       });
+      document.getElementById("cancelStudentPhotoCrop").addEventListener("click", () => {
+        const session = photoCropSession;
+        closeStudentPhotoCrop();
+        photoCropSession = null;
+        if (session) {
+          const error = new Error("Photo cropping cancelled.");
+          error.code = "crop_cancelled";
+          session.reject(error);
+        }
+      });
+      function confirmStudentPhotoCrop() {
+        const session = photoCropSession;
+        if (!session) return;
+        try {
+          const result = compressedCropDataUrl(session);
+          closeStudentPhotoCrop();
+          photoCropSession = null;
+          session.resolve(result);
+        } catch (error) {
+          showStatus(error instanceof Error ? error.message : "Could not prepare this photo.", "error-state");
+        }
+      }
+      document.getElementById("confirmStudentPhotoCrop").addEventListener("click", confirmStudentPhotoCrop);
+      document.getElementById("confirmStudentPhotoCropTop").addEventListener("click", confirmStudentPhotoCrop);
+      document.getElementById("resetStudentPhotoCrop").addEventListener("click", () => {
+        if (!photoCropSession) return;
+        photoCropSession.zoom = 1;
+        photoCropSession.panX = 0;
+        photoCropSession.panY = 0;
+        drawStudentPhotoCrop();
+      });
+      document.getElementById("rotateStudentPhotoLeft").addEventListener("click", () => { rotateCropImage(-90).catch(() => {}); });
+      document.getElementById("rotateStudentPhotoRight").addEventListener("click", () => { rotateCropImage(90).catch(() => {}); });
+      studentPhotoCropCanvas.addEventListener("pointerdown", (event) => {
+        if (!photoCropSession) return;
+        studentPhotoCropCanvas.setPointerCapture(event.pointerId);
+        cropPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      });
+      studentPhotoCropCanvas.addEventListener("pointermove", (event) => {
+        const session = photoCropSession;
+        const previous = cropPointers.get(event.pointerId);
+        if (!session || !previous) return;
+        cropPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+        const points = [...cropPointers.values()];
+        if (points.length === 1) {
+          session.panX += event.clientX - previous.x;
+          session.panY += event.clientY - previous.y;
+          constrainCropPan();
+        } else if (points.length === 2) {
+          const moving = cropPointers.get(event.pointerId);
+          const other = [...cropPointers.entries()].find(([pointerId]) => pointerId !== event.pointerId)?.[1];
+          const currentDistance = other ? Math.hypot(moving.x - other.x, moving.y - other.y) : 0;
+          const previousDistance = other ? Math.hypot(previous.x - other.x, previous.y - other.y) : 0;
+          if (previousDistance > 0) session.zoom = Math.max(1, Math.min(4, session.zoom * (currentDistance / previousDistance)));
+          constrainCropPan();
+        }
+        drawStudentPhotoCrop();
+        event.preventDefault();
+      });
+      ["pointerup", "pointercancel", "pointerleave"].forEach((eventName) => {
+        studentPhotoCropCanvas.addEventListener(eventName, (event) => cropPointers.delete(event.pointerId));
+      });
+      window.addEventListener("resize", () => { if (photoCropSession) drawStudentPhotoCrop(); });
       document.getElementById("removeStudentPhoto").addEventListener("click", clearStudentPhoto);
       form.addEventListener("submit", async (event) => {
         event.preventDefault();

@@ -53,7 +53,10 @@ import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.domain.SessionManager
 import com.batchfee.edu.domain.StaffPermissions
 import com.batchfee.edu.ui.components.PhoneInputField
+import com.batchfee.edu.ui.components.SquarePhotoCropDialog
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.UUID
 
@@ -99,6 +102,7 @@ fun AddEditStaffScreen(
     var savedCredentials by remember { mutableStateOf(CredentialInfo("", "")) }
     var photoUri by remember { mutableStateOf<Uri?>(null) }
     var originalPhotoReference by remember { mutableStateOf<String?>(null) }
+    var cropSourceUri by remember { mutableStateOf<Uri?>(null) }
     var isSaving by remember { mutableStateOf(false) }
     val photoSaveScope = rememberCoroutineScope()
 
@@ -109,10 +113,21 @@ fun AddEditStaffScreen(
         FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", tempPhotoFile)
     }
     val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { success ->
-        if (success) photoUri = tempPhotoUri
+        if (success) cropSourceUri = Uri.fromFile(tempPhotoFile)
     }
     val galleryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri != null) photoUri = uri
+        if (uri != null) {
+            photoSaveScope.launch {
+                runCatching {
+                    withContext(Dispatchers.IO) {
+                        FirebaseStorageImageUploadHelper.cacheSelectedImage(context, uri, "staff_photo")
+                    }
+                }.onSuccess { cropSourceUri = it }
+                    .onFailure {
+                        errorMessage = it.message ?: "Could not read this image. Please choose it again."
+                    }
+            }
+        }
     }
 
     val staff by viewModel.selectedStaff.collectAsState()
@@ -339,19 +354,19 @@ fun AddEditStaffScreen(
                         isSaving = true
                         photoSaveScope.launch {
                             try {
-                                val cloudPhotoUrl = photoUri?.let { selectedUri ->
-                                    if (selectedUri.scheme == "https" || selectedUri.scheme == "http") {
-                                        selectedUri.toString()
-                                    } else {
-                                        FirebaseStorageImageUploadHelper.uploadStaffPhoto(
-                                            context = context,
-                                            sourceUri = selectedUri,
-                                            subjectId = staffId,
-                                            replacesReference = originalPhotoReference
-                                        )
-                                    }
-                                }
                                 if (isEdit && staffId != null) {
+                                    val cloudPhotoUrl = photoUri?.let { selectedUri ->
+                                        if (selectedUri.scheme == "https" || selectedUri.scheme == "http") {
+                                            selectedUri.toString()
+                                        } else {
+                                            FirebaseStorageImageUploadHelper.uploadStaffPhoto(
+                                                context = context,
+                                                sourceUri = selectedUri,
+                                                subjectId = staffId,
+                                                replacesReference = originalPhotoReference
+                                            )
+                                        }
+                                    }
                                     viewModel.updateStaff(
                                         staffId = staffId,
                                         fullName = fullName,
@@ -378,7 +393,9 @@ fun AddEditStaffScreen(
                                     viewModel.addStaff(
                                         fullName = fullName,
                                         staffCode = loginId,
-                                        photoUri = cloudPhotoUrl,
+                                        // A new staff profile does not have its Firebase UID until this call
+                                        // completes. Upload the photo immediately after creation using that UID.
+                                        photoUri = null,
                                         roleTitle = roleTitle,
                                         phone = phone,
                                         email = email,
@@ -387,10 +404,45 @@ fun AddEditStaffScreen(
                                         assignedBatchIds = selectedBatchIds,
                                         password = password,
                                         status = status,
-                                        onSuccess = { _, loginIdResult, staffPassword, _ ->
-                                            isSaving = false
-                                            savedCredentials = CredentialInfo(loginIdResult, staffPassword)
-                                            showCredentialShare = true
+                                        onSuccess = { createdStaffId, loginIdResult, staffPassword, _ ->
+                                            val showCredentials = {
+                                                isSaving = false
+                                                savedCredentials = CredentialInfo(loginIdResult, staffPassword)
+                                                showCredentialShare = true
+                                            }
+                                            val selectedPhoto = photoUri
+                                            if (selectedPhoto == null) {
+                                                showCredentials()
+                                            } else {
+                                                photoSaveScope.launch {
+                                                    try {
+                                                        val cloudPhotoUrl = if (
+                                                            selectedPhoto.scheme == "https" || selectedPhoto.scheme == "http"
+                                                        ) {
+                                                            selectedPhoto.toString()
+                                                        } else {
+                                                            FirebaseStorageImageUploadHelper.uploadStaffPhoto(
+                                                                context = context,
+                                                                sourceUri = selectedPhoto,
+                                                                subjectId = createdStaffId,
+                                                                replacesReference = null,
+                                                            )
+                                                        }
+                                                        viewModel.updateStaffPhoto(
+                                                            staffId = createdStaffId,
+                                                            photoUri = cloudPhotoUrl,
+                                                            onSuccess = showCredentials,
+                                                            onError = {
+                                                                errorMessage = "Staff was created, but photo upload failed: $it"
+                                                                isSaving = false
+                                                            },
+                                                        )
+                                                    } catch (error: Exception) {
+                                                        errorMessage = "Staff was created, but photo upload failed: ${error.message ?: "Try editing this staff again."}"
+                                                        isSaving = false
+                                                    }
+                                                }
+                                            }
                                         },
                                         onError = {
                                             errorMessage = it
@@ -428,6 +480,17 @@ fun AddEditStaffScreen(
                 showCredentialShare = false
                 onBack()
             }
+        )
+    }
+
+    cropSourceUri?.let { sourceUri ->
+        SquarePhotoCropDialog(
+            sourceUri = sourceUri,
+            onCropped = { croppedUri ->
+                photoUri = croppedUri
+                cropSourceUri = null
+            },
+            onDismiss = { cropSourceUri = null },
         )
     }
 }

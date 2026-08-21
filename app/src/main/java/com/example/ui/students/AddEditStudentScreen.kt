@@ -91,6 +91,7 @@ import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.data.media.FirebaseStorageImageUploadHelper
 import com.batchfee.edu.domain.SessionManager
 import com.batchfee.edu.ui.components.COUNTRY_CODES
+import com.batchfee.edu.ui.components.SquarePhotoCropDialog
 import com.batchfee.edu.ui.components.buildWhatsAppUrl
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -141,6 +142,7 @@ fun AddEditStudentScreen(
     var admissionDateMs by remember { mutableStateOf(System.currentTimeMillis()) }
     var photoUri by remember { mutableStateOf<Uri?>(null) }
     var originalPhotoReference by remember { mutableStateOf<String?>(null) }
+    var cropSourceUri by remember { mutableStateOf<Uri?>(null) }
 
     var nameError by remember { mutableStateOf(false) }
     var phoneError by remember { mutableStateOf(false) }
@@ -169,7 +171,7 @@ fun AddEditStudentScreen(
     val cameraLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.TakePicture()
     ) { success ->
-        if (success) photoUri = Uri.fromFile(tempPhotoFile)
+        if (success) cropSourceUri = Uri.fromFile(tempPhotoFile)
     }
 
     val galleryLauncher = rememberLauncherForActivityResult(
@@ -178,7 +180,7 @@ fun AddEditStudentScreen(
         if (uri != null) {
             saveScope.launch {
                 try {
-                    photoUri = withContext(Dispatchers.IO) {
+                    cropSourceUri = withContext(Dispatchers.IO) {
                         FirebaseStorageImageUploadHelper.cacheSelectedImage(context, uri, "student_photo")
                     }
                 } catch (error: Exception) {
@@ -726,6 +728,17 @@ fun AddEditStudentScreen(
                     onBack()
                 }
             }
+        )
+    }
+
+    cropSourceUri?.let { sourceUri ->
+        SquarePhotoCropDialog(
+            sourceUri = sourceUri,
+            onCropped = { croppedUri ->
+                photoUri = croppedUri
+                cropSourceUri = null
+            },
+            onDismiss = { cropSourceUri = null },
         )
     }
 }
