@@ -125,7 +125,12 @@ fun AttendanceBatchSelectScreen(db: AppDatabase, onBack: () -> Unit, onSelectBat
                                     Text(batch.name, color = TextWhite, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     val total = summary?.totalStudents ?: 0
                                     val marked = summary?.markedCount ?: 0
-                                    Text("$marked/$total marked today", color = TextMuted, fontSize = 12.sp)
+                                    val pending = summary?.pendingCount ?: 0
+                                    Text(
+                                        if (pending > 0) "$marked/$total marked \u2022 $pending pending" else "$marked/$total marked today",
+                                        color = TextMuted,
+                                        fontSize = 12.sp,
+                                    )
                                 }
                                 Icon(Icons.Filled.ChevronRight, null, tint = TextMuted, modifier = Modifier.size(20.dp))
                             }

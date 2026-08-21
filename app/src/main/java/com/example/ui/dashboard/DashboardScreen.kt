@@ -3817,25 +3817,43 @@ private fun CompactDetailedAttendanceRow(
     leave: Int,
     holiday: Int
 ) {
-    val chartTotal = (present + absent + leave + holiday).coerceAtLeast(1)
+    val statusTotal = present + absent + leave + holiday
+    val chartTotal = maxOf(total, statusTotal).coerceAtLeast(1)
+    val pending = (chartTotal - statusTotal).coerceAtLeast(0)
     val values = listOf(present, absent, leave, holiday)
     val colors = listOf(AccentGreen, AccentRed, AccentSky, AccentGray)
     val captions = if (label == "Students") listOf("Present", "Absent", "Leave", "Holiday") else listOf("P", "A", "L", "H")
+    val fractions = (values + pending).map { count -> count.toFloat() / chartTotal }
+    val animatedFractions = fractions.mapIndexed { index, fraction ->
+        animateFloatAsState(
+            targetValue = fraction,
+            animationSpec = tween(durationMillis = 560, easing = FastOutSlowInEasing),
+            label = "${label}_attendance_segment_$index",
+        ).value
+    }
     Column(modifier = Modifier.fillMaxWidth()) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Text(label, color = TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-            Text("$marked/$total marked", color = TextSecondary, fontSize = 11.sp)
-        }
-        Spacer(Modifier.height(5.dp))
-        Row(modifier = Modifier.fillMaxWidth().height(7.dp).clip(RoundedCornerShape(4.dp))) {
-            values.forEachIndexed { index, value ->
-                if (value > 0) {
-                    Box(Modifier.weight(value.toFloat()).fillMaxHeight().background(colors[index]))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("$marked/$total marked", color = TextSecondary, fontSize = 11.sp)
+                if (pending > 0) {
+                    Text("  \u2022  $pending pending", color = AccentAmber, fontSize = 11.sp, fontWeight = FontWeight.Medium)
                 }
             }
-            if (values.sum() == 0) Box(Modifier.fillMaxSize().background(DashboardCardAlt))
         }
-        Spacer(Modifier.height(5.dp))
+        Spacer(Modifier.height(7.dp))
+        Canvas(modifier = Modifier.fillMaxWidth().height(9.dp).clip(RoundedCornerShape(5.dp))) {
+            drawRect(DashboardCardAlt)
+            var x = 0f
+            (animatedFractions.zip(colors + AccentGray.copy(alpha = 0.72f))).forEach { (fraction, color) ->
+                if (fraction > 0f) {
+                    val width = size.width * fraction
+                    drawRect(color, Offset(x, 0f), Size(width, size.height))
+                    x += width
+                }
+            }
+        }
+        Spacer(Modifier.height(7.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             values.forEachIndexed { index, value ->
                 val percent = value * 100 / chartTotal
@@ -3850,7 +3868,15 @@ private fun AttendanceSegmentedBar(sum: BatchAttendanceSummary, label: String) {
     Column {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text(label, color = TextSecondary, fontSize = 12.sp)
-            Text("${sum.markedCount}/${sum.totalStudents} marked today", color = TextSecondary, fontSize = 11.sp)
+            Text(
+                if (sum.pendingCount > 0) {
+                    "${sum.markedCount}/${sum.totalStudents} marked \u2022 ${sum.pendingCount} pending"
+                } else {
+                    "${sum.markedCount}/${sum.totalStudents} marked today"
+                },
+                color = if (sum.pendingCount > 0) AccentAmber else TextSecondary,
+                fontSize = 11.sp,
+            )
         }
         Spacer(Modifier.height(6.dp))
         val total = sum.chartTotal.toFloat().coerceAtLeast(1f)
@@ -3858,6 +3884,7 @@ private fun AttendanceSegmentedBar(sum: BatchAttendanceSummary, label: String) {
         val lW = sum.leaveCount / total; val hW = sum.holidayCount / total
         Canvas(modifier = Modifier.fillMaxWidth().height(10.dp)) {
             val w = size.width; val barH = size.height; val r = barH / 2
+            drawRoundRect(DashboardCardAlt, Offset.Zero, Size(w, barH), androidx.compose.ui.geometry.CornerRadius(r, r))
             var x = 0f
             drawRoundRect(AccentGreen, Offset(x, 0f), Size(w * pW, barH), androidx.compose.ui.geometry.CornerRadius(r, r))
             x += w * pW
@@ -3882,7 +3909,15 @@ private fun StaffSegmentedBar(sum: StaffAttendanceSummary) {
     Column {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text("Staff", color = TextSecondary, fontSize = 12.sp)
-            Text("${sum.markedCount}/${sum.totalStaff} marked today", color = TextSecondary, fontSize = 11.sp)
+            Text(
+                if (sum.pendingCount > 0) {
+                    "${sum.markedCount}/${sum.totalStaff} marked \u2022 ${sum.pendingCount} pending"
+                } else {
+                    "${sum.markedCount}/${sum.totalStaff} marked today"
+                },
+                color = if (sum.pendingCount > 0) AccentAmber else TextSecondary,
+                fontSize = 11.sp,
+            )
         }
         Spacer(Modifier.height(6.dp))
         val total = sum.chartTotal.toFloat().coerceAtLeast(1f)
@@ -3890,6 +3925,7 @@ private fun StaffSegmentedBar(sum: StaffAttendanceSummary) {
         val lW = sum.leaveCount / total; val hW = sum.holidayCount / total
         Canvas(modifier = Modifier.fillMaxWidth().height(10.dp)) {
             val w = size.width; val barH = size.height; val r = barH / 2
+            drawRoundRect(DashboardCardAlt, Offset.Zero, Size(w, barH), androidx.compose.ui.geometry.CornerRadius(r, r))
             var x = 0f
             drawRoundRect(AccentGreen, Offset(x, 0f), Size(w * pW, barH), androidx.compose.ui.geometry.CornerRadius(r, r))
             x += w * pW

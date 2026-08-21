@@ -47,13 +47,17 @@ data class BatchAttendanceSummary(
     val attendanceDays: Int = 0
 ) {
     val markedCount get() = presentCount + absentCount + leaveCount + holidayCount
-    val chartTotal get() = markedCount.takeIf { it > 0 } ?: totalStudents
-    private val statusDenominator get() = markedCount.takeIf { it > 0 } ?: totalStudents
+    // Daily dashboards must include students who are not marked yet. Otherwise
+    // 2 present students from a class of 3 incorrectly looks like 100% present.
+    val chartTotal get() = maxOf(totalStudents, markedCount)
+    val pendingCount get() = (chartTotal - markedCount).coerceAtLeast(0)
+    private val statusDenominator get() = chartTotal
     private val performanceDenominator get() = (presentCount + absentCount).takeIf { it > 0 } ?: markedCount
     val presentPct get() = if (statusDenominator > 0) presentCount * 100f / statusDenominator else 0f
     val absentPct get() = if (statusDenominator > 0) absentCount * 100f / statusDenominator else 0f
     val leavePct get() = if (statusDenominator > 0) leaveCount * 100f / statusDenominator else 0f
     val holidayPct get() = if (statusDenominator > 0) holidayCount * 100f / statusDenominator else 0f
+    val pendingPct get() = if (statusDenominator > 0) pendingCount * 100f / statusDenominator else 0f
     val coveragePct get() = if (expectedStudentDays > 0) markedCount * 100f / expectedStudentDays else 0f
     val presentPerformancePct get() = if (performanceDenominator > 0) presentCount * 100f / performanceDenominator else 0f
     val absentPerformancePct get() = if (performanceDenominator > 0) absentCount * 100f / performanceDenominator else 0f
@@ -69,12 +73,14 @@ data class StaffAttendanceSummary(
     val attendanceDays: Int = 0
 ) {
     val markedCount get() = presentCount + absentCount + leaveCount + holidayCount
-    val chartTotal get() = markedCount.takeIf { it > 0 } ?: totalStaff
-    private val statusDenominator get() = markedCount.takeIf { it > 0 } ?: totalStaff
+    val chartTotal get() = maxOf(totalStaff, markedCount)
+    val pendingCount get() = (chartTotal - markedCount).coerceAtLeast(0)
+    private val statusDenominator get() = chartTotal
     val presentPct get() = if (statusDenominator > 0) presentCount * 100f / statusDenominator else 0f
     val absentPct get() = if (statusDenominator > 0) absentCount * 100f / statusDenominator else 0f
     val leavePct get() = if (statusDenominator > 0) leaveCount * 100f / statusDenominator else 0f
     val holidayPct get() = if (statusDenominator > 0) holidayCount * 100f / statusDenominator else 0f
+    val pendingPct get() = if (statusDenominator > 0) pendingCount * 100f / statusDenominator else 0f
     val coveragePct get() = if (expectedStaffDays > 0) markedCount * 100f / expectedStaffDays else 0f
 }
 
