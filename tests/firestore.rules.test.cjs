@@ -1,4 +1,5 @@
 const { readFileSync } = require("node:fs");
+const assert = require("node:assert/strict");
 const { after, before, beforeEach, describe, test } = require("node:test");
 const {
   assertFails,
@@ -7,6 +8,7 @@ const {
 } = require("@firebase/rules-unit-testing");
 const {
   collection,
+  collectionGroup,
   deleteDoc,
   doc,
   getDoc,
@@ -231,6 +233,16 @@ async function seedBaseData() {
       feeId: "fee-a1",
       studentId: "student-doc-a1",
       receiptNumber: "REC-0000000001",
+    });
+    await setDoc(tenantDoc(db, OWNER_A, "subscription_receipts", "subscription-receipt-a1"), {
+      instituteId: OWNER_A,
+      amountPaid: 999,
+      status: "approved",
+    });
+    await setDoc(tenantDoc(db, OWNER_B, "subscription_receipts", "subscription-receipt-b1"), {
+      instituteId: OWNER_B,
+      amountPaid: 1999,
+      status: "approved",
     });
     await setDoc(tenantDoc(db, OWNER_A, "payment_reversals", "reversal-a1"), {
       instituteId: OWNER_A,
@@ -553,6 +565,23 @@ describe("P0-02 owner and staff security boundary", { concurrency: false }, () =
       currentPeriodEndMs: Date.now() + 31_536_000_000,
       studentLimit: 1500,
     }));
+  });
+
+  test("platform reader can query all subscription receipts without exposing other tenants", async () => {
+    const adminDb = authDb(ADMIN);
+    const allReceipts = await assertSucceeds(
+      getDocs(collectionGroup(adminDb, "subscription_receipts")),
+    );
+    assert.equal(allReceipts.size, 2);
+
+    const ownerDb = authDb(OWNER_A);
+    await assertSucceeds(
+      getDoc(tenantDoc(ownerDb, OWNER_A, "subscription_receipts", "subscription-receipt-a1")),
+    );
+    await assertFails(
+      getDoc(tenantDoc(ownerDb, OWNER_B, "subscription_receipts", "subscription-receipt-b1")),
+    );
+    await assertFails(getDocs(collectionGroup(ownerDb, "subscription_receipts")));
   });
 
   test("managed InstituteAdmin is same-tenant only and cannot edit entitlement fields", async () => {

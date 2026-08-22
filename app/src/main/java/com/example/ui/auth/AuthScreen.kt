@@ -50,11 +50,13 @@ import com.batchfee.edu.data.firestore.InstituteSyncHelper
 import com.batchfee.edu.data.models.AuditLogEntity
 import com.batchfee.edu.data.models.InstituteEntity
 import com.batchfee.edu.data.models.UserEntity
+import com.batchfee.edu.data.repository.InstituteOwnerLoginActivityTracker
 import com.batchfee.edu.domain.BiometricAuthManager
 import com.batchfee.edu.domain.DemoAuthRepository
 import com.batchfee.edu.domain.PasswordHasher
 import com.batchfee.edu.domain.SubscriptionPolicy
 import com.batchfee.edu.domain.SessionManager
+import com.batchfee.edu.domain.InstituteContactNumber
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseAuthException
 import com.google.firebase.crashlytics.FirebaseCrashlytics
@@ -69,6 +71,16 @@ import kotlinx.coroutines.withContext
 import androidx.lifecycle.viewModelScope
 
 class AuthViewModel(private val db: AppDatabase) : ViewModel() {
+    private fun trackInstituteOwnerLogin(instituteId: String?, role: String, method: String) {
+        val normalizedRole = role.lowercase()
+        val isOwner = normalizedRole == "instituteowner" || normalizedRole == "owner" ||
+            normalizedRole == "institute_owner"
+        val resolvedInstituteId = instituteId?.takeIf { it.isNotBlank() }
+        if (!isOwner || resolvedInstituteId == null) return
+
+        // Tracking is deliberately best-effort: a metrics outage must never block login.
+        InstituteOwnerLoginActivityTracker.record(resolvedInstituteId, method)
+    }
 
     /**
      * A dashboard is only safe to enter after its institute has been resolved.
@@ -111,6 +123,11 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
             onError("All fields are required")
             return
         }
+        val primaryContact = InstituteContactNumber.normalizeBangladesh(whatsappNumber)
+        if (primaryContact == null) {
+            onError("Enter a valid Bangladesh institute contact number.")
+            return
+        }
 
         viewModelScope.launch {
             try {
@@ -140,7 +157,8 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                             "instituteName" to instituteName,
                             "ownerName" to ownerName,
                             "email" to email,
-                            "whatsappNumber" to whatsappNumber,
+                            "phone" to primaryContact,
+                            "whatsappNumber" to primaryContact,
                             "role" to "owner",
                             "createdAt" to now,
                             "isActive" to true,
@@ -182,7 +200,7 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                             "instituteName" to instituteName,
                             "ownerName" to ownerName,
                             "ownerEmail" to email,
-                            "ownerPhone" to "",
+                            "ownerPhone" to primaryContact,
                             "instituteCode" to "",
                             "instituteAddress" to "",
                             "planId" to "plan_free_trial",
@@ -207,7 +225,8 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                     trialEndDateMs = now + trialDurationMs,
                     currentPeriodEndMs = now + trialDurationMs,
                     createdAtMs = now,
-                    whatsappNumber = whatsappNumber.ifBlank { null }
+                    phone = primaryContact,
+                    whatsappNumber = primaryContact
                 )
 
                 val user = UserEntity(
@@ -393,8 +412,14 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                                     currentPeriodEndMs = (data["currentPeriodEndMs"] as? Long)
                                         ?: (data["trialEndDate"] as? Long ?: (now + SubscriptionPolicy.FREE_TRIAL_DURATION_MS)),
                                     createdAtMs = data["createdAt"] as? Long ?: now,
-                                    phone = data["phone"] as? String,
-                                    whatsappNumber = data["whatsappNumber"] as? String,
+                                    phone = InstituteContactNumber.primary(
+                                        data["phone"] as? String,
+                                        data["whatsappNumber"] as? String
+                                    ),
+                                    whatsappNumber = InstituteContactNumber.whatsapp(
+                                        data["phone"] as? String,
+                                        data["whatsappNumber"] as? String
+                                    ),
                                     ownerName = data["ownerName"] as? String,
                                     email = data["email"] as? String,
                                     instituteCode = data["instituteCode"] as? String,
@@ -440,8 +465,14 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                                 currentPeriodEndMs = (data["currentPeriodEndMs"] as? Long)
                                     ?: (data["trialEndDate"] as? Long ?: (now + SubscriptionPolicy.FREE_TRIAL_DURATION_MS)),
                                 createdAtMs = data["createdAt"] as? Long ?: now,
-                                phone = data["phone"] as? String,
-                                whatsappNumber = data["whatsappNumber"] as? String,
+                                phone = InstituteContactNumber.primary(
+                                    data["phone"] as? String,
+                                    data["whatsappNumber"] as? String
+                                ),
+                                whatsappNumber = InstituteContactNumber.whatsapp(
+                                    data["phone"] as? String,
+                                    data["whatsappNumber"] as? String
+                                ),
                                 ownerName = data["ownerName"] as? String,
                                 email = data["email"] as? String,
                                 instituteCode = data["instituteCode"] as? String
@@ -556,6 +587,7 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
 
                 resolveInstituteBeforeNavigation(instituteId, role)
                 SessionManager.login(uid, instituteId ?: "", role, staffPermissions)
+                trackInstituteOwnerLogin(instituteId, role, "password")
                 android.util.Log.i(
                     "BatchFeeDataLoad",
                     "login_profile_ms=${SystemClock.elapsedRealtime() - profileStartedAt} " +
@@ -657,6 +689,7 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
 
                 resolveInstituteBeforeNavigation(instituteId, user.role)
                 SessionManager.login(user.id, instituteId, user.role, staffPermissions)
+                trackInstituteOwnerLogin(instituteId, user.role, "biometric")
                 BiometricAuthManager.refreshCurrentSession(appContext, user.email)
                 onSuccess(user.role)
             } catch (e: Exception) {
@@ -1067,8 +1100,14 @@ fun AuthScreen(
             Spacer(Modifier.height(12.dp))
             DarkTextField(
                 value = whatsappNumber,
-                onValueChange = { whatsappNumber = it },
-                label = "WhatsApp Number",
+                onValueChange = {
+                    whatsappNumber = it
+                    if (fieldError.containsKey("whatsappNumber")) {
+                        fieldError = fieldError - "whatsappNumber"
+                        errorMessage = null
+                    }
+                },
+                label = "Institute Contact & WhatsApp *",
                 leadingIcon = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("+880 ", color = AuthMuted, fontSize = 14.sp, fontWeight = FontWeight.Medium)
@@ -1076,6 +1115,14 @@ fun AuthScreen(
                 },
                 keyboardType = androidx.compose.ui.text.input.KeyboardType.Phone
             )
+            if (fieldError.containsKey("whatsappNumber")) {
+                Text(
+                    "Enter a valid Bangladesh mobile number",
+                    color = Color(0xFFF87171),
+                    fontSize = 10.sp,
+                    modifier = Modifier.padding(start = 12.dp, top = 2.dp)
+                )
+            }
             Spacer(Modifier.height(12.dp))
         }
 
@@ -1265,12 +1312,17 @@ fun AuthScreen(
                                 val errs = mutableMapOf<String, Boolean>()
                                 if (instituteName.isBlank()) errs["instituteName"] = true
                                 if (ownerName.isBlank()) errs["ownerName"] = true
+                                if (InstituteContactNumber.normalizeBangladesh(whatsappNumber) == null) errs["whatsappNumber"] = true
                                 if (email.isBlank()) errs["email"] = true
                                 if (password.isBlank()) errs["password"] = true
                                 if (!consentChecked) errs["consent"] = true
                                 if (errs.isNotEmpty()) {
                                     fieldError = errs
-                                    errorMessage = "Please fill all required fields and accept the terms."
+                                    errorMessage = if (errs.containsKey("whatsappNumber")) {
+                                        "Enter a valid institute contact number."
+                                    } else {
+                                        "Please fill all required fields and accept the terms."
+                                    }
                                     isLoading = false
                                     return@Button
                                 }

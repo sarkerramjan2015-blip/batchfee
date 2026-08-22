@@ -22,7 +22,8 @@ data class SubscriptionReceiptResult(
     val paymentMethod: String,
     val transactionLast4: String,
     val startDateMs: Long,
-    val endDateMs: Long
+    val endDateMs: Long,
+    val senderPhone: String = ""
 )
 
 data class SubscriptionInstituteResult(
@@ -165,7 +166,8 @@ class SubscriptionRepository(
             paymentMethod = receipt.string("paymentMethod"),
             transactionLast4 = receipt.optionalString("transactionLast4"),
             startDateMs = receipt.long("startDateMs"),
-            endDateMs = receipt.long("endDateMs")
+            endDateMs = receipt.long("endDateMs"),
+            senderPhone = receipt.optionalString("senderPhone")
         )
     }
 
@@ -233,7 +235,17 @@ class SubscriptionRepository(
         operationId: String,
         values: Map<String, Any?>
     ): SubscriptionInstituteResult {
-        val institute = commit(instituteId, action, operationId, values).map("institute")
+        val responseInstitute = commit(instituteId, action, operationId, values).map("institute")
+        // A previously deployed service returned only changed fields for
+        // extend/block. The write was successful, but strict parsing showed a
+        // false failure. Fall back to the strongly-consistent Firestore record
+        // until every backend revision returns the complete canonical state.
+        val institute = if (responseInstitute.hasCompleteInstituteState()) {
+            responseInstitute
+        } else {
+            firestore.collection("institutes").document(instituteId).get().await().data
+                ?: error("Subscription updated, but the latest institute state could not be loaded.")
+        }
         return SubscriptionInstituteResult(
             currentPlanId = institute.string("currentPlanId"),
             subscriptionStatus = institute.string("subscriptionStatus"),
@@ -302,6 +314,12 @@ private fun Map<String, Any?>.int(key: String): Int =
     (this[key] as? Number)?.toInt() ?: error("Missing $key in subscription response.")
 
 private fun Map<String, Any?>.optionalInt(key: String): Int? = (this[key] as? Number)?.toInt()
+
+private fun Map<String, Any?>.hasCompleteInstituteState(): Boolean =
+    this["currentPlanId"] is String &&
+        this["subscriptionStatus"] is String &&
+        this["currentPeriodEndMs"] is Number &&
+        this["isActive"] is Boolean
 
 private fun Map<String, Any?>.double(key: String): Double =
     (this[key] as? Number)?.toDouble() ?: error("Missing $key in subscription response.")

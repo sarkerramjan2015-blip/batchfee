@@ -36,8 +36,10 @@ import com.batchfee.edu.data.models.SubscriptionPlanEntity
 import com.batchfee.edu.data.models.SubscriptionRequest
 import com.batchfee.edu.data.repository.SubscriptionRepository
 import com.batchfee.edu.domain.SessionManager
+import com.batchfee.edu.domain.InstituteContactNumber
 import com.batchfee.edu.ui.superadmin.SubscriptionReceiptData
 import com.batchfee.edu.ui.superadmin.generateSubscriptionReceiptPdf
+import com.batchfee.edu.ui.superadmin.shareSubscriptionReceiptToWhatsApp
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
 import com.google.firebase.crashlytics.FirebaseCrashlytics
@@ -108,8 +110,14 @@ class BillingViewModel(private val db: AppDatabase) : ViewModel() {
                         currentPeriodEndMs = (data["currentPeriodEndMs"] as? Long)
                             ?: (data["trialEndDate"] as? Long ?: now),
                         createdAtMs = data["createdAt"] as? Long ?: now,
-                        phone = data["phone"] as? String,
-                        whatsappNumber = data["whatsappNumber"] as? String,
+                        phone = InstituteContactNumber.primary(
+                            data["phone"] as? String,
+                            data["whatsappNumber"] as? String
+                        ),
+                        whatsappNumber = InstituteContactNumber.whatsapp(
+                            data["phone"] as? String,
+                            data["whatsappNumber"] as? String
+                        ),
                         ownerName = data["ownerName"] as? String,
                         email = data["email"] as? String,
                         instituteCode = data["instituteCode"] as? String,
@@ -166,7 +174,8 @@ class BillingViewModel(private val db: AppDatabase) : ViewModel() {
                             paymentMethod = d["paymentMethod"] as? String ?: "",
                             transactionLast4 = d["transactionLast4"] as? String ?: "",
                             startDateMs = (d["startDateMs"] as? Number)?.toLong() ?: (d["approvedAt"] as? Number)?.toLong() ?: 0L,
-                            endDateMs = (d["endDateMs"] as? Number)?.toLong() ?: 0L
+                            endDateMs = (d["endDateMs"] as? Number)?.toLong() ?: 0L,
+                            senderPhone = d["senderPhone"] as? String ?: ""
                         )
                     }?.sortedByDescending { it.startDateMs } ?: emptyList()
                 }
@@ -460,25 +469,46 @@ fun BillingScreen(
                         }
                     }
                     if (showReceiptDialog) {
+                        val sendingNumberLine = if (r.senderPhone.isNotBlank()) {
+                            "\nSent from ${r.senderPhone}"
+                        } else {
+                            ""
+                        }
                         AlertDialog(
                             onDismissRequest = { showReceiptDialog = false },
                             title = { Text("Payment Receipt", color = TextWhite, fontWeight = FontWeight.Bold) },
-                            text = { Text("${r.planName}\nBDT ${"%,.0f".format(r.amountPaid)}\n${SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(r.startDateMs))}", color = TextMuted, fontSize = 13.sp) },
+                            text = { Text("${r.planName}\nBDT ${"%,.0f".format(r.amountPaid)}\n${SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(r.startDateMs))}$sendingNumberLine", color = TextMuted, fontSize = 13.sp) },
                             confirmButton = {
-                                Button(onClick = {
-                                    try {
-                                        val file = generateSubscriptionReceiptPdf(ctx, r)
-                                        val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", file)
-                                        ctx.startActivity(Intent(Intent.ACTION_VIEW).apply {
-                                            setDataAndType(uri, "application/pdf")
-                                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                        })
-                                    } catch (e: Exception) {
-                                        Toast.makeText(ctx, "Unable to open PDF: ${e.message}", Toast.LENGTH_SHORT).show()
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            if (shareSubscriptionReceiptToWhatsApp(ctx, r)) {
+                                                showReceiptDialog = false
+                                            } else {
+                                                Toast.makeText(ctx, "WhatsApp is not available.", Toast.LENGTH_SHORT).show()
+                                            }
+                                        },
+                                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Green)
+                                    ) {
+                                        Icon(Icons.Filled.Chat, contentDescription = null, modifier = Modifier.size(17.dp))
+                                        Spacer(Modifier.width(5.dp))
+                                        Text("WhatsApp")
                                     }
-                                    showReceiptDialog = false
-                                }, colors = ButtonDefaults.buttonColors(containerColor = ElectricBlue)) {
-                                    Text("View / Download PDF", color = Color.White)
+                                    Button(onClick = {
+                                        try {
+                                            val file = generateSubscriptionReceiptPdf(ctx, r)
+                                            val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", file)
+                                            ctx.startActivity(Intent(Intent.ACTION_VIEW).apply {
+                                                setDataAndType(uri, "application/pdf")
+                                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                            })
+                                            showReceiptDialog = false
+                                        } catch (e: Exception) {
+                                            Toast.makeText(ctx, "Unable to open PDF: ${e.message}", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }, colors = ButtonDefaults.buttonColors(containerColor = ElectricBlue)) {
+                                        Text("View PDF", color = Color.White)
+                                    }
                                 }
                             },
                             dismissButton = { TextButton(onClick = { showReceiptDialog = false }) { Text("Close", color = TextMuted) } },

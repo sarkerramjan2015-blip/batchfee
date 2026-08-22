@@ -12,6 +12,11 @@ import android.graphics.pdf.PdfDocument
 import android.net.Uri
 import android.widget.Toast
 import androidx.compose.animation.core.*
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -55,10 +60,14 @@ import com.batchfee.edu.data.models.InstituteEntity
 import com.batchfee.edu.data.models.SubscriptionPlanEntity
 import com.batchfee.edu.data.models.SubscriptionRequest
 import com.batchfee.edu.data.repository.SafeDeletionRepository
+import com.batchfee.edu.data.repository.PermanentArchivePurgeRepository
 import com.batchfee.edu.data.repository.SubscriptionRepository
 import com.batchfee.edu.data.repository.PlatformAdminRepository
 import com.batchfee.edu.data.repository.PlatformInstituteDraft
+import com.batchfee.edu.data.repository.InstituteOwnerLoginActivity
+import com.batchfee.edu.data.repository.InstituteOwnerLoginActivityRepository
 import com.batchfee.edu.domain.SessionManager
+import com.batchfee.edu.domain.InstituteContactNumber
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.google.firebase.firestore.AggregateSource
@@ -96,7 +105,6 @@ private val ElectricBlue = Color(0xFF3B82F6)
 private const val STANDARD_MONTHLY_FEE = 500.0
 private const val DEFAULT_TRIAL_PLAN_ID = "plan_free_trial"
 private const val MILLIS_PER_DAY = 24L * 60 * 60 * 1000
-private const val BATCHFEE_SUPPORT_WHATSAPP = "8801518657869"
 
 private fun effectiveSubscriptionExpiryMs(institute: InstituteEntity): Long =
     institute.currentPeriodEndMs.takeIf { it > 0L } ?: institute.trialEndDateMs
@@ -219,7 +227,8 @@ data class SubscriptionReceiptData(
     val paymentMethod: String,
     val transactionLast4: String,
     val startDateMs: Long,
-    val endDateMs: Long
+    val endDateMs: Long,
+    val senderPhone: String = ""
 )
 
 data class PlatformAuditEntry(
@@ -269,6 +278,9 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
     private val _pendingRequests = MutableStateFlow<List<SubscriptionRequest>>(emptyList())
     val pendingRequests = _pendingRequests.asStateFlow()
 
+    private val _approvingRequestIds = MutableStateFlow<Set<String>>(emptySet())
+    val approvingRequestIds = _approvingRequestIds.asStateFlow()
+
     private val _managedUsers = MutableStateFlow<List<ManagedUserSummary>>(emptyList())
     val managedUsers = _managedUsers.asStateFlow()
 
@@ -287,8 +299,13 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
     private val _bulkImportReport = MutableStateFlow(BulkImportReport())
     val bulkImportReport = _bulkImportReport.asStateFlow()
 
+    private val _purgingInstituteIds = MutableStateFlow<Set<String>>(emptySet())
+    val purgingInstituteIds = _purgingInstituteIds.asStateFlow()
+
     private val firestore = FirebaseFirestore.getInstance()
     private val safeDeletionRepository = SafeDeletionRepository(db)
+    private val permanentArchivePurgeRepository = PermanentArchivePurgeRepository(db)
+    private val ownerLoginActivityRepository = InstituteOwnerLoginActivityRepository()
     private var didBackfillManagedUsers = false
     private var approvedRequestDocuments: List<Pair<String, Map<String, Any>>> = emptyList()
     private var nextInstitutePageCursor: DocumentSnapshot? = null
@@ -439,7 +456,8 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                 paymentMethod = data["paymentMethod"] as? String ?: "",
                 transactionLast4 = data["transactionLast4"] as? String ?: "",
                 startDateMs = startDateMs,
-                endDateMs = endDateMs
+                endDateMs = endDateMs,
+                senderPhone = data["senderPhone"] as? String ?: ""
             )
         }.sortedByDescending { it.startDateMs }
         recalculateStats(_institutes.value, plans)
@@ -474,6 +492,8 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
     }
 
     fun approveRequest(request: SubscriptionRequest) {
+        if (request.requestId in _approvingRequestIds.value) return
+        _approvingRequestIds.value = _approvingRequestIds.value + request.requestId
         viewModelScope.launch {
             try {
                 val result = SubscriptionRepository(firestore).approveRequest(
@@ -525,11 +545,14 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                     paymentMethod = result.paymentMethod,
                     transactionLast4 = result.transactionLast4,
                     startDateMs = result.startDateMs,
-                    endDateMs = result.endDateMs
+                    endDateMs = result.endDateMs,
+                    senderPhone = result.senderPhone
                 )
             } catch (e: Exception) {
                 _operationMsg.value = "Approve failed: ${subscriptionOperationErrorMessage(e)}"
                 FirebaseCrashlytics.getInstance().recordException(e)
+            } finally {
+                _approvingRequestIds.value = _approvingRequestIds.value - request.requestId
             }
         }
     }
@@ -734,8 +757,14 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                 trialEndDateMs = trialEnd,
                 currentPeriodEndMs = periodEnd,
                 createdAtMs = (data["createdAt"] as? Number)?.toLong() ?: now,
-                phone = data["phone"] as? String,
-                whatsappNumber = data["whatsappNumber"] as? String,
+                phone = InstituteContactNumber.primary(
+                    data["phone"] as? String,
+                    data["whatsappNumber"] as? String
+                ),
+                whatsappNumber = InstituteContactNumber.whatsapp(
+                    data["phone"] as? String,
+                    data["whatsappNumber"] as? String
+                ),
                 profilePhotoUri = data["profilePhotoUri"] as? String,
                 ownerName = data["ownerName"] as? String,
                 email = data["email"] as? String,
@@ -879,7 +908,14 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                             trialEndDateMs = (data["archivedAtMs"] as? Number)?.toLong() ?: 0L,
                             currentPeriodEndMs = (data["retentionUntilMs"] as? Number)?.toLong() ?: 0L,
                             createdAtMs = (data["createdAt"] as? Number)?.toLong() ?: 0L,
-                            phone = data["phone"] as? String,
+                            phone = InstituteContactNumber.primary(
+                                data["phone"] as? String,
+                                data["whatsappNumber"] as? String
+                            ),
+                            whatsappNumber = InstituteContactNumber.whatsapp(
+                                data["phone"] as? String,
+                                data["whatsappNumber"] as? String
+                            ),
                             ownerName = data["ownerName"] as? String,
                             email = data["email"] as? String
                         ),
@@ -1132,6 +1168,25 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
         }
     }
 
+    fun permanentlyDeleteInstitute(instituteId: String) {
+        if (instituteId in _purgingInstituteIds.value) return
+        viewModelScope.launch {
+            _purgingInstituteIds.value = _purgingInstituteIds.value + instituteId
+            try {
+                val card = _trashedInstitutes.value.find { it.entity.id == instituteId }
+                permanentArchivePurgeRepository.purgeInstitute(instituteId)
+                _trashedInstitutes.value = _trashedInstitutes.value.filter { it.entity.id != instituteId }
+                refreshPlatformDashboard()
+                _operationMsg.value = "${card?.entity?.name ?: "Institute"} permanently deleted."
+            } catch (error: Exception) {
+                _operationMsg.value = "Permanent delete failed: ${error.message ?: "Please try again."}"
+                FirebaseCrashlytics.getInstance().recordException(error)
+            } finally {
+                _purgingInstituteIds.value = _purgingInstituteIds.value - instituteId
+            }
+        }
+    }
+
     fun deleteAnnouncement(id: String) {
         viewModelScope.launch {
             try {
@@ -1234,7 +1289,8 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                         paymentMethod = d["paymentMethod"] as? String ?: "",
                         transactionLast4 = d["transactionLast4"] as? String ?: "",
                         startDateMs = (d["startDateMs"] as? Number)?.toLong() ?: (d["approvedAt"] as? Number)?.toLong() ?: 0L,
-                        endDateMs = (d["endDateMs"] as? Number)?.toLong() ?: 0L
+                        endDateMs = (d["endDateMs"] as? Number)?.toLong() ?: 0L,
+                        senderPhone = d["senderPhone"] as? String ?: ""
                     )
                 }.sortedByDescending { it.startDateMs }
                 onResult(receipts)
@@ -1294,6 +1350,20 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
             } catch (error: Exception) {
                 FirebaseCrashlytics.getInstance().recordException(error)
                 _operationMsg.value = "Live platform metrics unavailable: ${error.message}"
+            }
+        }
+    }
+
+    fun loadInstituteOwnerLoginActivity(
+        instituteId: String,
+        onResult: (InstituteOwnerLoginActivity?, String?) -> Unit
+    ) {
+        viewModelScope.launch {
+            try {
+                onResult(ownerLoginActivityRepository.getOwnerLoginActivity(instituteId), null)
+            } catch (error: Exception) {
+                FirebaseCrashlytics.getInstance().recordException(error)
+                onResult(null, "Login activity could not be loaded right now.")
             }
         }
     }
@@ -1430,6 +1500,7 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
     val subscriptionPlans by viewModel.subscriptionPlans.collectAsState()
     val stats by viewModel.stats.collectAsState()
     val pendingRequests by viewModel.pendingRequests.collectAsState()
+    val approvingRequestIds by viewModel.approvingRequestIds.collectAsState()
     val managedUsers by viewModel.managedUsers.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val operationMsg by viewModel.operationMsg.collectAsState()
@@ -1438,6 +1509,7 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
     val platformAudit by viewModel.platformAudit.collectAsState()
     val recoveryLink by viewModel.lastRecoveryLink.collectAsState()
     val importReport by viewModel.bulkImportReport.collectAsState()
+    val purgingInstituteIds by viewModel.purgingInstituteIds.collectAsState()
 
     val snackbarHostState = remember { SnackbarHostState() }
     LaunchedEffect(operationMsg) {
@@ -1467,6 +1539,8 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
     var editingPlan by remember { mutableStateOf<SubscriptionPlanEntity?>(null) }
     var showPlanDialog by remember { mutableStateOf(false) }
     var showReceiptDialog by remember { mutableStateOf(false) }
+    var permanentDeleteTarget by remember { mutableStateOf<InstituteCardData?>(null) }
+    var recoveryVaultExpanded by remember { mutableStateOf(false) }
 
     // Open receipt actions only after server approval returned the saved receipt.
     LaunchedEffect(receiptData) {
@@ -1564,60 +1638,35 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
             }
 
             // ── Revenue Section ──
-            item {
-                val activityOptions = listOf(
-                    "all" to "All activity",
-                    "today" to "Active in last 24 hours",
-                    "7days" to "Active in last 7 days",
-                    "30days" to "Active in last 30 days",
-                    "inactive30" to "Inactive for 30+ days",
-                    "never" to "Never active"
-                )
-                val selectedActivityLabel = activityOptions.firstOrNull { it.first == lastActivityFilter }?.second ?: "All activity"
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(containerColor = CardBg),
-                    border = BorderStroke(1.dp, BorderSub)
-                ) {
-                    Row(Modifier.padding(horizontal = 12.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            Modifier.size(30.dp).clip(RoundedCornerShape(9.dp)).background(AccentCyan.copy(alpha = 0.13f)),
-                            contentAlignment = Alignment.Center
-                        ) { Icon(Icons.Filled.AccessTime, null, tint = AccentCyan, modifier = Modifier.size(16.dp)) }
-                        Spacer(Modifier.width(8.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text("Last Activity", color = TextWhite, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                            Text("Filter institute list by recent activity", color = TextMuted, fontSize = 10.sp)
-                        }
-                        Box {
-                            OutlinedButton(
-                                onClick = { lastActivityMenuOpen = true },
-                                contentPadding = PaddingValues(horizontal = 9.dp, vertical = 0.dp),
-                                modifier = Modifier.height(34.dp),
-                                shape = RoundedCornerShape(8.dp),
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = if (lastActivityFilter == "all") TextMuted else AccentCyan)
-                            ) {
-                                Text(if (lastActivityFilter == "all") "Filter" else selectedActivityLabel, fontSize = 11.sp)
-                                Spacer(Modifier.width(3.dp))
-                                Icon(Icons.Filled.ExpandMore, null, modifier = Modifier.size(16.dp))
-                            }
-                            DropdownMenu(
-                                expanded = lastActivityMenuOpen,
-                                onDismissRequest = { lastActivityMenuOpen = false },
-                                containerColor = CardBg
-                            ) {
-                                activityOptions.forEach { (value, label) ->
-                                    DropdownMenuItem(
-                                        text = { Text(label, color = if (value == lastActivityFilter) AccentCyan else TextWhite, fontSize = 12.sp) },
-                                        onClick = { lastActivityFilter = value; lastActivityMenuOpen = false }
-                                    )
-                                }
-                            }
-                        }
-                    }
+            if (trashedInstitutes.isNotEmpty()) {
+                item {
+                    RecoveryVaultSection(
+                        institutes = trashedInstitutes,
+                        purgingInstituteIds = purgingInstituteIds,
+                        expanded = recoveryVaultExpanded,
+                        onExpandedChange = { recoveryVaultExpanded = it },
+                        onRestore = viewModel::restoreInstitute,
+                        onDelete = { permanentDeleteTarget = it }
+                    )
                 }
             }
+
+            item {
+                SubscriptionPlanSection(
+                    plans = subscriptionPlans,
+                    institutes = institutes,
+                    onCreate = {
+                        editingPlan = null
+                        showPlanDialog = true
+                    },
+                    onEdit = { plan ->
+                        editingPlan = plan
+                        showPlanDialog = true
+                    },
+                    onDelete = viewModel::deleteSubscriptionPlan
+                )
+            }
+
 
             item {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1649,6 +1698,7 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
                     requests = pendingRequests,
                     institutes = institutes,
                     plans = subscriptionPlans,
+                    approvingRequestIds = approvingRequestIds,
                     onApprove = viewModel::approveRequest,
                     onReject = { request, note -> viewModel.rejectRequest(request, note) }
                 )
@@ -1802,9 +1852,49 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
                 Spacer(Modifier.height(4.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Text("All Institutes · ${filteredInstitutes.size}", color = TextMuted, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                    if (searchQuery.isNotBlank() || statusFilter != "all" || lastActivityFilter != "all") {
-                        TextButton(onClick = { searchQuery = ""; statusFilter = "all"; lastActivityFilter = "all" }) {
-                            Text("Clear", color = AccentCyan, fontSize = 12.sp)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (searchQuery.isNotBlank() || statusFilter != "all" || lastActivityFilter != "all") {
+                            TextButton(onClick = { searchQuery = ""; statusFilter = "all"; lastActivityFilter = "all" }) {
+                                Text("Clear", color = AccentCyan, fontSize = 11.sp)
+                            }
+                        }
+                        Box {
+                            IconButton(onClick = { lastActivityMenuOpen = true }, modifier = Modifier.size(36.dp)) {
+                                Icon(
+                                    Icons.Filled.AccessTime,
+                                    "Filter institutes by activity",
+                                    tint = if (lastActivityFilter == "all") TextMuted else AccentCyan,
+                                    modifier = Modifier.size(19.dp)
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = lastActivityMenuOpen,
+                                onDismissRequest = { lastActivityMenuOpen = false },
+                                containerColor = CardBg
+                            ) {
+                                listOf(
+                                    "all" to "All activity",
+                                    "today" to "Active in last 24 hours",
+                                    "7days" to "Active in last 7 days",
+                                    "30days" to "Active in last 30 days",
+                                    "inactive30" to "Inactive for 30+ days",
+                                    "never" to "Never active"
+                                ).forEach { (value, label) ->
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                label,
+                                                color = if (value == lastActivityFilter) AccentCyan else TextWhite,
+                                                fontSize = 12.sp
+                                            )
+                                        },
+                                        onClick = {
+                                            lastActivityFilter = value
+                                            lastActivityMenuOpen = false
+                                        }
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -2021,78 +2111,51 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
                 }
             }
 
-            // Retained deletion section. No automatic or client-side purge is allowed.
-            if (trashedInstitutes.isNotEmpty()) {
-                item {
-                    Spacer(Modifier.height(8.dp))
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        Text("Recovery Vault · ${trashedInstitutes.size}", color = AccentRed, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                    }
-                    Spacer(Modifier.height(6.dp))
-                }
-                items(trashedInstitutes, key = { it.entity.id }) { card ->
-                    val inst = card.entity
-                    val dateFormat = remember { SimpleDateFormat("dd MMM yyyy", Locale.getDefault()) }
-                    Card(
-                        Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(14.dp),
-                        colors = CardDefaults.cardColors(containerColor = CardBg),
-                        border = BorderStroke(1.dp, AccentRed.copy(alpha = 0.3f))
-                    ) {
-                        Column(Modifier.padding(14.dp)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Box(Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(AccentRed.copy(alpha = 0.15f)), contentAlignment = Alignment.Center) {
-                                    Icon(Icons.Filled.Delete, null, tint = AccentRed, modifier = Modifier.size(18.dp))
-                                }
-                                Spacer(Modifier.width(10.dp))
-                                Column(Modifier.weight(1f)) {
-                                    Text(inst.name, color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                                    Text("Retention review: ${dateFormat.format(Date(inst.currentPeriodEndMs))}", color = AccentRed.copy(alpha = 0.7f), fontSize = 11.sp)
-                                }
-                            }
-                            Spacer(Modifier.height(8.dp))
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                OutlinedButton(
-                                    onClick = { viewModel.restoreInstitute(inst.id) },
-                                    modifier = Modifier.weight(1f).height(36.dp),
-                                    shape = RoundedCornerShape(8.dp),
-                                    border = ButtonDefaults.outlinedButtonBorder,
-                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentGreen)
-                                ) {
-                                    Icon(Icons.Filled.Restore, null, modifier = Modifier.size(14.dp))
-                                    Spacer(Modifier.width(4.dp))
-                                    Text("Restore", fontSize = 12.sp)
-                                }
-                                Text(
-                                    "Ledger and media retained; no automatic purge",
-                                    modifier = Modifier.weight(1f),
-                                    color = TextMuted,
-                                    fontSize = 11.sp
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            item {
-                SubscriptionPlanSection(
-                    plans = subscriptionPlans,
-                    institutes = institutes,
-                    onCreate = {
-                        editingPlan = null
-                        showPlanDialog = true
-                    },
-                    onEdit = { plan ->
-                        editingPlan = plan
-                        showPlanDialog = true
-                    },
-                    onDelete = viewModel::deleteSubscriptionPlan
-                )
-            }
 
             item { Spacer(Modifier.height(80.dp)) }
         }
+    }
+
+    permanentDeleteTarget?.let { card ->
+        val institute = card.entity
+        AlertDialog(
+            onDismissRequest = { permanentDeleteTarget = null },
+            containerColor = CardBg,
+            shape = RoundedCornerShape(16.dp),
+            icon = { Icon(Icons.Filled.WarningAmber, null, tint = AccentRed) },
+            title = {
+                Text("Delete permanently?", color = TextWhite, fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(institute.name, color = TextWhite, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "This removes the institute, students, staff, fees, receipts, media and login accounts from the app and cloud. It cannot be restored.",
+                        color = TextMuted,
+                        fontSize = 12.sp
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.permanentlyDeleteInstitute(institute.id)
+                        permanentDeleteTarget = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = AccentRed),
+                    shape = RoundedCornerShape(9.dp)
+                ) {
+                    Icon(Icons.Filled.DeleteForever, null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(5.dp))
+                    Text("Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { permanentDeleteTarget = null }) {
+                    Text("Cancel", color = TextMuted)
+                }
+            }
+        )
     }
 
     if (showPlanDialog) {
@@ -2397,10 +2460,10 @@ private fun SubscriptionRequestSection(
     requests: List<SubscriptionRequest>,
     institutes: List<InstituteCardData>,
     plans: List<SubscriptionPlanEntity>,
+    approvingRequestIds: Set<String>,
     onApprove: (SubscriptionRequest) -> Unit,
     onReject: (SubscriptionRequest, String?) -> Unit
 ) {
-    val context = LocalContext.current
     Column {
         Spacer(Modifier.height(12.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -2447,36 +2510,11 @@ private fun SubscriptionRequestSection(
                         planName = planDisplayName(request.requestedPlanId, plans),
                         instituteCode = institute?.instituteCode,
                         ownerEmail = institute?.email,
+                        isApproving = request.requestId in approvingRequestIds,
                         onApprove = { onApprove(request) },
                         onReject = { note -> onReject(request, note) }
                     )
                 }
-            }
-        }
-        Spacer(Modifier.height(8.dp))
-        Surface(
-            modifier = Modifier.fillMaxWidth().clickable {
-                try {
-                    val message = Uri.encode("Hello BatchFee Support, I need help with a subscription request.")
-                    val url = Uri.parse("https://wa.me/$BATCHFEE_SUPPORT_WHATSAPP?text=$message")
-                    val whatsapp = Intent(Intent.ACTION_VIEW, url).setPackage("com.whatsapp")
-                    context.startActivity(if (whatsapp.resolveActivity(context.packageManager) != null) whatsapp else Intent(Intent.ACTION_VIEW, url))
-                } catch (_: Exception) {
-                    Toast.makeText(context, "Unable to open BatchFee support.", Toast.LENGTH_SHORT).show()
-                }
-            },
-            shape = RoundedCornerShape(10.dp),
-            color = AccentCyan.copy(alpha = 0.08f),
-            border = BorderStroke(1.dp, AccentCyan.copy(alpha = 0.22f))
-        ) {
-            Row(Modifier.padding(horizontal = 11.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Filled.SupportAgent, null, tint = AccentCyan, modifier = Modifier.size(17.dp))
-                Spacer(Modifier.width(7.dp))
-                Column(Modifier.weight(1f)) {
-                    Text("BatchFee Admin Panel", color = TextWhite, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-                    Text("Any query? Contact support on WhatsApp", color = TextMuted, fontSize = 10.sp)
-                }
-                Text("WhatsApp", color = AccentCyan, fontSize = 10.sp, fontWeight = FontWeight.Bold)
             }
         }
     }
@@ -2488,6 +2526,7 @@ private fun PendingSubscriptionRequestCard(
     planName: String,
     instituteCode: String?,
     ownerEmail: String?,
+    isApproving: Boolean,
     onApprove: () -> Unit,
     onReject: (String?) -> Unit
 ) {
@@ -2607,6 +2646,7 @@ private fun PendingSubscriptionRequestCard(
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
                     onClick = { showRejectDialog = true },
+                    enabled = !isApproving,
                     modifier = Modifier.weight(1f).height(40.dp),
                     shape = RoundedCornerShape(9.dp),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentRed)
@@ -2617,13 +2657,22 @@ private fun PendingSubscriptionRequestCard(
                 }
                 Button(
                     onClick = { showApproveConfirmation = true },
+                    enabled = !isApproving,
                     modifier = Modifier.weight(1f).height(40.dp),
                     shape = RoundedCornerShape(9.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = AccentGreen)
                 ) {
-                    Icon(Icons.Filled.ReceiptLong, null, tint = Color.Black, modifier = Modifier.size(15.dp))
+                    if (isApproving) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(15.dp),
+                            strokeWidth = 2.dp,
+                            color = Color.Black
+                        )
+                    } else {
+                        Icon(Icons.Filled.ReceiptLong, null, tint = Color.Black, modifier = Modifier.size(15.dp))
+                    }
                     Spacer(Modifier.width(4.dp))
-                    Text("Approve", color = Color.Black, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Text(if (isApproving) "Approving..." else "Approve", color = Color.Black, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                 }
             }
             Text("Approval issues a receipt and adds it to this institute's Payment History.", color = TextMuted, fontSize = 10.sp)
@@ -2632,15 +2681,23 @@ private fun PendingSubscriptionRequestCard(
 
     if (showApproveConfirmation) {
         AlertDialog(
-            onDismissRequest = { showApproveConfirmation = false },
+            onDismissRequest = { if (!isApproving) showApproveConfirmation = false },
             title = { Text("Approve subscription payment?", color = TextWhite, fontWeight = FontWeight.Bold) },
             text = { Text("A receipt for BDT ${"%,.0f".format(request.amountPaid)} will be issued to ${request.instituteName} and saved in its Payment History.", color = TextMuted, fontSize = 13.sp) },
             confirmButton = {
-                Button(onClick = { showApproveConfirmation = false; onApprove() }, colors = ButtonDefaults.buttonColors(containerColor = AccentGreen)) {
-                    Text("Approve & issue receipt", color = Color.Black)
+                Button(
+                    onClick = { showApproveConfirmation = false; onApprove() },
+                    enabled = !isApproving,
+                    colors = ButtonDefaults.buttonColors(containerColor = AccentGreen)
+                ) {
+                    Text(if (isApproving) "Approving..." else "Approve & issue receipt", color = Color.Black)
                 }
             },
-            dismissButton = { TextButton(onClick = { showApproveConfirmation = false }) { Text("Cancel", color = TextMuted) } },
+            dismissButton = {
+                TextButton(onClick = { showApproveConfirmation = false }, enabled = !isApproving) {
+                    Text("Cancel", color = TextMuted)
+                }
+            },
             containerColor = CardBg,
             shape = RoundedCornerShape(16.dp)
         )
@@ -2834,19 +2891,34 @@ private fun InstituteDetailsTabsDialog(
     card: InstituteCardData,
     plans: List<SubscriptionPlanEntity>,
     viewModel: SuperAdminViewModel,
+    initialTab: String = "Overview",
     onDismiss: () -> Unit
 ) {
     val inst = card.entity
-    val tabs = listOf("Overview", "Subscription", "Usage", "Team", "Payments", "Support", "Audit")
-    var selectedTab by remember { mutableIntStateOf(0) }
+    val tabs = listOf("Overview", "Logins", "Subscription", "Usage", "Team", "Payments", "Support", "Audit")
+    var selectedTab by remember(inst.id, initialTab) {
+        mutableIntStateOf(tabs.indexOf(initialTab).coerceAtLeast(0))
+    }
     var team by remember { mutableStateOf<List<InstituteStaffSummary>?>(null) }
     var receipts by remember { mutableStateOf<List<SubscriptionReceiptData>?>(null) }
     var audit by remember { mutableStateOf<List<PlatformAuditEntry>?>(null) }
+    var loginActivity by remember(inst.id) { mutableStateOf<InstituteOwnerLoginActivity?>(null) }
+    var loginActivityLoading by remember(inst.id) { mutableStateOf(false) }
+    var loginActivityError by remember(inst.id) { mutableStateOf<String?>(null) }
     var accessReason by remember { mutableStateOf("") }
     var accessDays by remember { mutableStateOf("7") }
     var showOwnerAccess by remember { mutableStateOf(false) }
     LaunchedEffect(inst.id, selectedTab) {
         when (tabs[selectedTab]) {
+            "Logins" -> {
+                loginActivityLoading = true
+                loginActivityError = null
+                viewModel.loadInstituteOwnerLoginActivity(inst.id) { activity, error ->
+                    loginActivity = activity
+                    loginActivityError = error
+                    loginActivityLoading = false
+                }
+            }
             "Team" -> viewModel.loadInstituteStaff(inst.id) { team = it }
             "Payments" -> viewModel.loadInstituteReceipts(inst.id) { receipts = it }
             "Audit" -> viewModel.loadInstituteAudit(inst.id) { audit = it }
@@ -2857,7 +2929,13 @@ private fun InstituteDetailsTabsDialog(
         title = { Column { Text(inst.name, color = TextWhite, fontWeight = FontWeight.Bold); Text(inst.ownerName ?: inst.email.orEmpty(), color = TextMuted, fontSize = 11.sp) } },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                TabRow(selectedTabIndex = selectedTab, containerColor = CardBg, contentColor = AccentCyan, divider = {}) {
+                ScrollableTabRow(
+                    selectedTabIndex = selectedTab,
+                    containerColor = CardBg,
+                    contentColor = AccentCyan,
+                    edgePadding = 0.dp,
+                    divider = {}
+                ) {
                     tabs.forEachIndexed { index, name -> Tab(selected = selectedTab == index, onClick = { selectedTab = index }, text = { Text(name, fontSize = 9.sp, maxLines = 1) }) }
                 }
                 when (tabs[selectedTab]) {
@@ -2865,6 +2943,12 @@ private fun InstituteDetailsTabsDialog(
                         "Institute code" to (inst.instituteCode ?: "Not set"), "Phone" to (inst.phone ?: "Not set"),
                         "Email" to (inst.email ?: "Not set"), "Status" to inst.subscriptionStatus, "Created" to SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(inst.createdAtMs))
                     ))
+                    "Logins" -> when {
+                        loginActivityLoading -> LoadingDetail()
+                        loginActivityError != null -> EmptyDetail(loginActivityError!!)
+                        loginActivity == null -> EmptyDetail("No owner login activity is available yet")
+                        else -> InstituteOwnerLoginActivityPanel(loginActivity!!)
+                    }
                     "Subscription" -> {
                         DetailRows(listOf("Plan" to planDisplayName(inst.currentPlanId, plans), "Paid / trial expiry" to SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(effectiveSubscriptionExpiryMs(inst)))))
                         OutlinedTextField(accessDays, { if (it.all(Char::isDigit) && it.length <= 4) accessDays = it }, label = { Text("Grant access days") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true, modifier = Modifier.fillMaxWidth())
@@ -2891,6 +2975,72 @@ private fun InstituteDetailsTabsDialog(
 @Composable private fun DetailRows(rows: List<Pair<String, String>>) = Column(verticalArrangement = Arrangement.spacedBy(5.dp)) { rows.forEach { (label, value) -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(label, color = TextMuted, fontSize = 11.sp); Text(value, color = TextWhite, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) } } }
 @Composable private fun LoadingDetail() = Box(Modifier.fillMaxWidth().padding(18.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(20.dp), color = AccentCyan, strokeWidth = 2.dp) }
 @Composable private fun EmptyDetail(text: String) = Text(text, color = TextMuted, fontSize = 11.sp)
+
+@Composable
+private fun InstituteOwnerLoginActivityPanel(activity: InstituteOwnerLoginActivity) {
+    val dateTimeFormat = remember { SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault()) }
+    Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+            OwnerLoginStat("Today", activity.todayCount.toString(), AccentGreen, Modifier.weight(1f))
+            OwnerLoginStat("Last 30 days", activity.last30DaysCount.toString(), AccentCyan, Modifier.weight(1f))
+            OwnerLoginStat("Lifetime", activity.totalLoginCount.toString(), AccentViolet, Modifier.weight(1f))
+        }
+        Text(
+            if (activity.lastLoginAtMs > 0L) "Last login: ${dateTimeFormat.format(Date(activity.lastLoginAtMs))}"
+            else "No owner login has been recorded yet.",
+            color = TextMuted,
+            fontSize = 10.sp
+        )
+        HorizontalDivider(color = BorderSub)
+        Text("Owner login history - last ${activity.retentionDays} days", color = TextWhite, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        if (activity.events.isEmpty()) {
+            EmptyDetail("New successful owner logins will appear here.")
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxWidth().heightIn(max = 260.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                items(activity.events, key = { it.id }) { event ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(9.dp))
+                            .background(BorderSub.copy(alpha = 0.34f)).padding(horizontal = 9.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            Modifier.size(29.dp).clip(RoundedCornerShape(8.dp))
+                                .background(AccentCyan.copy(alpha = 0.12f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                if (event.method == "biometric") Icons.Filled.Fingerprint else Icons.Filled.Login,
+                                null,
+                                tint = AccentCyan,
+                                modifier = Modifier.size(15.dp)
+                            )
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(dateTimeFormat.format(Date(event.occurredAtMs)), color = TextWhite, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                            Text(if (event.method == "biometric") "Biometric login" else "Password login", color = TextMuted, fontSize = 9.sp)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun OwnerLoginStat(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier.clip(RoundedCornerShape(9.dp)).background(color.copy(alpha = 0.11f))
+            .padding(horizontal = 7.dp, vertical = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(value, color = color, fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+        Text(label, color = TextMuted, fontSize = 8.sp, maxLines = 1)
+    }
+}
 
 @Composable
 private fun OwnerAccessDialog(inst: InstituteEntity, onDismiss: () -> Unit, onRecovery: (String, String) -> Unit, onTransfer: (String, String, String, String) -> Unit) {
@@ -3015,6 +3165,148 @@ private fun parseCsvLine(line: String): List<String> {
 }
 
 @Composable
+private fun RecoveryVaultSection(
+    institutes: List<InstituteCardData>,
+    purgingInstituteIds: Set<String>,
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
+    onRestore: (String) -> Unit,
+    onDelete: (InstituteCardData) -> Unit
+) {
+    val dateFormat = remember { SimpleDateFormat("dd MMM yyyy", Locale.getDefault()) }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = CardBg),
+        border = BorderStroke(1.dp, AccentRed.copy(alpha = 0.3f))
+    ) {
+        Column {
+            Row(
+                modifier = Modifier.fillMaxWidth()
+                    .clickable { onExpandedChange(!expanded) }
+                    .padding(horizontal = 12.dp, vertical = 9.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier.size(30.dp).clip(RoundedCornerShape(9.dp))
+                        .background(AccentRed.copy(alpha = 0.14f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Filled.DeleteSweep, null, tint = AccentRed, modifier = Modifier.size(16.dp))
+                }
+                Spacer(Modifier.width(8.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Recovery Vault", color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        if (expanded) "${institutes.size} institutes - tap to close"
+                        else "${institutes.size} institutes - tap to manage",
+                        color = TextMuted,
+                        fontSize = 9.sp
+                    )
+                }
+                Surface(shape = RoundedCornerShape(7.dp), color = AccentRed.copy(alpha = 0.13f)) {
+                    Text(
+                        institutes.size.toString(),
+                        color = AccentRed,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                    )
+                }
+                Spacer(Modifier.width(6.dp))
+                Icon(
+                    imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                    contentDescription = if (expanded) "Collapse recovery vault" else "Expand recovery vault",
+                    tint = AccentRed,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+
+            AnimatedVisibility(
+                visible = expanded,
+                enter = expandVertically(animationSpec = tween(220)) + fadeIn(animationSpec = tween(180)),
+                exit = shrinkVertically(animationSpec = tween(180)) + fadeOut(animationSpec = tween(130))
+            ) {
+                Column {
+                    HorizontalDivider(color = BorderSub)
+                    institutes.forEachIndexed { index, card ->
+                        val institute = card.entity
+                        val isPurging = institute.id in purgingInstituteIds
+                        if (index > 0) {
+                            HorizontalDivider(
+                                color = BorderSub.copy(alpha = 0.75f),
+                                modifier = Modifier.padding(horizontal = 12.dp)
+                            )
+                        }
+                        Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    modifier = Modifier.size(32.dp).clip(RoundedCornerShape(9.dp))
+                                        .background(AccentRed.copy(alpha = 0.13f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(Icons.Filled.Business, null, tint = AccentRed, modifier = Modifier.size(16.dp))
+                                }
+                                Spacer(Modifier.width(9.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        institute.name,
+                                        color = TextWhite,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        "Archived · Review ${dateFormat.format(Date(institute.currentPeriodEndMs))}",
+                                        color = TextMuted,
+                                        fontSize = 10.sp
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.height(7.dp))
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(
+                                    onClick = { onRestore(institute.id) },
+                                    enabled = !isPurging,
+                                    modifier = Modifier.weight(1f).height(34.dp),
+                                    shape = RoundedCornerShape(8.dp),
+                                    border = BorderStroke(1.dp, AccentGreen.copy(alpha = 0.65f)),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentGreen),
+                                    contentPadding = PaddingValues(horizontal = 8.dp)
+                                ) {
+                                    Icon(Icons.Filled.Restore, null, modifier = Modifier.size(14.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Restore", fontSize = 11.sp)
+                                }
+                                OutlinedButton(
+                                    onClick = { onDelete(card) },
+                                    enabled = !isPurging,
+                                    modifier = Modifier.weight(1f).height(34.dp),
+                                    shape = RoundedCornerShape(8.dp),
+                                    border = BorderStroke(1.dp, AccentRed.copy(alpha = 0.7f)),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentRed),
+                                    contentPadding = PaddingValues(horizontal = 8.dp)
+                                ) {
+                                    if (isPurging) {
+                                        CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = AccentRed)
+                                    } else {
+                                        Icon(Icons.Filled.DeleteForever, null, modifier = Modifier.size(14.dp))
+                                    }
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(if (isPurging) "Deleting" else "Delete", fontSize = 11.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun SubscriptionPlanSection(
     plans: List<SubscriptionPlanEntity>,
     institutes: List<InstituteCardData>,
@@ -3024,60 +3316,103 @@ private fun SubscriptionPlanSection(
 ) {
     val planUsage = remember(institutes) { institutes.groupingBy { it.entity.currentPlanId }.eachCount() }
     var selectedPlan by remember { mutableStateOf<SubscriptionPlanEntity?>(null) }
-    Column {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("Subscription Plans", color = TextMuted, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-            TextButton(onClick = onCreate) {
-                Icon(Icons.Filled.Add, null, tint = AccentCyan, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(4.dp))
-                Text("New Plan", color = AccentCyan, fontWeight = FontWeight.Bold)
-            }
-        }
-        Spacer(Modifier.height(8.dp))
-        if (plans.isEmpty()) {
-            Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = CardBg)) {
-                Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
-                    Text("No subscription plans found yet.", color = TextMuted, fontSize = 13.sp)
+    var expanded by remember { mutableStateOf(false) }
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = CardBg),
+        border = BorderStroke(1.dp, AccentViolet.copy(alpha = 0.28f))
+    ) {
+        Column {
+            Row(
+                modifier = Modifier.fillMaxWidth()
+                    .clickable { expanded = !expanded }
+                    .padding(start = 12.dp, end = 5.dp, top = 8.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    Modifier.size(30.dp).clip(RoundedCornerShape(9.dp))
+                        .background(AccentViolet.copy(alpha = 0.14f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Filled.WorkspacePremium, null, tint = AccentViolet, modifier = Modifier.size(17.dp))
                 }
+                Spacer(Modifier.width(8.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Subscription Plans", color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        if (expanded) "${plans.size} plans - tap a plan for details" else "${plans.size} plans - tap to manage",
+                        color = TextMuted,
+                        fontSize = 9.sp
+                    )
+                }
+                TextButton(onClick = onCreate, contentPadding = PaddingValues(horizontal = 7.dp, vertical = 0.dp)) {
+                    Icon(Icons.Filled.Add, null, tint = AccentCyan, modifier = Modifier.size(15.dp))
+                    Spacer(Modifier.width(3.dp))
+                    Text("New Plan", color = AccentCyan, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+                Icon(
+                    if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                    if (expanded) "Collapse subscription plans" else "Expand subscription plans",
+                    tint = AccentViolet,
+                    modifier = Modifier.size(20.dp)
+                )
             }
-        } else {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                plans.forEach { plan ->
-                    Card(
-                        modifier = Modifier.fillMaxWidth().clickable { selectedPlan = plan },
-                        shape = RoundedCornerShape(14.dp),
-                        colors = CardDefaults.cardColors(containerColor = CardBg),
-                        border = BorderStroke(1.dp, BorderSub)
-                    ) {
-                        Column(Modifier.padding(12.dp)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Column(Modifier.weight(1f)) {
-                                    Text(plan.name, color = TextWhite, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-                                    Text("Tap to view plan details", color = TextMuted, fontSize = 10.sp)
-                                }
-                                if (plan.tag.isNotBlank()) {
+            AnimatedVisibility(
+                visible = expanded,
+                enter = expandVertically(animationSpec = tween(220)) + fadeIn(animationSpec = tween(180)),
+                exit = shrinkVertically(animationSpec = tween(180)) + fadeOut(animationSpec = tween(130))
+            ) {
+                Column {
+                    HorizontalDivider(color = BorderSub)
+                    if (plans.isEmpty()) {
+                        Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
+                            Text("No subscription plans found yet.", color = TextMuted, fontSize = 12.sp)
+                        }
+                    } else {
+                        plans.forEachIndexed { index, plan ->
+                            val assignedCount = planUsage[plan.id] ?: 0
+                            if (index > 0) HorizontalDivider(color = BorderSub.copy(alpha = 0.75f), modifier = Modifier.padding(horizontal = 12.dp))
+                            Column(
+                                modifier = Modifier.fillMaxWidth()
+                                    .clickable { selectedPlan = plan }
+                                    .padding(start = 12.dp, end = 6.dp, top = 9.dp, bottom = 9.dp)
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
                                     Box(
-                                        Modifier.clip(RoundedCornerShape(8.dp))
-                                            .background(AccentViolet.copy(alpha = 0.15f))
-                                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                                        Modifier.size(32.dp).clip(RoundedCornerShape(9.dp))
+                                            .background(AccentCyan.copy(alpha = 0.11f)),
+                                        contentAlignment = Alignment.Center
                                     ) {
-                                        Text(plan.tag, color = AccentViolet, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                        Text(plan.name.take(1).uppercase(), color = AccentCyan, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                    Spacer(Modifier.width(9.dp))
+                                    Column(Modifier.weight(1f)) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(plan.name, color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                                            if (plan.tag.isNotBlank()) {
+                                                Spacer(Modifier.width(5.dp))
+                                                Surface(shape = RoundedCornerShape(6.dp), color = AccentViolet.copy(alpha = 0.14f)) {
+                                                    Text(plan.tag, color = AccentViolet, fontSize = 8.sp, fontWeight = FontWeight.Bold, maxLines = 1, modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp))
+                                                }
+                                            }
+                                        }
+                                        Text(plan.description, color = TextMuted, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
+                                    Column(horizontalAlignment = Alignment.End) {
+                                        IconButton(onClick = { onEdit(plan) }, modifier = Modifier.size(32.dp)) {
+                                            Icon(Icons.Filled.Edit, "Edit ${plan.name}", tint = AccentCyan, modifier = Modifier.size(16.dp))
+                                        }
+                                        if (assignedCount > 0) {
+                                            Text("$assignedCount active", color = AccentGreen, fontSize = 8.sp, fontWeight = FontWeight.SemiBold)
+                                        }
                                     }
                                 }
-                            }
-                            Spacer(Modifier.height(6.dp))
-                            Text(plan.description, color = TextMuted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Spacer(Modifier.height(8.dp))
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                PlanMetricChip("BDT ${formatMoneyValue(plan.priceBdt)}")
-                                PlanMetricChip(planStudentCapacityLabel(plan))
-                                PlanMetricChip(planUserCapacityLabel(plan))
-                                (planUsage[plan.id] ?: 0).takeIf { it > 0 }?.let { count ->
-                                    PlanMetricChip("$count institutes")
+                                Spacer(Modifier.height(6.dp))
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    PlanMetricChip("BDT ${formatMoneyValue(plan.priceBdt)}")
+                                    PlanMetricChip(planStudentCapacityLabel(plan))
+                                    PlanMetricChip(planUserCapacityLabel(plan))
                                 }
                             }
                         }
@@ -3085,15 +3420,15 @@ private fun SubscriptionPlanSection(
                 }
             }
         }
-        selectedPlan?.let { plan ->
-            SubscriptionPlanDetailsDialog(
-                plan = plan,
-                assignedInstituteCount = planUsage[plan.id] ?: 0,
-                onDismiss = { selectedPlan = null },
-                onEdit = { selectedPlan = null; onEdit(plan) },
-                onDelete = { selectedPlan = null; onDelete(plan.id) }
-            )
-        }
+    }
+    selectedPlan?.let { plan ->
+        SubscriptionPlanDetailsDialog(
+            plan = plan,
+            assignedInstituteCount = planUsage[plan.id] ?: 0,
+            onDismiss = { selectedPlan = null },
+            onEdit = { selectedPlan = null; onEdit(plan) },
+            onDelete = { selectedPlan = null; onDelete(plan.id) }
+        )
     }
 }
 
@@ -3201,11 +3536,57 @@ private fun SubscriptionPlanEditorDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (initialPlan == null) "Create Subscription Plan" else "Edit Subscription Plan", color = TextWhite, fontWeight = FontWeight.Bold) },
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier.size(39.dp).clip(RoundedCornerShape(11.dp))
+                        .background(AccentViolet.copy(alpha = 0.15f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        if (initialPlan == null) Icons.Filled.AddBusiness else Icons.Filled.EditNote,
+                        null,
+                        tint = AccentViolet,
+                        modifier = Modifier.size(21.dp)
+                    )
+                }
+                Spacer(Modifier.width(10.dp))
+                Column {
+                    Text(
+                        if (initialPlan == null) "Create Subscription Plan" else "Edit Subscription Plan",
+                        color = TextWhite,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        if (initialPlan == null) "Add a new customer plan" else "Update ${initialPlan.name}",
+                        color = TextMuted,
+                        fontSize = 10.sp
+                    )
+                }
+            }
+        },
         text = {
-            Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                validationError?.let { Text(it, color = AccentRed, fontSize = 12.sp) }
-                OutlinedTextField(
+            Column(
+                modifier = Modifier.fillMaxWidth().heightIn(max = 470.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                validationError?.let { error ->
+                    Surface(
+                        shape = RoundedCornerShape(9.dp),
+                        color = AccentRed.copy(alpha = 0.1f),
+                        border = BorderStroke(1.dp, AccentRed.copy(alpha = 0.35f))
+                    ) {
+                        Row(Modifier.fillMaxWidth().padding(9.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Filled.ErrorOutline, null, tint = AccentRed, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(error, color = AccentRed, fontSize = 11.sp)
+                        }
+                    }
+                }
+
+                PlanEditorSectionLabel("Plan information", Icons.Filled.Description)
+                PlanEditorTextField(
                     value = name,
                     onValueChange = {
                         name = it
@@ -3214,82 +3595,87 @@ private fun SubscriptionPlanEditorDialog(
                         }
                     },
                     label = { Text("Plan name") },
-                    singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
-                OutlinedTextField(
+                PlanEditorTextField(
                     value = planId,
                     onValueChange = {
                         val slug = slugifyPlanName(it)
                         planId = if (slug.startsWith("plan_")) slug else "plan_$slug"
                     },
                     label = { Text("Plan ID") },
-                    singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
-                OutlinedTextField(
+                PlanEditorTextField(
                     value = description,
                     onValueChange = { description = it },
                     label = { Text("Description") },
+                    singleLine = false,
+                    minLines = 2,
+                    maxLines = 3,
                     modifier = Modifier.fillMaxWidth()
                 )
+
+                PlanEditorSectionLabel("Pricing", Icons.Filled.Payments)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
+                    PlanEditorTextField(
                         value = priceBdt,
                         onValueChange = { if (it.isEmpty() || it.matches(Regex("^\\d*(\\.\\d{0,2})?$"))) priceBdt = it },
                         label = { Text("BDT") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        singleLine = true,
                         modifier = Modifier.weight(1f)
                     )
-                    OutlinedTextField(
+                    PlanEditorTextField(
                         value = priceInr,
                         onValueChange = { if (it.isEmpty() || it.matches(Regex("^\\d*(\\.\\d{0,2})?$"))) priceInr = it },
                         label = { Text("INR") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        singleLine = true,
                         modifier = Modifier.weight(1f)
                     )
                 }
-                OutlinedTextField(
+
+                PlanEditorSectionLabel("Capacity & display", Icons.Filled.Tune)
+                PlanEditorTextField(
                     value = maxStudents,
                     onValueChange = { if (it.isEmpty() || it.matches(Regex("^\\d+$"))) maxStudents = it },
                     label = { Text("Student limit") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
+                    PlanEditorTextField(
                         value = maxBranches,
                         onValueChange = { if (it.isEmpty() || it.matches(Regex("^\\d+$"))) maxBranches = it },
                         label = { Text("Branches") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        singleLine = true,
                         modifier = Modifier.weight(1f)
                     )
-                }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = tag,
-                        onValueChange = { tag = it },
-                        label = { Text("Tag") },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f)
-                    )
-                    OutlinedTextField(
+                    PlanEditorTextField(
                         value = tierLevel,
                         onValueChange = { if (it.isEmpty() || it.matches(Regex("^\\d+$"))) tierLevel = it },
                         label = { Text("Tier") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        singleLine = true,
                         modifier = Modifier.weight(1f)
                     )
+                }
+                PlanEditorTextField(
+                    value = tag,
+                    onValueChange = { tag = it },
+                    label = { Text("Tag (optional)") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Surface(shape = RoundedCornerShape(9.dp), color = AccentCyan.copy(alpha = 0.08f)) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.AllInclusive, null, tint = AccentCyan, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(7.dp))
+                        Text("Batch and staff access remain unlimited for every plan.", color = TextMuted, fontSize = 10.sp)
+                    }
                 }
             }
         },
         confirmButton = {
-            TextButton(onClick = {
+            Button(
+                onClick = {
                 val normalizedId = planId.trim().ifBlank { "plan_${slugifyPlanName(name)}" }
                 val parsedPriceBdt = priceBdt.toDoubleOrNull()
                 val parsedPriceInr = priceInr.toDoubleOrNull() ?: 0.0
@@ -3327,12 +3713,78 @@ private fun SubscriptionPlanEditorDialog(
                         )
                     )
                 }
-            }) {
-                Text("Save", color = AccentCyan, fontWeight = FontWeight.Bold)
+                },
+                shape = RoundedCornerShape(10.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = AccentCyan),
+                contentPadding = PaddingValues(horizontal = 15.dp, vertical = 9.dp)
+            ) {
+                Icon(Icons.Filled.Save, null, tint = BgColor, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(5.dp))
+                Text(if (initialPlan == null) "Create Plan" else "Save Changes", color = BgColor, fontWeight = FontWeight.Bold, fontSize = 12.sp)
             }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel", color = TextMuted) } },
-        containerColor = CardBg
+        dismissButton = {
+            OutlinedButton(
+                onClick = onDismiss,
+                shape = RoundedCornerShape(10.dp),
+                border = BorderStroke(1.dp, BorderSub),
+                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 9.dp)
+            ) {
+                Text("Cancel", color = TextMuted, fontSize = 12.sp)
+            }
+        },
+        containerColor = CardBg,
+        shape = RoundedCornerShape(18.dp)
+    )
+}
+
+@Composable
+private fun PlanEditorSectionLabel(title: String, icon: ImageVector) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(top = 3.dp, bottom = 1.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(icon, null, tint = AccentViolet, modifier = Modifier.size(14.dp))
+        Spacer(Modifier.width(5.dp))
+        Text(title, color = TextWhite, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.width(7.dp))
+        HorizontalDivider(Modifier.weight(1f), color = BorderSub)
+    }
+}
+
+@Composable
+private fun PlanEditorTextField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: @Composable (() -> Unit),
+    modifier: Modifier = Modifier,
+    keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
+    singleLine: Boolean = true,
+    minLines: Int = 1,
+    maxLines: Int = if (singleLine) 1 else Int.MAX_VALUE
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        label = label,
+        modifier = modifier,
+        keyboardOptions = keyboardOptions,
+        singleLine = singleLine,
+        minLines = minLines,
+        maxLines = maxLines,
+        shape = RoundedCornerShape(11.dp),
+        textStyle = LocalTextStyle.current.copy(color = TextWhite, fontSize = 13.sp),
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedTextColor = TextWhite,
+            unfocusedTextColor = TextWhite,
+            focusedBorderColor = AccentCyan,
+            unfocusedBorderColor = BorderSub,
+            focusedLabelColor = AccentCyan,
+            unfocusedLabelColor = TextMuted,
+            cursorColor = AccentCyan,
+            focusedContainerColor = BorderSub.copy(alpha = 0.2f),
+            unfocusedContainerColor = BorderSub.copy(alpha = 0.12f)
+        )
     )
 }
 
@@ -3448,6 +3900,7 @@ private fun InstituteCard(
     var extendReason by remember { mutableStateOf("") }
     var showManageDialog by remember { mutableStateOf(false) }
     var showDetailSheet by remember { mutableStateOf(false) }
+    var showLoginActivity by remember { mutableStateOf(false) }
     val compactActionPadding = PaddingValues(horizontal = 4.dp)
 
     Card(
@@ -3534,10 +3987,21 @@ private fun InstituteCard(
                         Spacer(Modifier.width(4.dp))
                         Text("Until ${dateFormat.format(Date(effectiveSubscriptionExpiryMs(inst)))}", color = TextMuted, fontSize = 11.sp)
                     }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Filled.AccessTime, null, tint = TextMuted.copy(alpha = 0.6f), modifier = Modifier.size(13.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("Last active: $lastActive", color = TextMuted.copy(alpha = 0.6f), fontSize = 11.sp)
+                    OutlinedButton(
+                        onClick = { showLoginActivity = true },
+                        modifier = Modifier.fillMaxWidth().height(34.dp),
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = PaddingValues(horizontal = 8.dp),
+                        border = BorderStroke(1.dp, AccentCyan.copy(alpha = 0.35f)),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentCyan)
+                    ) {
+                        Icon(Icons.Filled.AccessTime, null, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(5.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Activity", fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                            Text(lastActive, color = TextMuted, fontSize = 9.sp, maxLines = 1)
+                        }
+                        Icon(Icons.Filled.ChevronRight, null, modifier = Modifier.size(15.dp))
                     }
                     if (lastActive == "Never" || lastActive.contains("d ago") && lastActive.substringBefore("d").toIntOrNull()?.let { it > 7 } == true) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -3760,6 +4224,16 @@ private fun InstituteCard(
                 }
             }
         }
+    }
+
+    if (showLoginActivity) {
+        InstituteDetailsTabsDialog(
+            card = card,
+            plans = subscriptionPlans,
+            viewModel = viewModel,
+            initialTab = "Logins",
+            onDismiss = { showLoginActivity = false }
+        )
     }
 
     // ── Detail Sheet ──
@@ -4648,6 +5122,9 @@ internal fun generateSubscriptionReceiptPdf(context: Context, r: SubscriptionRec
     drawRow("Period", "${dateFmt.format(Date(r.startDateMs))} — ${dateFmt.format(Date(r.endDateMs))}")
     if (r.paymentMethod.isNotBlank()) {
         drawRow("Payment Method", r.paymentMethod.uppercase())
+    }
+    if (r.senderPhone.isNotBlank()) {
+        drawRow("Sending Number", r.senderPhone)
     }
     if (r.transactionLast4.isNotBlank()) {
         drawRow("Transaction Ref", "••••${r.transactionLast4}")

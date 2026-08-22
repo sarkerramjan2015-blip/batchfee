@@ -2,9 +2,12 @@ package com.batchfee.edu.ui.staff
 
 import android.content.Context
 import android.content.Intent
+import android.content.ClipData
 import android.graphics.Color as AndroidColor
+import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.RectF
+import android.graphics.Shader
 import android.graphics.pdf.PdfDocument
 import android.net.Uri
 import android.widget.Toast
@@ -43,6 +46,9 @@ import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.data.models.StaffEntity
 import com.batchfee.edu.data.models.SalaryEntity
 import com.batchfee.edu.domain.SessionManager
+import com.batchfee.edu.domain.InstituteContactNumber
+import com.batchfee.edu.ui.students.drawLogo
+import com.batchfee.edu.ui.students.loadBitmap
 import java.io.File
 import java.text.SimpleDateFormat
 import kotlinx.coroutines.Dispatchers
@@ -85,15 +91,18 @@ fun SalaryDashboardScreen(
     var instName by remember { mutableStateOf("BatchFee Institute") }
     var instCode by remember { mutableStateOf("N/A") }
     var instPhone by remember { mutableStateOf("") }
+    var instAddress by remember { mutableStateOf("") }
+    var instLogoUri by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(Unit) {
         val iid = SessionManager.currentInstituteId.value
         if (iid != null) {
-            withContext(Dispatchers.IO) {
-                db.instituteDao().getInstitute(iid)?.let { inst ->
-                    instName = inst.name ?: "BatchFee Institute"
-                    instCode = inst.instituteCode ?: "N/A"
-                    instPhone = inst.phone ?: ""
-                }
+            val inst = withContext(Dispatchers.IO) { db.instituteDao().getInstitute(iid) }
+            inst?.let {
+                instName = it.name.ifBlank { "BatchFee Institute" }
+                instCode = it.instituteCode?.takeIf(String::isNotBlank) ?: "N/A"
+                instPhone = InstituteContactNumber.primary(it.phone, it.whatsappNumber).orEmpty()
+                instAddress = it.address.orEmpty()
+                instLogoUri = it.profilePhotoUri
             }
         }
     }
@@ -287,6 +296,8 @@ fun SalaryDashboardScreen(
             instName = instName,
             instCode = instCode,
             instPhone = instPhone,
+            instAddress = instAddress,
+            instLogoUri = instLogoUri,
             onDismiss = { receiptTarget = null },
         )
     }
@@ -622,9 +633,13 @@ private fun SalaryReceiptDialog(
     instName: String,
     instCode: String,
     instPhone: String,
+    instAddress: String,
+    instLogoUri: String?,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var isPreparingReceipt by remember { mutableStateOf(false) }
     val paid = salary.paidAmount.coerceIn(0.0, salary.netSalary)
     val due = (salary.netSalary - paid).coerceAtLeast(0.0)
     val isPaid = paid > 0.0 && due <= 0.009
@@ -651,7 +666,7 @@ private fun SalaryReceiptDialog(
                     contentAlignment = Alignment.Center,
                 ) { Icon(Icons.Filled.ReceiptLong, null, tint = Cyan) }
                 Spacer(Modifier.width(10.dp))
-                Column {
+                Column(Modifier.weight(1f)) {
                     Text("Salary receipt", color = TextWhite, fontWeight = FontWeight.Bold, fontSize = 19.sp)
                     Text(salary.salarySlipNumber, color = TextMuted, fontSize = 11.sp)
                 }
@@ -696,44 +711,76 @@ private fun SalaryReceiptDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = {
-                try {
-                    val file = generateSalaryReceiptPdf(context, salary, staffName, instName, instCode, instPhone)
-                    val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-                    context.startActivity(Intent(Intent.ACTION_VIEW).apply {
-                        setDataAndType(uri, "application/pdf")
-                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    })
-                } catch (_: Exception) {
-                    Toast.makeText(context, "Could not open the receipt.", Toast.LENGTH_SHORT).show()
+            TextButton(
+                enabled = !isPreparingReceipt,
+                onClick = {
+                    scope.launch {
+                        isPreparingReceipt = true
+                        try {
+                            val file = withContext(Dispatchers.IO) {
+                                generateSalaryReceiptPdf(
+                                    context, salary, staffName, instName, instCode,
+                                    instPhone, instAddress, instLogoUri
+                                )
+                            }
+                            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+                            context.startActivity(Intent(Intent.ACTION_VIEW).apply {
+                                setDataAndType(uri, "application/pdf")
+                                clipData = ClipData.newRawUri("Salary receipt", uri)
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            })
+                        } catch (_: Exception) {
+                            Toast.makeText(context, "Could not open the receipt.", Toast.LENGTH_SHORT).show()
+                        } finally {
+                            isPreparingReceipt = false
+                        }
+                    }
                 }
-            }) {
-                Icon(Icons.Filled.Print, null, modifier = Modifier.size(18.dp), tint = ElectricBlue)
+            ) {
+                if (isPreparingReceipt) {
+                    CircularProgressIndicator(modifier = Modifier.size(17.dp), strokeWidth = 2.dp, color = ElectricBlue)
+                } else {
+                    Icon(Icons.Filled.Print, null, modifier = Modifier.size(18.dp), tint = ElectricBlue)
+                }
                 Spacer(Modifier.width(5.dp))
-                Text("Print", color = ElectricBlue, fontWeight = FontWeight.Bold)
+                Text(if (isPreparingReceipt) "Preparing..." else "Print", color = ElectricBlue, fontWeight = FontWeight.Bold)
             }
         },
         dismissButton = {
             Row {
-                TextButton(onClick = {
-                    try {
-                        val file = generateSalaryReceiptPdf(context, salary, staffName, instName, instCode, instPhone)
-                        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-                        context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
-                            type = "application/pdf"
-                            putExtra(Intent.EXTRA_STREAM, uri)
-                            putExtra(Intent.EXTRA_TEXT, "Salary receipt - $staffName - ${salary.salaryMonth}")
-                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                        }, "Share salary receipt"))
-                    } catch (_: Exception) {
-                        Toast.makeText(context, "Could not share the receipt.", Toast.LENGTH_SHORT).show()
+                TextButton(
+                    enabled = !isPreparingReceipt,
+                    onClick = {
+                        scope.launch {
+                            isPreparingReceipt = true
+                            try {
+                                val file = withContext(Dispatchers.IO) {
+                                    generateSalaryReceiptPdf(
+                                        context, salary, staffName, instName, instCode,
+                                        instPhone, instAddress, instLogoUri
+                                    )
+                                }
+                                val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+                                context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+                                    type = "application/pdf"
+                                    putExtra(Intent.EXTRA_STREAM, uri)
+                                    putExtra(Intent.EXTRA_TEXT, "Salary receipt - $staffName - ${salary.salaryMonth}")
+                                    clipData = ClipData.newRawUri("Salary receipt", uri)
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }, "Share salary receipt"))
+                            } catch (_: Exception) {
+                                Toast.makeText(context, "Could not share the receipt.", Toast.LENGTH_SHORT).show()
+                            } finally {
+                                isPreparingReceipt = false
+                            }
+                        }
                     }
-                }) {
+                ) {
                     Icon(Icons.Filled.Share, null, modifier = Modifier.size(17.dp), tint = Cyan)
                     Spacer(Modifier.width(4.dp))
                     Text("Share", color = Cyan, fontWeight = FontWeight.Bold)
                 }
-                TextButton(onClick = onDismiss) { Text("Close", color = TextMuted) }
+                TextButton(onClick = onDismiss, enabled = !isPreparingReceipt) { Text("Close", color = TextMuted) }
             }
         },
     )
@@ -741,8 +788,9 @@ private fun SalaryReceiptDialog(
 
 @Composable
 private fun ReceiptLine(label: String, amount: Double, color: Color = TextWhite, bold: Boolean = false) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-        Text(label, color = TextMuted, fontSize = 12.sp)
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, color = TextMuted, fontSize = 12.sp, modifier = Modifier.weight(1f))
+        Spacer(Modifier.width(12.dp))
         Text(
             "BDT ${salaryAmount(amount)}",
             color = color,
@@ -752,90 +800,328 @@ private fun ReceiptLine(label: String, amount: Double, color: Color = TextWhite,
     }
 }
 
-private fun generateSalaryReceiptPdf(context: Context, salary: SalaryEntity, staffName: String, instName: String, instCode: String, instPhone: String): File {
+private suspend fun generateSalaryReceiptPdf(
+    context: Context,
+    salary: SalaryEntity,
+    staffName: String,
+    instName: String,
+    instCode: String,
+    instPhone: String,
+    instAddress: String,
+    instLogoUri: String?,
+): File {
     val document = PdfDocument()
-    val page = document.startPage(PdfDocument.PageInfo.Builder(340, 544, 1).create())
+    val pageWidth = 595
+    val pageHeight = 842
+    val page = document.startPage(PdfDocument.PageInfo.Builder(pageWidth, pageHeight, 1).create())
     val canvas = page.canvas
-    val white = AndroidColor.WHITE
-    val darkBlue = AndroidColor.rgb(30, 58, 95)
+
+    val navy = AndroidColor.rgb(7, 24, 46)
     val blue = AndroidColor.rgb(37, 99, 235)
+    val cyan = AndroidColor.rgb(34, 211, 238)
+    val white = AndroidColor.WHITE
+    val surface = AndroidColor.rgb(248, 250, 252)
+    val border = AndroidColor.rgb(226, 232, 240)
     val textDark = AndroidColor.rgb(30, 41, 59)
-    val textMuted = AndroidColor.rgb(71, 85, 105)
+    val textMuted = AndroidColor.rgb(100, 116, 139)
+    val green = AndroidColor.rgb(22, 163, 74)
+    val amber = AndroidColor.rgb(217, 119, 6)
+    val red = AndroidColor.rgb(220, 38, 38)
     val paid = salary.paidAmount.coerceIn(0.0, salary.netSalary)
     val due = (salary.netSalary - paid).coerceAtLeast(0.0)
+    val logo = loadBitmap(context, instLogoUri)
 
-    val fill = Paint().apply { style = Paint.Style.FILL }
-    val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 11f; color = textDark }
-    val bold = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 13f; color = textDark; isFakeBoldText = true }
-    val whiteText = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 16f; color = white; isFakeBoldText = true }
-
-    // Header
-    fill.color = darkBlue
-    canvas.drawRect(0f, 0f, 340f, 130f, fill)
-    canvas.drawText(instName.uppercase(), 20f, 50f, whiteText)
-    whiteText.textSize = 10f
-    canvas.drawText("STAFF SALARY RECEIPT", 20f, 70f, whiteText)
-    whiteText.textSize = 9f
-    canvas.drawText("$instCode  •  $instPhone", 20f, 90f, whiteText)
-    fill.color = white
-
-    // Staff info section
-    var y = 155f
-    bold.textSize = 15f
-    canvas.drawText(staffName, 20f, y, bold)
-    y += 20
-    text.textSize = 12f
-    canvas.drawText(salary.salaryMonth, 20f, y, text)
-    y += 30
-
-    // Divider
-    fill.color = android.graphics.Color.rgb(226, 232, 240)
-    canvas.drawRect(20f, y, 320f, y + 1f, fill)
-    y += 20
-
-    // Salary breakdown
-    val rows = listOf(
-        "Basic Salary" to "BDT ${salaryAmount(salary.basicSalary)}",
-        "Bonus" to "BDT ${salaryAmount(salary.bonusAmount)}",
-        "Deduction" to "BDT ${salaryAmount(salary.deductionAmount)}",
-        "Advance" to "BDT ${salaryAmount(salary.advanceAmount)}",
-        "Net Salary" to "BDT ${salaryAmount(salary.netSalary)}",
-        "Paid to Date" to "BDT ${salaryAmount(paid)}",
-        "Remaining Due" to "BDT ${salaryAmount(due)}"
-    )
-    rows.forEach { (label, value) ->
-        val isNet = label == "Net Salary" || label == "Paid to Date" || label == "Remaining Due"
-        if (isNet) {
-            y += 5
-            fill.color = android.graphics.Color.rgb(226, 232, 240)
-            canvas.drawRect(20f, y - 2, 320f, y + 17f, fill)
-        }
-        text.textSize = if (isNet) 13f else 11f
-        val labelColor = if (isNet) darkBlue else textMuted
-        text.color = labelColor
-        canvas.drawText(label, 20f, y + 10f, text)
-        val valColor = when (label) {
-            "Paid to Date" -> AndroidColor.rgb(22, 163, 74)
-            "Remaining Due" -> if (due > 0) AndroidColor.rgb(217, 119, 6) else AndroidColor.rgb(22, 163, 74)
-            else -> if (isNet) darkBlue else textDark
-        }
-        text.color = valColor
-        text.isFakeBoldText = isNet
-        canvas.drawText(value, 300f, y + 10f, text)
-        text.isFakeBoldText = false
-        y += if (isNet) 26 else 20
+    val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 1f
+        color = border
+    }
+    val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = textDark; textSize = 11f }
+    val bold = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = textDark
+        textSize = 13f
+        isFakeBoldText = true
     }
 
-    // Footer
-    y += 20
-    text.textSize = 9f; text.color = textMuted
-    canvas.drawText("Thank you  •  $instName", 20f, y, text)
+    canvas.drawColor(white)
+
+    // Branded header using the institute's saved logo.
+    fill.shader = LinearGradient(0f, 0f, pageWidth.toFloat(), 170f, navy, blue, Shader.TileMode.CLAMP)
+    canvas.drawRect(0f, 0f, pageWidth.toFloat(), 170f, fill)
+    fill.shader = null
+    fill.color = AndroidColor.argb(28, 255, 255, 255)
+    canvas.drawCircle(530f, 25f, 94f, fill)
+    canvas.drawCircle(490f, 145f, 54f, fill)
+    fill.color = white
+    canvas.drawRoundRect(RectF(35f, 31f, 107f, 103f), 16f, 16f, fill)
+    drawLogo(canvas, logo, instName, 41f, 37f, 60f, navy, cyan)
+
+    val instituteTitle = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = white
+        textSize = 20f
+        isFakeBoldText = true
+    }
+    val upperInstituteName = instName.uppercase(Locale.getDefault())
+    fitSalaryPdfText(upperInstituteName, instituteTitle, 365f, 20f, 13f)
+    canvas.drawText(upperInstituteName, 124f, 57f, instituteTitle)
+    val headerMeta = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = AndroidColor.rgb(207, 250, 254)
+        textSize = 9.5f
+    }
+    val contactLine = listOf(
+        instCode.takeIf { it.isNotBlank() && it != "N/A" },
+        instPhone.takeIf { it.isNotBlank() },
+    ).filterNotNull().joinToString("  |  ").ifBlank { "Official salary document" }
+    fitSalaryPdfText(contactLine, headerMeta, 365f, 9.5f, 7.5f)
+    canvas.drawText(contactLine, 124f, 77f, headerMeta)
+    if (instAddress.isNotBlank()) {
+        fitSalaryPdfText(instAddress, headerMeta, 365f, 9f, 7f)
+        canvas.drawText(instAddress, 124f, 95f, headerMeta)
+    }
+
+    val receiptTitle = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = white
+        textSize = 18f
+        isFakeBoldText = true
+        textAlign = Paint.Align.CENTER
+    }
+    canvas.drawText("STAFF SALARY RECEIPT", pageWidth / 2f, 139f, receiptTitle)
+    val slipPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = AndroidColor.rgb(207, 250, 254)
+        textSize = 8.5f
+        textAlign = Paint.Align.CENTER
+    }
+    val receiptNumber = "Receipt No: ${salary.salarySlipNumber.ifBlank { salary.id }}"
+    fitSalaryPdfText(receiptNumber, slipPaint, 500f, 8.5f, 6.5f)
+    canvas.drawText(receiptNumber, pageWidth / 2f, 156f, slipPaint)
+
+    // Staff and salary-period card.
+    fill.color = surface
+    canvas.drawRoundRect(RectF(35f, 192f, 560f, 270f), 14f, 14f, fill)
+    canvas.drawRoundRect(RectF(35f, 192f, 560f, 270f), 14f, 14f, stroke)
+    fill.color = AndroidColor.rgb(219, 234, 254)
+    canvas.drawCircle(73f, 231f, 23f, fill)
+    val initialPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = blue
+        textSize = 19f
+        isFakeBoldText = true
+        textAlign = Paint.Align.CENTER
+    }
+    canvas.drawText(staffName.trim().take(1).uppercase(Locale.getDefault()).ifBlank { "S" }, 73f, 238f, initialPaint)
+    bold.textSize = 16f
+    fitSalaryPdfText(staffName, bold, 295f, 16f, 11f)
+    canvas.drawText(staffName, 112f, 224f, bold)
+    text.color = textMuted
+    text.textSize = 10f
+    val salaryPeriodText = "Salary month  |  ${salary.salaryMonth}"
+    fitSalaryPdfText(salaryPeriodText, text, 295f, 10f, 8f)
+    canvas.drawText(salaryPeriodText, 112f, 244f, text)
+
+    val statusText = when {
+        due <= 0.009 -> "PAID"
+        paid > 0.009 -> "PARTIAL"
+        else -> "DUE"
+    }
+    val statusColor = when (statusText) {
+        "PAID" -> green
+        "PARTIAL" -> amber
+        else -> red
+    }
+    fill.color = AndroidColor.argb(
+        24,
+        AndroidColor.red(statusColor),
+        AndroidColor.green(statusColor),
+        AndroidColor.blue(statusColor),
+    )
+    canvas.drawRoundRect(RectF(462f, 213f, 535f, 249f), 18f, 18f, fill)
+    val statusPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = statusColor
+        textSize = 10f
+        isFakeBoldText = true
+        textAlign = Paint.Align.CENTER
+    }
+    canvas.drawText(statusText, 498.5f, 235f, statusPaint)
+
+    // Right-aligned amount column prevents long figures from being cut off.
+    bold.color = textDark
+    bold.textSize = 13f
+    canvas.drawText("SALARY BREAKDOWN", 35f, 310f, bold)
+    text.color = textMuted
+    text.textSize = 9f
+    canvas.drawText("Description", 50f, 337f, text)
+    text.textAlign = Paint.Align.RIGHT
+    canvas.drawText("Amount (BDT)", 545f, 337f, text)
+    text.textAlign = Paint.Align.LEFT
+    fill.color = border
+    canvas.drawRect(35f, 346f, 560f, 347f, fill)
+
+    var y = 373f
+    val rows = listOf(
+        Triple("Basic salary", salary.basicSalary, textDark),
+        Triple("Bonus", salary.bonusAmount, green),
+        Triple("Deduction", salary.deductionAmount, if (salary.deductionAmount > 0) red else textDark),
+        Triple("Advance", salary.advanceAmount, if (salary.advanceAmount > 0) amber else textDark),
+    )
+    rows.forEachIndexed { index, (label, amount, amountColor) ->
+        if (index % 2 == 1) {
+            fill.color = surface
+            canvas.drawRoundRect(RectF(35f, y - 19f, 560f, y + 10f), 5f, 5f, fill)
+        }
+        text.color = textMuted
+        text.textSize = 11f
+        canvas.drawText(label, 50f, y, text)
+        text.color = amountColor
+        text.textSize = 11.5f
+        text.isFakeBoldText = amount != 0.0
+        text.textAlign = Paint.Align.RIGHT
+        val amountText = salaryAmount(amount)
+        fitSalaryPdfText(amountText, text, 220f, 11.5f, 8f)
+        canvas.drawText(amountText, 545f, y, text)
+        text.textAlign = Paint.Align.LEFT
+        text.isFakeBoldText = false
+        y += 34f
+    }
+
+    fill.color = AndroidColor.rgb(239, 246, 255)
+    canvas.drawRoundRect(RectF(35f, 505f, 560f, 553f), 10f, 10f, fill)
+    bold.color = navy
+    bold.textSize = 13f
+    canvas.drawText("Net salary", 50f, 535f, bold)
+    val rightBold = Paint(bold).apply {
+        textAlign = Paint.Align.RIGHT
+        color = blue
+        textSize = 15f
+    }
+    val netSalaryText = "BDT ${salaryAmount(salary.netSalary)}"
+    fitSalaryPdfText(netSalaryText, rightBold, 240f, 15f, 10f)
+    canvas.drawText(netSalaryText, 545f, 535f, rightBold)
+
+    fill.color = surface
+    canvas.drawRoundRect(RectF(35f, 570f, 560f, 656f), 12f, 12f, fill)
+    canvas.drawRoundRect(RectF(35f, 570f, 560f, 656f), 12f, 12f, stroke)
+    listOf(
+        Triple("Paid", paid, green),
+        Triple("Remaining", due, if (due > 0) amber else green),
+    ).forEachIndexed { index, (label, amount, color) ->
+        val centerX = if (index == 0) 166f else 430f
+        text.color = textMuted
+        text.textSize = 9.5f
+        text.textAlign = Paint.Align.CENTER
+        canvas.drawText(label, centerX, 597f, text)
+        val amountText = "BDT ${salaryAmount(amount)}"
+        val amountPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            this.color = color
+            textSize = 15f
+            isFakeBoldText = true
+            textAlign = Paint.Align.CENTER
+        }
+        fitSalaryPdfText(amountText, amountPaint, 215f, 15f, 10f)
+        canvas.drawText(amountText, centerX, 622f, amountPaint)
+    }
+    text.textAlign = Paint.Align.CENTER
+    text.color = textMuted
+    text.textSize = 9f
+    val paidOn = salary.paymentDateMs?.takeIf { it > 0L }?.let {
+        SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(it))
+    } ?: "Not recorded"
+    val method = salary.paymentMethod?.trim()?.takeIf { it.isNotBlank() }
+        ?.replaceFirstChar { it.uppercase() } ?: "Not recorded"
+    val paymentMeta = "Method: $method  |  Payment date: $paidOn"
+    fitSalaryPdfText(paymentMeta, text, 500f, 9f, 7f)
+    canvas.drawText(paymentMeta, pageWidth / 2f, 644f, text)
+    text.textAlign = Paint.Align.LEFT
+
+    var noteBottom = 676f
+    salary.note?.trim()?.takeIf { it.isNotBlank() }?.let { note ->
+        bold.color = textDark
+        bold.textSize = 10.5f
+        canvas.drawText("Note", 35f, 681f, bold)
+        text.color = textMuted
+        text.textSize = 9.5f
+        noteBottom = drawSalaryPdfWrappedText(canvas, note, 35f, 699f, 525f, 13f, text, maxLines = 3)
+    }
+
+    val signatureY = maxOf(742f, noteBottom + 34f).coerceAtMost(762f)
+    fill.color = border
+    canvas.drawRect(45f, signatureY, 215f, signatureY + 1f, fill)
+    canvas.drawRect(380f, signatureY, 550f, signatureY + 1f, fill)
+    text.color = textMuted
+    text.textSize = 8f
+    text.textAlign = Paint.Align.CENTER
+    canvas.drawText("Staff signature", 130f, signatureY + 17f, text)
+    canvas.drawText("Authorized signature", 465f, signatureY + 17f, text)
+
+    fill.color = navy
+    canvas.drawRect(0f, 802f, pageWidth.toFloat(), pageHeight.toFloat(), fill)
+    text.color = white
+    text.textSize = 8.5f
+    val footerText = "Generated securely by BatchFee  |  $instName"
+    fitSalaryPdfText(footerText, text, 520f, 8.5f, 6.5f)
+    canvas.drawText(footerText, pageWidth / 2f, 823f, text)
+    text.color = AndroidColor.rgb(165, 243, 252)
+    text.textSize = 7.5f
+    canvas.drawText("This is a computer-generated salary receipt.", pageWidth / 2f, 836f, text)
 
     document.finishPage(page)
-    val file = File(context.cacheDir, "salary_receipt_${salary.salaryMonth.replace(" ", "_")}.pdf")
-    file.outputStream().use { document.writeTo(it) }
-    document.close()
+    val safeMonth = salary.salaryMonth.replace(Regex("[^A-Za-z0-9_-]"), "_")
+    val file = File(context.cacheDir, "salary_receipt_${safeMonth}_${salary.id.takeLast(8)}.pdf")
+    try {
+        file.outputStream().use { document.writeTo(it) }
+    } finally {
+        document.close()
+    }
     return file
+}
+
+private fun fitSalaryPdfText(
+    value: String,
+    paint: Paint,
+    maxWidth: Float,
+    preferredSize: Float,
+    minimumSize: Float,
+) {
+    paint.textSize = preferredSize
+    while (paint.textSize > minimumSize && paint.measureText(value) > maxWidth) {
+        paint.textSize -= 0.5f
+    }
+}
+
+private fun drawSalaryPdfWrappedText(
+    canvas: android.graphics.Canvas,
+    value: String,
+    x: Float,
+    startY: Float,
+    maxWidth: Float,
+    lineHeight: Float,
+    paint: Paint,
+    maxLines: Int,
+): Float {
+    val words = value.replace(Regex("\\s+"), " ").trim().split(" ")
+    val lines = mutableListOf<String>()
+    var current = ""
+    words.forEach { word ->
+        val candidate = if (current.isBlank()) word else "$current $word"
+        if (paint.measureText(candidate) <= maxWidth) {
+            current = candidate
+        } else {
+            if (current.isNotBlank()) lines += current
+            current = word
+        }
+    }
+    if (current.isNotBlank()) lines += current
+    val visible = lines.take(maxLines).toMutableList()
+    if (lines.size > maxLines && visible.isNotEmpty()) {
+        var last = visible.last()
+        while (last.isNotEmpty() && paint.measureText("$last...") > maxWidth) last = last.dropLast(1)
+        visible[visible.lastIndex] = "${last.trimEnd()}..."
+    }
+    var y = startY
+    visible.forEach { line ->
+        canvas.drawText(line, x, y, paint)
+        y += lineHeight
+    }
+    return y
 }
 
 @Composable

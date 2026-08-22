@@ -2,6 +2,7 @@
 
 import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.data.models.InstituteEntity
+import com.batchfee.edu.domain.InstituteContactNumber
 import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.Dispatchers
@@ -56,6 +57,8 @@ object InstituteSyncHelper {
                 val currentPlanId = data["currentPlanId"] as? String ?: "plan_free_trial"
                 val subscriptionStatus = data["subscriptionStatus"] as? String
                     ?: if (currentPlanId == "plan_free_trial") "trial" else "active"
+                val cloudPhone = data["phone"] as? String
+                val cloudWhatsApp = data["whatsappNumber"] as? String
                 db.instituteDao().insertInstitute(
                     InstituteEntity(
                         id = snapshot.id,
@@ -67,9 +70,9 @@ object InstituteSyncHelper {
                         currentPeriodEndMs = (data["currentPeriodEndMs"] as? Number)?.toLong()
                             ?: ((data["trialEndDate"] as? Number)?.toLong() ?: now),
                         createdAtMs = (data["createdAt"] as? Number)?.toLong() ?: now,
-                        phone = data["phone"] as? String,
+                        phone = InstituteContactNumber.primary(cloudPhone, cloudWhatsApp),
                         address = data["address"] as? String,
-                        whatsappNumber = data["whatsappNumber"] as? String,
+                        whatsappNumber = InstituteContactNumber.whatsapp(cloudPhone, cloudWhatsApp),
                         // Preserve local file URIs. For remote URLs, use Firestore as authority
                         // with local fallback so a stale Firestore doc doesn't nuke a valid URL.
                         profilePhotoUri = when {

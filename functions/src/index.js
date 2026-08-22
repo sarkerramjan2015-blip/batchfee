@@ -26,6 +26,7 @@ const {
   createPermanentBatchPurgeHandler,
   createPermanentStaffPurgeHandler,
 } = require("./permanentArchivePurge");
+const { createPermanentInstitutePurgeHandler } = require("./permanentInstitutePurge");
 const { createPublicRegistrationHandler } = require("./publicRegistration");
 const {
   cleanupPendingRegistrationPhoto,
@@ -38,6 +39,11 @@ const {
   createStudentActivityFeedHandler,
   writeStudentActivity,
 } = require("./studentActivity");
+const {
+  createInstituteOwnerLoginCleanupHandler,
+  createInstituteOwnerLoginFeedHandler,
+  createInstituteOwnerLoginRecorder,
+} = require("./instituteOwnerLoginActivity");
 const {
   FREE_TRIAL_DURATION_MS,
   FREE_TRIAL_STUDENT_LIMIT,
@@ -1050,6 +1056,21 @@ exports.getStudentActivity = onCall(
       assertCanManageTenantResource(auth, instituteId, "manage_student", false),
   })),
 );
+exports.recordInstituteOwnerLogin = onCall(
+  callableOptions,
+  guarded(createInstituteOwnerLoginRecorder({ db })),
+);
+exports.getInstituteOwnerLoginActivity = onCall(
+  callableOptions,
+  guarded(createInstituteOwnerLoginFeedHandler({ db, assertPlatformRoot })),
+);
+exports.cleanupInstituteOwnerLoginActivity = onSchedule(
+  { region: REGION, schedule: "every day 03:15", timeZone: "Asia/Dhaka", timeoutSeconds: 300, memory: "256MiB" },
+  async () => {
+    const result = await createInstituteOwnerLoginCleanupHandler({ db })();
+    logger.info("Institute owner login activity cleanup completed", result);
+  },
+);
 exports.createEntitledStudent = onCall(
   { ...callableOptions, timeoutSeconds: 60 },
   guarded(createEntitledStudentHandler),
@@ -1129,6 +1150,12 @@ exports.permanentlyPurgeBatch = onCall(
 exports.permanentlyPurgeStaff = onCall(
   { ...callableOptions, timeoutSeconds: 120, memory: "512MiB" },
   guarded(createPermanentStaffPurgeHandler({ db, adminAuth, bucket: mediaStorageBucket })),
+);
+exports.permanentlyPurgeInstitute = onCall(
+  // Public invocation only opens the callable transport; the handler still
+  // requires Firebase Auth plus an active, trusted Super Admin record.
+  { ...callableOptions, timeoutSeconds: 540, memory: "1GiB", invoker: "public" },
+  guarded(createPermanentInstitutePurgeHandler({ db, adminAuth, bucket: mediaStorageBucket })),
 );
 exports.uploadSecureMedia = onCall(
   { ...callableOptions, timeoutSeconds: 60, memory: "512MiB" },

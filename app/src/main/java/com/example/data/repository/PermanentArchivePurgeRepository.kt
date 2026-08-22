@@ -73,4 +73,28 @@ class PermanentArchivePurgeRepository(private val db: AppDatabase) {
             db.staffDao().deleteStaff(instituteId, staffId)
         }
     }
+
+    suspend fun purgeInstitute(instituteId: String) {
+        functions.getHttpsCallable("permanentlyPurgeInstitute").call(
+            mapOf("instituteId" to instituteId)
+        ).await()
+
+        // Mirror the server result only after the trusted purge succeeds. Child
+        // tables are cleared before parent tables to preserve local FK integrity.
+        db.withTransaction {
+            val sql = db.openHelper.writableDatabase
+            val args = arrayOf<Any?>(instituteId)
+            listOf(
+                "payment_reversals", "receipts", "payments", "results", "attendance",
+                "absent_messages", "homework_submissions", "assignment_submissions",
+                "batch_students", "fees", "exams", "homework", "assignments", "works",
+                "staff_attendance", "salaries", "audit_logs", "expenses", "enquiries",
+                "reminder_templates", "financial_outbox", "deletion_outbox", "staff",
+                "students", "batches", "users"
+            ).forEach { table ->
+                sql.execSQL("DELETE FROM $table WHERE instituteId = ?", args)
+            }
+            sql.execSQL("DELETE FROM institutes WHERE id = ?", args)
+        }
+    }
 }

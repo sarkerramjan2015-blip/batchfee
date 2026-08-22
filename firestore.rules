@@ -598,6 +598,13 @@ service cloud.firestore {
       allow read: if isPlatformDataReader() || isInstitutePrincipal(instituteId);
     }
 
+    // Super Admin loads the canonical receipt ledger across every institute
+    // with a collection-group query. Keep that global view platform-only;
+    // tenant users continue to use the scoped rule above for their own records.
+    match /{path=**}/subscription_receipts/{receiptId} {
+      allow read: if isPlatformDataReader();
+    }
+
     // These records make subscription mutations reviewable without exposing
     // operation payloads to tenant users or allowing client-side alteration.
     match /institutes/{instituteId}/subscription_audit/{auditId} {

@@ -585,7 +585,10 @@ function createSubscriptionBillingHandler({ db, FieldValue }) {
         applyOperationAudit(transaction, instituteRef, operationId, action, actorUid, now,
           plainInstitute(authority.institute), { ...after, preBlockSubscriptionStatus: null },
           { daysToAdd, startDateMs, reason });
-        const result = { institute: { ...after, preBlockSubscriptionStatus: null } };
+        // Return the full canonical state. Older partial responses made the
+        // Android client report a failure after this transaction had already
+        // extended the subscription successfully.
+        const result = { institute: plainInstitute({ ...authority.institute, ...after }) };
         completedOperation(transaction, instituteRef, operationId, actorUid, hash, action, result, now);
         return result;
       }
@@ -616,7 +619,10 @@ function createSubscriptionBillingHandler({ db, FieldValue }) {
         transaction.update(instituteRef, after);
         applyOperationAudit(transaction, instituteRef, operationId, action, actorUid, now,
           before, { ...after, preBlockSubscriptionStatus: blocked ? after.preBlockSubscriptionStatus : null }, { blocked });
-        const result = { institute: { ...after, preBlockSubscriptionStatus: blocked ? after.preBlockSubscriptionStatus : null } };
+        // Block/unblock also needs the unchanged plan and expiry fields so the
+        // client can update its local cache without mistaking success for an
+        // invalid response.
+        const result = { institute: plainInstitute({ ...authority.institute, ...after }) };
         completedOperation(transaction, instituteRef, operationId, actorUid, hash, action, result, now);
         return result;
       }

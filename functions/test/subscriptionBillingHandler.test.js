@@ -357,6 +357,66 @@ test("platform trial management always persists the unlimited student sentinel",
   assert.equal(db.documents.get("institutes/institute-a").subscriptionStatus, "trial");
 });
 
+test("extend returns the complete canonical institute state", async () => {
+  const now = Date.now();
+  const db = seededDb(now);
+  const previousEnd = db.documents.get("institutes/institute-a").currentPeriodEndMs;
+  const handler = handlerFor(db);
+
+  const result = await handler({
+    auth: { uid: "super-admin" },
+    data: {
+      action: "extend_subscription",
+      instituteId: "institute-a",
+      operationId: "sub_operation_extend_0001",
+      daysToAdd: 10,
+      reason: "Customer grace period",
+    },
+  });
+
+  assert.equal(result.institute.currentPlanId, "plan_growth");
+  assert.equal(result.institute.subscriptionStatus, "active");
+  assert.equal(result.institute.currentPeriodEndMs, previousEnd + 10 * 24 * 60 * 60 * 1000);
+  assert.equal(result.institute.isActive, true);
+  assert.equal(result.institute.studentLimit, 500);
+  assert.equal(result.institute.staffLimit, 13);
+});
+
+test("block and unblock return the unchanged plan and expiry", async () => {
+  const now = Date.now();
+  const db = seededDb(now);
+  const originalEnd = db.documents.get("institutes/institute-a").currentPeriodEndMs;
+  const handler = handlerFor(db);
+
+  const blocked = await handler({
+    auth: { uid: "super-admin" },
+    data: {
+      action: "set_institute_blocked",
+      instituteId: "institute-a",
+      operationId: "sub_operation_block_0001",
+      blocked: true,
+    },
+  });
+  assert.equal(blocked.institute.currentPlanId, "plan_growth");
+  assert.equal(blocked.institute.currentPeriodEndMs, originalEnd);
+  assert.equal(blocked.institute.subscriptionStatus, "blocked");
+  assert.equal(blocked.institute.isActive, false);
+
+  const unblocked = await handler({
+    auth: { uid: "super-admin" },
+    data: {
+      action: "set_institute_blocked",
+      instituteId: "institute-a",
+      operationId: "sub_operation_unblock_0001",
+      blocked: false,
+    },
+  });
+  assert.equal(unblocked.institute.currentPlanId, "plan_growth");
+  assert.equal(unblocked.institute.currentPeriodEndMs, originalEnd);
+  assert.equal(unblocked.institute.subscriptionStatus, "active");
+  assert.equal(unblocked.institute.isActive, true);
+});
+
 test("super admin removes legacy and orphaned requests from the pending queue", async () => {
   const db = seededDb(Date.now());
   db.documents.set("subscriptionRequests/legacy-request", {

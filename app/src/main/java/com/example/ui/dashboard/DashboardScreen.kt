@@ -53,6 +53,7 @@ import com.batchfee.edu.data.models.StudentEntity
 
 import com.batchfee.edu.domain.SessionManager
 import com.batchfee.edu.domain.MonthlyDueCalculator
+import com.batchfee.edu.domain.InstituteContactNumber
 import com.google.firebase.firestore.FirebaseFirestore
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.sp
@@ -1021,7 +1022,10 @@ fun DashboardScreen(
     val openEditDialog: () -> Unit = {
         editOwnerName = currentUser?.name.orEmpty()
         editInstituteName = institute?.name.orEmpty()
-        editPhone = institute?.phone.orEmpty()
+        editPhone = InstituteContactNumber.primary(
+            institute?.phone,
+            institute?.whatsappNumber
+        ).orEmpty()
         editAddress = institute?.address.orEmpty()
         editProfilePhotoUri = savedProfilePhotoUri
         showEditDialog = true
@@ -1880,7 +1884,10 @@ fun DashboardScreen(
     if (showEditDialog) {
         val originalOwnerName = currentUser?.name?.trim().orEmpty()
         val originalInstituteName = institute?.name?.trim().orEmpty()
-        val originalPhone = institute?.phone?.trim().orEmpty()
+        val originalPhone = InstituteContactNumber.primary(
+            institute?.phone,
+            institute?.whatsappNumber
+        ).orEmpty()
         val originalAddress = institute?.address?.trim().orEmpty()
         val originalPhotoUri = institute?.profilePhotoUri.orEmpty()
         val hasProfileChanges =
@@ -1998,7 +2005,11 @@ fun DashboardScreen(
                     OutlinedTextField(
                         value = editPhone,
                         onValueChange = { editPhone = it },
-                        label = { Text("Phone Number") },
+                        label = { Text("Institute Contact & WhatsApp") },
+                        supportingText = {
+                            Text("Used for calls, receipts and WhatsApp", color = TextSecondary, fontSize = 10.sp)
+                        },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                         colors = OutlinedTextFieldDefaults.colors(
@@ -2042,6 +2053,13 @@ fun DashboardScreen(
                             }
                             return@TextButton
                         }
+                        val primaryContact = InstituteContactNumber.normalizeBangladesh(editPhone)
+                        if (primaryContact == null) {
+                            snappbarcoroutineScope.launch {
+                                snackbarHostState.showSnackbar("Enter a valid Bangladesh institute contact number.")
+                            }
+                            return@TextButton
+                        }
 
                         isSavingProfile = true
                         snappbarcoroutineScope.launch {
@@ -2060,7 +2078,8 @@ fun DashboardScreen(
 
                                 val updated = inst.copy(
                                     name = editInstituteName.trim(),
-                                    phone = editPhone.trim().ifBlank { null },
+                                    phone = primaryContact,
+                                    whatsappNumber = primaryContact,
                                     address = editAddress.trim().ifBlank { null },
                                     profilePhotoUri = profilePhotoUri
                                 )
