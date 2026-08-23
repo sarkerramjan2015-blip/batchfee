@@ -558,7 +558,14 @@ service cloud.firestore {
         && request.resource.data.instituteName == get(institutePath(instituteId)).data.instituteName
         && request.resource.data.ownerName == get(institutePath(instituteId)).data.ownerName
         && request.resource.data.ownerEmail == get(institutePath(instituteId)).data.email
-        && request.resource.data.ownerPhone == ''
+        // Older supported clients wrote an empty phone on the zero-value trial
+        // receipt. Current clients copy the verified institute contact. Accept
+        // both shapes, but never allow an unrelated phone to be attached.
+        && (request.resource.data.ownerPhone == ''
+          || (('phone' in get(institutePath(instituteId)).data)
+            && request.resource.data.ownerPhone == get(institutePath(instituteId)).data.phone)
+          || (('whatsappNumber' in get(institutePath(instituteId)).data)
+            && request.resource.data.ownerPhone == get(institutePath(instituteId)).data.whatsappNumber))
         && request.resource.data.instituteCode == ''
         && request.resource.data.instituteAddress == ''
         && request.resource.data.planId == 'plan_free_trial'

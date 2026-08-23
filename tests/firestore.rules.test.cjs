@@ -450,6 +450,49 @@ describe("P0-02 owner and staff security boundary", { concurrency: false }, () =
     await assertFails(setDoc(instituteRef(authDb("invalid-limit", "invalid-limit@example.test"), "invalid-limit"), invalidLimit));
   });
 
+  test("new owner can create the app's phone-bound free-trial receipt", async () => {
+    const uid = "new-owner-with-contact";
+    const email = "new-owner-with-contact@example.test";
+    const contact = "+8801518657896";
+    const createdAt = Date.now();
+    const db = authDb(uid, email);
+    const institute = validNewInstitute(email, createdAt);
+    institute.phone = contact;
+    institute.whatsappNumber = contact;
+
+    await assertSucceeds(setDoc(instituteRef(db, uid), institute));
+
+    const receipt = {
+      receiptNumber: `TRIAL-${createdAt}`,
+      instituteId: uid,
+      instituteName: institute.instituteName,
+      ownerName: institute.ownerName,
+      ownerEmail: email,
+      ownerPhone: contact,
+      instituteCode: "",
+      instituteAddress: "",
+      planId: "plan_free_trial",
+      planName: "Free Trial",
+      durationMonths: 1,
+      amountPaid: 0,
+      paymentMethod: "free_trial",
+      transactionLast4: "",
+      startDateMs: createdAt,
+      endDateMs: institute.currentPeriodEndMs,
+      approvedAt: createdAt,
+      status: "approved",
+    };
+
+    await assertSucceeds(setDoc(
+      tenantDoc(db, uid, "receipts", receipt.receiptNumber),
+      receipt,
+    ));
+    await assertFails(setDoc(
+      tenantDoc(db, uid, "receipts", `TRIAL-${createdAt + 1}`),
+      { ...receipt, receiptNumber: `TRIAL-${createdAt + 1}`, ownerPhone: "+8801999999999" },
+    ));
+  });
+
   test("active staff access is permission-scoped and token matching is exact", async () => {
     const viewDb = authDb("staff-view-a");
     await assertSucceeds(getDoc(tenantDoc(viewDb, OWNER_A, "students", "student-a")));
