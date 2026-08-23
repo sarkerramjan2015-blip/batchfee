@@ -472,6 +472,7 @@ async function createEntitledStudentHandler(request) {
       studentCount: count + 1,
       studentLimit: limit,
       unlimitedTrialStudents,
+      photoUri: registrationPhoto ? registrationPhoto.reference : (studentFields.photoUri || null),
     };
   });
   if (registrationPhoto && registrationRequestId) {

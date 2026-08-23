@@ -60,6 +60,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import com.batchfee.edu.ui.components.BatchFeeBottomNav
+import com.batchfee.edu.ui.components.SquarePhotoCropDialog
 import com.batchfee.edu.domain.AccessControl
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -424,6 +425,7 @@ private fun isLeapYear(year: Int) =
     (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
 
 class DashboardViewModel(private val db: AppDatabase) : ViewModel() {
+    private val enquiryMutationsInProgress = mutableSetOf<String>()
     private val _isBootstrapReady = MutableStateFlow(false)
     val isBootstrapReady = _isBootstrapReady.asStateFlow()
 
@@ -720,6 +722,11 @@ class DashboardViewModel(private val db: AppDatabase) : ViewModel() {
             onError("Subject name is required.")
             return
         }
+        val mutationKey = "$instId:$cleanPhone:${cleanName.lowercase()}:$enquiryDateMs"
+        if (!synchronized(enquiryMutationsInProgress) { enquiryMutationsInProgress.add(mutationKey) }) {
+            onError("This enquiry is already being saved.")
+            return
+        }
 
         viewModelScope.launch {
             try {
@@ -745,6 +752,8 @@ class DashboardViewModel(private val db: AppDatabase) : ViewModel() {
             } catch (e: Exception) {
                 e.printStackTrace()
                 onError("Could not save enquiry. Try again.")
+            } finally {
+                synchronized(enquiryMutationsInProgress) { enquiryMutationsInProgress.remove(mutationKey) }
             }
         }
     }
@@ -1015,6 +1024,7 @@ fun DashboardScreen(
     var editPhone by remember { mutableStateOf("") }
     var editAddress by remember { mutableStateOf("") }
     var editProfilePhotoUri by remember { mutableStateOf<Uri?>(null) }
+    var profileCropSourceUri by remember { mutableStateOf<Uri?>(null) }
     val context = LocalContext.current
     val savedProfilePhotoUri = remember(institute?.profilePhotoUri) {
         institute?.profilePhotoUri?.takeIf { it.isNotBlank() }?.let(Uri::parse)
@@ -1038,7 +1048,7 @@ fun DashboardScreen(
     }
     val cameraLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.TakePicture()
-    ) { success -> if (success) editProfilePhotoUri = Uri.fromFile(tempPhotoFile) }
+    ) { success -> if (success) profileCropSourceUri = Uri.fromFile(tempPhotoFile) }
 
     // Gallery picker launcher
     val galleryLauncher = rememberLauncherForActivityResult(
@@ -1047,7 +1057,7 @@ fun DashboardScreen(
         if (uri != null) {
             snappbarcoroutineScope.launch {
                 try {
-                    editProfilePhotoUri = withContext(Dispatchers.IO) {
+                    profileCropSourceUri = withContext(Dispatchers.IO) {
                         FirebaseStorageImageUploadHelper.cacheSelectedImage(context, uri, "institute_logo")
                     }
                 } catch (error: Exception) {
@@ -1878,6 +1888,17 @@ fun DashboardScreen(
                 }
             },
             containerColor = Color(0xFF0F1629)
+        )
+    }
+
+    profileCropSourceUri?.let { sourceUri ->
+        SquarePhotoCropDialog(
+            sourceUri = sourceUri,
+            onCropped = { croppedUri ->
+                editProfilePhotoUri = croppedUri
+                profileCropSourceUri = null
+            },
+            onDismiss = { profileCropSourceUri = null },
         )
     }
 

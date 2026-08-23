@@ -1,5 +1,6 @@
 package com.batchfee.edu.ui.assignments
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
@@ -64,6 +65,7 @@ fun AddAssignmentScreen(db: AppDatabase, onBack: () -> Unit) {
     // The owner can still explicitly choose Draft when it is not ready.
     var status by remember { mutableStateOf("published") }
     var isSaving by remember { mutableStateOf(false) }
+    val pendingAssignmentId = remember { UUID.randomUUID().toString() }
     var saveError by remember { mutableStateOf<String?>(null) }
     var batchExpanded by remember { mutableStateOf(false) }
     var typeExpanded by remember { mutableStateOf(false) }
@@ -71,6 +73,8 @@ fun AddAssignmentScreen(db: AppDatabase, onBack: () -> Unit) {
     var fmtExpanded by remember { mutableStateOf(false) }
     var showDatePicker by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+
+    BackHandler(enabled = isSaving) { }
 
     val types = listOf("individual" to "Individual", "group" to "Group", "project" to "Project", "presentation" to "Presentation", "written" to "Written", "lab" to "Lab Report")
     val formats = listOf("any" to "Any Format", "pdf" to "PDF", "word" to "Word", "image" to "Image", "video" to "Video", "presentation" to "Presentation", "text" to "Text")
@@ -83,7 +87,7 @@ fun AddAssignmentScreen(db: AppDatabase, onBack: () -> Unit) {
     Scaffold(
         containerColor = AsBg,
         topBar = {
-            TopAppBar(title = { Text("Add Assignment", color = AsWhite, fontWeight = FontWeight.Bold) }, navigationIcon = { IconButton(onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = AsMuted) } }, colors = TopAppBarDefaults.topAppBarColors(containerColor = AsBg))
+            TopAppBar(title = { Text("Add Assignment", color = AsWhite, fontWeight = FontWeight.Bold) }, navigationIcon = { IconButton(onClick = onBack, enabled = !isSaving) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = AsMuted) } }, colors = TopAppBarDefaults.topAppBarColors(containerColor = AsBg))
         }
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).background(AsBg).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -172,10 +176,11 @@ fun AddAssignmentScreen(db: AppDatabase, onBack: () -> Unit) {
             if (saveError != null) { Box(Modifier.fillMaxWidth().background(Color(0x22EF4444), RoundedCornerShape(10.dp)).padding(12.dp)) { Text(saveError!!, color = Color(0xFFFCA5A5), fontSize = 13.sp) } }
 
             Button(onClick = {
+                if (isSaving) return@Button
                 if (title.isBlank()) { saveError = "Title is required"; return@Button }
                 isSaving = true; saveError = null
                 scope.launch {
-                    val a = AssignmentEntity(id = UUID.randomUUID().toString(), instituteId = instId, batchId = selectedBatch?.id, title = title.trim(), subject = subject.takeIf { it.isNotBlank() }, className = className.takeIf { it.isNotBlank() }, assignmentType = assignmentType, instructions = instructions.trim(), learningObjective = learningObjective.takeIf { it.isNotBlank() }, totalMarks = totalMarks.toDoubleOrNull(), passingMarks = null, gradingMethod = gradingMethod, rubricJson = null, startDateMs = System.currentTimeMillis(), dueDateMs = if (hasDueDate) dueDateMs else null, allowLateSubmission = allowLateSubmission, latePenalty = null, submissionFormat = submissionFormat, maxFileSizeKb = null, referenceMaterials = null, status = status, publishDateMs = if (status == "published") System.currentTimeMillis() else null, createdAtMs = System.currentTimeMillis(), updatedAtMs = System.currentTimeMillis(), archivedAtMs = null)
+                    val a = AssignmentEntity(id = pendingAssignmentId, instituteId = instId, batchId = selectedBatch?.id, title = title.trim(), subject = subject.takeIf { it.isNotBlank() }, className = className.takeIf { it.isNotBlank() }, assignmentType = assignmentType, instructions = instructions.trim(), learningObjective = learningObjective.takeIf { it.isNotBlank() }, totalMarks = totalMarks.toDoubleOrNull(), passingMarks = null, gradingMethod = gradingMethod, rubricJson = null, startDateMs = System.currentTimeMillis(), dueDateMs = if (hasDueDate) dueDateMs else null, allowLateSubmission = allowLateSubmission, latePenalty = null, submissionFormat = submissionFormat, maxFileSizeKb = null, referenceMaterials = null, status = status, publishDateMs = if (status == "published") System.currentTimeMillis() else null, createdAtMs = System.currentTimeMillis(), updatedAtMs = System.currentTimeMillis(), archivedAtMs = null)
                     try {
                         // A published assignment must reach the student app before
                         // this screen reports a successful save.
@@ -188,7 +193,7 @@ fun AddAssignmentScreen(db: AppDatabase, onBack: () -> Unit) {
                         isSaving = false
                     }
                 }
-            }, modifier = Modifier.fillMaxWidth().height(54.dp), shape = RoundedCornerShape(16.dp), colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent), contentPadding = PaddingValues(0.dp)) {
+            }, enabled = !isSaving, modifier = Modifier.fillMaxWidth().height(54.dp), shape = RoundedCornerShape(16.dp), colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent), contentPadding = PaddingValues(0.dp)) {
                 Box(Modifier.fillMaxSize().shadow(12.dp, RoundedCornerShape(16.dp), spotColor = AsAmber.copy(alpha = 0.4f)).background(Brush.horizontalGradient(listOf(AsAmber, AsCyan)), RoundedCornerShape(16.dp)), contentAlignment = Alignment.Center) {
                     if (isSaving) CircularProgressIndicator(Modifier.size(22.dp), color = Color.White, strokeWidth = 2.dp)
                     else Text(if (status == "published") "Save & Publish" else "Save Draft", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)

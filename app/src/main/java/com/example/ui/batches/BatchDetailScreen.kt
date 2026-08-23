@@ -1,5 +1,7 @@
 package com.batchfee.edu.ui.batches
 
+import android.widget.Toast
+
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.BorderStroke
@@ -1325,9 +1327,11 @@ private fun SummaryStatSmall(label: String, value: String, color: Color) {
 @Composable
 fun EnrollStudentsScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
     val instId = SessionManager.currentInstituteId.collectAsState().value
+    val context = LocalContext.current
     var allStudents by remember { mutableStateOf<List<com.batchfee.edu.data.models.StudentEntity>>(emptyList()) }
     var enrolledStudents by remember { mutableStateOf<List<com.batchfee.edu.data.models.StudentEntity>>(emptyList()) }
     var batchMonthlyFee by remember { mutableStateOf(0.0) }
+    var enrollingStudentIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(instId, batchId) {
@@ -1367,30 +1371,44 @@ fun EnrollStudentsScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
                         Row(Modifier.padding(16.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically) {
                             Text(s.fullName, style = MaterialTheme.typography.bodyLarge)
-                            Button(onClick = {
-                                if (instId != null) {
+                            Button(
+                                onClick = {
+                                if (instId != null && s.id !in enrollingStudentIds) {
+                                    enrollingStudentIds = enrollingStudentIds + s.id
                                     scope.launch {
-                                        val enrollmentStart = s.admissionDateMs.takeIf { it > 0L }
-                                            ?: System.currentTimeMillis()
-                                        val enrollment = com.batchfee.edu.data.models.BatchStudentEntity(
-                                            id = UUID.randomUUID().toString(),
-                                            instituteId = instId,
-                                            batchId = batchId,
-                                            studentId = s.id,
-                                            joinedAtMs = enrollmentStart,
-                                            status = "active",
-                                            leftAtMs = null,
-                                            firstMonthFeePeriod = MonthlyDueCalculator.periodFor(enrollmentStart),
-                                            firstMonthFeeAmount = MonthlyDueCalculator.calculateFirstMonthFee(
-                                                batchMonthlyFee,
-                                                enrollmentStart
+                                        try {
+                                            val enrollmentStart = s.admissionDateMs.takeIf { it > 0L }
+                                                ?: System.currentTimeMillis()
+                                            val enrollment = com.batchfee.edu.data.models.BatchStudentEntity(
+                                                id = UUID.randomUUID().toString(),
+                                                instituteId = instId,
+                                                batchId = batchId,
+                                                studentId = s.id,
+                                                joinedAtMs = enrollmentStart,
+                                                status = "active",
+                                                leftAtMs = null,
+                                                firstMonthFeePeriod = MonthlyDueCalculator.periodFor(enrollmentStart),
+                                                firstMonthFeeAmount = MonthlyDueCalculator.calculateFirstMonthFee(
+                                                    batchMonthlyFee,
+                                                    enrollmentStart
+                                                )
                                             )
-                                        )
-                                        BatchStudentSyncHelper.upsertEnrollment(enrollment)
-                                        db.batchStudentDao().enrollStudent(enrollment)
+                                            BatchStudentSyncHelper.upsertEnrollment(enrollment)
+                                            db.batchStudentDao().enrollStudent(enrollment)
+                                        } catch (error: Exception) {
+                                            Toast.makeText(
+                                                context,
+                                                error.message ?: "Could not enroll this student.",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                        } finally {
+                                            enrollingStudentIds = enrollingStudentIds - s.id
+                                        }
                                     }
                                 }
-                            }) { Text("Add") }
+                            }, enabled = s.id !in enrollingStudentIds) {
+                                Text(if (s.id in enrollingStudentIds) "Adding..." else "Add")
+                            }
                         }
                     }
                 }

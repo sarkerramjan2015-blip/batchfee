@@ -113,8 +113,8 @@ class RegistrationListViewModel(private val db: AppDatabase) : ViewModel() {
                 // The request ID is an idempotency key on the trusted backend. It atomically
                 // creates this student and consumes the pending registration, so a second tap
                 // cannot create a duplicate even if it reaches the server.
-                entitledCreationRepository.createStudent(student, registration.requestId)
-                db.studentDao().insertStudent(student)
+                val cloudPhotoUri = entitledCreationRepository.createStudent(student, registration.requestId)
+                db.studentDao().insertStudent(student.copy(photoUri = cloudPhotoUri ?: student.photoUri))
                 _snackbarMessage.value = "${registration.fullName} approved and added to students."
             } catch (e: Exception) {
                 _snackbarMessage.value = approvalErrorMessage(e)

@@ -53,6 +53,7 @@ import kotlinx.coroutines.withContext
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.net.URLEncoder
+import java.util.UUID
 import kotlin.math.roundToLong
 
 // ── BatchFee Plan Data ──────────────────────────────────────────
@@ -695,6 +696,12 @@ fun PricingScreen(
                 val selPrice = remember(selectedDuration) { viewModel.priceFor(selPlan) }
                 val durationMonths = when (selectedDuration) { 0 -> 1; 1 -> 6; 2 -> 12; else -> 1 }
                 val normalizedSenderPhone = normalizeBangladeshiMobileForSubmission(senderPhone).orEmpty()
+                val paymentRequestOperationId = remember(
+                    selectedPlanId,
+                    durationMonths,
+                    selectedPaymentMethod,
+                    normalizedSenderPhone
+                ) { UUID.randomUUID().toString() }
                 val accessPeriod = when (durationMonths) {
                     12 -> "1 year from approval"
                     6 -> "6 months from approval"
@@ -764,26 +771,28 @@ fun PricingScreen(
                         } else {
                             Button(
                                 onClick = {
+                                    if (isSubmitting) return@Button
+                                    if (instituteId == null) {
+                                        submitError = "Institute not found. Try restarting the app."
+                                        return@Button
+                                    }
+                                    if (normalizedSenderPhone.isBlank()) {
+                                        submitError = "Enter a valid Bangladeshi sending number."
+                                        showPaymentConfirmation = false
+                                        showPaymentDialog = true
+                                        return@Button
+                                    }
+                                    isSubmitting = true
+                                    submitError = null
                                     scope.launch {
-                                        if (instituteId == null) {
-                                            submitError = "Institute not found. Try restarting the app."
-                                            return@launch
-                                        }
-                                        if (normalizedSenderPhone.isBlank()) {
-                                            submitError = "Enter a valid Bangladeshi sending number."
-                                            showPaymentConfirmation = false
-                                            showPaymentDialog = true
-                                            return@launch
-                                        }
-                                        isSubmitting = true
-                                        submitError = null
                                         try {
                                             SubscriptionRepository().submitRequest(
                                                 instituteId = instituteId!!,
                                                 requestedPlanId = selPlan.id,
                                                 durationMonths = durationMonths,
                                                 paymentMethod = selectedPaymentMethod,
-                                                senderPhone = normalizedSenderPhone
+                                                senderPhone = normalizedSenderPhone,
+                                                operationId = paymentRequestOperationId
                                             )
                                             submitSuccess = true
                                         } catch (error: Exception) {

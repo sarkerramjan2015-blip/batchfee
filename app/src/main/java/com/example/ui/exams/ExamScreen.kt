@@ -527,6 +527,7 @@ fun ExamDetailScreen(db: AppDatabase, examId: String, onBack: () -> Unit, onEdit
     var showStudentMessageDialog by remember { mutableStateOf<StudentResultItem?>(null) }
     var showExamMenu by remember { mutableStateOf(false) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
+    var isSavingResults by remember { mutableStateOf(false) }
 
     LaunchedEffect(examId) { viewModel.loadExamDetails(examId) }
 
@@ -670,7 +671,7 @@ fun ExamDetailScreen(db: AppDatabase, examId: String, onBack: () -> Unit, onEdit
                 // ── Save button ────────────────────────
                 if (!hasResults && studentResults.isNotEmpty()) {
                     Spacer(Modifier.height(16.dp))
-                    val canSave = marksMap.values.any { (it.toDoubleOrNull() ?: -1.0) >= 0 }
+                    val canSave = !isSavingResults && marksMap.values.any { (it.toDoubleOrNull() ?: -1.0) >= 0 }
                     Box(
                         modifier = Modifier.fillMaxWidth().height(48.dp).clip(RoundedCornerShape(14.dp))
                             .shadow(4.dp, RoundedCornerShape(14.dp), spotColor = Cyan.copy(alpha = 0.3f))
@@ -679,15 +680,29 @@ fun ExamDetailScreen(db: AppDatabase, examId: String, onBack: () -> Unit, onEdit
                     ) {
                         TextButton(
                             onClick = {
+                                if (isSavingResults) return@TextButton
+                                isSavingResults = true
                                 val marksList = marksMap.map { it.key to (it.value.toDoubleOrNull() ?: 0.0) }.filter { it.second > 0 }
                                 viewModel.saveResults(examId, selectedExam?.batchId ?: "", marksList,
-                                    onSuccess = { scope.launch { snackbarHostState.showSnackbar("Results saved!") } },
-                                    onError = { scope.launch { snackbarHostState.showSnackbar(it) } }
+                                    onSuccess = {
+                                        isSavingResults = false
+                                        scope.launch { snackbarHostState.showSnackbar("Results saved!") }
+                                    },
+                                    onError = {
+                                        isSavingResults = false
+                                        scope.launch { snackbarHostState.showSnackbar(it) }
+                                    }
                                 )
                             },
                             modifier = Modifier.fillMaxSize(), enabled = canSave,
                             colors = ButtonDefaults.textButtonColors(contentColor = if (canSave) Color.White else TextMuted)
-                        ) { Text("Save All Marks", fontWeight = FontWeight.Bold, fontSize = 16.sp) }
+                        ) {
+                            if (isSavingResults) {
+                                CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                            }
+                            Text(if (isSavingResults) "Saving..." else "Save All Marks", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        }
                     }
                 }
 

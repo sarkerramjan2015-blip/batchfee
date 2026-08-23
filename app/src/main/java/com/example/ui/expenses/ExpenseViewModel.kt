@@ -24,6 +24,7 @@ data class ExpenseSummary(
 )
 
 class ExpenseViewModel(private val db: AppDatabase) : ViewModel() {
+    private val mutationsInProgress = mutableSetOf<String>()
     private val _expenses = MutableStateFlow<List<ExpenseEntity>>(emptyList())
     val expenses = _expenses.asStateFlow()
 
@@ -67,6 +68,7 @@ class ExpenseViewModel(private val db: AppDatabase) : ViewModel() {
     fun addExpense(
         title: String, category: String, amount: Double, expenseDateMs: Long,
         paymentMethod: String?, description: String?,
+        expenseId: String = UUID.randomUUID().toString(),
         onSuccess: () -> Unit, onError: (String) -> Unit = {}
     ) {
         val instId = SessionManager.currentInstituteId.value
@@ -76,9 +78,14 @@ class ExpenseViewModel(private val db: AppDatabase) : ViewModel() {
         if (title.isBlank()) { onError("Title is required."); return }
         if (category.isBlank()) { onError("Category is required."); return }
         if (amount <= 0) { onError("Amount must be greater than 0."); return }
+        val mutationKey = "create:$expenseId"
+        if (!synchronized(mutationsInProgress) { mutationsInProgress.add(mutationKey) }) {
+            onError("This expense is already being saved.")
+            return
+        }
 
         val expense = ExpenseEntity(
-            id = UUID.randomUUID().toString(), instituteId = instId,
+            id = expenseId, instituteId = instId,
             category = category, title = title.trim(), amount = amount,
             expenseDateMs = expenseDateMs,
             paymentMethod = paymentMethod?.trim()?.takeIf { it.isNotEmpty() },
@@ -99,6 +106,8 @@ class ExpenseViewModel(private val db: AppDatabase) : ViewModel() {
                 onSuccess()
             } catch (e: Exception) {
                 onError("Failed to save: ${e.message}")
+            } finally {
+                synchronized(mutationsInProgress) { mutationsInProgress.remove(mutationKey) }
             }
         }
     }

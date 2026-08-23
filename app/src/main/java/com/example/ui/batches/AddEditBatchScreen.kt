@@ -1,6 +1,7 @@
 package com.batchfee.edu.ui.batches
 
 import android.app.TimePickerDialog
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.BorderStroke
@@ -35,6 +36,7 @@ import com.batchfee.edu.domain.SessionManager
 import kotlinx.coroutines.launch
 import java.util.Calendar
 import java.util.Locale
+import java.util.UUID
 
 // ── Colors (matching PricingScreen) ─────────────────────────────
 private val BgColor      = Color(0xFF07111F)
@@ -90,6 +92,11 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
     var scheduleError by remember { mutableStateOf<String?>(null) }
     var editingBatch by remember(batchId) { mutableStateOf<BatchEntity?>(null) }
     var loadedBatchId by remember(batchId) { mutableStateOf<String?>(null) }
+    var isSaving by remember { mutableStateOf(false) }
+    val pendingBatchId = remember { UUID.randomUUID().toString() }
+    val pendingBatchCode = remember { "BAT-${UUID.randomUUID().toString().take(8)}" }
+
+    BackHandler(enabled = isSaving) { }
 
     // Validation
     var nameError by remember { mutableStateOf(false) }
@@ -145,7 +152,7 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
             TopAppBar(
                 title = { Text(if (isEditMode) "Edit Batch" else "Add Batch", color = TextWhite, fontWeight = FontWeight.Bold) },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    IconButton(onClick = onBack, enabled = !isSaving) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = TextWhite)
                     }
                 },
@@ -323,7 +330,8 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
                     .background(
                         brush = Brush.horizontalGradient(listOf(ElectricBlue, Cyan))
                     )
-                    .clickable {
+                    .clickable(enabled = !isSaving) {
+                        if (isSaving) return@clickable
                         // Validate
                         nameError = name.isBlank()
                         val fee = feeString.toDoubleOrNull()
@@ -355,6 +363,7 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
                                 if (existing == null) {
                                     scope.launch { snackbarHostState.showSnackbar("Batch is still loading.") }
                                 } else {
+                                    isSaving = true
                                     viewModel.updateBatch(
                                         existing.copy(
                                             name = name.trim(),
@@ -368,6 +377,7 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
                                             description = existing.description
                                         ),
                                         onError = { message ->
+                                            isSaving = false
                                             scope.launch { snackbarHostState.showSnackbar(message) }
                                         },
                                         onSuccess = {
@@ -379,6 +389,7 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
                                     )
                                 }
                             } else {
+                                isSaving = true
                                 viewModel.addBatch(
                                     name = name.trim(),
                                     feeAmount = fee,
@@ -386,7 +397,10 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
                                     scheduleDays = savedScheduleDays,
                                     startTime = if (scheduleConfigured) startTime else null,
                                     endTime = if (scheduleConfigured) endTime else null,
+                                    batchId = pendingBatchId,
+                                    batchCode = pendingBatchCode,
                                     onError = { message ->
+                                        isSaving = false
                                         scope.launch { snackbarHostState.showSnackbar(message) }
                                     },
                                     onSuccess = {
@@ -402,9 +416,18 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
                 contentAlignment = Alignment.Center
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Filled.Save, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+                    if (isSaving) {
+                        CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
+                    } else {
+                        Icon(Icons.Filled.Save, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+                    }
                     Spacer(Modifier.width(8.dp))
-                    Text(if (isEditMode) "Update Batch" else "Save Batch", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        if (isSaving) "Saving..." else if (isEditMode) "Update Batch" else "Save Batch",
+                        color = Color.White,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
             }
 

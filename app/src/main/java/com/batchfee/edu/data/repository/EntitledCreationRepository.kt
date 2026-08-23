@@ -13,7 +13,7 @@ class EntitledCreationRepository {
     suspend fun createStudent(
         student: StudentEntity,
         registrationRequestId: String? = null
-    ) {
+    ): String? {
         val payload = mutableMapOf<String, Any?>(
             "instituteId" to student.instituteId,
             "studentId" to student.id,
@@ -22,9 +22,11 @@ class EntitledCreationRepository {
         registrationRequestId?.trim()?.takeIf { it.isNotEmpty() }?.let {
             payload["registrationRequestId"] = it
         }
-        functions.getHttpsCallable("createEntitledStudent").call(
+        val response = functions.getHttpsCallable("createEntitledStudent").call(
             payload
         ).await()
+        val data = response.data as? Map<*, *>
+        return (data?.get("photoUri") as? String)?.takeIf { it.isNotBlank() }
     }
 
     suspend fun createBatch(batch: BatchEntity) {

@@ -2,6 +2,7 @@ package com.batchfee.edu.ui.expenses
 
 import android.app.DatePickerDialog
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -251,6 +252,8 @@ fun AddEditExpenseScreen(db: AppDatabase, onBack: () -> Unit) {
     var title by remember { mutableStateOf("") }
     var category by remember { mutableStateOf("") }
     var amount by remember { mutableStateOf("") }
+    var isSaving by remember { mutableStateOf(false) }
+    val pendingExpenseId = remember { UUID.randomUUID().toString() }
 
     var paymentMethod by remember { mutableStateOf("") }
     var expenseDateMs by remember { mutableStateOf(System.currentTimeMillis()) }
@@ -259,6 +262,8 @@ fun AddEditExpenseScreen(db: AppDatabase, onBack: () -> Unit) {
     val dateStr = remember(expenseDateMs) { SimpleDateFormat("dd MMM, yyyy", Locale.getDefault()).format(Date(expenseDateMs)) }
     val isFormValid = title.isNotBlank() && category.isNotBlank() && (amount.toDoubleOrNull() ?: 0.0) > 0
 
+    BackHandler(enabled = isSaving) { }
+
     Scaffold(
         containerColor = BgColor,
         topBar = {
@@ -266,7 +271,7 @@ fun AddEditExpenseScreen(db: AppDatabase, onBack: () -> Unit) {
                 title = { Text("Add Expense", color = TextWhite, fontWeight = FontWeight.Bold) },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = BgColor),
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    IconButton(onClick = onBack, enabled = !isSaving) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = TextWhite)
                     }
                 }
@@ -385,25 +390,35 @@ fun AddEditExpenseScreen(db: AppDatabase, onBack: () -> Unit) {
                 Spacer(Modifier.height(8.dp))
                 Button(
                     onClick = {
+                        if (isSaving) return@Button
                         val value = amount.toDoubleOrNull() ?: 0.0
                         if (value <= 0) {
                             Toast.makeText(context, "Amount must be greater than 0", Toast.LENGTH_SHORT).show()
                             return@Button
                         }
+                        isSaving = true
                         viewModel.addExpense(title, category, value, expenseDateMs, paymentMethod, null,
+                            expenseId = pendingExpenseId,
                             onSuccess = {
                                 Toast.makeText(context, "Expense saved!", Toast.LENGTH_SHORT).show()
                                 onBack()
                             },
-                            onError = { msg -> Toast.makeText(context, msg, Toast.LENGTH_SHORT).show() }
+                            onError = { msg ->
+                                isSaving = false
+                                Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                            }
                         )
                     },
                     modifier = Modifier.fillMaxWidth().height(52.dp),
-                    enabled = isFormValid,
+                    enabled = isFormValid && !isSaving,
                     shape = RoundedCornerShape(14.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = ElectricBlue, disabledContainerColor = BorderSub)
                 ) {
-                    Text("Save Expense", color = if (isFormValid) Color.White else TextMuted, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    if (isSaving) {
+                        CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                    }
+                    Text(if (isSaving) "Saving..." else "Save Expense", color = if (isFormValid) Color.White else TextMuted, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                 }
             }
 

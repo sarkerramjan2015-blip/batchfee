@@ -71,6 +71,7 @@ private data class DueFeeReport(
 class FeeViewModel(private val db: AppDatabase) : ViewModel() {
     private val feeRepository = FeeCollectionRepository(db)
     private val monthlyRepairAttemptedStudentIds = mutableSetOf<String>()
+    private val mutationsInProgress = mutableSetOf<String>()
 
     private val _feeList = MutableStateFlow<List<FeeEntity>>(emptyList())
     val feeList = _feeList.asStateFlow()
@@ -385,6 +386,11 @@ class FeeViewModel(private val db: AppDatabase) : ViewModel() {
             onError("No active institute session.")
             return
         }
+        val mutationKey = "create:$studentId:$feeType:$feePeriod"
+        if (!startMutation(mutationKey)) {
+            onError("This fee is already being saved.")
+            return
+        }
         viewModelScope.launch {
             try {
                 feeRepository.createFee(
@@ -406,6 +412,8 @@ class FeeViewModel(private val db: AppDatabase) : ViewModel() {
                 onError("Unable to create fee. Please check the values and try again.")
             } catch (e: Exception) {
                 onError(e.message ?: "Unable to create fee.")
+            } finally {
+                finishMutation(mutationKey)
             }
         }
     }
@@ -430,6 +438,11 @@ class FeeViewModel(private val db: AppDatabase) : ViewModel() {
             onError("Amount must be greater than zero.")
             return
         }
+        val mutationKey = "collect:$feeId"
+        if (!startMutation(mutationKey)) {
+            onError("This payment is already being saved.")
+            return
+        }
         viewModelScope.launch {
             try {
                 val result = feeRepository.collectPayment(
@@ -450,6 +463,8 @@ class FeeViewModel(private val db: AppDatabase) : ViewModel() {
                 onError(e.message ?: "Payment rejected.")
             } catch (e: Exception) {
                 onError("Payment failed. Please try again.")
+            } finally {
+                finishMutation(mutationKey)
             }
         }
     }
@@ -477,6 +492,11 @@ class FeeViewModel(private val db: AppDatabase) : ViewModel() {
             onError("Amount must be greater than zero.")
             return
         }
+        val mutationKey = "adjust:$feeId"
+        if (!startMutation(mutationKey)) {
+            onError("This payment is already being saved.")
+            return
+        }
         viewModelScope.launch {
             try {
                 val result = feeRepository.updateFeeAndCollectPayment(
@@ -500,8 +520,18 @@ class FeeViewModel(private val db: AppDatabase) : ViewModel() {
                 onError(e.message ?: "Payment rejected.")
             } catch (e: Exception) {
                 onError("Payment failed. Please try again.")
+            } finally {
+                finishMutation(mutationKey)
             }
         }
+    }
+
+    private fun startMutation(key: String): Boolean = synchronized(mutationsInProgress) {
+        mutationsInProgress.add(key)
+    }
+
+    private fun finishMutation(key: String) {
+        synchronized(mutationsInProgress) { mutationsInProgress.remove(key) }
     }
 }
 

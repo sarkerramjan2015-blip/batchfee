@@ -4,9 +4,11 @@ import android.content.ContentResolver
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.ImageDecoder
 import android.graphics.Matrix
 import android.media.ExifInterface
 import android.net.Uri
+import android.os.Build
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -55,6 +57,9 @@ import java.io.FileOutputStream
 import java.io.InputStream
 import java.util.UUID
 import kotlin.math.roundToInt
+
+private const val PROFILE_PHOTO_SIZE = 300
+private const val MAX_CROP_DECODE_DIMENSION = 2048
 
 /**
  * Shared profile-photo editor. It deliberately keeps one fixed square frame so every
@@ -329,13 +334,13 @@ private fun cropToSquareFile(
     val cropLeft = ((-drawLeft) / layout.scale).roundToInt().coerceIn(0, bitmap.width - cropWidth)
     val cropTop = ((-drawTop) / layout.scale).roundToInt().coerceIn(0, bitmap.height - cropHeight)
     val cropped = Bitmap.createBitmap(bitmap, cropLeft, cropTop, cropWidth, cropHeight)
-    val output = if (cropped.width == 720 && cropped.height == 720) cropped else {
-        Bitmap.createScaledBitmap(cropped, 720, 720, true).also { cropped.recycle() }
+    val output = if (cropped.width == PROFILE_PHOTO_SIZE && cropped.height == PROFILE_PHOTO_SIZE) cropped else {
+        Bitmap.createScaledBitmap(cropped, PROFILE_PHOTO_SIZE, PROFILE_PHOTO_SIZE, true).also { cropped.recycle() }
     }
     try {
         val target = File(context.cacheDir, "cropped_photo_${UUID.randomUUID()}.jpg")
         FileOutputStream(target).use { stream ->
-            check(output.compress(Bitmap.CompressFormat.JPEG, 92, stream)) { "Could not save cropped image." }
+            check(output.compress(Bitmap.CompressFormat.JPEG, 84, stream)) { "Could not save cropped image." }
         }
         return Uri.fromFile(target)
     } finally {
@@ -364,6 +369,10 @@ private fun imageInputStream(context: Context, uri: Uri): InputStream? = when (u
 }
 
 private fun decodeForCrop(context: Context, sourceUri: Uri): Bitmap {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        decodeWithImageDecoder(context, sourceUri)?.let { return it }
+    }
+
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     // decodeStream deliberately returns null when inJustDecodeBounds=true. Opening the
     // stream successfully is what matters here; treating that expected null as an error
@@ -371,10 +380,10 @@ private fun decodeForCrop(context: Context, sourceUri: Uri): Bitmap {
     imageInputStream(context, sourceUri)?.use { stream ->
         BitmapFactory.decodeStream(stream, null, bounds)
     } ?: error("Could not read this image.")
-    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) error("Choose a valid JPEG, PNG or WebP image.")
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) error("Choose a valid image file.")
 
     var sampleSize = 1
-    while (maxOf(bounds.outWidth / sampleSize, bounds.outHeight / sampleSize) > 2048) sampleSize *= 2
+    while (maxOf(bounds.outWidth / sampleSize, bounds.outHeight / sampleSize) > MAX_CROP_DECODE_DIMENSION) sampleSize *= 2
     val decoded = imageInputStream(context, sourceUri)?.use { stream ->
         BitmapFactory.decodeStream(stream, null, BitmapFactory.Options().apply { inSampleSize = sampleSize })
     } ?: error("Could not decode this image.")
@@ -394,13 +403,45 @@ private fun decodeForCrop(context: Context, sourceUri: Uri): Bitmap {
             }
         }
     }.getOrNull() ?: ExifInterface.ORIENTATION_NORMAL
-    val rotation = when (orientation) {
-        ExifInterface.ORIENTATION_ROTATE_90 -> 90f
-        ExifInterface.ORIENTATION_ROTATE_180 -> 180f
-        ExifInterface.ORIENTATION_ROTATE_270 -> 270f
-        else -> 0f
+    val matrix = Matrix()
+    when (orientation) {
+        ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.setScale(-1f, 1f)
+        ExifInterface.ORIENTATION_ROTATE_180 -> matrix.setRotate(180f)
+        ExifInterface.ORIENTATION_FLIP_VERTICAL -> {
+            matrix.setRotate(180f)
+            matrix.postScale(-1f, 1f)
+        }
+        ExifInterface.ORIENTATION_TRANSPOSE -> {
+            matrix.setRotate(90f)
+            matrix.postScale(-1f, 1f)
+        }
+        ExifInterface.ORIENTATION_ROTATE_90 -> matrix.setRotate(90f)
+        ExifInterface.ORIENTATION_TRANSVERSE -> {
+            matrix.setRotate(-90f)
+            matrix.postScale(-1f, 1f)
+        }
+        ExifInterface.ORIENTATION_ROTATE_270 -> matrix.setRotate(-90f)
+        else -> return decoded
     }
-    if (rotation == 0f) return decoded
-    return Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, Matrix().apply { postRotate(rotation) }, true)
+    return Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true)
         .also { decoded.recycle() }
 }
+
+@androidx.annotation.RequiresApi(Build.VERSION_CODES.P)
+private fun decodeWithImageDecoder(context: Context, sourceUri: Uri): Bitmap? = runCatching {
+    val source = if (sourceUri.scheme == ContentResolver.SCHEME_FILE) {
+        val file = sourceUri.path?.let(::File)?.takeIf { it.isFile && it.canRead() }
+            ?: error("Could not read this image.")
+        ImageDecoder.createSource(file)
+    } else {
+        ImageDecoder.createSource(context.contentResolver, sourceUri)
+    }
+    ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
+        decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+        decoder.memorySizePolicy = ImageDecoder.MEMORY_POLICY_LOW_RAM
+        var sampleSize = 1
+        val largestSide = maxOf(info.size.width, info.size.height)
+        while (largestSide / sampleSize > MAX_CROP_DECODE_DIMENSION) sampleSize *= 2
+        if (sampleSize > 1) decoder.setTargetSampleSize(sampleSize)
+    }
+}.getOrNull()

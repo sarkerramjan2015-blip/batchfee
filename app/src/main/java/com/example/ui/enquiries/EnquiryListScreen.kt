@@ -38,6 +38,7 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import java.util.UUID
 
 private val BgColor = Color(0xFF07111F)
 private val CardBg = Color(0xFF0F172A)
@@ -72,6 +73,8 @@ fun EnquiryListScreen(db: AppDatabase, onBack: () -> Unit, onAddEnquiry: () -> U
     var newPhone by remember { mutableStateOf("") }
     var newSubject by remember { mutableStateOf("") }
     var newAddress by remember { mutableStateOf("") }
+    var isSavingEnquiry by remember { mutableStateOf(false) }
+    val pendingEnquiryId = remember(showAddDialog) { UUID.randomUUID().toString() }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -191,7 +194,7 @@ fun EnquiryListScreen(db: AppDatabase, onBack: () -> Unit, onAddEnquiry: () -> U
 
     // Add dialog (unchanged)
     if (showAddDialog) {
-        Dialog(onDismissRequest = { showAddDialog = false }) {
+        Dialog(onDismissRequest = { if (!isSavingEnquiry) showAddDialog = false }) {
             Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = CardBg), border = BorderStroke(1.dp, BorderSub)) {
                 Column(modifier = Modifier.padding(20.dp)) {
                     Text("New Enquiry", color = TextWhite, fontSize = 18.sp, fontWeight = FontWeight.Bold)
@@ -205,12 +208,15 @@ fun EnquiryListScreen(db: AppDatabase, onBack: () -> Unit, onAddEnquiry: () -> U
                     OutlinedTextField(value = newAddress, onValueChange = { newAddress = it }, label = { Text("Address (optional)") }, maxLines = 2, modifier = Modifier.fillMaxWidth(), colors = fieldColors(), shape = RoundedCornerShape(10.dp))
                     Spacer(Modifier.height(16.dp))
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        OutlinedButton(onClick = { showAddDialog = false }, modifier = Modifier.weight(1f).height(44.dp), shape = RoundedCornerShape(10.dp), border = BorderStroke(1.dp, BorderSub)) { Text("Cancel", color = TextMuted) }
+                        OutlinedButton(onClick = { showAddDialog = false }, enabled = !isSavingEnquiry, modifier = Modifier.weight(1f).height(44.dp), shape = RoundedCornerShape(10.dp), border = BorderStroke(1.dp, BorderSub)) { Text("Cancel", color = TextMuted) }
                         Button(onClick = {
+                            if (isSavingEnquiry) return@Button
+                            isSavingEnquiry = true
                             viewModel.addEnquiry(newName, newPhone, newAddress, newSubject, System.currentTimeMillis(),
-                                onSuccess = { showAddDialog = false; newName = ""; newPhone = ""; newSubject = ""; newAddress = ""; scope.launch { snackbarHostState.showSnackbar("Enquiry saved.") } },
-                                onError = { scope.launch { snackbarHostState.showSnackbar(it) } })
-                        }, modifier = Modifier.weight(1f).height(44.dp), shape = RoundedCornerShape(10.dp), colors = ButtonDefaults.buttonColors(containerColor = ElectricBlue)) { Text("Save", color = Color.White) }
+                                enquiryId = pendingEnquiryId,
+                                onSuccess = { isSavingEnquiry = false; showAddDialog = false; newName = ""; newPhone = ""; newSubject = ""; newAddress = ""; scope.launch { snackbarHostState.showSnackbar("Enquiry saved.") } },
+                                onError = { isSavingEnquiry = false; scope.launch { snackbarHostState.showSnackbar(it) } })
+                        }, enabled = !isSavingEnquiry, modifier = Modifier.weight(1f).height(44.dp), shape = RoundedCornerShape(10.dp), colors = ButtonDefaults.buttonColors(containerColor = ElectricBlue)) { Text(if (isSavingEnquiry) "Saving..." else "Save", color = Color.White) }
                     }
                 }
             }

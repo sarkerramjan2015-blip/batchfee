@@ -23,6 +23,7 @@ import java.util.UUID
 
 class BatchViewModel(private val db: AppDatabase) : ViewModel() {
     private val entitledCreationRepository = EntitledCreationRepository()
+    private val mutationsInProgress = mutableSetOf<String>()
     private val _batchList = MutableStateFlow<List<BatchEntity>>(emptyList())
     val batchList = _batchList.asStateFlow()
 
@@ -48,6 +49,8 @@ class BatchViewModel(private val db: AppDatabase) : ViewModel() {
         startTime: String? = null,
         endTime: String? = null,
         description: String? = null,
+        batchId: String = UUID.randomUUID().toString(),
+        batchCode: String = "BAT-${UUID.randomUUID().toString().take(8)}",
         onError: (String) -> Unit = {},
         onSuccess: () -> Unit
     ) {
@@ -63,11 +66,19 @@ class BatchViewModel(private val db: AppDatabase) : ViewModel() {
             onError("Admission fee cannot be negative.")
             return
         }
-        val instId = SessionManager.currentInstituteId.value ?: return
+        val instId = SessionManager.currentInstituteId.value ?: run {
+            onError("No active institute session.")
+            return
+        }
+        val mutationKey = "create:$batchId"
+        if (!startMutation(mutationKey)) {
+            onError("Batch is already being saved.")
+            return
+        }
         val batch = BatchEntity(
-            id = UUID.randomUUID().toString(),
+            id = batchId,
             instituteId = instId,
-            batchCode = "BAT-${UUID.randomUUID().toString().take(8)}",
+            batchCode = batchCode,
             name = name,
             subject = null,
             className = null,
@@ -96,6 +107,8 @@ class BatchViewModel(private val db: AppDatabase) : ViewModel() {
                 onSuccess()
             } catch (e: Exception) {
                 onError(e.message ?: "Failed to save batch.")
+            } finally {
+                finishMutation(mutationKey)
             }
         }
     }
@@ -109,6 +122,11 @@ class BatchViewModel(private val db: AppDatabase) : ViewModel() {
             onError("Fee amount must be greater than 0.")
             return
         }
+        val mutationKey = "update:${batch.id}"
+        if (!startMutation(mutationKey)) {
+            onError("Batch update is already in progress.")
+            return
+        }
         viewModelScope.launch {
             try {
                 val updated = batch.copy(updatedAtMs = System.currentTimeMillis())
@@ -120,8 +138,18 @@ class BatchViewModel(private val db: AppDatabase) : ViewModel() {
                 onSuccess()
             } catch (e: Exception) {
                 onError(e.message ?: "Failed to update batch.")
+            } finally {
+                finishMutation(mutationKey)
             }
         }
+    }
+
+    private fun startMutation(key: String): Boolean = synchronized(mutationsInProgress) {
+        mutationsInProgress.add(key)
+    }
+
+    private fun finishMutation(key: String) {
+        synchronized(mutationsInProgress) { mutationsInProgress.remove(key) }
     }
 
     fun archiveBatch(batch: BatchEntity, onError: (String) -> Unit = {}, onSuccess: () -> Unit) {

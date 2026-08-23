@@ -909,6 +909,7 @@ fun UnifiedCollectScreen(
                         item {
                             Button(
                                 onClick = {
+                                    if (isSaving) return@Button
                                     collectError = null
                                     val instId = SessionManager.currentInstituteId.value
                                     val userId = SessionManager.currentUserId.value
@@ -957,8 +958,8 @@ fun UnifiedCollectScreen(
                                         }
                                     }
 
+                                    isSaving = true
                                     scope.launch {
-                                        isSaving = true
                                         try {
                                             val now = System.currentTimeMillis()
                                             // All allocations from one Save action share one trusted,
@@ -1174,14 +1175,16 @@ fun UnifiedCollectScreen(
             onDismiss = { editingHistoryItem = null },
             onSave = { update ->
                 if (student == null) return@PaymentEditDialog
+                if (isSaving) return@PaymentEditDialog
+                isSaving = true
                 scope.launch {
                     val instId = SessionManager.currentInstituteId.value
                     if (instId == null) {
+                        isSaving = false
                         snackbarHostState.showSnackbar("No active institute session.")
                         return@launch
                     }
                     try {
-                        isSaving = true
                         feeRepository.ownerEditPayment(
                             paymentId = item.payment.id,
                             instituteId = instId,
@@ -1219,14 +1222,16 @@ fun UnifiedCollectScreen(
             onDismiss = { deletingHistoryItem = null },
             onDelete = {
                 if (student == null) return@PaymentPermanentDeleteDialog
+                if (isSaving) return@PaymentPermanentDeleteDialog
+                isSaving = true
                 scope.launch {
                     val instId = SessionManager.currentInstituteId.value
                     if (instId == null) {
+                        isSaving = false
                         snackbarHostState.showSnackbar("No active institute session.")
                         return@launch
                     }
                     try {
-                        isSaving = true
                         feeRepository.ownerDeletePayment(
                             paymentId = item.payment.id,
                             instituteId = instId,

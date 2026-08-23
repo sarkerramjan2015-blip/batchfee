@@ -1,5 +1,6 @@
 package com.batchfee.edu.ui.homework
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
@@ -60,10 +61,13 @@ fun AddHomeworkScreen(db: AppDatabase, onBack: () -> Unit) {
     var dueDateMs by remember { mutableStateOf<Long?>(null) }
     var requiresSubmission by remember { mutableStateOf(false) }
     var isSaving by remember { mutableStateOf(false) }
+    val pendingHomeworkId = remember { UUID.randomUUID().toString() }
     var saveError by remember { mutableStateOf<String?>(null) }
     var batchExpanded by remember { mutableStateOf(false) }
     var showDatePicker by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+
+    BackHandler(enabled = isSaving) { }
 
     LaunchedEffect(instId) {
         try {
@@ -76,7 +80,7 @@ fun AddHomeworkScreen(db: AppDatabase, onBack: () -> Unit) {
         topBar = {
             TopAppBar(
                 title = { Text("Add Homework", color = HwWhite, fontWeight = FontWeight.Bold) },
-                navigationIcon = { IconButton(onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = HwMuted) } },
+                navigationIcon = { IconButton(onClick = onBack, enabled = !isSaving) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = HwMuted) } },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = HwBg)
             )
         }
@@ -162,11 +166,12 @@ fun AddHomeworkScreen(db: AppDatabase, onBack: () -> Unit) {
 
             // Save button
             Button(onClick = {
+                if (isSaving) return@Button
                 if (title.isBlank()) { saveError = "Title is required"; return@Button }
                 isSaving = true; saveError = null
                 scope.launch {
                     val hw = HomeworkEntity(
-                        id = UUID.randomUUID().toString(), instituteId = instId, batchId = selectedBatch?.id,
+                        id = pendingHomeworkId, instituteId = instId, batchId = selectedBatch?.id,
                         title = title.trim(), subject = subject.takeIf { it.isNotBlank() }, className = className.takeIf { it.isNotBlank() },
                         instructions = instructions.trim(), bookPage = bookPage.takeIf { it.isNotBlank() },
                         startDateMs = System.currentTimeMillis(), dueDateMs = if (hasDueDate) dueDateMs else null,
@@ -185,7 +190,7 @@ fun AddHomeworkScreen(db: AppDatabase, onBack: () -> Unit) {
                         isSaving = false
                     }
                 }
-            }, modifier = Modifier.fillMaxWidth().height(54.dp), shape = RoundedCornerShape(16.dp), colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent), contentPadding = PaddingValues(0.dp)) {
+            }, enabled = !isSaving, modifier = Modifier.fillMaxWidth().height(54.dp), shape = RoundedCornerShape(16.dp), colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent), contentPadding = PaddingValues(0.dp)) {
                 Box(Modifier.fillMaxSize().shadow(12.dp, RoundedCornerShape(16.dp), spotColor = HwBlue.copy(alpha = 0.4f)).background(Brush.horizontalGradient(listOf(HwBlue, HwCyan)), RoundedCornerShape(16.dp)), contentAlignment = Alignment.Center) {
                     if (isSaving) CircularProgressIndicator(Modifier.size(22.dp), color = Color.White, strokeWidth = 2.dp)
                     else Text("Save Homework", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)

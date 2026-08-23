@@ -248,6 +248,7 @@ data class BulkImportReport(
 )
 
 class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
+    private val subscriptionExtensionsInProgress = mutableSetOf<String>()
     private val _institutes = MutableStateFlow<List<InstituteCardData>>(emptyList())
     val institutes = _institutes.asStateFlow()
 
@@ -825,6 +826,10 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
             _operationMsg.value = "Please record why access is being extended."
             return
         }
+        if (!synchronized(subscriptionExtensionsInProgress) { subscriptionExtensionsInProgress.add(instituteId) }) {
+            _operationMsg.value = "This subscription extension is already being processed."
+            return
+        }
         viewModelScope.launch {
             try {
                 val updated = SubscriptionRepository(firestore).extendSubscription(instituteId, daysToAdd, reason)
@@ -849,6 +854,8 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                 _operationMsg.value = "Subscription extended by $daysToAdd days"
             } catch (e: Exception) {
                 _operationMsg.value = "Failed: ${e.message}"
+            } finally {
+                synchronized(subscriptionExtensionsInProgress) { subscriptionExtensionsInProgress.remove(instituteId) }
             }
         }
     }

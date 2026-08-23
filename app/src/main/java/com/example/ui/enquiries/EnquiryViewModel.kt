@@ -19,6 +19,7 @@ import java.util.Locale
 import java.util.UUID
 
 class EnquiryViewModel(private val db: AppDatabase) : ViewModel() {
+    private val mutationsInProgress = mutableSetOf<String>()
     private val _allEnquiries = MutableStateFlow<List<EnquiryEntity>>(emptyList())
     val allEnquiries = _allEnquiries.asStateFlow()
 
@@ -158,6 +159,7 @@ class EnquiryViewModel(private val db: AppDatabase) : ViewModel() {
         address: String?,
         subjectName: String,
         enquiryDateMs: Long,
+        enquiryId: String = UUID.randomUUID().toString(),
         onSuccess: () -> Unit,
         onError: (String) -> Unit
     ) {
@@ -166,12 +168,17 @@ class EnquiryViewModel(private val db: AppDatabase) : ViewModel() {
         if (name.isBlank()) { onError("Name is required."); return }
         if (phone.isBlank()) { onError("Phone is required."); return }
         if (subjectName.isBlank()) { onError("Subject is required."); return }
+        val mutationKey = "create:$enquiryId"
+        if (!synchronized(mutationsInProgress) { mutationsInProgress.add(mutationKey) }) {
+            onError("This enquiry is already being saved.")
+            return
+        }
 
         viewModelScope.launch {
             try {
                 val now = System.currentTimeMillis()
                 val enquiry = EnquiryEntity(
-                    id = UUID.randomUUID().toString(),
+                    id = enquiryId,
                     instituteId = instId,
                     name = name.trim(),
                     phone = phone.trim(),
@@ -190,6 +197,8 @@ class EnquiryViewModel(private val db: AppDatabase) : ViewModel() {
                 onSuccess()
             } catch (e: Exception) {
                 onError(e.message ?: "Failed to save enquiry.")
+            } finally {
+                synchronized(mutationsInProgress) { mutationsInProgress.remove(mutationKey) }
             }
         }
     }

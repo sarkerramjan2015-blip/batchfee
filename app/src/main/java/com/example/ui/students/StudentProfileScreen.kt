@@ -137,6 +137,7 @@ fun StudentProfileScreen(
     var activeEnrollments by remember { mutableStateOf<List<BatchStudentEntity>>(emptyList()) }
     var billingEnrollments by remember { mutableStateOf<List<BatchStudentEntity>>(emptyList()) }
     var enrolledBatchIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var assigningBatchIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var feeHistory by remember { mutableStateOf<List<FeeEntity>>(emptyList()) }
     var paymentHistory by remember { mutableStateOf<List<PaymentEntity>>(emptyList()) }
     var monthAttendance by remember { mutableStateOf<List<com.batchfee.edu.data.models.AttendanceEntity>>(emptyList()) }
@@ -167,6 +168,7 @@ fun StudentProfileScreen(
     var selectedFeeId by remember { mutableStateOf<String?>(null) }
     var receiptText by remember { mutableStateOf<String?>(null) }
     var feeErrorMessage by remember { mutableStateOf<String?>(null) }
+    var isSavingFee by remember { mutableStateOf(false) }
 
     // ── Receipt image upload state ───────────────────────────
     var receiptImageUri by remember { mutableStateOf<Uri?>(null) }
@@ -744,7 +746,8 @@ fun StudentProfileScreen(
                                         .background(
                                             brush = Brush.horizontalGradient(listOf(ElectricBlue, Cyan))
                                         )
-                                        .clickable {
+                                        .clickable(enabled = !isSavingFee) {
+                                            if (isSavingFee) return@clickable
                                             val base = feeAmount.toDoubleOrNull() ?: 0.0
                                             val paid = collectAmount.toDoubleOrNull() ?: 0.0
                                             feeErrorMessage = null
@@ -785,6 +788,7 @@ fun StudentProfileScreen(
                                                 appendLine("Due     : BDT ${due.toLong()}")
                                             }
                                             receiptText = rText
+                                            isSavingFee = true
                                             scope.launch {
                                                 try {
                                                     val existingFeeId = selectedFeeId
@@ -830,6 +834,8 @@ fun StudentProfileScreen(
                                                     feeErrorMessage = e.message ?: "Payment rejected."
                                                 } catch (e: Exception) {
                                                     feeErrorMessage = "Payment failed before it could be queued."
+                                                } finally {
+                                                    isSavingFee = false
                                                 }
                                             }
                                             return@clickable
@@ -861,9 +867,13 @@ fun StudentProfileScreen(
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(Icons.Filled.Save, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                                        if (isSavingFee) {
+                                            CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
+                                        } else {
+                                            Icon(Icons.Filled.Save, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                                        }
                                         Spacer(Modifier.width(4.dp))
-                                        Text("Save", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                        Text(if (isSavingFee) "Saving..." else "Save", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                                     }
                                 }
 
@@ -1107,30 +1117,41 @@ fun StudentProfileScreen(
                                                 if (isEnrolled) Modifier.border(1.dp, Cyan.copy(alpha = 0.3f), RoundedCornerShape(10.dp))
                                                 else Modifier.border(1.dp, BorderSub, RoundedCornerShape(10.dp))
                                             )
-                                            .clickable {
-                                                if (!isEnrolled && instId != null) {
+                                            .clickable(enabled = !isEnrolled && batch.id !in assigningBatchIds) {
+                                                if (!isEnrolled && batch.id !in assigningBatchIds && instId != null) {
+                                                    assigningBatchIds = assigningBatchIds + batch.id
                                                     scope.launch {
-                                                        val enrollmentStart = s.admissionDateMs.takeIf { it > 0L }
-                                                            ?: System.currentTimeMillis()
-                                                        val enrollment = BatchStudentEntity(
-                                                            id = UUID.randomUUID().toString(),
-                                                            instituteId = instId!!,
-                                                            batchId = batch.id,
-                                                            studentId = studentId,
-                                                            joinedAtMs = enrollmentStart,
-                                                            status = "active",
-                                                            leftAtMs = null,
-                                                            firstMonthFeePeriod = MonthlyDueCalculator.periodFor(enrollmentStart),
-                                                            firstMonthFeeAmount = MonthlyDueCalculator.calculateFirstMonthFee(
-                                                                batch.monthlyFeeAmount,
-                                                                enrollmentStart
+                                                        try {
+                                                            val enrollmentStart = s.admissionDateMs.takeIf { it > 0L }
+                                                                ?: System.currentTimeMillis()
+                                                            val enrollment = BatchStudentEntity(
+                                                                id = UUID.randomUUID().toString(),
+                                                                instituteId = instId!!,
+                                                                batchId = batch.id,
+                                                                studentId = studentId,
+                                                                joinedAtMs = enrollmentStart,
+                                                                status = "active",
+                                                                leftAtMs = null,
+                                                                firstMonthFeePeriod = MonthlyDueCalculator.periodFor(enrollmentStart),
+                                                                firstMonthFeeAmount = MonthlyDueCalculator.calculateFirstMonthFee(
+                                                                    batch.monthlyFeeAmount,
+                                                                    enrollmentStart
+                                                                )
                                                             )
-                                                        )
-                                                        BatchStudentSyncHelper.upsertEnrollment(enrollment)
-                                                        db.batchStudentDao().enrollStudent(enrollment)
-                                                        // Refresh enrolled set
-                                                        enrolledBatchIds = enrolledBatchIds + batch.id
-                                                        batches = batches + batch
+                                                            BatchStudentSyncHelper.upsertEnrollment(enrollment)
+                                                            db.batchStudentDao().enrollStudent(enrollment)
+                                                            // Refresh enrolled set
+                                                            enrolledBatchIds = enrolledBatchIds + batch.id
+                                                            batches = batches + batch
+                                                        } catch (error: Exception) {
+                                                            Toast.makeText(
+                                                                context,
+                                                                error.message ?: "Could not assign this batch.",
+                                                                Toast.LENGTH_SHORT
+                                                            ).show()
+                                                        } finally {
+                                                            assigningBatchIds = assigningBatchIds - batch.id
+                                                        }
                                                     }
                                                 }
                                             }

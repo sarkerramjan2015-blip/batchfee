@@ -1,5 +1,6 @@
 package com.batchfee.edu.data.media
 
+import android.content.ContentResolver
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -26,6 +27,8 @@ import java.util.UUID
  */
 object FirebaseStorageImageUploadHelper {
     private const val MANAGED_REFERENCE_PREFIX = "batchfee-media://v1/"
+    private const val PROFILE_IMAGE_SIZE = 300
+    private const val MAX_SELECTED_SOURCE_BYTES = 20L * 1024L * 1024L
     private val functions = FirebaseFunctions.getInstance("asia-south1")
 
     suspend fun uploadInstituteLogo(
@@ -92,13 +95,40 @@ object FirebaseStorageImageUploadHelper {
      * This makes the image safe to upload later, including after the picker has closed.
      */
     fun cacheSelectedImage(context: Context, sourceUri: Uri, prefix: String): Uri {
+        val extension = when (context.contentResolver.getType(sourceUri)?.lowercase()) {
+            "image/jpeg", "image/jpg" -> ".jpg"
+            "image/png" -> ".png"
+            "image/webp" -> ".webp"
+            "image/heic", "image/heif" -> ".heic"
+            else -> ".image"
+        }
         val target = File(
             context.cacheDir,
-            "${prefix}_${UUID.randomUUID()}.img"
+            "${prefix}_${UUID.randomUUID()}$extension"
         ).apply { parentFile?.mkdirs() }
-        context.contentResolver.openInputStream(sourceUri)?.use { input ->
-            target.outputStream().use { output -> input.copyTo(output) }
-        } ?: throw IllegalArgumentException("Could not read this image. Please choose it again.")
+        try {
+            openSourceStream(context, sourceUri)?.use { input ->
+                target.outputStream().use { output ->
+                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                    var total = 0L
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read < 0) break
+                        total += read
+                        if (total > MAX_SELECTED_SOURCE_BYTES) {
+                            throw IllegalArgumentException("Choose an image smaller than 20 MB.")
+                        }
+                        output.write(buffer, 0, read)
+                    }
+                }
+            } ?: throw IllegalArgumentException("Could not read this image. Please choose it again.")
+            if (!target.isFile || target.length() <= 0L) {
+                throw IllegalArgumentException("The selected image is empty.")
+            }
+        } catch (error: Exception) {
+            target.delete()
+            throw error
+        }
         // This file belongs to our own app. A direct file URI avoids relying on a
         // FileProvider read grant again during the later Save action.
         return Uri.fromFile(target)
@@ -160,12 +190,11 @@ object FirebaseStorageImageUploadHelper {
 
     /** Converts every selected image into a small JPEG before it leaves the device. */
     private fun optimizeToJpeg(context: Context, sourceUri: Uri, policy: ImagePolicy): ByteArray {
-        val resolver = context.contentResolver
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         // With inJustDecodeBounds Android correctly returns null from decodeStream;
         // only the bounds fields are populated. Treating that expected null as a
         // read failure blocked every valid PNG/JPEG before upload could begin.
-        val sourceWasOpened = resolver.openInputStream(sourceUri)?.use {
+        val sourceWasOpened = openSourceStream(context, sourceUri)?.use {
             BitmapFactory.decodeStream(it, null, bounds)
             true
         } ?: false
@@ -179,25 +208,21 @@ object FirebaseStorageImageUploadHelper {
         val decodeOptions = BitmapFactory.Options().apply {
             inSampleSize = calculateInSampleSize(bounds.outWidth, bounds.outHeight, policy.maxDimension)
         }
-        val decoded = resolver.openInputStream(sourceUri)?.use {
+        val decoded = openSourceStream(context, sourceUri)?.use {
             BitmapFactory.decodeStream(it, null, decodeOptions)
         } ?: throw IllegalArgumentException("Unable to decode the selected image.")
 
-        var working = scaleToLimit(decoded, policy.maxDimension)
-        val orientationCorrected = applyExifOrientation(
-            bitmap = working,
-            // This recovery is intentionally limited to institute branding;
-            // student and staff photo flows keep their existing behavior.
-            orientation = if (policy == ImagePolicy.INSTITUTE_LOGO) {
-                readExifOrientation(context, sourceUri)
-            } else {
-                ExifInterface.ORIENTATION_NORMAL
-            },
-        )
-        if (orientationCorrected !== working && working !== decoded) {
+        var working = decoded
+        val orientationCorrected = applyExifOrientation(working, readExifOrientation(context, sourceUri))
+        if (orientationCorrected !== working) {
             working.recycle()
+            working = orientationCorrected
         }
-        working = orientationCorrected
+        val square = centerCropAndResize(working, policy.maxDimension)
+        if (square !== working) {
+            working.recycle()
+            working = square
+        }
         if (working.hasAlpha()) {
             val withWhiteBackground = Bitmap.createBitmap(
                 working.width,
@@ -208,7 +233,7 @@ object FirebaseStorageImageUploadHelper {
                 drawColor(Color.WHITE)
                 drawBitmap(working, 0f, 0f, null)
             }
-            if (working !== decoded) working.recycle()
+            working.recycle()
             working = withWhiteBackground
         }
 
@@ -225,24 +250,10 @@ object FirebaseStorageImageUploadHelper {
             }
             if (compressed.size <= policy.targetBytes) return compressed
 
-            repeat(3) {
-                if (working.width <= 320 && working.height <= 320) return compressed
-                val reduced = Bitmap.createScaledBitmap(
-                    working,
-                    (working.width * 0.75f).toInt().coerceAtLeast(320),
-                    (working.height * 0.75f).toInt().coerceAtLeast(320),
-                    true
-                )
-                if (reduced === working) return compressed
-                if (working !== decoded) working.recycle()
-                working = reduced
-                compressed = compress(65)
-                if (compressed.size <= policy.targetBytes) return compressed
-            }
+            compressed = compress(48)
             return compressed
         } finally {
-            if (working !== decoded) working.recycle()
-            decoded.recycle()
+            working.recycle()
         }
     }
 
@@ -258,16 +269,27 @@ object FirebaseStorageImageUploadHelper {
         return sampleSize
     }
 
-    private fun scaleToLimit(bitmap: Bitmap, maxDimension: Int): Bitmap {
-        val largestSide = maxOf(bitmap.width, bitmap.height)
-        if (largestSide <= maxDimension) return bitmap
-        val scale = maxDimension.toFloat() / largestSide
-        return Bitmap.createScaledBitmap(
-            bitmap,
-            (bitmap.width * scale).toInt().coerceAtLeast(1),
-            (bitmap.height * scale).toInt().coerceAtLeast(1),
-            true
-        )
+    private fun centerCropAndResize(bitmap: Bitmap, outputSize: Int): Bitmap {
+        val side = minOf(bitmap.width, bitmap.height)
+        val left = (bitmap.width - side) / 2
+        val top = (bitmap.height - side) / 2
+        val cropped = if (left == 0 && top == 0 && side == bitmap.width && side == bitmap.height) {
+            bitmap
+        } else {
+            Bitmap.createBitmap(bitmap, left, top, side, side)
+        }
+        if (cropped.width == outputSize && cropped.height == outputSize) return cropped
+        return Bitmap.createScaledBitmap(cropped, outputSize, outputSize, true).also {
+            if (cropped !== bitmap) cropped.recycle()
+        }
+    }
+
+    private fun openSourceStream(context: Context, sourceUri: Uri) = when (sourceUri.scheme) {
+        ContentResolver.SCHEME_FILE -> sourceUri.path
+            ?.let(::File)
+            ?.takeIf { it.isFile && it.canRead() }
+            ?.inputStream()
+        else -> context.contentResolver.openInputStream(sourceUri)
     }
 
     private fun readExifOrientation(context: Context, sourceUri: Uri): Int = runCatching {
@@ -308,8 +330,8 @@ object FirebaseStorageImageUploadHelper {
         val targetBytes: Int,
         val purpose: String
     ) {
-        INSTITUTE_LOGO(maxDimension = 800, targetBytes = 500 * 1024, purpose = "institute_logo"),
-        STUDENT_PHOTO(maxDimension = 720, targetBytes = 300 * 1024, purpose = "student_photo"),
-        STAFF_PHOTO(maxDimension = 720, targetBytes = 300 * 1024, purpose = "staff_photo")
+        INSTITUTE_LOGO(maxDimension = PROFILE_IMAGE_SIZE, targetBytes = 180 * 1024, purpose = "institute_logo"),
+        STUDENT_PHOTO(maxDimension = PROFILE_IMAGE_SIZE, targetBytes = 160 * 1024, purpose = "student_photo"),
+        STAFF_PHOTO(maxDimension = PROFILE_IMAGE_SIZE, targetBytes = 160 * 1024, purpose = "staff_photo")
     }
 }

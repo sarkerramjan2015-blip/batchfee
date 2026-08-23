@@ -28,6 +28,7 @@ class SalaryViewModel(private val db: AppDatabase) : ViewModel() {
     // A salary receipt must never be saved twice when the user taps the
     // payment button again while the first cloud request is still running.
     private val paymentsInProgress = mutableSetOf<String>()
+    private val salaryMutationsInProgress = mutableSetOf<String>()
 
     init {
         loadData()
@@ -108,10 +109,14 @@ class SalaryViewModel(private val db: AppDatabase) : ViewModel() {
         bonusAmount: Double,
         deductionAmount: Double,
         advanceAmount: Double,
+        salaryId: String = UUID.randomUUID().toString(),
         onSuccess: () -> Unit,
         onError: (String) -> Unit = {}
     ) {
-        val instId = SessionManager.currentInstituteId.value ?: return
+        val instId = SessionManager.currentInstituteId.value ?: run {
+            onError("No active institute session.")
+            return
+        }
         val userId = SessionManager.currentUserId.value ?: run {
             onError("No user session found. Please sign in again.")
             return
@@ -119,32 +124,40 @@ class SalaryViewModel(private val db: AppDatabase) : ViewModel() {
         val net = basicSalary + bonusAmount - (deductionAmount + advanceAmount)
         if (net < 0) { onError("Net salary cannot be negative."); return }
         if (basicSalary <= 0) { onError("Basic salary must be greater than zero."); return }
+        val mutationKey = "$instId:$staffId:$salaryMonth"
+        if (!synchronized(salaryMutationsInProgress) { salaryMutationsInProgress.add(mutationKey) }) {
+            onError("Salary generation is already in progress for this staff and month.")
+            return
+        }
 
         viewModelScope.launch {
-            val existing = db.salaryDao().countByStaffAndMonth(staffId, salaryMonth, instId)
-            if (existing > 0) { onError("Salary already exists for this staff in $salaryMonth."); return@launch }
-
-            val entity = SalaryEntity(
-                id = UUID.randomUUID().toString(),
-                instituteId = instId,
-                staffId = staffId,
-                salaryMonth = salaryMonth,
-                basicSalary = basicSalary,
-                bonusAmount = bonusAmount,
-                deductionAmount = deductionAmount,
-                advanceAmount = advanceAmount,
-                netSalary = net,
-                paidAmount = 0.0,
-                paymentMethod = null,
-                paymentDateMs = null,
-                status = "unpaid",
-                salarySlipNumber = "SLP-${UUID.randomUUID().toString().take(8)}",
-                note = null,
-                createdAtMs = System.currentTimeMillis(),
-                updatedAtMs = System.currentTimeMillis(),
-                cancelledAtMs = null
-            )
             try {
+                val existing = db.salaryDao().countByStaffAndMonth(staffId, salaryMonth, instId)
+                if (existing > 0) {
+                    onError("Salary already exists for this staff in $salaryMonth.")
+                    return@launch
+                }
+
+                val entity = SalaryEntity(
+                    id = salaryId,
+                    instituteId = instId,
+                    staffId = staffId,
+                    salaryMonth = salaryMonth,
+                    basicSalary = basicSalary,
+                    bonusAmount = bonusAmount,
+                    deductionAmount = deductionAmount,
+                    advanceAmount = advanceAmount,
+                    netSalary = net,
+                    paidAmount = 0.0,
+                    paymentMethod = null,
+                    paymentDateMs = null,
+                    status = "unpaid",
+                    salarySlipNumber = "SLP-${UUID.randomUUID().toString().take(8)}",
+                    note = null,
+                    createdAtMs = System.currentTimeMillis(),
+                    updatedAtMs = System.currentTimeMillis(),
+                    cancelledAtMs = null
+                )
                 val staff = db.staffDao().getStaffByIdOnce(staffId, instId)
                 val expense = buildSalaryExpense(entity, staff, userId)
                 SalarySyncHelper.upsertSalaryWithExpense(entity, expense)
@@ -158,6 +171,8 @@ class SalaryViewModel(private val db: AppDatabase) : ViewModel() {
                 onSuccess()
             } catch (_: Exception) {
                 onError("Could not generate salary. Check your connection and try again.")
+            } finally {
+                synchronized(salaryMutationsInProgress) { salaryMutationsInProgress.remove(mutationKey) }
             }
         }
     }

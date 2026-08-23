@@ -30,6 +30,7 @@ data class StudentResultItem(
 )
 
 class ExamViewModel(private val db: AppDatabase) : ViewModel() {
+    private val resultMutationsInProgress = mutableSetOf<String>()
     private val examFeeRepository = ExamFeeRepository(db)
     private val _exams = MutableStateFlow<List<ExamEntity>>(emptyList())
     val exams = _exams.asStateFlow()
@@ -260,9 +261,17 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
         onSuccess: () -> Unit,
         onError: (String) -> Unit = {}
     ) {
-        val instId = SessionManager.currentInstituteId.value ?: return
+        val instId = SessionManager.currentInstituteId.value ?: run {
+            onError("No active institute session.")
+            return
+        }
         val totalMarks = _selectedExam.value?.totalMarks ?: 100.0
         val passingMarks = _selectedExam.value?.passingMarks ?: 40.0
+        val mutationKey = "$instId:$examId"
+        if (!synchronized(resultMutationsInProgress) { resultMutationsInProgress.add(mutationKey) }) {
+            onError("Results are already being saved for this exam.")
+            return
+        }
 
         viewModelScope.launch {
             try {
@@ -271,7 +280,7 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
                 val results = sorted.mapIndexed { idx, (studentId, marks) ->
                     val grade = calculateGrade(marks, totalMarks, passingMarks)
                     ResultEntity(
-                        id = UUID.randomUUID().toString(), instituteId = instId,
+                        id = UUID.nameUUIDFromBytes("$instId|$examId|$studentId".toByteArray()).toString(), instituteId = instId,
                         examId = examId, batchId = batchId, studentId = studentId,
                         marksObtained = marks, grade = grade, position = idx + 1,
                         remarks = null, published = false,
@@ -294,6 +303,8 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
                 onSuccess()
             } catch (e: Exception) {
                 onError(e.message ?: "Failed to save results")
+            } finally {
+                synchronized(resultMutationsInProgress) { resultMutationsInProgress.remove(mutationKey) }
             }
         }
     }

@@ -11,6 +11,7 @@ import android.graphics.Shader
 import android.graphics.pdf.PdfDocument
 import android.net.Uri
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -338,6 +339,10 @@ fun GenerateSalaryScreen(db: AppDatabase, onBack: () -> Unit) {
     var bonus by remember { mutableStateOf("0") }
     var deduction by remember { mutableStateOf("0") }
     var advance by remember { mutableStateOf("0") }
+    var isGenerating by remember { mutableStateOf(false) }
+    val pendingSalaryId = remember(selectedStaffId, month) { UUID.randomUUID().toString() }
+
+    BackHandler(enabled = isGenerating) { }
 
     Scaffold(
         containerColor = BgColor,
@@ -346,7 +351,7 @@ fun GenerateSalaryScreen(db: AppDatabase, onBack: () -> Unit) {
             TopAppBar(
                 title = { Text("Generate Salary", color = TextWhite, fontWeight = FontWeight.Bold, fontSize = 20.sp) },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    IconButton(onClick = onBack, enabled = !isGenerating) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = TextWhite)
                     }
                 },
@@ -475,7 +480,7 @@ fun GenerateSalaryScreen(db: AppDatabase, onBack: () -> Unit) {
 
             Spacer(Modifier.height(16.dp))
             val scope = rememberCoroutineScope()
-            val canGenerate = selectedStaffId != null && month.isNotBlank() && net >= 0
+            val canGenerate = selectedStaffId != null && month.isNotBlank() && net >= 0 && !isGenerating
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -489,19 +494,28 @@ fun GenerateSalaryScreen(db: AppDatabase, onBack: () -> Unit) {
             ) {
                 TextButton(
                     onClick = {
-                        if (selectedStaffId != null && month.isNotBlank() && net >= 0) {
+                        if (!isGenerating && selectedStaffId != null && month.isNotBlank() && net >= 0) {
+                            isGenerating = true
                             viewModel.generateSalary(selectedStaffId!!, month,
                                 basic.toDoubleOrNull() ?: 0.0, bonus.toDoubleOrNull() ?: 0.0,
                                 deduction.toDoubleOrNull() ?: 0.0, advance.toDoubleOrNull() ?: 0.0,
+                                salaryId = pendingSalaryId,
                                 onSuccess = onBack,
-                                onError = { msg -> scope.launch { snackbarHostState.showSnackbar(msg) } })
+                                onError = { msg ->
+                                    isGenerating = false
+                                    scope.launch { snackbarHostState.showSnackbar(msg) }
+                                })
                         }
                     },
                     modifier = Modifier.fillMaxSize(),
                     enabled = canGenerate,
                     colors = ButtonDefaults.textButtonColors(contentColor = if (canGenerate) Color.White else TextMuted)
                 ) {
-                    Text("Generate Salary", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    if (isGenerating) {
+                        CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                    }
+                    Text(if (isGenerating) "Generating..." else "Generate Salary", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                 }
             }
             Spacer(Modifier.height(24.dp))
