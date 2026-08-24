@@ -17,6 +17,11 @@ function isSuperAdmin(user) {
     (!Object.prototype.hasOwnProperty.call(user, "status") || user.status === "active");
 }
 
+function hasPlatformAdminRole(user) {
+  return user &&
+    (["SuperAdmin", "superAdmin", "super_admin"].includes(user.role) || user.platformRole === "root");
+}
+
 async function deleteQuery(db, query) {
   while (true) {
     const snapshot = await query.limit(400).get();
@@ -74,14 +79,22 @@ function createPermanentInstitutePurgeHandler({ db, adminAuth, bucket }) {
       db.collection("student_auth_accounts").where("instituteId", "==", instituteId).get(),
       db.collection("student_auth_logins").where("instituteId", "==", instituteId).get(),
     ]);
-    const authUids = new Set([
+    const candidateAuthUids = new Set([
       institute.ownerUid,
       instituteId,
       ...managedUsers.docs.map((doc) => doc.id),
       ...authAccounts.docs.map((doc) => doc.id),
       ...students.docs.map((doc) => doc.get("firebaseUid")),
       ...staffs.docs.map((doc) => doc.get("firebaseUid") || doc.id),
-    ].filter((value) => typeof value === "string" && value && value !== request.auth.uid));
+    ].filter((value) => typeof value === "string" && value));
+    const candidateAppUsers = await Promise.all(
+      [...candidateAuthUids].map((uid) => db.collection("app_users").doc(uid).get()),
+    );
+    const protectedAuthUids = new Set([request.auth.uid]);
+    candidateAppUsers.forEach((snapshot) => {
+      if (snapshot.exists && hasPlatformAdminRole(snapshot.data())) protectedAuthUids.add(snapshot.id);
+    });
+    const authUids = new Set([...candidateAuthUids].filter((uid) => !protectedAuthUids.has(uid)));
     const loginKeys = new Set(authLogins.docs.map((doc) => doc.id));
 
     // Remove all tenant media, including temporary public-registration photos.
@@ -107,13 +120,13 @@ function createPermanentInstitutePurgeHandler({ db, adminAuth, bucket }) {
       deleteQuery(db, db.collection("public_registration_dedup").where("instituteId", "==", instituteId)),
       deleteQuery(db, db.collection("platform_audit").where("instituteId", "==", instituteId)),
       Promise.all(managedUsers.docs
-        .filter((doc) => doc.id !== request.auth.uid)
+        .filter((doc) => !protectedAuthUids.has(doc.id))
         .map((doc) => doc.ref.delete())),
       deleteQuery(db, db.collection("Users").where("instituteId", "==", instituteId)),
       deleteDocumentTree(db, db.collection("registrations").doc(instituteId)),
     ]);
     await Promise.all([
-      (institute.ownerUid || instituteId) === request.auth.uid ? Promise.resolve() :
+      protectedAuthUids.has(institute.ownerUid || instituteId) ? Promise.resolve() :
         db.collection("app_users").doc(institute.ownerUid || instituteId).delete().catch(() => {}),
       db.collection("institutes_trash").doc(instituteId).delete().catch(() => {}),
       db.collection("app_users_trash").doc(instituteId).delete().catch(() => {}),
@@ -125,4 +138,4 @@ function createPermanentInstitutePurgeHandler({ db, adminAuth, bucket }) {
   };
 }
 
-module.exports = { createPermanentInstitutePurgeHandler };
+module.exports = { createPermanentInstitutePurgeHandler, hasPlatformAdminRole };

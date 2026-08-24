@@ -16,8 +16,25 @@ function isActive(data) {
 }
 
 function isSuperAdmin(data) {
-  return data && (["SuperAdmin", "superAdmin", "super_admin"].includes(data.role) || data.platformRole === "root") &&
+  return hasPlatformAdminRole(data) &&
     (!Object.prototype.hasOwnProperty.call(data, "status") || data.status === "active");
+}
+
+// Platform identities must never be disabled as a side effect of tenant cleanup.
+// The role check intentionally ignores status so an already-archived root identity
+// is still protected and can be recovered safely.
+function hasPlatformAdminRole(data) {
+  return data && (["SuperAdmin", "superAdmin", "super_admin"].includes(data.role) ||
+    data.platformRole === "root");
+}
+
+function resolveInstituteOwnerUid(instituteId, institute) {
+  const ownerUid = typeof institute?.ownerUid === "string" ? institute.ownerUid.trim() : "";
+  return ownerUid || instituteId;
+}
+
+function isProtectedAuthIdentity({ actorUid, authUid, appUser }) {
+  return !!authUid && (authUid === actorUid || hasPlatformAdminRole(appUser));
 }
 
 function isManagedAdmin(data, instituteId) {
@@ -201,6 +218,21 @@ async function reconcileAuth({ adminAuth, db, plan }) {
       return invalidResult;
     }
 
+    const authAppUserSnap = await db.collection("app_users").doc(plan.authUid).get();
+    const authAppUser = authAppUserSnap.exists ? authAppUserSnap.data() : null;
+    if (isProtectedAuthIdentity({
+      actorUid: plan.actorUid,
+      authUid: plan.authUid,
+      appUser: authAppUser,
+    })) {
+      const protectedResult = { ...plan.result, authCleanupState: "protected_platform_identity" };
+      await operationRef.update({
+        authCleanupState: "protected_platform_identity",
+        result: protectedResult,
+      });
+      return protectedResult;
+    }
+
     await adminAuth.updateUser(plan.authUid, { disabled: plan.disableAuth });
     await adminAuth.revokeRefreshTokens(plan.authUid);
 
@@ -289,6 +321,7 @@ function createSafeDeletionHandler({ db, adminAuth }) {
         const existingLoginKey = operationSnap.get("loginKey") || null;
         return {
           result: operationSnap.get("result"),
+          actorUid,
           authUid: existingAuthUid,
           disableAuth: operationSnap.get("disableAuth") === true,
           restoreStudentAccess: operationSnap.get("restoreStudentAccess") === true,
@@ -318,9 +351,15 @@ function createSafeDeletionHandler({ db, adminAuth }) {
       let loginKey = null;
       let restoreStudentAccess = false;
       let studentIdentity = null;
-      const targetAppUserRef = parsed.entityType === "institute"
-        ? db.collection("app_users").doc(parsed.instituteId) : null;
+      const instituteOwnerUid = parsed.entityType === "institute"
+        ? resolveInstituteOwnerUid(parsed.instituteId, entity) : null;
+      const targetAppUserRef = instituteOwnerUid
+        ? db.collection("app_users").doc(instituteOwnerUid) : null;
       const targetAppUserSnap = targetAppUserRef ? await transaction.get(targetAppUserRef) : null;
+      const targetAppUser = targetAppUserSnap && targetAppUserSnap.exists
+        ? targetAppUserSnap.data() : null;
+      const protectInstituteIdentity = parsed.entityType === "institute" &&
+        isProtectedAuthIdentity({ actorUid, authUid: instituteOwnerUid, appUser: targetAppUser });
 
       if (parsed.entityType === "student") {
         authUid = typeof entity.firebaseUid === "string" ? entity.firebaseUid : null;
@@ -331,7 +370,7 @@ function createSafeDeletionHandler({ db, adminAuth }) {
         const loginSnap = loginRef ? await transaction.get(loginRef) : null;
         studentIdentity = { accountSnap, loginSnap };
       } else if (parsed.entityType === "institute") {
-        authUid = parsed.instituteId;
+        authUid = protectInstituteIdentity ? null : instituteOwnerUid;
       }
 
       let result;
@@ -376,7 +415,8 @@ function createSafeDeletionHandler({ db, adminAuth }) {
             updatedAtMs: now,
           });
         }
-        if (parsed.entityType === "institute" && targetAppUserSnap && targetAppUserSnap.exists) {
+        if (parsed.entityType === "institute" && !protectInstituteIdentity &&
+            targetAppUserSnap && targetAppUserSnap.exists) {
           transaction.update(targetAppUserRef, { status: "archived", updatedAtMs: now });
         }
         transaction.set(stateRef, {
@@ -447,7 +487,8 @@ function createSafeDeletionHandler({ db, adminAuth }) {
             transaction.set(accountRef, { status: "restoring", updatedAtMs: now }, { merge: true });
           }
         }
-        if (parsed.entityType === "institute" && targetAppUserSnap && targetAppUserSnap.exists) {
+        if (parsed.entityType === "institute" && !protectInstituteIdentity &&
+            targetAppUserSnap && targetAppUserSnap.exists) {
           const appUserStatus = previous.appUserStatus;
           transaction.update(targetAppUserRef, {
             status: appUserStatus == null ? "active" : appUserStatus,
@@ -501,6 +542,7 @@ function createSafeDeletionHandler({ db, adminAuth }) {
       });
       return {
         result,
+        actorUid,
         authUid,
         disableAuth: parsed.action === "archive",
         restoreStudentAccess,
@@ -514,4 +556,9 @@ function createSafeDeletionHandler({ db, adminAuth }) {
   };
 }
 
-module.exports = { createSafeDeletionHandler };
+module.exports = {
+  createSafeDeletionHandler,
+  hasPlatformAdminRole,
+  resolveInstituteOwnerUid,
+  isProtectedAuthIdentity,
+};

@@ -147,3 +147,22 @@ test("even a Super Admin cannot purge an active institute", async () => {
   );
   assert.equal(db.documents.has("institutes/institute-a"), true);
 });
+
+test("purging a legacy institute can never delete or disable a platform identity", async () => {
+  const db = new FakeDb({
+    "app_users/root-admin": { role: "SuperAdmin", status: "active", instituteId: null },
+    "app_users/other-root": { role: "SuperAdmin", status: "archived", instituteId: "root-admin" },
+    "institutes/root-admin": {
+      ...archivedInstitute(),
+      ownerUid: "root-admin",
+    },
+  });
+  const { handler, deletedUsers } = testDependencies(db);
+
+  const result = await handler({ auth: { uid: "root-admin" }, data: { instituteId: "root-admin" } });
+
+  assert.equal(result.permanentlyDeleted, true);
+  assert.equal(db.documents.has("app_users/root-admin"), true);
+  assert.equal(db.documents.has("app_users/other-root"), true);
+  assert.deepEqual(deletedUsers, []);
+});
