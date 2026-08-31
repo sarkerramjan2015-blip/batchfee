@@ -1,9 +1,9 @@
 ﻿package com.batchfee.edu.data.firestore
 
 import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.firebase.FirebaseFailureReporter
 import com.batchfee.edu.data.models.InstituteEntity
 import com.batchfee.edu.domain.InstituteContactNumber
-import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
@@ -19,7 +19,7 @@ object InstituteSyncHelper {
                 firestore.collection("institutes").document(instituteId)
                     .update("studentCount", count).await()
             } catch (e: Exception) {
-                FirebaseCrashlytics.getInstance().recordException(e)
+                FirebaseFailureReporter.report(e, "update student count", permissionDeniedIsExpected = true)
             }
         }
     }
@@ -30,7 +30,7 @@ object InstituteSyncHelper {
                 firestore.collection("institutes").document(instituteId)
                     .update("staffCount", count).await()
             } catch (e: Exception) {
-                FirebaseCrashlytics.getInstance().recordException(e)
+                FirebaseFailureReporter.report(e, "update staff count", permissionDeniedIsExpected = true)
             }
         }
     }
@@ -41,7 +41,7 @@ object InstituteSyncHelper {
                 firestore.collection("institutes").document(instituteId)
                     .update("batchCount", count).await()
             } catch (e: Exception) {
-                FirebaseCrashlytics.getInstance().recordException(e)
+                FirebaseFailureReporter.report(e, "update batch count", permissionDeniedIsExpected = true)
             }
         }
     }
@@ -89,7 +89,7 @@ object InstituteSyncHelper {
                     )
                 )
             } catch (e: Exception) {
-                FirebaseCrashlytics.getInstance().recordException(e)
+                FirebaseFailureReporter.report(e, "sync institute from Firestore", permissionDeniedIsExpected = true)
             }
         }
     }
@@ -113,7 +113,7 @@ object InstituteSyncHelper {
                     com.google.firebase.firestore.SetOptions.merge()
                 ).await()
             } catch (e: Exception) {
-                FirebaseCrashlytics.getInstance().recordException(e)
+                FirebaseFailureReporter.report(e, "sync institute to Firestore", permissionDeniedIsExpected = true)
                 throw e
             }
         }

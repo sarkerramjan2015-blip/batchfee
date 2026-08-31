@@ -7,6 +7,7 @@ const {
   hashPassword,
   legacyStudentLoginDocumentId,
   normalizeIdentifier,
+  staffLoginDocumentId,
   studentLoginDocumentId,
   validatePassword,
   verifyPassword,
@@ -19,6 +20,14 @@ test("login keys are normalized, deterministic, and globally student-scoped", ()
   assert.notEqual(first, studentLoginDocumentId("student-02"));
   assert.notEqual(first, legacyStudentLoginDocumentId("inst-a", "student-01"));
   assert.equal(normalizeIdentifier("  ABC-12  "), "abc-12");
+});
+
+test("staff login keys are normalized, deterministic, and separated from student keys", () => {
+  const first = staffLoginDocumentId(" STF-250274 ");
+  assert.equal(first, staffLoginDocumentId("stf-250274"));
+  assert.match(first, /^[a-f0-9]{64}$/);
+  assert.notEqual(first, staffLoginDocumentId("stf-250275"));
+  assert.notEqual(first, studentLoginDocumentId("stf-250274"));
 });
 
 test("password verifier is salted and rejects wrong credentials", async () => {

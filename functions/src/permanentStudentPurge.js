@@ -2,8 +2,8 @@
 
 const { HttpsError } = require("firebase-functions/v2/https");
 const { parseMediaReference } = require("./mediaSecurityCore");
-const { hasCurrentSubscription } = require("./subscriptionPolicy");
 const { studentLoginDocumentId } = require("./studentAuthCore");
+const { studentIdClaimDocumentId } = require("./studentIdCore");
 
 const STUDENT_COLLECTIONS = [
   "batch_students", "attendance", "fees", "payments", "receipts", "results",
@@ -65,7 +65,7 @@ function createPermanentStudentPurgeHandler({ db, adminAuth, bucket }) {
     const [instituteSnap, studentSnap, actorSnap] = await Promise.all([
       instituteRef.get(), studentRef.get(), db.collection("app_users").doc(request.auth.uid).get(),
     ]);
-    if (!instituteSnap.exists || !studentSnap.exists) throw new HttpsError("not-found", "Archived student was not found.");
+    if (!instituteSnap.exists) throw new HttpsError("not-found", "Institute was not found.");
     const institute = instituteSnap.data();
     const actor = actorSnap.exists ? actorSnap.data() : null;
     const superAdmin = isSuperAdmin(actor);
@@ -74,8 +74,15 @@ function createPermanentStudentPurgeHandler({ db, adminAuth, bucket }) {
     if (!owner && !managedOwner && !superAdmin) {
       throw new HttpsError("permission-denied", "Only the institute owner or Super Admin can permanently delete a student.");
     }
-    if (!hasCurrentSubscription(institute)) {
-      throw new HttpsError("failed-precondition", "Subscription has expired. Renew the plan to continue.");
+    // Permanent deletion is a data-ownership operation, not a paid feature.
+    // An authenticated owner/admin must still be able to remove archived data
+    // after a subscription expires.
+    if (!studentSnap.exists) {
+      // A previous request may have completed in the backend while its response
+      // was lost. Treat an authorised retry as success so the app can finish its
+      // local cleanup instead of leaving a permanent "Deleting..." archive card.
+      await removeDeletionMetadata(db, instituteRef, "student", studentId);
+      return { studentId, permanentlyDeleted: true, replayed: true };
     }
     const student = studentSnap.data();
     // `archivedAtMs` is the canonical archive marker. Older app versions did
@@ -111,9 +118,19 @@ function createPermanentStudentPurgeHandler({ db, adminAuth, bucket }) {
     const logins = await db.collection("student_auth_logins").where("instituteId", "==", instituteId)
       .where("studentId", "==", studentId).get();
     const loginKeys = new Set(logins.docs.map((doc) => doc.id));
+    let studentCodeClaimRef = null;
     if (typeof student.studentCode === "string" && student.studentCode.trim()) {
       loginKeys.add(studentLoginDocumentId(student.studentCode));
+      studentCodeClaimRef = db.collection("student_id_claims")
+        .doc(studentIdClaimDocumentId(student.studentCode));
       await db.collection("student_login_mappings").doc(student.studentCode).delete().catch(() => {});
+    }
+    if (studentCodeClaimRef) {
+      const claimSnap = await studentCodeClaimRef.get();
+      if (claimSnap.exists && claimSnap.get("instituteId") === instituteId &&
+          claimSnap.get("studentId") === studentId) {
+        await studentCodeClaimRef.delete();
+      }
     }
     await Promise.all([
       ...logins.docs.map((doc) => doc.ref.delete()),

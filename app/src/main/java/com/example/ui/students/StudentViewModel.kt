@@ -19,6 +19,7 @@ import com.batchfee.edu.data.models.BatchStudentEntity
 import com.batchfee.edu.data.repository.StudentAccountRepository
 import com.batchfee.edu.data.repository.EntitledCreationRepository
 import com.batchfee.edu.data.repository.FeeCollectionRepository
+import com.google.firebase.functions.FirebaseFunctionsException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -78,6 +79,7 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
     fun addStudent(
         id: String,
         studentCode: String,
+        studentCodeIsAuto: Boolean,
         fullName: String,
         phone: String,
         guardianName: String?,
@@ -92,12 +94,17 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
         photoUri: String?,
         isAppAccessEnabled: Boolean = false,
         appAccessPassword: String? = null,
-        onSuccess: () -> Unit,
+        onSuccess: (String) -> Unit,
         onPartialSuccess: (String) -> Unit = {},
         onError: (String) -> Unit = {}
     ) {
         if (fullName.isBlank()) { onError("Student name is required."); return }
         if (phone.isBlank()) { onError("Phone number is required."); return }
+        val normalizedStudentCode = StudentIdGenerator.normalize(studentCode)
+        if (!StudentIdGenerator.isValid(normalizedStudentCode)) {
+            onError("Student ID must contain 3 to 20 letters, numbers or hyphens.")
+            return
+        }
         val instId = SessionManager.currentInstituteId.value ?: return
         val combinedNotes = buildString {
             if (!whatsappNumber.isNullOrBlank()) {
@@ -116,7 +123,7 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
         val student = StudentEntity(
             id = id,
             instituteId = instId,
-            studentCode = studentCode,
+            studentCode = normalizedStudentCode,
             fullName = fullName,
             photoUri = photoUri,
             gender = gender,
@@ -142,12 +149,12 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
         )
         viewModelScope.launch {
             try {
-                entitledCreationRepository.createStudent(student)
-                db.studentDao().insertStudent(student)
+                val savedCloudStudent = createStudentWithUniqueCode(student, studentCodeIsAuto)
+                db.studentDao().insertStudent(savedCloudStudent)
                 val savedStudent = if (isAppAccessEnabled) {
                     try {
-                        studentAccountRepository.provision(instId, student.id, appAccessPassword!!)
-                        student.copy(isAppAccessEnabled = true)
+                        studentAccountRepository.provision(instId, savedCloudStudent.id, appAccessPassword!!)
+                        savedCloudStudent.copy(isAppAccessEnabled = true)
                     } catch (error: Exception) {
                         // The profile is already safely created. Do not leave the owner on the
                         // form where a retry would look like another student registration.
@@ -158,13 +165,13 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
                         return@launch
                     }
                 } else {
-                    student
+                    savedCloudStudent
                 }
-                if (savedStudent != student) db.studentDao().updateStudent(savedStudent)
+                if (savedStudent != savedCloudStudent) db.studentDao().updateStudent(savedStudent)
                 StaffActivityLogger.logCompletedAction(
                     db, "student_created", "students", "Added student ${savedStudent.fullName}"
                 )
-                onSuccess()
+                onSuccess(savedStudent.studentCode)
             } catch (error: Exception) {
                 onError(accountErrorMessage(error, "Student account could not be created."))
             }
@@ -233,6 +240,7 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
     fun updateStudent(
         id: String,
         studentCode: String,
+        studentCodeIsAuto: Boolean,
         fullName: String,
         phone: String,
         guardianName: String?,
@@ -253,8 +261,14 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
     ) {
         viewModelScope.launch {
             val instId = SessionManager.currentInstituteId.value ?: return@launch
+            val normalizedStudentCode = StudentIdGenerator.normalize(studentCode)
             val existing = db.studentDao().getStudentById(id, instId).firstOrNull() ?: run {
                 onError("Student profile was not found.")
+                return@launch
+            }
+            val unchangedLegacyCode = StudentIdGenerator.normalize(existing.studentCode) == normalizedStudentCode
+            if (!StudentIdGenerator.isValid(normalizedStudentCode) && !unchangedLegacyCode) {
+                onError("Student ID must contain 3 to 20 letters, numbers or hyphens.")
                 return@launch
             }
             if (isAppAccessEnabled && !existing.isAppAccessEnabled && appAccessPassword.isNullOrEmpty()) {
@@ -270,7 +284,8 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
             // non-empty password below explicitly performs the reset; otherwise only the
             // student profile is saved.
             if (isAppAccessEnabled && existing.isAppAccessEnabled &&
-                existing.studentCode != studentCode && appAccessPassword.isNullOrEmpty()) {
+                !existing.studentCode.equals(normalizedStudentCode, ignoreCase = true) &&
+                appAccessPassword.isNullOrEmpty()) {
                 onError("Re-enter the app password after changing the student ID.")
                 return@launch
             }
@@ -280,7 +295,7 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
                 }
             }.trimEnd().takeIf { it.isNotEmpty() }
             val updated = existing.copy(
-                studentCode = studentCode,
+                studentCode = normalizedStudentCode,
                 fullName = fullName,
                 phone = phone,
                 guardianName = guardianName,
@@ -297,6 +312,7 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
                 isAppAccessEnabled = existing.isAppAccessEnabled
             )
             try {
+                val resolvedStudent = resolveUniqueStudentCodeForUpdate(updated, studentCodeIsAuto)
                 val admissionDateChanged = existing.admissionDateMs != admissionDateMs
                 if (admissionDateChanged) {
                     // The admission date is part of the financial contract. Let the
@@ -318,7 +334,7 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
                 // An ordinary profile update must reach Firestore before the screen reports
                 // success. The previous best-effort path could look saved on this device while
                 // leaving the cloud record (and every other device) unchanged.
-                StudentSyncHelper.upsertStudentOrThrow(updated)
+                val syncedStudent = syncStudentProfileWithUniqueCode(resolvedStudent, studentCodeIsAuto)
                 val requiresAccountChange = appAccessPassword != null ||
                     isAppAccessEnabled != existing.isAppAccessEnabled
                 val finalStudent = if (requiresAccountChange) {
@@ -328,11 +344,11 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
                         } else {
                             studentAccountRepository.disable(instId, id)
                         }
-                        updated.copy(isAppAccessEnabled = isAppAccessEnabled)
+                        syncedStudent.copy(isAppAccessEnabled = isAppAccessEnabled)
                     } catch (error: Exception) {
                         // Profile fields did save successfully. Keep Room consistent with the
                         // cloud and make the remaining account action explicit to the owner.
-                        db.studentDao().updateStudent(updated)
+                        db.studentDao().updateStudent(syncedStudent)
                         onPartialSuccess(
                             "Student details were saved, but app login could not be updated. " +
                                 "Try setting the password again from the student profile."
@@ -340,7 +356,7 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
                         return@launch
                     }
                 } else {
-                    updated
+                    syncedStudent
                 }
                 db.studentDao().updateStudent(finalStudent)
                 StaffActivityLogger.logCompletedAction(
@@ -449,16 +465,101 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
 
     private fun accountErrorMessage(error: Exception, fallback: String): String {
         val message = error.message.orEmpty()
+        val functionsCode = (error as? FirebaseFunctionsException)?.code
         return when {
+            error is StudentIdConflictException ||
+                functionsCode == FirebaseFunctionsException.Code.ALREADY_EXISTS &&
+                message.contains("Student ID", ignoreCase = true) ->
+                "This Student ID is already in use."
             message.contains("PERMISSION_DENIED", ignoreCase = true) ->
                 "You do not have permission to manage student app access."
-            message.contains("ALREADY_EXISTS", ignoreCase = true) ->
-                "This Student ID is already linked to another account. Generate a new Student ID."
+            functionsCode == FirebaseFunctionsException.Code.ALREADY_EXISTS ||
+                message.contains("ALREADY_EXISTS", ignoreCase = true) ->
+                "This Student ID is already in use."
             message.contains("UNAVAILABLE", ignoreCase = true) ||
                 message.contains("DEADLINE_EXCEEDED", ignoreCase = true) ->
                 "Account service is temporarily unavailable. Check your connection and try again."
             else -> fallback
         }
+    }
+
+    private suspend fun createStudentWithUniqueCode(
+        baseStudent: StudentEntity,
+        autoGenerated: Boolean
+    ): StudentEntity {
+        var candidate = baseStudent.copy(studentCode = StudentIdGenerator.normalize(baseStudent.studentCode))
+        repeat(STUDENT_ID_ATTEMPTS) {
+            if (db.studentDao().isStudentCodeInUse(candidate.instituteId, candidate.studentCode)) {
+                if (!autoGenerated) throw StudentIdConflictException()
+                candidate = candidate.copy(studentCode = StudentIdGenerator.generate())
+                return@repeat
+            }
+            try {
+                val result = entitledCreationRepository.createStudent(candidate)
+                return candidate.copy(
+                    studentCode = StudentIdGenerator.normalize(result.studentCode),
+                    photoUri = result.photoUri ?: candidate.photoUri
+                )
+            } catch (error: Exception) {
+                if (!isStudentIdConflict(error) || !autoGenerated) throw error
+                candidate = candidate.copy(studentCode = StudentIdGenerator.generate())
+            }
+        }
+        throw StudentIdConflictException()
+    }
+
+    private suspend fun resolveUniqueStudentCodeForUpdate(
+        baseStudent: StudentEntity,
+        autoGenerated: Boolean
+    ): StudentEntity {
+        var candidate = baseStudent.copy(studentCode = StudentIdGenerator.normalize(baseStudent.studentCode))
+        repeat(STUDENT_ID_ATTEMPTS) {
+            val inUse = db.studentDao().isStudentCodeInUse(
+                candidate.instituteId,
+                candidate.studentCode,
+                excludingStudentId = candidate.id
+            )
+            if (!inUse) return candidate
+            if (!autoGenerated) throw StudentIdConflictException()
+            candidate = candidate.copy(studentCode = StudentIdGenerator.generate())
+        }
+        throw StudentIdConflictException()
+    }
+
+    private suspend fun syncStudentProfileWithUniqueCode(
+        baseStudent: StudentEntity,
+        autoGenerated: Boolean
+    ): StudentEntity {
+        var candidate = baseStudent
+        repeat(STUDENT_ID_ATTEMPTS) {
+            try {
+                StudentSyncHelper.upsertStudentOrThrow(candidate)
+                return candidate
+            } catch (error: Exception) {
+                if (!isStudentIdConflict(error) || !autoGenerated) throw error
+                candidate = candidate.copy(studentCode = StudentIdGenerator.generate())
+                while (db.studentDao().isStudentCodeInUse(
+                        candidate.instituteId,
+                        candidate.studentCode,
+                        excludingStudentId = candidate.id
+                    )) {
+                    candidate = candidate.copy(studentCode = StudentIdGenerator.generate())
+                }
+            }
+        }
+        throw StudentIdConflictException()
+    }
+
+    private fun isStudentIdConflict(error: Exception): Boolean {
+        val functionsError = error as? FirebaseFunctionsException
+        return functionsError?.code == FirebaseFunctionsException.Code.ALREADY_EXISTS &&
+            functionsError.message.orEmpty().contains("Student ID", ignoreCase = true)
+    }
+
+    private class StudentIdConflictException : IllegalStateException("This Student ID is already in use.")
+
+    private companion object {
+        const val STUDENT_ID_ATTEMPTS = 12
     }
 }
 

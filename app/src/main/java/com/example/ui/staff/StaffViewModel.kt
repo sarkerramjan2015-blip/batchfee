@@ -12,10 +12,8 @@ import com.batchfee.edu.data.models.UserEntity
 import com.batchfee.edu.domain.PasswordHasher
 import com.batchfee.edu.domain.SessionManager
 import com.batchfee.edu.domain.StaffPermissions
-import com.batchfee.edu.data.firebase.FirebaseAuthApi
 import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
 import com.batchfee.edu.data.firestore.InstituteSyncHelper
-import com.batchfee.edu.data.firestore.StaffSyncHelper
 import com.batchfee.edu.data.repository.EntitledCreationRepository
 import com.batchfee.edu.data.repository.SafeDeletionRepository
 import kotlinx.coroutines.Dispatchers
@@ -25,7 +23,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.tasks.await
 import java.util.UUID
 
 class StaffViewModel(private val db: AppDatabase) : ViewModel() {
@@ -178,7 +175,7 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
             staffEmail == null -> onError("Email is required.")
             role.isBlank() -> onError("Role title is required.")
             monthlySalary < 0 -> onError("Monthly salary cannot be negative.")
-            cleanPassword.length < 4 -> onError("Password must be at least 4 characters.")
+            cleanPassword.length < 6 -> onError("Password must be at least 6 characters.")
             else -> viewModelScope.launch {
                 val existingLogin = db.userDao().getUserByEmail(staffEmail)
                 if (existingLogin != null) {
@@ -186,23 +183,11 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
                     return@launch
                 }
 
-                // Create Firebase Auth account via REST API (does NOT sign anyone out)
-                val firebaseUid: String
-                try {
-                    firebaseUid = FirebaseAuthApi.createUser(staffEmail, cleanPassword)
-                } catch (e: FirebaseAuthApi.SignUpException) {
-                    onError(e.firebaseMessage)
-                    return@launch
-                } catch (e: Exception) {
-                    onError("Failed to create staff account. Check connection and try again.")
-                    return@launch
-                }
-
                 val now = System.currentTimeMillis()
                 val permissionCsv = StaffPermissions.toCsv(permissions)
                 val batchCsv = assignedBatchIds.sorted().joinToString(",").takeIf { it.isNotBlank() }
-                val staff = StaffEntity(
-                    id = firebaseUid,
+                val pendingStaff = StaffEntity(
+                    id = "pending",
                     instituteId = instId,
                     staffCode = loginId,
                     fullName = name,
@@ -221,12 +206,14 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
                     updatedAtMs = now,
                     archivedAtMs = null
                 )
+                val firebaseUid: String
                 try {
-                    entitledCreationRepository.createStaff(staff)
+                    firebaseUid = entitledCreationRepository.provisionStaff(pendingStaff, cleanPassword)
                 } catch (error: Exception) {
-                    onError("Staff account could not be created: ${error.localizedMessage ?: "subscription limit or connection problem"}")
+                    onError("Staff account could not be created: ${error.localizedMessage ?: "subscription or connection problem"}")
                     return@launch
                 }
+                val staff = pendingStaff.copy(id = firebaseUid)
                 db.staffDao().insertStaff(staff)
                 db.userDao().insertUser(
                     UserEntity(
@@ -277,7 +264,7 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
             loginId.isBlank() -> onError("Staff login ID is required.")
             role.isBlank() -> onError("Role title is required.")
             monthlySalary < 0 -> onError("Monthly salary cannot be negative.")
-            cleanPassword.isNotBlank() && cleanPassword.length < 4 -> onError("Password must be at least 4 characters.")
+            cleanPassword.isNotBlank() && cleanPassword.length < 6 -> onError("Password must be at least 6 characters.")
             else -> viewModelScope.launch {
                 val instId = SessionManager.currentInstituteId.value ?: run {
                     onError("Institute session was not found.")
@@ -310,52 +297,18 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
                     status = status,
                     updatedAtMs = System.currentTimeMillis()
                 )
-                db.staffDao().updateStaff(updated)
-
-                // ── Password reset via Firebase (only when password field is non‑blank) ──
-                // Firebase client SDK cannot set a new password on an existing account
-                // without the target user's idToken.  Instead we send a password‑reset email
-                // via Firebase Auth.  The staff completes the reset on their own, and the
-                // next login automatically syncs the Room passwordHash (AuthScreen line 340).
-                //
-                // Room hash is deliberately NOT updated here — Firebase is the source of
-                // truth for login credentials.  We stay consistent.
-                if (cleanPassword.isNotBlank() && staffEmail != null) {
-                    try {
-                        com.google.firebase.auth.FirebaseAuth.getInstance()
-                            .sendPasswordResetEmail(staffEmail)
-                            .await()
-                    } catch (e: Exception) {
-                        // Report failure — do NOT continue with a partial save.
-                        onError("Failed to send password reset email: ${e.localizedMessage ?: "Check connection and try again."}")
-                        return@launch
-                    }
+                try {
+                    entitledCreationRepository.updateStaff(
+                        updated,
+                        cleanPassword.takeIf { it.isNotBlank() }
+                    )
+                    db.staffDao().updateStaff(updated)
+                } catch (error: Exception) {
+                    onError(error.localizedMessage ?: "Could not update the staff account.")
+                    return@launch
                 }
 
-                // ── Password reset via Firebase (only when password field is non‑blank) ──
-                // Firebase client SDK cannot set a new password on an existing account
-                // without the target user's idToken.  Instead we send a password‑reset email
-                // via Firebase Auth.  The staff completes the reset on their own, and the
-                // next login automatically syncs their credentials.
-                //
-                // Room hash is deliberately NOT updated — Firebase is the source of
-                // truth for login credentials.  Staff login always validates against
-                // Firebase Auth, never against the Room hash.
-                if (cleanPassword.isNotBlank() && staffEmail != null) {
-                    try {
-                        com.google.firebase.auth.FirebaseAuth.getInstance()
-                            .sendPasswordResetEmail(staffEmail)
-                            .await()
-                    } catch (e: Exception) {
-                        // Report failure — do NOT continue with a partial save.
-                        onError("Failed to send password reset email: ${e.localizedMessage ?: "Check connection and try again."}")
-                        return@launch
-                    }
-                }
-
-                // ── Update local UserEntity ──
-                // Password hash preserved as-is — Firebase Auth is source of truth for login.
-                // When staff resets via email and logs in, AuthScreen line 340 auto-syncs the hash.
+                // Keep the local offline login cache aligned with the trusted update.
                 val currentUser = db.userDao().getUserById(staffId)
                 if (currentUser == null) {
                     if (staffEmail == null) {
@@ -368,7 +321,9 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
                             instituteId = instId,
                             name = name,
                             email = staffEmail,
-                            passwordHash = "",  // placeholder — Firebase is source of truth
+                            passwordHash = cleanPassword.takeIf { it.isNotBlank() }
+                                ?.let(PasswordHasher::hash)
+                                .orEmpty(),
                             role = "Staff",
                             createdAtMs = System.currentTimeMillis()
                         )
@@ -379,7 +334,9 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
                             instituteId = instId,
                             name = name,
                             email = staffEmail ?: currentUser.email,
-                            passwordHash = currentUser.passwordHash,  // preserve — Firebase is source of truth
+                            passwordHash = cleanPassword.takeIf { it.isNotBlank() }
+                                ?.let(PasswordHasher::hash)
+                                ?: currentUser.passwordHash,
                             role = "Staff"
                         )
                     )
@@ -388,8 +345,6 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
                 if (SessionManager.currentUserId.value == staffId) {
                     SessionManager.updateStaffPermissions(permissionCsv)
                 }
-                // Sync to Firestore (non-blocking)
-                launch { StaffSyncHelper.updateStaff(updated) }
                 onSuccess()
             }
         }
@@ -417,9 +372,8 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
             }
             val updated = existing.copy(photoUri = photoUri, updatedAtMs = System.currentTimeMillis())
             try {
+                entitledCreationRepository.updateStaff(updated)
                 db.staffDao().updateStaff(updated)
-                // The local update is immediate; Firestore publishes the same photo for other devices.
-                launch { StaffSyncHelper.updateStaff(updated) }
                 onSuccess()
             } catch (error: Exception) {
                 onError(error.message ?: "Could not save staff photo.")

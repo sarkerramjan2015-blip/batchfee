@@ -45,9 +45,10 @@ class FirebaseSafeDeletionGateway : SafeDeletionGateway {
     override suspend fun commit(request: Map<String, Any?>): SafeDeletionResult =
         withContext(Dispatchers.IO) {
             try {
-                val response = functions.getHttpsCallable("commitSafeDeletion").call(request).await()
                 @Suppress("UNCHECKED_CAST")
-                parseSafeDeletionResult(response.data as? Map<String, Any?>
+                parseSafeDeletionResult(callTrustedFunction(
+                    functions, "commitSafeDeletion", request
+                ) as? Map<String, Any?>
                     ?: error("Invalid safe-deletion response."))
             } catch (error: FirebaseFunctionsException) {
                 when (error.code) {

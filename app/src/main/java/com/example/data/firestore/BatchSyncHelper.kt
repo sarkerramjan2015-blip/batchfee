@@ -1,8 +1,11 @@
 ﻿package com.batchfee.edu.data.firestore
 
 import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.firebase.FirebaseFailureReporter
 import com.batchfee.edu.data.models.BatchEntity
-import com.google.firebase.crashlytics.FirebaseCrashlytics
+import androidx.room.withTransaction
+import com.google.firebase.firestore.DocumentChange
+import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
 import kotlinx.coroutines.Dispatchers
@@ -24,7 +27,7 @@ object BatchSyncHelper {
                     .set(batch.toFirestore())
                     .await()
             } catch (e: Exception) {
-                FirebaseCrashlytics.getInstance().recordException(e)
+                FirebaseFailureReporter.report(e, "sync batch to Firestore", permissionDeniedIsExpected = true)
                 throw e
             }
         }
@@ -33,12 +36,37 @@ object BatchSyncHelper {
     suspend fun syncAllFromFirestore(db: AppDatabase, instituteId: String) {
         withContext(Dispatchers.IO) {
             try {
-                val snapshot = batchesCollection(instituteId).get().await()
-                snapshot.documents
-                    .mapNotNull { document -> document.toBatchEntity(instituteId) }
-                    .forEach { batch -> db.batchDao().insertBatch(batch) }
+                batchesCollection(instituteId).forEachDocumentPage { documents ->
+                    db.withTransaction {
+                        documents
+                            .mapNotNull { document -> document.toBatchEntity(instituteId) }
+                            .forEach { batch -> db.batchDao().insertBatch(batch) }
+                    }
+                }
             } catch (e: Exception) {
-                FirebaseCrashlytics.getInstance().recordException(e)
+                FirebaseFailureReporter.report(e, "sync batches from Firestore", permissionDeniedIsExpected = true)
+            }
+        }
+    }
+
+    /** Applies only the documents delivered by an active realtime listener. */
+    suspend fun applyRealtimeChanges(
+        db: AppDatabase,
+        instituteId: String,
+        changes: List<DocumentChange>
+    ) = withContext(Dispatchers.IO) {
+        db.withTransaction {
+            changes.forEach { change ->
+                when (change.type) {
+                    DocumentChange.Type.ADDED,
+                    DocumentChange.Type.MODIFIED ->
+                        change.document.toBatchEntity(instituteId)?.let {
+                            db.batchDao().insertBatch(it)
+                        }
+
+                    DocumentChange.Type.REMOVED ->
+                        db.batchDao().deleteBatch(instituteId, change.document.id)
+                }
             }
         }
     }
@@ -65,7 +93,7 @@ object BatchSyncHelper {
         "archivedAtMs" to archivedAtMs
     )
 
-    private fun com.google.firebase.firestore.DocumentSnapshot.toBatchEntity(
+    private fun DocumentSnapshot.toBatchEntity(
         instituteId: String
     ): BatchEntity? {
         val batchCode = getString("batchCode") ?: return null

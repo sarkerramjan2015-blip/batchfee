@@ -113,7 +113,14 @@ test("staff purge deletes the linked Firebase account without a typed name", asy
     "institutes/institute-a/staff_attendance/attendance-a": { staffId: "staff-a" },
     "institutes/institute-a/salaries/salary-a": { staffId: "staff-a" },
     "institutes/institute-a/audit_logs/log-a": { userId: "staff-a" },
-    "app_users/staff-a": { role: "Staff" },
+    "app_users/staff-a": { role: "Staff", instituteId: "institute-a" },
+    "staff_auth_accounts/staff-a": {
+      instituteId: "institute-a", staffId: "staff-a", loginKey: "staff-login-a",
+    },
+    "staff_auth_logins/staff-login-a": {
+      instituteId: "institute-a", staffId: "staff-a", enabled: false,
+    },
+    "staff_auth_attempts/staff-login-a": { failedAttempts: 2 },
   });
   const deletedUsers = [];
   const handler = createPermanentStaffPurgeHandler({
@@ -127,6 +134,7 @@ test("staff purge deletes the linked Firebase account without a typed name", asy
   [
     "institutes/institute-a/staffs/staff-a", "institutes/institute-a/staff_attendance/attendance-a",
     "institutes/institute-a/salaries/salary-a", "institutes/institute-a/audit_logs/log-a", "app_users/staff-a",
+    "staff_auth_accounts/staff-a", "staff_auth_logins/staff-login-a", "staff_auth_attempts/staff-login-a",
   ].forEach((path) => assert.equal(db.documents.has(path), false, path));
   assert.deepEqual(deletedUsers, ["staff-a"]);
 });

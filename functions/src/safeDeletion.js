@@ -77,7 +77,15 @@ function previousState(entityType, entity, appUser) {
       isAppAccessEnabled: entity.isAppAccessEnabled === true,
     };
   }
-  if (entityType === "batch" || entityType === "staff") {
+  if (entityType === "staff") {
+    return {
+      status: entity.status || "active",
+      archivedAtMs: entity.archivedAtMs || null,
+      appUserStatus: appUser && Object.prototype.hasOwnProperty.call(appUser, "status")
+        ? appUser.status : null,
+    };
+  }
+  if (entityType === "batch") {
     return { status: entity.status || "active", archivedAtMs: entity.archivedAtMs || null };
   }
   return {
@@ -182,6 +190,12 @@ function isManagedStudentUser(user, instituteId, studentId) {
     claims.instituteId === instituteId && claims.studentId === studentId;
 }
 
+function isManagedStaffUser(user, instituteId, staffId) {
+  const claims = user && user.customClaims;
+  return claims && claims.staffManaged === true &&
+    claims.instituteId === instituteId && claims.staffId === staffId;
+}
+
 async function reconcileAuth({ adminAuth, db, plan }) {
   if (!plan.authUid) return { ...plan.result, authCleanupState: "not_required" };
   const instituteRef = db.collection("institutes").doc(plan.result.instituteId);
@@ -213,6 +227,12 @@ async function reconcileAuth({ adminAuth, db, plan }) {
     }
     if (plan.result.entityType === "student" &&
       !isManagedStudentUser(user, plan.result.instituteId, plan.result.entityId)) {
+      const invalidResult = { ...plan.result, authCleanupState: "link_invalid" };
+      await operationRef.update({ authCleanupState: "link_invalid", result: invalidResult });
+      return invalidResult;
+    }
+    if (plan.result.entityType === "staff" &&
+      !isManagedStaffUser(user, plan.result.instituteId, plan.result.entityId)) {
       const invalidResult = { ...plan.result, authCleanupState: "link_invalid" };
       await operationRef.update({ authCleanupState: "link_invalid", result: invalidResult });
       return invalidResult;
@@ -251,6 +271,22 @@ async function reconcileAuth({ adminAuth, db, plan }) {
         transaction.update(plan.targetRef, { isAppAccessEnabled: true, updatedAtMs: Date.now() });
       });
       completedResult = { ...completedResult, isAppAccessEnabled: true };
+    }
+    if (!plan.disableAuth && plan.restoreStaffAccess && plan.loginRef && plan.accountRef) {
+      await db.runTransaction(async (transaction) => {
+        const [staffSnap, loginSnap, accountSnap] = await Promise.all([
+          transaction.get(plan.targetRef),
+          transaction.get(plan.loginRef),
+          transaction.get(plan.accountRef),
+        ]);
+        if (!staffSnap.exists || !loginSnap.exists || !accountSnap.exists) return;
+        if (staffSnap.get("deletionState") === "retained") return;
+        transaction.update(plan.loginRef, { enabled: true, updatedAtMs: Date.now() });
+        transaction.set(plan.accountRef, { status: "active", updatedAtMs: Date.now() }, { merge: true });
+        if (plan.appUserRef) {
+          transaction.set(plan.appUserRef, { status: "active", updatedAtMs: Date.now() }, { merge: true });
+        }
+      });
     }
     await operationRef.update({ authCleanupState: "complete", result: completedResult });
     return completedResult;
@@ -325,11 +361,16 @@ function createSafeDeletionHandler({ db, adminAuth }) {
           authUid: existingAuthUid,
           disableAuth: operationSnap.get("disableAuth") === true,
           restoreStudentAccess: operationSnap.get("restoreStudentAccess") === true,
+          restoreStaffAccess: operationSnap.get("restoreStaffAccess") === true,
           targetRef,
           loginRef: existingLoginKey
-            ? db.collection("student_auth_logins").doc(existingLoginKey) : null,
-          accountRef: existingAuthUid && parsed.entityType === "student"
-            ? db.collection("student_auth_accounts").doc(existingAuthUid) : null,
+            ? db.collection(parsed.entityType === "staff"
+              ? "staff_auth_logins" : "student_auth_logins").doc(existingLoginKey) : null,
+          accountRef: existingAuthUid && ["student", "staff"].includes(parsed.entityType)
+            ? db.collection(parsed.entityType === "staff"
+              ? "staff_auth_accounts" : "student_auth_accounts").doc(existingAuthUid) : null,
+          appUserRef: existingAuthUid && parsed.entityType === "staff"
+            ? db.collection("app_users").doc(existingAuthUid) : null,
         };
       }
 
@@ -339,7 +380,7 @@ function createSafeDeletionHandler({ db, adminAuth }) {
       if (!targetSnap.exists) throw new HttpsError("not-found", `${parsed.entityType} not found.`);
       const entity = targetSnap.data();
       const retentionUntilMs = retainedUntil(now);
-      const mediaUri = parsed.entityType === "student" ? (entity.photoUri || null) :
+      const mediaUri = ["student", "staff"].includes(parsed.entityType) ? (entity.photoUri || null) :
         parsed.entityType === "institute" ? (entity.profilePhotoUri || null) : null;
       const managedMedia = parseMediaReference(mediaUri);
       const mediaAssetRef = managedMedia && managedMedia.instituteId === parsed.instituteId
@@ -350,11 +391,15 @@ function createSafeDeletionHandler({ db, adminAuth }) {
       let accountRef = null;
       let loginKey = null;
       let restoreStudentAccess = false;
+      let restoreStaffAccess = false;
       let studentIdentity = null;
+      let staffIdentity = null;
       const instituteOwnerUid = parsed.entityType === "institute"
         ? resolveInstituteOwnerUid(parsed.instituteId, entity) : null;
-      const targetAppUserRef = instituteOwnerUid
-        ? db.collection("app_users").doc(instituteOwnerUid) : null;
+      const targetAppUserUid = instituteOwnerUid ||
+        (parsed.entityType === "staff" ? parsed.entityId : null);
+      const targetAppUserRef = targetAppUserUid
+        ? db.collection("app_users").doc(targetAppUserUid) : null;
       const targetAppUserSnap = targetAppUserRef ? await transaction.get(targetAppUserRef) : null;
       const targetAppUser = targetAppUserSnap && targetAppUserSnap.exists
         ? targetAppUserSnap.data() : null;
@@ -369,6 +414,17 @@ function createSafeDeletionHandler({ db, adminAuth }) {
         loginRef = loginKey ? db.collection("student_auth_logins").doc(loginKey) : null;
         const loginSnap = loginRef ? await transaction.get(loginRef) : null;
         studentIdentity = { accountSnap, loginSnap };
+      } else if (parsed.entityType === "staff") {
+        accountRef = db.collection("staff_auth_accounts").doc(parsed.entityId);
+        const accountSnap = await transaction.get(accountRef);
+        const accountMatches = accountSnap.exists &&
+          accountSnap.get("instituteId") === parsed.instituteId &&
+          accountSnap.get("staffId") === parsed.entityId;
+        authUid = accountMatches ? parsed.entityId : null;
+        loginKey = accountMatches ? accountSnap.get("loginKey") : null;
+        loginRef = loginKey ? db.collection("staff_auth_logins").doc(loginKey) : null;
+        const loginSnap = loginRef ? await transaction.get(loginRef) : null;
+        staffIdentity = { accountSnap, loginSnap, accountMatches };
       } else if (parsed.entityType === "institute") {
         authUid = protectInstituteIdentity ? null : instituteOwnerUid;
       }
@@ -392,6 +448,21 @@ function createSafeDeletionHandler({ db, adminAuth }) {
           }
           if (accountRef && studentIdentity.accountSnap && studentIdentity.accountSnap.exists) {
             transaction.set(accountRef, { status: "archived", updatedAtMs: now }, { merge: true });
+          }
+        }
+        if (parsed.entityType === "staff") {
+          restoreStaffAccess = !!staffIdentity.accountMatches &&
+            !!staffIdentity.loginSnap && staffIdentity.loginSnap.exists &&
+            targetAppUserSnap && targetAppUserSnap.exists &&
+            targetAppUserSnap.get("status") !== "archived";
+          if (loginRef && staffIdentity.loginSnap && staffIdentity.loginSnap.exists) {
+            transaction.update(loginRef, { enabled: false, updatedAtMs: now });
+          }
+          if (accountRef && staffIdentity.accountSnap && staffIdentity.accountSnap.exists) {
+            transaction.set(accountRef, { status: "archived", updatedAtMs: now }, { merge: true });
+          }
+          if (targetAppUserRef && targetAppUserSnap && targetAppUserSnap.exists) {
+            transaction.update(targetAppUserRef, { status: "archived", updatedAtMs: now });
           }
         }
         transaction.update(targetRef, archivePatch(
@@ -430,6 +501,7 @@ function createSafeDeletionHandler({ db, adminAuth }) {
           previous,
           authUid,
           restoreStudentAccess,
+          restoreStaffAccess,
           mediaUri,
           mediaCleanupState: "retained",
         });
@@ -447,6 +519,7 @@ function createSafeDeletionHandler({ db, adminAuth }) {
         const previous = stateSnap.get("previous") || {};
         authUid = stateSnap.get("authUid") || authUid;
         restoreStudentAccess = stateSnap.get("restoreStudentAccess") === true;
+        restoreStaffAccess = stateSnap.get("restoreStaffAccess") === true;
         const needsStudentSeatCheck = parsed.entityType === "student" &&
           !hasUnlimitedTrialStudents(institute, now);
         if (seatCountSnap && needsStudentSeatCheck) {
@@ -485,6 +558,20 @@ function createSafeDeletionHandler({ db, adminAuth }) {
           }
           if (accountRef && studentIdentity.accountSnap && studentIdentity.accountSnap.exists) {
             transaction.set(accountRef, { status: "restoring", updatedAtMs: now }, { merge: true });
+          }
+        }
+        if (parsed.entityType === "staff") {
+          if (loginRef && staffIdentity.loginSnap && staffIdentity.loginSnap.exists) {
+            transaction.update(loginRef, { enabled: false, updatedAtMs: now });
+          }
+          if (accountRef && staffIdentity.accountSnap && staffIdentity.accountSnap.exists) {
+            transaction.set(accountRef, { status: "restoring", updatedAtMs: now }, { merge: true });
+          }
+          if (targetAppUserRef && targetAppUserSnap && targetAppUserSnap.exists) {
+            transaction.update(targetAppUserRef, {
+              status: previous.appUserStatus || "active",
+              updatedAtMs: now,
+            });
           }
         }
         if (parsed.entityType === "institute" && !protectInstituteIdentity &&
@@ -534,6 +621,7 @@ function createSafeDeletionHandler({ db, adminAuth }) {
         loginKey,
         disableAuth: parsed.action === "archive",
         restoreStudentAccess,
+        restoreStaffAccess,
         authCleanupState: authUid ? "pending" : "not_required",
         mediaCleanupState: result.mediaCleanupState,
         result,
@@ -546,9 +634,11 @@ function createSafeDeletionHandler({ db, adminAuth }) {
         authUid,
         disableAuth: parsed.action === "archive",
         restoreStudentAccess,
+        restoreStaffAccess,
         targetRef,
         loginRef,
         accountRef,
+        appUserRef: parsed.entityType === "staff" ? targetAppUserRef : null,
       };
     });
 

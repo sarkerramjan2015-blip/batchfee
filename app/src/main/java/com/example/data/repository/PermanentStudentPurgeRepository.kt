@@ -10,12 +10,12 @@ class PermanentStudentPurgeRepository(private val db: AppDatabase) {
     private val functions = FirebaseFunctions.getInstance("asia-south1")
 
     suspend fun purge(instituteId: String, studentId: String) {
-        functions.getHttpsCallable("permanentlyPurgeStudent").call(
+        callTrustedFunction(functions, "permanentlyPurgeStudent",
             mapOf(
                 "instituteId" to instituteId,
                 "studentId" to studentId
             )
-        ).await()
+        )
 
         db.withTransaction {
             val sql = db.openHelper.writableDatabase

@@ -27,6 +27,7 @@ import com.batchfee.edu.domain.SessionManager
 import com.batchfee.edu.domain.StudentSessionManager
 import com.batchfee.edu.domain.ThemePreferences
 import com.batchfee.edu.data.firestore.InstituteRealtimeSyncManager
+import com.batchfee.edu.data.firebase.FirebaseFailureReporter
 import com.batchfee.edu.ui.auth.AuthScreen
 import com.batchfee.edu.ui.billing.BillingScreen
 import com.batchfee.edu.ui.dashboard.DashboardScreen
@@ -40,9 +41,9 @@ import com.batchfee.edu.ui.theme.MyApplicationTheme
 import com.batchfee.edu.ui.update.ForceUpdateScreen
 import com.batchfee.edu.ui.studentapp.StudentLoginScreen
 import com.batchfee.edu.ui.studentapp.StudentMainScaffold
-import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -96,6 +97,7 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
     val isLoggedIn by SessionManager.currentUserId.collectAsState()
     val sessionRole by SessionManager.currentUserRole.collectAsState()
     val sessionInstituteId by SessionManager.currentInstituteId.collectAsState()
+    val sessionStaffPermissions by SessionManager.currentStaffPermissions.collectAsState()
     val sessionNotice by SessionManager.sessionNotice.collectAsState()
     val lastActivityAtMs by SessionManager.lastActivityAtMs.collectAsState()
     val studentSessionId by StudentSessionManager.studentId.collectAsState()
@@ -124,10 +126,15 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
 
     // A single, session-scoped listener group keeps the high-use owner data current.
     // It only updates Room in the background and is always removed on logout/switch.
-    DisposableEffect(isLoggedIn, sessionRole, sessionInstituteId) {
+    DisposableEffect(isLoggedIn, sessionRole, sessionInstituteId, sessionStaffPermissions) {
         val instituteId = sessionInstituteId
         if (isLoggedIn != null && sessionRole != "SuperAdmin" && !instituteId.isNullOrBlank()) {
-            InstituteRealtimeSyncManager.start(appDb, instituteId)
+            InstituteRealtimeSyncManager.start(
+                db = appDb,
+                instituteId = instituteId,
+                role = sessionRole,
+                permissions = sessionStaffPermissions
+            )
         }
         onDispose {
             if (!instituteId.isNullOrBlank()) InstituteRealtimeSyncManager.stop(instituteId)
@@ -191,29 +198,36 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
         val role = SessionManager.currentUserRole.value ?: return@LaunchedEffect
         if (role == "SuperAdmin") return@LaunchedEffect
         val instId = SessionManager.currentInstituteId.value ?: return@LaunchedEffect
-        withContext(Dispatchers.IO) {
+
+        suspend fun updateLastActive() = withContext(Dispatchers.IO) {
             try {
                 FirebaseFirestore.getInstance()
                     .collection("institutes").document(instId)
                     .update("lastActiveAt", System.currentTimeMillis())
                     .await()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
-                FirebaseCrashlytics.getInstance().recordException(e)
+                FirebaseFailureReporter.report(
+                    e,
+                    operation = "update institute last activity",
+                    permissionDeniedIsExpected = true
+                )
             }
         }
+
+        // Check entitlement before attempting a protected write. Expired sessions
+        // therefore produce no repeated permission-denied events.
+        if (checkSubscriptionExpired(instId, appDb)) {
+            navController.navigate(SubscriptionExpiredRoute) {
+                popUpTo(navController.graph.id) { inclusive = true }
+            }
+            return@LaunchedEffect
+        }
+        updateLastActive()
         while (true) {
             delay(60 * 1000L)
             if (SessionManager.currentUserId.value != uid) break
-            withContext(Dispatchers.IO) {
-                try {
-                    FirebaseFirestore.getInstance()
-                        .collection("institutes").document(instId)
-                        .update("lastActiveAt", System.currentTimeMillis())
-                        .await()
-                } catch (e: Exception) {
-                    FirebaseCrashlytics.getInstance().recordException(e)
-                }
-            }
             // Every tenant role is subscription-gated; billing remains available on expiry.
             if (SessionManager.currentUserId.value == uid) {
                 val expired = checkSubscriptionExpired(instId, appDb)
@@ -223,6 +237,7 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
                     }
                     break
                 }
+                updateLastActive()
             }
         }
     }
@@ -853,27 +868,30 @@ private suspend fun checkSubscriptionExpired(instituteId: String, db: com.batchf
         val doc = FirebaseFirestore.getInstance()
             .collection("institutes").document(instituteId)
             .get().await()
-        val isActive = doc.getBoolean("isActive") ?: true
-        if (!isActive) return true
-        if (doc.getString("subscriptionStatus") in setOf("expired", "blocked")) return true
+        val isActive = doc.getBoolean("isActive") == true
+        val status = doc.getString("subscriptionStatus")
+        if (!isActive || status !in setOf("trial", "active")) return true
         val now = System.currentTimeMillis()
-        // Prefer currentPeriodEndMs (paid plan) over trialEndDate (trial plan).
+        // Match firestore.rules hasActiveSubscription exactly.
         // A paid subscriber may have a stale trialEndDate in the past — ignore it
-        // when a valid currentPeriodEndMs exists.
-        val periodEnd = doc.getLong("currentPeriodEndMs")
-        if (periodEnd != null && periodEnd > 0L) return now > periodEnd
-        val trialEnd = doc.getLong("trialEndDate") ?: return false
-        now > trialEnd
+        // currentPeriodEndMs remains the backend-authoritative expiry field.
+        val periodEnd = doc.getLong("currentPeriodEndMs") ?: return true
+        now >= periodEnd
+    } catch (e: CancellationException) {
+        throw e
     } catch (e: Exception) {
-        FirebaseCrashlytics.getInstance().recordException(e)
+        FirebaseFailureReporter.report(
+            e,
+            operation = "check subscription entitlement",
+            permissionDeniedIsExpected = true
+        )
         // Offline fallback: check Room DB instead of allowing access
         val local = withContext(Dispatchers.IO) { db.instituteDao().getInstitute(instituteId) }
         if (local != null) {
             val now = System.currentTimeMillis()
-            // Check status from local cache
-            if (local.subscriptionStatus in setOf("expired", "blocked")) return true
+            if (local.subscriptionStatus !in setOf("trial", "active")) return true
             val endMs = local.currentPeriodEndMs.takeIf { it > 0L } ?: local.trialEndDateMs
-            return now > endMs
+            return now >= endMs
         }
         // No data available at all: safest is to deny access
         true

@@ -19,7 +19,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.google.firebase.crashlytics.FirebaseCrashlytics
+import com.batchfee.edu.data.firebase.FirebaseFailureReporter
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
 
@@ -34,7 +34,11 @@ fun GlobalNotificationCard() {
         val listener: ListenerRegistration = db.collection("Global_Notifications")
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
-                    FirebaseCrashlytics.getInstance().recordException(error)
+                    FirebaseFailureReporter.report(
+                        error,
+                        operation = "global notification listener",
+                        permissionDeniedIsExpected = true
+                    )
                     return@addSnapshotListener
                 }
                 val now = System.currentTimeMillis()

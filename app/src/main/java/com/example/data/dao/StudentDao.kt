@@ -21,6 +21,23 @@ interface StudentDao {
     @Query("SELECT COUNT(*) FROM students WHERE instituteId = :instituteId AND archivedAtMs IS NULL")
     fun countStudents(instituteId: String): Flow<Int>
 
+    @Query(
+        """
+        SELECT EXISTS(
+            SELECT 1 FROM students
+            WHERE instituteId = :instituteId
+              AND UPPER(TRIM(studentCode)) = UPPER(TRIM(:studentCode))
+              AND id != :excludingStudentId
+            LIMIT 1
+        )
+        """
+    )
+    suspend fun isStudentCodeInUse(
+        instituteId: String,
+        studentCode: String,
+        excludingStudentId: String = ""
+    ): Boolean
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertStudent(student: StudentEntity)
 

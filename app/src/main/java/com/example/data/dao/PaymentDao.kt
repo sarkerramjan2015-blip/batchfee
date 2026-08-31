@@ -27,4 +27,12 @@ interface PaymentDao {
     @Query("DELETE FROM payments WHERE instituteId = :instituteId AND id = :paymentId")
     suspend fun deletePaymentById(instituteId: String, paymentId: String)
 
+    @Query("UPDATE payments SET status = :status, updatedAtMs = :updatedAtMs WHERE instituteId = :instituteId AND id = :paymentId")
+    suspend fun updatePaymentStatus(
+        instituteId: String,
+        paymentId: String,
+        status: String,
+        updatedAtMs: Long
+    )
+
 }

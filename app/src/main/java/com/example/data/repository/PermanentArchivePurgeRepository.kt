@@ -13,12 +13,12 @@ class PermanentArchivePurgeRepository(private val db: AppDatabase) {
     private val functions = FirebaseFunctions.getInstance("asia-south1")
 
     suspend fun purgeBatch(instituteId: String, batchId: String) {
-        functions.getHttpsCallable("permanentlyPurgeBatch").call(
+        callTrustedFunction(functions, "permanentlyPurgeBatch",
             mapOf(
                 "instituteId" to instituteId,
                 "batchId" to batchId
             )
-        ).await()
+        )
 
         db.withTransaction {
             val sql = db.openHelper.writableDatabase
@@ -53,12 +53,12 @@ class PermanentArchivePurgeRepository(private val db: AppDatabase) {
     }
 
     suspend fun purgeStaff(instituteId: String, staffId: String) {
-        functions.getHttpsCallable("permanentlyPurgeStaff").call(
+        callTrustedFunction(functions, "permanentlyPurgeStaff",
             mapOf(
                 "instituteId" to instituteId,
                 "staffId" to staffId
             )
-        ).await()
+        )
 
         db.withTransaction {
             val sql = db.openHelper.writableDatabase
@@ -75,9 +75,9 @@ class PermanentArchivePurgeRepository(private val db: AppDatabase) {
     }
 
     suspend fun purgeInstitute(instituteId: String) {
-        functions.getHttpsCallable("permanentlyPurgeInstitute").call(
+        callTrustedFunction(functions, "permanentlyPurgeInstitute",
             mapOf("instituteId" to instituteId)
-        ).await()
+        )
 
         // Mirror the server result only after the trusted purge succeeds. Child
         // tables are cleared before parent tables to preserve local FK integrity.

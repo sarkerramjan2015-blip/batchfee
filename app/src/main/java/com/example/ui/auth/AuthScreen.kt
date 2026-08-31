@@ -44,6 +44,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.firebase.FirebaseFailureReporter
 import com.batchfee.edu.data.firestore.AppUserSyncHelper
 import com.batchfee.edu.data.firestore.AuditLogSyncHelper
 import com.batchfee.edu.data.firestore.InstituteSyncHelper
@@ -51,6 +52,7 @@ import com.batchfee.edu.data.models.AuditLogEntity
 import com.batchfee.edu.data.models.InstituteEntity
 import com.batchfee.edu.data.models.UserEntity
 import com.batchfee.edu.data.repository.InstituteOwnerLoginActivityTracker
+import com.batchfee.edu.data.repository.StaffAuthRepository
 import com.batchfee.edu.domain.BiometricAuthManager
 import com.batchfee.edu.domain.DemoAuthRepository
 import com.batchfee.edu.domain.PasswordHasher
@@ -59,7 +61,6 @@ import com.batchfee.edu.domain.SessionManager
 import com.batchfee.edu.domain.InstituteContactNumber
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseAuthException
-import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreException
 import com.batchfee.edu.data.firestore.StaffSyncHelper
@@ -71,6 +72,7 @@ import kotlinx.coroutines.withContext
 import androidx.lifecycle.viewModelScope
 
 class AuthViewModel(private val db: AppDatabase) : ViewModel() {
+    private val staffAuthRepository = StaffAuthRepository()
     private fun trackInstituteOwnerLogin(instituteId: String?, role: String, method: String) {
         val normalizedRole = role.lowercase()
         val isOwner = normalizedRole == "instituteowner" || normalizedRole == "owner" ||
@@ -252,7 +254,7 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                 SessionManager.login(uid, uid, user.role)
                 onSuccess()
             } catch (e: FirebaseAuthException) {
-                FirebaseCrashlytics.getInstance().recordException(e)
+                FirebaseFailureReporter.report(e, "create institute authentication")
                 val message = when (e.errorCode) {
                     "ERROR_EMAIL_ALREADY_IN_USE" -> "An account with this email already exists"
                     "ERROR_INVALID_EMAIL" -> "Please enter a valid email address"
@@ -261,14 +263,14 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                 }
                 onError(message)
             } catch (e: FirebaseFirestoreException) {
-                FirebaseCrashlytics.getInstance().recordException(e)
+                FirebaseFailureReporter.report(e, "create institute profile")
                 // Firestore write failed but Auth succeeded — cleanup auth user
                 try {
                     FirebaseAuth.getInstance().currentUser?.delete()
                 } catch (_: Exception) { }
                 onError(e.localizedMessage ?: "Cloud sync failed. Check your connection and try again.")
             } catch (e: Exception) {
-                FirebaseCrashlytics.getInstance().recordException(e)
+                FirebaseFailureReporter.report(e, "create institute")
                 onError(e.localizedMessage ?: "Registration failed")
             }
         }
@@ -294,39 +296,25 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                 android.util.Log.d("AUTH_LOGIN", "LOGIN: credential=$input, hasAt=$hasAt, password length=${cleanPassword.length}")
 
                 // ── SMART ROUTING: Email vs Staff ID ──
-                val firebaseEmail: String
-                if (hasAt) {
-                    // Direct email login
-                    firebaseEmail = input
-                } else {
-                    // Staff ID — resolve to email via Room DB
-                    val staff = db.staffDao().getStaffByCodeOnce(input.uppercase())
-                    if (staff == null) {
-                        android.util.Log.w("AUTH_LOGIN", "Staff ID not found: $input")
-                        onError("Staff ID not found or not synced to this device.")
-                        return@launch
-                    }
-                    val staffEmail = staff.email
-                    if (staffEmail.isNullOrBlank()) {
-                        android.util.Log.w("AUTH_LOGIN", "Staff has no email: ${staff.id}")
-                        onError("No email linked to this Staff ID. Contact your admin.")
-                        return@launch
-                    }
-                    firebaseEmail = staffEmail
-                }
-
-                // ── Firebase Auth ──
-                android.util.Log.d("AUTH_LOGIN", "Calling signInWithEmailAndPassword: email=$firebaseEmail")
                 val authStartedAt = SystemClock.elapsedRealtime()
-                val authResult = withContext(Dispatchers.IO) {
-                    // Sign out any stale session first to avoid credential expiry errors
-                    try { FirebaseAuth.getInstance().signOut() } catch (_: Exception) { }
-                    FirebaseAuth.getInstance()
-                        .signInWithEmailAndPassword(firebaseEmail, cleanPassword)
-                        .await()
+                try { FirebaseAuth.getInstance().signOut() } catch (_: Exception) { }
+                val uid = if (hasAt) {
+                    withContext(Dispatchers.IO) {
+                        FirebaseAuth.getInstance()
+                            .signInWithEmailAndPassword(input, cleanPassword)
+                            .await().user?.uid
+                    } ?: throw IllegalStateException("Firebase Auth returned null UID")
+                } else {
+                    try {
+                        staffAuthRepository.signIn(input.uppercase(), cleanPassword)
+                    } catch (error: Exception) {
+                        onError(staffAuthRepository.userMessage(error))
+                        return@launch
+                    }
                 }
-                val uid = authResult.user?.uid
-                    ?: throw IllegalStateException("Firebase Auth returned null UID")
+                val firebaseEmail = FirebaseAuth.getInstance().currentUser?.email
+                    ?: input.takeIf { hasAt }
+                    ?: throw IllegalStateException("Staff authentication email is unavailable.")
                 android.util.Log.i("BatchFeeDataLoad", "login_auth_ms=${SystemClock.elapsedRealtime() - authStartedAt}")
 
                 // ── Fetch or rebuild local user record ──
@@ -337,7 +325,7 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                 var localUser = db.userDao().getUserById(uid)
                 // Most production accounts have a managed-user record. The legacy institute
                 // lookup is only needed if that record is absent (or for staff resolution).
-                val firestoreUserDoc = if (managedUser == null || managedUser.role == "Staff") {
+                val firestoreUserDoc = if (managedUser == null) {
                     withContext(Dispatchers.IO) {
                         FirebaseFirestore.getInstance()
                             .collection("institutes").document(uid)
@@ -349,7 +337,62 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                 val instituteId: String?
                 var staffPermissions: String? = null
 
-                if (managedUser != null && managedUser.role != "Staff") {
+                if (managedUser?.role == "Staff") {
+                    val managedInstituteId = managedUser.instituteId?.takeIf { it.isNotBlank() }
+                        ?: run {
+                            onError("This staff account is not linked to an institute. Contact your admin.")
+                            return@launch
+                        }
+                    val foundStaff = withContext(Dispatchers.IO) {
+                        StaffSyncHelper.fetchStaffFromFirestore(managedInstituteId, uid)
+                    } ?: run {
+                        onError("Staff profile was not found. Contact your admin.")
+                        return@launch
+                    }
+                    if (foundStaff.status != "active" || foundStaff.archivedAtMs != null) {
+                        onError("This staff account is inactive. Contact your admin.")
+                        return@launch
+                    }
+                    role = "Staff"
+                    instituteId = managedInstituteId
+                    staffPermissions = foundStaff.permissions
+                    val syncedUser = UserEntity(
+                        id = uid,
+                        instituteId = managedInstituteId,
+                        name = foundStaff.fullName,
+                        email = firebaseEmail,
+                        passwordHash = localUser?.passwordHash ?: PasswordHasher.hash(passwordHash),
+                        role = "Staff",
+                        createdAtMs = localUser?.createdAtMs ?: managedUser.createdAtMs
+                    )
+                    if (localUser == null) db.userDao().insertUser(syncedUser)
+                    else db.userDao().updateUser(syncedUser)
+                    localUser = syncedUser
+                    db.staffDao().insertStaff(
+                        com.batchfee.edu.data.models.StaffEntity(
+                            id = uid,
+                            instituteId = managedInstituteId,
+                            staffCode = foundStaff.staffCode,
+                            fullName = foundStaff.fullName,
+                            photoUri = foundStaff.photoUri.takeIf { it.isNotBlank() },
+                            roleTitle = foundStaff.roleTitle,
+                            phone = foundStaff.phone.takeIf { it.isNotBlank() },
+                            email = foundStaff.email.takeIf { it.isNotBlank() },
+                            address = foundStaff.address.takeIf { it.isNotBlank() },
+                            joiningDateMs = foundStaff.joiningDateMs,
+                            monthlySalary = foundStaff.monthlySalary,
+                            assignedBatchIds = foundStaff.assignedBatchIds.takeIf { it.isNotBlank() },
+                            status = foundStaff.status,
+                            notes = foundStaff.notes.takeIf { it.isNotBlank() },
+                            permissions = foundStaff.permissions.takeIf { it.isNotBlank() },
+                            createdAtMs = foundStaff.createdAtMs.takeIf { it > 0L }
+                                ?: managedUser.createdAtMs,
+                            updatedAtMs = foundStaff.updatedAtMs.takeIf { it > 0L }
+                                ?: System.currentTimeMillis(),
+                            archivedAtMs = foundStaff.archivedAtMs
+                        )
+                    )
+                } else if (managedUser != null) {
                     role = when (managedUser.role) {
                         "owner" -> "InstituteOwner"
                         "admin", "InstituteAdmin", "instituteAdmin", "institute_admin" -> "InstituteAdmin"
@@ -617,7 +660,7 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
 
             } catch (e: FirebaseAuthException) {
                 android.util.Log.e("AUTH_LOGIN", "FirebaseAuthException: code=${e.errorCode}, msg=${e.message}")
-                FirebaseCrashlytics.getInstance().recordException(e)
+                FirebaseFailureReporter.report(e, "login authentication")
                 val message = when (e.errorCode) {
                     "ERROR_INVALID_EMAIL" -> "Invalid email address."
                     "ERROR_WRONG_PASSWORD" -> "Wrong password."
@@ -628,7 +671,7 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                 onError(message)
             } catch (e: Exception) {
                 android.util.Log.e("AUTH_LOGIN", "Unexpected error: ${e.message}", e)
-                FirebaseCrashlytics.getInstance().recordException(e)
+                FirebaseFailureReporter.report(e, "login")
                 onError("Login failed. Please try again.")
             }
         }
@@ -719,7 +762,7 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                 FirebaseAuth.getInstance().sendPasswordResetEmail(normalizedEmail).await()
                 onSuccess("Password reset email sent to $normalizedEmail")
             } catch (e: FirebaseAuthException) {
-                FirebaseCrashlytics.getInstance().recordException(e)
+                FirebaseFailureReporter.report(e, "password reset authentication")
                 val message = when (e.errorCode) {
                     "ERROR_INVALID_EMAIL" -> "Enter a valid email address."
                     "ERROR_USER_NOT_FOUND" -> "No Firebase account was found for this email."
@@ -727,7 +770,7 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                 }
                 onError(message)
             } catch (e: Exception) {
-                FirebaseCrashlytics.getInstance().recordException(e)
+                FirebaseFailureReporter.report(e, "password reset")
                 onError(e.localizedMessage ?: "Could not send reset email.")
             }
         }

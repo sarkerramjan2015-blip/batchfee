@@ -1,8 +1,11 @@
 package com.batchfee.edu.data.firestore
 
 import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.firebase.FirebaseFailureReporter
 import com.batchfee.edu.data.models.StudentEntity
-import com.google.firebase.crashlytics.FirebaseCrashlytics
+import androidx.room.withTransaction
+import com.google.firebase.firestore.DocumentChange
+import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.functions.FirebaseFunctions
 import kotlinx.coroutines.Dispatchers
@@ -22,7 +25,7 @@ object StudentSyncHelper {
             try {
                 upsertStudentOrThrow(student)
             } catch (e: Exception) {
-                FirebaseCrashlytics.getInstance().recordException(e)
+                FirebaseFailureReporter.report(e, "sync student to Firestore", permissionDeniedIsExpected = true)
                 // Best-effort sync — don't crash local operations
             }
         }
@@ -50,12 +53,37 @@ object StudentSyncHelper {
     suspend fun syncAllFromFirestore(db: AppDatabase, instituteId: String) {
         withContext(Dispatchers.IO) {
             try {
-                val snapshot = studentsCollection(instituteId).get().await()
-                snapshot.documents
-                    .mapNotNull { document -> document.toStudentEntity(instituteId) }
-                    .forEach { student -> db.studentDao().insertStudent(student) }
+                studentsCollection(instituteId).forEachDocumentPage { documents ->
+                    db.withTransaction {
+                        documents
+                            .mapNotNull { document -> document.toStudentEntity(instituteId) }
+                            .forEach { student -> db.studentDao().insertStudent(student) }
+                    }
+                }
             } catch (e: Exception) {
-                FirebaseCrashlytics.getInstance().recordException(e)
+                FirebaseFailureReporter.report(e, "sync students from Firestore", permissionDeniedIsExpected = true)
+            }
+        }
+    }
+
+    /** Applies only the documents delivered by an active realtime listener. */
+    suspend fun applyRealtimeChanges(
+        db: AppDatabase,
+        instituteId: String,
+        changes: List<DocumentChange>
+    ) = withContext(Dispatchers.IO) {
+        db.withTransaction {
+            changes.forEach { change ->
+                when (change.type) {
+                    DocumentChange.Type.ADDED,
+                    DocumentChange.Type.MODIFIED ->
+                        change.document.toStudentEntity(instituteId)?.let {
+                            db.studentDao().insertStudent(it)
+                        }
+
+                    DocumentChange.Type.REMOVED ->
+                        db.studentDao().deleteStudent(instituteId, change.document.id)
+                }
             }
         }
     }
@@ -81,7 +109,7 @@ object StudentSyncHelper {
         "notes" to notes
     )
 
-    private fun com.google.firebase.firestore.DocumentSnapshot.toStudentEntity(
+    private fun DocumentSnapshot.toStudentEntity(
         instituteId: String
     ): StudentEntity? {
         val fullName = getString("fullName") ?: return null

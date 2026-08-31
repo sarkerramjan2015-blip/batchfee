@@ -208,7 +208,7 @@ fun AddEditStaffScreen(
             DarkTextField(
                 value = password,
                 onValueChange = { password = it },
-                placeholder = if (isEdit) "Leave blank to keep old password" else "Minimum 4 characters",
+                placeholder = if (isEdit) "Leave blank to keep old password" else "Minimum 6 characters",
                 leadingIcon = { Icon(Icons.Filled.Lock, null, tint = TextMuted) },
                 visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                 keyboardType = KeyboardType.Password,
@@ -331,7 +331,7 @@ fun AddEditStaffScreen(
                 roleTitle.isNotBlank() &&
                 salary != null &&
                 salary >= 0 &&
-                (isEdit || password.length >= 4)
+                (isEdit || password.length >= 6)
 
             Box(
                 modifier = Modifier

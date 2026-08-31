@@ -55,6 +55,9 @@ interface BatchStudentDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun enrollStudent(enrollment: BatchStudentEntity)
 
+    @Query("DELETE FROM batch_students WHERE instituteId = :instituteId AND id = :enrollmentId")
+    suspend fun deleteEnrollment(instituteId: String, enrollmentId: String)
+
     @Query("UPDATE batch_students SET status = 'removed', leftAtMs = :leftAtMs WHERE batchId = :batchId AND studentId = :studentId AND instituteId = :instituteId")
     suspend fun removeStudentFromBatch(batchId: String, studentId: String, instituteId: String, leftAtMs: Long)
 

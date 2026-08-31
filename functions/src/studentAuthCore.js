@@ -19,6 +19,15 @@ function studentLoginDocumentId(studentCode) {
     .digest("hex");
 }
 
+function staffLoginDocumentId(staffCode) {
+  const normalizedStaff = normalizeIdentifier(staffCode);
+  return crypto
+    .createHash("sha256")
+    .update("staff\u0000")
+    .update(normalizedStaff)
+    .digest("hex");
+}
+
 // Kept only so a successful login can migrate accounts provisioned by older
 // app versions. New accounts never use an institute-scoped login key.
 function legacyStudentLoginDocumentId(instituteCode, studentCode) {
@@ -77,6 +86,7 @@ module.exports = {
   hashPassword,
   legacyStudentLoginDocumentId,
   normalizeIdentifier,
+  staffLoginDocumentId,
   studentLoginDocumentId,
   validatePassword,
   verifyPassword,

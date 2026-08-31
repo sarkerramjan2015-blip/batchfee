@@ -3,6 +3,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 const { createPermanentStudentPurgeHandler } = require("../src/permanentStudentPurge");
+const { studentIdClaimDocumentId } = require("../src/studentIdCore");
 
 class Snapshot {
   constructor(ref, data) {
@@ -95,7 +96,7 @@ function request() {
   };
 }
 
-test("permanent purge is denied after subscription expiry", async () => {
+test("permanent purge remains available after subscription expiry", async () => {
   const db = new FakeDb({
     "institutes/institute-a": { ...liveInstitute(Date.now()), currentPeriodEndMs: Date.now() - 1 },
     "institutes/institute-a/students/student-a": archivedStudent(),
@@ -106,12 +107,54 @@ test("permanent purge is denied after subscription expiry", async () => {
     bucket: { name: "bucket", file: () => ({ delete: async () => {} }) },
   });
 
-  await assert.rejects(handler(request()), (error) => error.code === "failed-precondition");
-  assert.equal(db.documents.has("institutes/institute-a/students/student-a"), true);
+  const result = await handler(request());
+  assert.deepEqual(result, { studentId: "student-a", permanentlyDeleted: true });
+  assert.equal(db.documents.has("institutes/institute-a/students/student-a"), false);
+});
+
+test("an authorised retry succeeds after the student was already purged", async () => {
+  const db = new FakeDb({
+    "institutes/institute-a": liveInstitute(Date.now()),
+    "institutes/institute-a/deletion_states/student_student-a": { state: "pending" },
+  });
+  const handler = createPermanentStudentPurgeHandler({
+    db,
+    adminAuth: { deleteUser: async () => {} },
+    bucket: { name: "bucket", file: () => ({ delete: async () => {} }) },
+  });
+
+  const result = await handler(request());
+  assert.deepEqual(result, {
+    studentId: "student-a",
+    permanentlyDeleted: true,
+    replayed: true,
+  });
+  assert.equal(
+    db.documents.has("institutes/institute-a/deletion_states/student_student-a"),
+    false,
+  );
+});
+
+test("an unauthorised caller cannot turn a missing student into a successful purge", async () => {
+  const db = new FakeDb({
+    "institutes/institute-a": liveInstitute(Date.now()),
+    "app_users/outsider": { role: "InstituteOwner", instituteId: "institute-b", status: "active" },
+  });
+  const handler = createPermanentStudentPurgeHandler({
+    db,
+    adminAuth: { deleteUser: async () => {} },
+    bucket: { name: "bucket", file: () => ({ delete: async () => {} }) },
+  });
+
+  await assert.rejects(handler({
+    auth: { uid: "outsider" },
+    data: { instituteId: "institute-a", studentId: "student-a" },
+  }), (error) => error.code === "permission-denied");
 });
 
 test("permanent purge clears student authentication artifacts", async () => {
   const now = Date.now();
+  const claimPath = `student_id_claims/${studentIdClaimDocumentId("STU-100")}`;
   const db = new FakeDb({
     "institutes/institute-a": liveInstitute(now),
     "institutes/institute-a/students/student-a": archivedStudent(),
@@ -121,6 +164,7 @@ test("permanent purge clears student authentication artifacts", async () => {
     },
     "student_auth_attempts/login-key": { failedAttempts: 2 },
     "student_login_mappings/STU-100": { firebaseUid: "student-auth-uid" },
+    [claimPath]: { instituteId: "institute-a", studentId: "student-a" },
   });
   const deletedAuthUsers = [];
   const handler = createPermanentStudentPurgeHandler({
@@ -136,6 +180,7 @@ test("permanent purge clears student authentication artifacts", async () => {
   assert.equal(db.documents.has("student_auth_logins/login-key"), false);
   assert.equal(db.documents.has("student_auth_attempts/login-key"), false);
   assert.equal(db.documents.has("student_login_mappings/STU-100"), false);
+  assert.equal(db.documents.has(claimPath), false);
   assert.deepEqual(deletedAuthUsers, ["student-auth-uid"]);
 });
 

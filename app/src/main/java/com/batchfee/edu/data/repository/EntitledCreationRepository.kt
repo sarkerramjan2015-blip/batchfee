@@ -5,15 +5,21 @@ import com.batchfee.edu.data.models.StaffEntity
 import com.batchfee.edu.data.models.StudentEntity
 import com.google.firebase.functions.FirebaseFunctions
 import kotlinx.coroutines.tasks.await
+import java.util.UUID
 
 /** Creates quota-controlled records through trusted App Check-protected Functions. */
 class EntitledCreationRepository {
     private val functions = FirebaseFunctions.getInstance(StudentAccountRepository.FUNCTIONS_REGION)
 
+    data class StudentCreationResult(
+        val studentCode: String,
+        val photoUri: String?
+    )
+
     suspend fun createStudent(
         student: StudentEntity,
         registrationRequestId: String? = null
-    ): String? {
+    ): StudentCreationResult {
         val payload = mutableMapOf<String, Any?>(
             "instituteId" to student.instituteId,
             "studentId" to student.id,
@@ -22,23 +28,78 @@ class EntitledCreationRepository {
         registrationRequestId?.trim()?.takeIf { it.isNotEmpty() }?.let {
             payload["registrationRequestId"] = it
         }
-        val response = functions.getHttpsCallable("createEntitledStudent").call(
-            payload
-        ).await()
-        val data = response.data as? Map<*, *>
-        return (data?.get("photoUri") as? String)?.takeIf { it.isNotBlank() }
+        // Keep the same student/request IDs when a stale ID token forces one
+        // retry. The backend treats registrationRequestId as an idempotency
+        // key, so a lost success response cannot create a second student.
+        val data = callTrusted("createEntitledStudent", payload) as? Map<*, *>
+        val savedStudentCode = (data?.get("studentCode") as? String)
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?: student.studentCode
+        return StudentCreationResult(
+            studentCode = savedStudentCode,
+            photoUri = (data?.get("photoUri") as? String)?.takeIf { it.isNotBlank() }
+        )
     }
 
     suspend fun createBatch(batch: BatchEntity) {
-        functions.getHttpsCallable("createEntitledBatch").call(
-            mapOf("instituteId" to batch.instituteId, "batchId" to batch.id, "batch" to batchPayload(batch))
-        ).await()
+        val operationId = UUID.randomUUID().toString()
+        callTrusted(
+            "createEntitledBatch",
+            mapOf(
+                "operationId" to operationId,
+                "instituteId" to batch.instituteId,
+                "batchId" to batch.id,
+                "batch" to batchPayload(batch)
+            )
+        )
     }
 
     suspend fun createStaff(staff: StaffEntity) {
-        functions.getHttpsCallable("createEntitledStaff").call(
-            mapOf("instituteId" to staff.instituteId, "staffId" to staff.id, "staff" to staffPayload(staff))
-        ).await()
+        val operationId = UUID.randomUUID().toString()
+        callTrusted(
+            "createEntitledStaff",
+            mapOf(
+                "operationId" to operationId,
+                "instituteId" to staff.instituteId,
+                "staffId" to staff.id,
+                "staff" to staffPayload(staff)
+            )
+        )
+    }
+
+    suspend fun provisionStaff(staff: StaffEntity, password: String): String {
+        val operationId = UUID.randomUUID().toString()
+        val response = callTrusted(
+            "provisionStaffAccount",
+            mapOf(
+                "operationId" to operationId,
+                "instituteId" to staff.instituteId,
+                "staff" to staffPayload(staff),
+                "password" to password
+            )
+        )
+        val data = response as? Map<*, *>
+        return (data?.get("staffId") as? String)?.takeIf { it.isNotBlank() }
+            ?: error("Trusted staff service returned an invalid account ID.")
+    }
+
+    suspend fun updateStaff(staff: StaffEntity, password: String? = null) {
+        val operationId = UUID.randomUUID().toString()
+        callTrusted(
+            "updateStaffAccount",
+            mapOf(
+                "operationId" to operationId,
+                "instituteId" to staff.instituteId,
+                "staffId" to staff.id,
+                "staff" to staffPayload(staff),
+                "password" to password?.trim()?.takeIf { it.isNotEmpty() }
+            )
+        )
+    }
+
+    private suspend fun callTrusted(functionName: String, payload: Map<String, Any?>): Any? {
+        return callTrustedFunction(functions, functionName, payload)
     }
 
     private fun studentPayload(s: StudentEntity) = mapOf(

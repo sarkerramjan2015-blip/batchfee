@@ -253,9 +253,20 @@
         field?.focus({ preventScroll: true });
         return true;
       }
+      const registrationSlugPattern = /^[\p{L}\p{M}\p{N}]+(?:-[\p{L}\p{M}\p{N}]+)*$/u;
+      function validRegistrationSlug(value) {
+        return typeof value === "string" && value.length > 0 && value.length <= 80 &&
+          registrationSlugPattern.test(value);
+      }
       function slugFromPath() {
-        const match = location.pathname.match(/^\/register\/([a-z0-9]+(?:-[a-z0-9]+)*)\/?$/);
-        return match ? match[1] : null;
+        const match = location.pathname.match(/^\/register\/([^/]+)\/?$/);
+        if (!match) return null;
+        try {
+          const slug = decodeURIComponent(match[1]);
+          return validRegistrationSlug(slug) ? slug : null;
+        } catch (_) {
+          return null;
+        }
       }
       function registrationEndpoint() {
         // The Hosting rewrite is used in deployed previews and production. The
@@ -313,7 +324,7 @@
             if (instituteId) {
               const legacy = (await db.collection("public_registration_profiles").doc(`id_${instituteId}`).get()).data();
               const legacySlug = legacy && typeof legacy.slug === "string" ? legacy.slug : "";
-              if (/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(legacySlug)) {
+              if (validRegistrationSlug(legacySlug)) {
                 location.replace(`/register/${encodeURIComponent(legacySlug)}`);
                 return;
               }

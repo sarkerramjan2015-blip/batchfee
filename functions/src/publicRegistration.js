@@ -7,9 +7,12 @@ const {
   uploadPendingRegistrationPhoto,
   cleanupPendingRegistrationPhoto,
 } = require("./registrationPhoto");
+const { hasCurrentSubscription } = require("./subscriptionPolicy");
 
 const RATE_WINDOW_MS = 60 * 60 * 1000;
-const MAX_SUBMISSIONS_PER_IP = 4;
+// A whole coaching centre can share one Wi-Fi/public mobile IP. Keep a
+// meaningful abuse ceiling without blocking a normal class after four forms.
+const MAX_SUBMISSIONS_PER_IP = 30;
 const MAX_SUBMISSIONS_PER_PROFILE = 120;
 const DUPLICATE_WINDOW_MS = 24 * 60 * 60 * 1000;
 
@@ -90,22 +93,45 @@ function createPublicRegistrationHandler({ db, bucket, rateLimitSecret }) {
     let photoInstituteId = null;
     let accepted = false;
 
+    // Resolve and validate the target before accepting media or rate-limit
+    // writes. Old public profile documents can survive a legacy institute
+    // deletion; those links must not keep creating pending records that no
+    // owner can ever approve.
+    let profileInstituteId = null;
+    try {
+      const profileSnap = await profileRef.get();
+      const profile = profileSnap.exists ? profileSnap.data() : null;
+      profileInstituteId = profile && profile.slug === registration.slug &&
+        typeof profile.instituteId === "string" ? profile.instituteId : null;
+      if (!profileInstituteId || profileInstituteId.length > 128) {
+        sendJson(response, 404, { error: "registration_link_not_found" });
+        return;
+      }
+      const instituteSnap = await db.collection("institutes").doc(profileInstituteId).get();
+      if (!instituteSnap.exists) {
+        sendJson(response, 404, { error: "registration_link_not_found" });
+        return;
+      }
+      if (!hasCurrentSubscription(instituteSnap.data(), now)) {
+        sendJson(response, 409, { error: "registration_unavailable" });
+        return;
+      }
+    } catch (error) {
+      console.error("Public registration institute validation failed", {
+        reason: error instanceof Error ? error.message : "Unknown error",
+      });
+      sendJson(response, 503, { error: "temporarily_unavailable" });
+      return;
+    }
+
     // An image is stored privately before the Firestore transaction. This keeps
     // registration records small and lets us return an error without consuming a
     // student's one allowed submission when Storage is unavailable.
     if (studentPhoto) {
       try {
-        const profileSnap = await profileRef.get();
-        const profile = profileSnap.exists ? profileSnap.data() : null;
-        const instituteId = profile && profile.slug === registration.slug &&
-          typeof profile.instituteId === "string" ? profile.instituteId : "";
-        if (!instituteId || instituteId.length > 128) {
-          sendJson(response, 404, { error: "registration_link_not_found" });
-          return;
-        }
-        photoInstituteId = instituteId;
+        photoInstituteId = profileInstituteId;
         temporaryPhoto = await uploadPendingRegistrationPhoto({
-          bucket, instituteId, requestId, photo: studentPhoto,
+          bucket, instituteId: profileInstituteId, requestId, photo: studentPhoto,
         });
       } catch (error) {
         console.error("Public registration photo upload failed", {
@@ -118,8 +144,10 @@ function createPublicRegistrationHandler({ db, bucket, rateLimitSecret }) {
 
     try {
       const result = await db.runTransaction(async (transaction) => {
-        const [profileSnap, ipRateSnap, profileRateSnap, duplicateSnap] = await Promise.all([
+        const instituteRef = db.collection("institutes").doc(profileInstituteId);
+        const [profileSnap, instituteSnap, ipRateSnap, profileRateSnap, duplicateSnap] = await Promise.all([
           transaction.get(profileRef),
+          transaction.get(instituteRef),
           transaction.get(ipRateRef),
           transaction.get(profileRateRef),
           transaction.get(duplicateRef),
@@ -129,7 +157,11 @@ function createPublicRegistrationHandler({ db, bucket, rateLimitSecret }) {
         }
         const profile = profileSnap.data();
         const instituteId = typeof profile.instituteId === "string" ? profile.instituteId : "";
-        if (!instituteId || instituteId.length > 128) return { kind: "not_found" };
+        if (!instituteId || instituteId.length > 128 || instituteId !== profileInstituteId) {
+          return { kind: "not_found" };
+        }
+        if (!instituteSnap.exists) return { kind: "not_found" };
+        if (!hasCurrentSubscription(instituteSnap.data(), now)) return { kind: "unavailable" };
         if (temporaryPhoto && (temporaryPhoto.storageBucket !== bucket.name || photoInstituteId !== instituteId)) {
           return { kind: "not_found" };
         }
@@ -185,6 +217,8 @@ function createPublicRegistrationHandler({ db, bucket, rateLimitSecret }) {
         sendJson(response, 404, { error: "registration_link_not_found" });
       } else if (result.kind === "duplicate") {
         sendJson(response, 409, { error: "already_submitted" });
+      } else if (result.kind === "unavailable") {
+        sendJson(response, 409, { error: "registration_unavailable" });
       } else {
         sendJson(response, 429, { error: "try_again_later" });
       }

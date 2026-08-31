@@ -113,6 +113,14 @@ async function seedBaseData() {
       studentLimit: 50,
       staffLimit: 1,
     });
+    await setDoc(instituteRef(db, "managed-institute-a"), {
+      instituteName: "নাজমুল টিউটোরিয়াল হোম",
+      ownerName: "Managed Owner",
+      ownerUid: "managed-owner-a",
+      email: "managed-owner-a@example.test",
+      role: "owner",
+      isActive: true,
+    });
 
     await setDoc(doc(db, "app_users", ADMIN), {
       role: "SuperAdmin",
@@ -128,6 +136,11 @@ async function seedBaseData() {
       role: "InstituteAdmin",
       status: "inactive",
       instituteId: OWNER_A,
+    });
+    await setDoc(doc(db, "app_users", "managed-owner-a"), {
+      role: "InstituteOwner",
+      status: "active",
+      instituteId: "managed-institute-a",
     });
 
     const staffRecords = {
@@ -369,6 +382,39 @@ describe("P0-01 tenant isolation", { concurrency: false }, () => {
       fullName: "Forged registration",
       phone: "+8801712345678",
       status: "pending",
+    }));
+  });
+
+  test("a managed owner can publish Bengali slug and institute-id alias profiles", async () => {
+    const db = authDb("managed-owner-a");
+    const profile = {
+      instituteId: "managed-institute-a",
+      instituteName: "নাজমুল টিউটোরিয়াল হোম",
+      slug: "নাজমুল-টিউটোরিয়াল-হোম",
+      phone: "+8801785768989",
+      profilePhotoUri: null,
+      updatedAtMs: Date.now(),
+    };
+
+    await assertSucceeds(setDoc(
+      doc(db, "public_registration_profiles", profile.slug),
+      profile,
+    ));
+    await assertSucceeds(setDoc(
+      doc(db, "public_registration_profiles", `id_${profile.instituteId}`),
+      profile,
+    ));
+  });
+
+  test("a public profile document id must match its slug or institute alias", async () => {
+    const db = authDb("managed-owner-a");
+    await assertFails(setDoc(doc(db, "public_registration_profiles", "unrelated-document"), {
+      instituteId: "managed-institute-a",
+      instituteName: "নাজমুল টিউটোরিয়াল হোম",
+      slug: "নাজমুল-টিউটোরিয়াল-হোম",
+      phone: "+8801785768989",
+      profilePhotoUri: null,
+      updatedAtMs: Date.now(),
     }));
   });
 
@@ -815,6 +861,9 @@ describe("P0-04 student credential privacy", { concurrency: false }, () => {
       await assertFails(getDoc(doc(db, "student_auth_logins", "private-login-key")));
       await assertFails(getDoc(doc(db, "student_auth_accounts", "student-uid-a1")));
       await assertFails(getDoc(doc(db, "student_auth_attempts", "private-login-key")));
+      await assertFails(getDoc(doc(db, "staff_auth_logins", "private-login-key")));
+      await assertFails(getDoc(doc(db, "staff_auth_accounts", "staff-uid-a1")));
+      await assertFails(getDoc(doc(db, "staff_auth_attempts", "private-login-key")));
     }
   });
 });
@@ -980,5 +1029,47 @@ describe("P0-07 media metadata boundary", { concurrency: false }, () => {
       tenantDoc(otherOwnerDb, OWNER_A, "media_assets", "media-1"),
       { instituteId: OWNER_B, reference: "batchfee-media://v1/owner-b/forged" },
     ));
+  });
+});
+
+describe("P0-08 trusted operational summary boundary", { concurrency: false }, () => {
+  test("tenant principals and active staff can read only their trusted summary", async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(tenantDoc(context.firestore(), OWNER_A, "dashboard_summary", "current"), {
+        studentCount: 12,
+        batchCount: 3,
+        staffCount: 2,
+        updatedAtMs: Date.now(),
+      });
+    });
+
+    await assertSucceeds(getDoc(tenantDoc(authDb(OWNER_A), OWNER_A, "dashboard_summary", "current")));
+    await assertSucceeds(getDoc(tenantDoc(authDb("staff-none-a"), OWNER_A, "dashboard_summary", "current")));
+    await assertSucceeds(getDoc(tenantDoc(authDb(ADMIN), OWNER_A, "dashboard_summary", "current")));
+    await assertFails(getDoc(tenantDoc(authDb(OWNER_B), OWNER_A, "dashboard_summary", "current")));
+  });
+
+  test("no client can forge a dashboard summary or institute counter", async () => {
+    for (const db of [authDb(OWNER_A), authDb("staff-none-a"), authDb(ADMIN)]) {
+      await assertFails(setDoc(tenantDoc(db, OWNER_A, "dashboard_summary", "current"), {
+        studentCount: 999999,
+        batchCount: 999999,
+        staffCount: 999999,
+      }));
+      await assertFails(updateDoc(instituteRef(db, OWNER_A), { studentCount: 999999 }));
+    }
+  });
+
+  test("trusted creation idempotency records are backend-only", async () => {
+    for (const db of [authDb(OWNER_A), authDb("staff-manage-a"), authDb(ADMIN)]) {
+      const operation = tenantDoc(db, OWNER_A, "creation_operations", "create-1");
+      await assertFails(getDoc(operation));
+      await assertFails(setDoc(operation, {
+        actorUid: OWNER_A,
+        requestHash: "forged",
+        status: "completed",
+      }));
+      await assertFails(deleteDoc(operation));
+    }
   });
 });

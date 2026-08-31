@@ -31,6 +31,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.firebase.FirebaseFailureReporter
 import com.batchfee.edu.data.models.InstituteEntity
 import com.batchfee.edu.data.models.SubscriptionPlanEntity
 import com.batchfee.edu.data.models.SubscriptionRequest
@@ -42,7 +43,7 @@ import com.batchfee.edu.ui.superadmin.generateSubscriptionReceiptPdf
 import com.batchfee.edu.ui.superadmin.shareSubscriptionReceiptToWhatsApp
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
-import com.google.firebase.crashlytics.FirebaseCrashlytics
+import com.google.firebase.firestore.ListenerRegistration
 import androidx.core.content.FileProvider
 import java.io.File
 import kotlinx.coroutines.Dispatchers
@@ -79,6 +80,7 @@ class BillingViewModel(private val db: AppDatabase) : ViewModel() {
     val receipts = _receipts.asStateFlow()
 
     private val firestore = FirebaseFirestore.getInstance()
+    private val listenerRegistrations = mutableListOf<ListenerRegistration>()
 
     init {
         viewModelScope.launch {
@@ -92,9 +94,17 @@ class BillingViewModel(private val db: AppDatabase) : ViewModel() {
         }
         viewModelScope.launch {
             val instId = SessionManager.currentInstituteId.value ?: return@launch
-            firestore.collection("institutes").document(instId)
+            listenerRegistrations += firestore.collection("institutes").document(instId)
                 .addSnapshotListener { snapshot, error ->
-                    if (error != null || snapshot == null || !snapshot.exists()) return@addSnapshotListener
+                    if (error != null) {
+                        FirebaseFailureReporter.report(
+                            error,
+                            operation = "billing institute listener",
+                            permissionDeniedIsExpected = true
+                        )
+                        return@addSnapshotListener
+                    }
+                    if (snapshot == null || !snapshot.exists()) return@addSnapshotListener
                     val data = snapshot.data ?: return@addSnapshotListener
                     val now = System.currentTimeMillis()
                     val currentPlanId = data["currentPlanId"] as? String ?: "plan_free_trial"
@@ -132,10 +142,17 @@ class BillingViewModel(private val db: AppDatabase) : ViewModel() {
         }
         viewModelScope.launch {
             val instId = SessionManager.currentInstituteId.value ?: return@launch
-            firestore.collection("subscriptionRequests")
+            listenerRegistrations += firestore.collection("subscriptionRequests")
                 .whereEqualTo("instituteId", instId)
                 .addSnapshotListener { snapshot, error ->
-                    if (error != null) return@addSnapshotListener
+                    if (error != null) {
+                        FirebaseFailureReporter.report(
+                            error,
+                            operation = "billing request listener",
+                            permissionDeniedIsExpected = true
+                        )
+                        return@addSnapshotListener
+                    }
                     val doc = snapshot?.documents
                         ?.maxByOrNull { (it.data?.get("requestSentAt") as? Number)?.toLong() ?: 0L }
                     if (doc != null && doc.exists()) {
@@ -150,12 +167,16 @@ class BillingViewModel(private val db: AppDatabase) : ViewModel() {
             val instId = SessionManager.currentInstituteId.value ?: return@launch
             // This canonical record is created by the trusted approval service.
             // Student fee receipts intentionally share no billing UI or data path.
-            firestore.collection("institutes").document(instId)
+            listenerRegistrations += firestore.collection("institutes").document(instId)
                 .collection("subscription_receipts")
                 .orderBy("approvedAt", Query.Direction.DESCENDING)
                 .addSnapshotListener { snapshot, error ->
                     if (error != null) {
-                        FirebaseCrashlytics.getInstance().recordException(error)
+                        FirebaseFailureReporter.report(
+                            error,
+                            operation = "billing receipt listener",
+                            permissionDeniedIsExpected = true
+                        )
                         return@addSnapshotListener
                     }
                     _receipts.value = snapshot?.documents?.mapNotNull { doc ->
@@ -180,6 +201,12 @@ class BillingViewModel(private val db: AppDatabase) : ViewModel() {
                     }?.sortedByDescending { it.startDateMs } ?: emptyList()
                 }
         }
+    }
+
+    override fun onCleared() {
+        listenerRegistrations.forEach { it.remove() }
+        listenerRegistrations.clear()
+        super.onCleared()
     }
 }
 

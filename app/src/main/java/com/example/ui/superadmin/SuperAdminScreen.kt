@@ -313,11 +313,13 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
     private var totalInstituteCount: Int? = null
     private var hasServerDashboard = false
     private var instituteFirstPageListener: ListenerRegistration? = null
-    private val instituteDocumentListeners = mutableMapOf<String, ListenerRegistration>()
+    private val lifecycleListeners = mutableListOf<ListenerRegistration>()
     private var resetInstituteListOnNextSnapshot = false
 
     private companion object {
         const val INSTITUTE_PAGE_SIZE = 40L
+        const val ADMIN_LIST_WINDOW = 100L
+        const val INSTITUTE_DETAIL_WINDOW = 100L
     }
 
     val projectedRevenue: Double
@@ -332,7 +334,8 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
         loadManagedUsersRealtime()
         loadTrashedInstitutes()
         viewModelScope.launch { safeDeletionRepository.replayAllPending() }
-        loadApprovedReceiptsRealtime()
+        // Lifetime receipt/revenue totals come from the trusted dashboard.
+        // Do not open an unbounded collection-group listener at login.
         loadAllAnnouncements()
         refreshPlatformDashboard()
         loadPlatformAudit()
@@ -406,7 +409,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
     }
 
     private fun loadApprovedReceiptsRealtime() {
-        firestore.collectionGroup("subscription_receipts")
+        lifecycleListeners += firestore.collectionGroup("subscription_receipts")
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
                     FirebaseCrashlytics.getInstance().recordException(error)
@@ -465,8 +468,9 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
     }
 
     private fun loadPendingRequestsRealtime() {
-        firestore.collection("subscriptionRequests")
+        lifecycleListeners += firestore.collection("subscriptionRequests")
             .whereEqualTo("status", "pending")
+            .limit(ADMIN_LIST_WINDOW)
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
                     FirebaseCrashlytics.getInstance().recordException(error)
@@ -595,8 +599,12 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                     _isLoading.value = false
                     return@addSnapshotListener
                 }
-                nextInstitutePageCursor = page.documents.lastOrNull()
-                _hasMoreInstitutes.value = page.documents.size == INSTITUTE_PAGE_SIZE.toInt()
+                // A realtime refresh of page one must not rewind a cursor that
+                // already advanced through later pages.
+                if (resetInstituteListOnNextSnapshot || nextInstitutePageCursor == null) {
+                    nextInstitutePageCursor = page.documents.lastOrNull()
+                    _hasMoreInstitutes.value = page.documents.size == INSTITUTE_PAGE_SIZE.toInt()
+                }
                 val now = System.currentTimeMillis()
                 val pageIds = page.documents.map { it.id }.toSet()
                 val pageCards = page.documents.mapNotNull { instituteCardFromDocument(it, now) }
@@ -614,44 +622,10 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                     pageIds.forEach(::remove)
                     putAll(pageActive)
                 }
-                observeLoadedInstitutes(mergedCards)
                 recalculateStats(mergedCards)
                 rebuildReceiptHistory()
                 _isLoading.value = false
             }
-    }
-
-    private fun observeLoadedInstitutes(cards: List<InstituteCardData>) {
-        val desiredIds = cards.map { it.entity.id }.toSet()
-        instituteDocumentListeners.keys.filterNot { it in desiredIds }.toList().forEach { id ->
-            instituteDocumentListeners.remove(id)?.remove()
-        }
-        cards.forEach { card ->
-            val instituteId = card.entity.id
-            if (instituteDocumentListeners.containsKey(instituteId)) return@forEach
-            instituteDocumentListeners[instituteId] = firestore.collection("institutes").document(instituteId)
-                .addSnapshotListener { snapshot, error ->
-                    if (error != null || snapshot == null) {
-                        error?.let(FirebaseCrashlytics.getInstance()::recordException)
-                        return@addSnapshotListener
-                    }
-                    val now = System.currentTimeMillis()
-                    val freshCard = snapshot.takeIf { it.exists() }?.let { instituteCardFromDocument(it, now) }
-                    val updatedCards = _institutes.value.filterNot { it.entity.id == instituteId }.toMutableList()
-                    freshCard?.let(updatedCards::add)
-                    updatedCards.sortByDescending { it.entity.createdAtMs }
-                    _institutes.value = updatedCards
-                    val nextActive = _lastActiveMap.value.toMutableMap()
-                    (snapshot.data?.get("lastActiveAt") as? Number)?.toLong()?.let { nextActive[instituteId] = it }
-                        ?: nextActive.remove(instituteId)
-                    _lastActiveMap.value = nextActive
-                    recalculateStats(updatedCards)
-                    rebuildReceiptHistory()
-                    if (!snapshot.exists()) {
-                        instituteDocumentListeners.remove(instituteId)?.remove()
-                    }
-                }
-        }
     }
 
     private fun loadInstituteTotalCount() {
@@ -715,7 +689,6 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
             }
             _institutes.value = mergedCards
             _lastActiveMap.value = if (reset) loadedActive else _lastActiveMap.value + loadedActive
-            observeLoadedInstitutes(mergedCards)
             recalculateStats(mergedCards)
             rebuildReceiptHistory()
         } catch (error: Exception) {
@@ -730,8 +703,8 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
     override fun onCleared() {
         instituteFirstPageListener?.remove()
         instituteFirstPageListener = null
-        instituteDocumentListeners.values.forEach { it.remove() }
-        instituteDocumentListeners.clear()
+        lifecycleListeners.forEach { it.remove() }
+        lifecycleListeners.clear()
         super.onCleared()
     }
 
@@ -779,7 +752,9 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
     }
 
     private fun loadManagedUsersRealtime() {
-        firestore.collection("app_users")
+        lifecycleListeners += firestore.collection("app_users")
+            .whereIn("role", listOf("SuperAdmin", "superAdmin", "super_admin", "PlatformAdmin"))
+            .limit(ADMIN_LIST_WINDOW)
             .addSnapshotListener { snapshot, error ->
                 if (error != null || snapshot == null) return@addSnapshotListener
                 _managedUsers.value = snapshot.documents.mapNotNull { doc ->
@@ -895,8 +870,9 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
     val trashedInstitutes = _trashedInstitutes.asStateFlow()
 
     private fun loadTrashedInstitutes() {
-        firestore.collection("institutes")
+        lifecycleListeners += firestore.collection("institutes")
             .whereEqualTo("deletionState", "retained")
+            .limit(ADMIN_LIST_WINDOW)
             .addSnapshotListener { docs, error ->
                 if (error != null || docs == null) {
                     error?.let(FirebaseCrashlytics.getInstance()::recordException)
@@ -1207,7 +1183,8 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
     }
 
     private fun loadAllAnnouncements() {
-        firestore.collection("Global_Notifications")
+        lifecycleListeners += firestore.collection("Global_Notifications")
+            .limit(ADMIN_LIST_WINDOW)
             .addSnapshotListener { snapshot, error ->
                 if (error != null || snapshot == null) return@addSnapshotListener
                 _announcements.value = snapshot.documents.mapNotNull { doc ->
@@ -1247,6 +1224,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                 val data = withContext(Dispatchers.IO) {
                     firestore.collection("institutes").document(instituteId)
                         .collection("staffs")
+                        .limit(INSTITUTE_DETAIL_WINDOW)
                         .get().await()
                 }
                 val staffList = data.documents.mapNotNull { doc ->
@@ -1277,6 +1255,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                     firestore.collection("institutes").document(instituteId)
                         .collection("subscription_receipts")
                         .orderBy("approvedAt", com.google.firebase.firestore.Query.Direction.DESCENDING)
+                        .limit(INSTITUTE_DETAIL_WINDOW)
                         .get().await()
                 }
                 val plans = _subscriptionPlans.value
@@ -1438,7 +1417,10 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
     }
 
     private fun loadPlatformAudit() {
-        firestore.collection("platform_audit").addSnapshotListener { snapshot, error ->
+        lifecycleListeners += firestore.collection("platform_audit")
+            .orderBy("createdAtMs", Query.Direction.DESCENDING)
+            .limit(ADMIN_LIST_WINDOW)
+            .addSnapshotListener { snapshot, error ->
             if (error != null || snapshot == null) return@addSnapshotListener
             _platformAudit.value = snapshot.documents.mapNotNull { document ->
                 val data = document.data ?: return@mapNotNull null
@@ -1447,14 +1429,18 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                     data["actorUid"] as? String ?: "", data["instituteId"] as? String ?: "",
                     (data["createdAtMs"] as? Number)?.toLong() ?: 0L,
                     details?.entries?.joinToString(" · ") { "${it.key}: ${it.value}" }.orEmpty())
-            }.sortedByDescending { it.createdAtMs }.take(100)
+            }.sortedByDescending { it.createdAtMs }
         }
     }
 
     fun loadInstituteAudit(instituteId: String, onResult: (List<PlatformAuditEntry>) -> Unit) {
         viewModelScope.launch {
             try {
-                val snapshot = firestore.collection("institutes").document(instituteId).collection("subscription_audit").get().await()
+                val snapshot = firestore.collection("institutes").document(instituteId)
+                    .collection("subscription_audit")
+                    .orderBy("createdAtMs", Query.Direction.DESCENDING)
+                    .limit(INSTITUTE_DETAIL_WINDOW)
+                    .get().await()
                 onResult(snapshot.documents.mapNotNull { document ->
                     val data = document.data ?: return@mapNotNull null
                     PlatformAuditEntry(document.id, data["action"] as? String ?: "subscription_operation",
@@ -1510,6 +1496,8 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
     val approvingRequestIds by viewModel.approvingRequestIds.collectAsState()
     val managedUsers by viewModel.managedUsers.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
+    val hasMoreInstitutes by viewModel.hasMoreInstitutes.collectAsState()
+    val isLoadingMoreInstitutes by viewModel.isLoadingMoreInstitutes.collectAsState()
     val operationMsg by viewModel.operationMsg.collectAsState()
     val receiptData by viewModel.receiptData.collectAsState()
     val lastActiveMap by viewModel.lastActiveMap.collectAsState()
@@ -2115,6 +2103,28 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
             } else {
                 items(filteredInstitutes, key = { it.entity.id }) { card ->
                     InstituteCard(card, viewModel, subscriptionPlans)
+                }
+            }
+
+            if (hasMoreInstitutes) {
+                item {
+                    OutlinedButton(
+                        onClick = viewModel::loadMoreInstitutes,
+                        enabled = !isLoadingMoreInstitutes,
+                        modifier = Modifier.fillMaxWidth().height(46.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentCyan)
+                    ) {
+                        if (isLoadingMoreInstitutes) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.dp,
+                                color = AccentCyan
+                            )
+                            Spacer(Modifier.width(8.dp))
+                        }
+                        Text(if (isLoadingMoreInstitutes) "Loading institutes…" else "Load more institutes")
+                    }
                 }
             }
 

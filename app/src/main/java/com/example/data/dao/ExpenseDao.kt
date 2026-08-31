@@ -27,4 +27,7 @@ interface ExpenseDao {
 
     @Query("UPDATE expenses SET archivedAtMs = :archivedAtMs WHERE id = :expenseId AND instituteId = :instituteId")
     suspend fun archiveExpense(instituteId: String, expenseId: String, archivedAtMs: Long)
+
+    @Query("DELETE FROM expenses WHERE id = :expenseId AND instituteId = :instituteId")
+    suspend fun deleteExpense(instituteId: String, expenseId: String)
 }

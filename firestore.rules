@@ -62,7 +62,7 @@ service cloud.firestore {
       return isSignedIn()
         && exists(path)
         && get(path).data.instituteId == instituteId
-        && get(path).data.role in ['InstituteOwner', 'owner']
+        && get(path).data.role in ['InstituteOwner', 'owner', 'instituteOwner', 'institute_owner']
         && (!('status' in get(path).data) || get(path).data.status == 'active');
     }
 
@@ -192,7 +192,6 @@ service cloud.firestore {
         && request.resource.data.slug is string
         && request.resource.data.slug.size() > 0
         && request.resource.data.slug.size() <= 80
-        && request.resource.data.slug.matches('^[a-z0-9]+(-[a-z0-9]+)*$')
         && (!('phone' in request.resource.data)
           || request.resource.data.phone == null
           || (request.resource.data.phone is string && request.resource.data.phone.size() <= 32))
@@ -201,6 +200,15 @@ service cloud.firestore {
           || (request.resource.data.profilePhotoUri is string
             && request.resource.data.profilePhotoUri.size() <= 2048))
         && request.resource.data.updatedAtMs is int;
+    }
+
+    // Android publishes the same safe public profile under its readable slug
+    // and under an institute-id alias used by older shared links. Binding the
+    // document id to one of those two values keeps writes scoped without
+    // rejecting valid Bengali (or other Unicode) institute names.
+    function publicRegistrationProfileIdMatches(profileId) {
+      return profileId == request.resource.data.slug
+        || profileId == 'id_' + request.resource.data.instituteId;
     }
 
     function studentCreateHasNoAuthFields() {
@@ -318,7 +326,11 @@ service cloud.firestore {
         'studentLimit',
         'staffLimit',
         'currentPlanId',
-        'subscriptionExpiredAtMs'
+        'subscriptionExpiredAtMs',
+        'studentCount',
+        'staffCount',
+        'batchCount',
+        'countSummaryUpdatedAtMs'
       ]);
     }
 
@@ -444,6 +456,8 @@ service cloud.firestore {
         && collection != 'media_assets'
         && collection != 'media_upload_operations'
         && collection != 'media_audit'
+        && collection != 'dashboard_summary'
+        && collection != 'creation_operations'
         && collection != 'subscription_receipts'
         && collection != 'subscription_audit'
         && collection != 'subscription_operations'
@@ -513,6 +527,19 @@ service cloud.firestore {
 
     match /institutes/{instituteId}/deletion_audit/{auditId} {
       allow read: if isSuperAdmin() || isActiveInstitutePrincipal(instituteId);
+    }
+
+    // Operational counts are recomputed by trusted Firestore triggers. Clients
+    // can display the summary but cannot forge usage or subscription counters.
+    match /institutes/{instituteId}/dashboard_summary/{summaryId} {
+      allow read: if isSuperAdmin()
+        || isActiveInstitutePrincipal(instituteId)
+        || isActiveStaff(instituteId);
+      allow write: if false;
+    }
+
+    match /institutes/{instituteId}/creation_operations/{operationId} {
+      allow read, write: if false;
     }
 
     // Firebase Storage object paths, ownership, delivery type and upload audit metadata are
@@ -790,13 +817,15 @@ service cloud.firestore {
       allow get: if true;
       allow create: if isSignedIn()
         && validPublicRegistrationProfile()
-        && (request.auth.uid == request.resource.data.instituteId || isSuperAdmin());
+        && publicRegistrationProfileIdMatches(profileId)
+        && (isInstitutePrincipal(request.resource.data.instituteId) || isSuperAdmin());
       allow update: if isSignedIn()
         && validPublicRegistrationProfile()
+        && publicRegistrationProfileIdMatches(profileId)
         && request.resource.data.instituteId == resource.data.instituteId
-        && (request.auth.uid == resource.data.instituteId || isSuperAdmin());
+        && (isInstitutePrincipal(resource.data.instituteId) || isSuperAdmin());
       allow delete: if isSignedIn()
-        && (request.auth.uid == resource.data.instituteId || isSuperAdmin());
+        && (isInstitutePrincipal(resource.data.instituteId) || isSuperAdmin());
     }
 
     // -----------------------------------------------------------------
@@ -881,6 +910,26 @@ service cloud.firestore {
     }
 
     match /student_auth_attempts/{documentId} {
+      allow read, write: if false;
+    }
+
+    // Globally reserves the normalized, user-facing Student ID. Only trusted
+    // Functions can claim or release an ID, so two devices cannot race a save.
+    match /student_id_claims/{documentId} {
+      allow read, write: if false;
+    }
+
+    // Staff credentials, global Staff-ID lookup and brute-force counters are
+    // trusted-backend-only. Clients receive only a short-lived custom token.
+    match /staff_auth_logins/{documentId} {
+      allow read, write: if false;
+    }
+
+    match /staff_auth_accounts/{documentId} {
+      allow read, write: if false;
+    }
+
+    match /staff_auth_attempts/{documentId} {
       allow read, write: if false;
     }
 

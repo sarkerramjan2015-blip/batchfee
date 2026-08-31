@@ -145,11 +145,38 @@ function createPermanentStaffPurgeHandler({ db, adminAuth, bucket }) {
       deleteQuery(db, instituteRef.collection("audit_logs").where("userId", "==", staffId)),
     ]);
     await removeManagedMedia({ instituteRef, instituteId, reference: target.photoUri, bucket });
+
+    // Staff-ID sign-in uses server-owned global mappings. Remove those before
+    // the profile so a permanently deleted staff member can neither sign in
+    // nor leave an occupied Staff ID behind.
+    const accountRef = db.collection("staff_auth_accounts").doc(staffId);
+    const [accountSnap, loginSnaps, appUserSnap] = await Promise.all([
+      accountRef.get(),
+      db.collection("staff_auth_logins")
+        .where("instituteId", "==", instituteId)
+        .where("staffId", "==", staffId)
+        .get(),
+      db.collection("app_users").doc(staffId).get(),
+    ]);
+    const loginKeys = new Set(loginSnaps.docs.map((doc) => doc.id));
+    if (accountSnap.exists && accountSnap.get("instituteId") === instituteId &&
+        accountSnap.get("staffId") === staffId && typeof accountSnap.get("loginKey") === "string") {
+      loginKeys.add(accountSnap.get("loginKey"));
+    }
+    await Promise.all([
+      ...loginSnaps.docs.map((doc) => doc.ref.delete()),
+      ...[...loginKeys].map((key) => db.collection("staff_auth_attempts").doc(key).delete()),
+      accountRef.delete().catch(() => {}),
+    ]);
     await targetRef.delete();
-    await db.collection("app_users").doc(staffId).delete().catch(() => {});
-    await adminAuth.deleteUser(staffId).catch((error) => {
-      if (error?.code !== "auth/user-not-found") throw error;
-    });
+    const linkedStaffIdentity = appUserSnap.exists &&
+      appUserSnap.get("instituteId") === instituteId && appUserSnap.get("role") === "Staff";
+    if (linkedStaffIdentity) {
+      await db.collection("app_users").doc(staffId).delete().catch(() => {});
+      await adminAuth.deleteUser(staffId).catch((error) => {
+        if (error?.code !== "auth/user-not-found") throw error;
+      });
+    }
     await removeDeletionMetadata(db, instituteRef, "staff", staffId);
     return { staffId, permanentlyDeleted: true };
   };

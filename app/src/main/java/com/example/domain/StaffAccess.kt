@@ -59,7 +59,7 @@ object StaffPermissions {
 }
 
 object AccessControl {
-    private val alwaysAllowedRoutes = setOf("DashboardRoute", "More", "WorksListRoute", "AddWorkRoute", "HomeworkListRoute", "AddHomeworkRoute", "AssignmentListRoute", "AddAssignmentRoute")
+    private val alwaysAllowedRoutes = setOf("DashboardRoute", "More")
 
     private val adminOnlyRoutes = setOf(
         "SettingsRoute",
@@ -116,8 +116,27 @@ object AccessControl {
         "IdCardPreviewRoute" to setOf(StaffPermissions.GENERATE_ID_CARDS),
         "BirthdayReminderRoute" to setOf(StaffPermissions.BIRTHDAY_REMINDERS),
         "EnquiryListRoute" to setOf(StaffPermissions.VIEW_REPORTS),
-        "HomeworkListRoute" to setOf("VIEW_STUDENTS"),
-        "AssignmentListRoute" to setOf("VIEW_STUDENTS")
+        "WorksListRoute" to setOf(
+            StaffPermissions.VIEW_STUDENTS,
+            StaffPermissions.MANAGE_STUDENTS,
+            StaffPermissions.VIEW_BATCHES,
+            StaffPermissions.MANAGE_BATCHES
+        ),
+        "AddWorkRoute" to setOf(StaffPermissions.MANAGE_STUDENTS, StaffPermissions.MANAGE_BATCHES),
+        "HomeworkListRoute" to setOf(
+            StaffPermissions.VIEW_STUDENTS,
+            StaffPermissions.MANAGE_STUDENTS,
+            StaffPermissions.VIEW_BATCHES,
+            StaffPermissions.MANAGE_BATCHES
+        ),
+        "AddHomeworkRoute" to setOf(StaffPermissions.MANAGE_STUDENTS, StaffPermissions.MANAGE_BATCHES),
+        "AssignmentListRoute" to setOf(
+            StaffPermissions.VIEW_STUDENTS,
+            StaffPermissions.MANAGE_STUDENTS,
+            StaffPermissions.VIEW_BATCHES,
+            StaffPermissions.MANAGE_BATCHES
+        ),
+        "AddAssignmentRoute" to setOf(StaffPermissions.MANAGE_STUDENTS, StaffPermissions.MANAGE_BATCHES)
     )
 
     fun isKnownRoute(route: String): Boolean {

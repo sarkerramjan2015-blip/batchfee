@@ -1,7 +1,7 @@
 ﻿package com.batchfee.edu.data.firestore
 
 import com.batchfee.edu.data.models.UserEntity
-import com.google.firebase.crashlytics.FirebaseCrashlytics
+import com.batchfee.edu.data.firebase.FirebaseFailureReporter
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
@@ -34,7 +34,7 @@ object AppUserSyncHelper {
                 )
             ).await()
         } catch (e: Exception) {
-            FirebaseCrashlytics.getInstance().recordException(e)
+            FirebaseFailureReporter.report(e, "sync app user to Firestore", permissionDeniedIsExpected = true)
             throw e
         }
     }
@@ -53,7 +53,7 @@ object AppUserSyncHelper {
                 status = doc.getString("status") ?: "active"
             )
         } catch (e: Exception) {
-            FirebaseCrashlytics.getInstance().recordException(e)
+            FirebaseFailureReporter.report(e, "sync app user from Firestore", permissionDeniedIsExpected = true)
             null
         }
     }

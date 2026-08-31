@@ -90,6 +90,7 @@ import coil.request.ImageRequest
 import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.data.media.FirebaseStorageImageUploadHelper
 import com.batchfee.edu.domain.SessionManager
+import com.batchfee.edu.domain.StudentIdGenerator
 import com.batchfee.edu.ui.components.COUNTRY_CODES
 import com.batchfee.edu.ui.components.SquarePhotoCropDialog
 import com.batchfee.edu.ui.components.buildWhatsAppUrl
@@ -129,6 +130,9 @@ fun AddEditStudentScreen(
     val newStudentId = remember { UUID.randomUUID().toString() }
 
     var studentCode by remember { mutableStateOf(viewModel.generateStudentCode()) }
+    var originalStudentCode by remember { mutableStateOf("") }
+    var studentCodeIsAuto by remember { mutableStateOf(true) }
+    var studentCodeError by remember { mutableStateOf<String?>(null) }
     var existingId by remember { mutableStateOf("") }
     var fullName by remember { mutableStateOf("") }
     var guardianName by remember { mutableStateOf("") }
@@ -196,6 +200,8 @@ fun AddEditStudentScreen(
             student?.let { s ->
                 existingId = s.id
                 studentCode = s.studentCode.ifBlank { viewModel.generateStudentCode() }
+                originalStudentCode = s.studentCode
+                studentCodeIsAuto = false
                 fullName = s.fullName
                 guardianName = s.guardianName ?: ""
                 phone = s.phone ?: ""
@@ -344,10 +350,18 @@ fun AddEditStudentScreen(
             ) {
                 DarkTextField(
                     value = studentCode,
-                    onValueChange = {},
-                    readOnly = true,
+                    onValueChange = { value ->
+                        studentCode = StudentIdGenerator.normalize(value)
+                            .filter { it.isLetterOrDigit() || it == '-' }
+                            .take(20)
+                        studentCodeIsAuto = false
+                        studentCodeError = null
+                    },
+                    readOnly = false,
                     modifier = Modifier.weight(1f),
-                    singleLine = true
+                    singleLine = true,
+                    isError = studentCodeError != null,
+                    supportingText = studentCodeError
                 )
                 Spacer(Modifier.width(8.dp))
                 Box(
@@ -355,11 +369,22 @@ fun AddEditStudentScreen(
                         .clip(RoundedCornerShape(8.dp))
                         .background(Cyan.copy(alpha = 0.14f))
                         .border(1.dp, Cyan.copy(alpha = 0.35f), RoundedCornerShape(8.dp))
+                        .clickable {
+                            studentCode = viewModel.generateStudentCode()
+                            studentCodeIsAuto = true
+                            studentCodeError = null
+                        }
                         .padding(horizontal = 10.dp, vertical = 7.dp)
                 ) {
                     Text("Auto", fontSize = 11.sp, color = Cyan, fontWeight = FontWeight.Bold)
                 }
             }
+            Text(
+                if (studentCodeIsAuto) "Auto-generated ID" else "Manual ID — checked before save",
+                color = TextMuted,
+                fontSize = 11.sp,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
 
             SectionLabel("Student Name *")
             DarkTextField(
@@ -587,7 +612,17 @@ fun AddEditStudentScreen(
                     .clickable(enabled = !isSaving) {
                         nameError = fullName.isBlank()
                         phoneError = phone.isBlank()
-                        if (nameError || phoneError) return@clickable
+                        val normalizedStudentCode = StudentIdGenerator.normalize(studentCode)
+                        val unchangedLegacyCode = isEdit &&
+                            StudentIdGenerator.normalize(originalStudentCode) == normalizedStudentCode
+                        studentCodeError = if (StudentIdGenerator.isValid(normalizedStudentCode) ||
+                            unchangedLegacyCode) {
+                            null
+                        } else {
+                            "Use 3–20 letters, numbers or hyphens."
+                        }
+                        if (nameError || phoneError || studentCodeError != null) return@clickable
+                        studentCode = normalizedStudentCode
 
                         isSaving = true
                         saveError = null
@@ -612,6 +647,7 @@ fun AddEditStudentScreen(
                                     viewModel.updateStudent(
                                         id = existingId,
                                         studentCode = loginStudentCode,
+                                        studentCodeIsAuto = studentCodeIsAuto,
                                         fullName = fullName.trim(),
                                         phone = phone.trim(),
                                         guardianName = guardianName.trim().takeIf { it.isNotEmpty() },
@@ -644,6 +680,7 @@ fun AddEditStudentScreen(
                                     viewModel.addStudent(
                                         id = newStudentId,
                                         studentCode = loginStudentCode,
+                                        studentCodeIsAuto = studentCodeIsAuto,
                                         fullName = fullName.trim(),
                                         phone = phone.trim(),
                                         guardianName = guardianName.trim().takeIf { it.isNotEmpty() },
@@ -658,13 +695,13 @@ fun AddEditStudentScreen(
                                         photoUri = cloudPhotoUrl,
                                         isAppAccessEnabled = isAppAccessEnabled,
                                         appAccessPassword = accountPassword,
-                                        onSuccess = {
+                                        onSuccess = { savedStudentCode ->
                                             isSaving = false
                                             welcomeRecipient = whatsappNumber.trim().ifBlank { phone.trim() }
                                             welcomeMessage = buildAdmissionWelcomeMessage(
                                                 instituteName = instituteName,
                                                 studentName = fullName.trim(),
-                                                studentCode = loginStudentCode,
+                                                studentCode = savedStudentCode,
                                                 className = className.trim(),
                                                 temporaryPassword = accountPassword
                                             )

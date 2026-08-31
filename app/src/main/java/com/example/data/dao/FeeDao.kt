@@ -43,6 +43,9 @@ interface FeeDao {
     @Upsert
     suspend fun insertFee(fee: FeeEntity)
 
+    @Query("DELETE FROM fees WHERE instituteId = :instituteId AND id = :feeId")
+    suspend fun deleteFeeById(instituteId: String, feeId: String)
+
     @Query("SELECT SUM(paidAmount) FROM fees WHERE instituteId = :instituteId AND cancelledAtMs IS NULL")
     fun getTotalCollected(instituteId: String): Flow<Double?>
 

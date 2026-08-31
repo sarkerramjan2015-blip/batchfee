@@ -2,6 +2,7 @@
 
 import androidx.room.withTransaction
 import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.firebase.FirebaseFailureReporter
 import com.batchfee.edu.data.models.AbsentMessageEntity
 import com.batchfee.edu.data.models.AttendanceEntity
 import com.batchfee.edu.data.models.BatchStudentEntity
@@ -18,8 +19,9 @@ import com.batchfee.edu.data.models.ResultEntity
 import com.batchfee.edu.data.models.SalaryEntity
 import com.batchfee.edu.data.models.StaffAttendanceEntity
 import com.batchfee.edu.data.models.SubscriptionPlanEntity
-import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.DocumentChange
+import com.google.firebase.firestore.DocumentSnapshot
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
@@ -30,7 +32,11 @@ private fun instituteCollection(instituteId: String, name: String) =
     firestore.collection("institutes").document(instituteId).collection(name)
 
 private fun recordException(e: Exception) {
-    FirebaseCrashlytics.getInstance().recordException(e)
+    FirebaseFailureReporter.report(
+        e,
+        operation = "operational data sync",
+        permissionDeniedIsExpected = true
+    )
 }
 
 private fun Number?.asLong(): Long? = this?.toLong()
@@ -93,29 +99,56 @@ object BatchStudentSyncHelper {
 
     suspend fun syncAllFromFirestore(db: AppDatabase, instituteId: String) = withContext(Dispatchers.IO) {
         try {
-            val snapshot = instituteCollection(instituteId, COLLECTION).get().await()
-            snapshot.documents.mapNotNull { doc ->
-                val batchId = doc.getString("batchId") ?: return@mapNotNull null
-                val studentId = doc.getString("studentId") ?: return@mapNotNull null
-                BatchStudentEntity(
-                    id = doc.id,
-                    instituteId = doc.getString("instituteId") ?: instituteId,
-                    batchId = batchId,
-                    studentId = studentId,
-                    joinedAtMs = (doc.get("joinedAtMs") as? Number).asLong() ?: 0L,
-                    status = doc.getString("status") ?: "active",
-                    leftAtMs = (doc.get("leftAtMs") as? Number).asLong(),
-                    firstMonthFeePeriod = doc.getString("firstMonthFeePeriod"),
-                    firstMonthFeeAmount = (doc.get("firstMonthFeeAmount") as? Number).asDouble(),
-                    customMonthlyFeeAmount = (doc.get("customMonthlyFeeAmount") as? Number).asDouble(),
-                    customFeeReason = doc.getString("customFeeReason"),
-                    customFeeEffectiveFromPeriod = doc.getString("customFeeEffectiveFromPeriod"),
-                    customFeePolicySyncedAtMs = (doc.get("customFeePolicySyncedAtMs") as? Number).asLong()
-                )
-            }.forEach { db.batchStudentDao().enrollStudent(it) }
+            instituteCollection(instituteId, COLLECTION).forEachDocumentPage { documents ->
+                db.withTransaction {
+                    documents.mapNotNull { it.toEnrollment(instituteId) }
+                        .forEach { db.batchStudentDao().enrollStudent(it) }
+                }
+            }
         } catch (e: Exception) {
             recordException(e)
         }
+    }
+
+    suspend fun applyRealtimeChanges(
+        db: AppDatabase,
+        instituteId: String,
+        changes: List<DocumentChange>
+    ) = withContext(Dispatchers.IO) {
+        db.withTransaction {
+            changes.forEach { change ->
+                when (change.type) {
+                    DocumentChange.Type.ADDED,
+                    DocumentChange.Type.MODIFIED ->
+                        change.document.toEnrollment(instituteId)?.let {
+                            db.batchStudentDao().enrollStudent(it)
+                        }
+
+                    DocumentChange.Type.REMOVED ->
+                        db.batchStudentDao().deleteEnrollment(instituteId, change.document.id)
+                }
+            }
+        }
+    }
+
+    private fun DocumentSnapshot.toEnrollment(instituteId: String): BatchStudentEntity? {
+        val batchId = getString("batchId") ?: return null
+        val studentId = getString("studentId") ?: return null
+        return BatchStudentEntity(
+            id = id,
+            instituteId = getString("instituteId") ?: instituteId,
+            batchId = batchId,
+            studentId = studentId,
+            joinedAtMs = (get("joinedAtMs") as? Number).asLong() ?: 0L,
+            status = getString("status") ?: "active",
+            leftAtMs = (get("leftAtMs") as? Number).asLong(),
+            firstMonthFeePeriod = getString("firstMonthFeePeriod"),
+            firstMonthFeeAmount = (get("firstMonthFeeAmount") as? Number).asDouble(),
+            customMonthlyFeeAmount = (get("customMonthlyFeeAmount") as? Number).asDouble(),
+            customFeeReason = getString("customFeeReason"),
+            customFeeEffectiveFromPeriod = getString("customFeeEffectiveFromPeriod"),
+            customFeePolicySyncedAtMs = (get("customFeePolicySyncedAtMs") as? Number).asLong()
+        )
     }
 }
 
@@ -126,10 +159,10 @@ object FinanceSyncHelper {
 
     suspend fun syncAllFromFirestore(db: AppDatabase, instituteId: String) = withContext(Dispatchers.IO) {
         try {
-            val feeSnapshot = instituteCollection(instituteId, FEES).get().await()
-            val paymentSnapshot = instituteCollection(instituteId, PAYMENTS).get().await()
-            val receiptSnapshot = instituteCollection(instituteId, RECEIPTS).get().await()
-            val reversalSnapshot = instituteCollection(instituteId, "payment_reversals").get().await()
+            val feeSnapshot = instituteCollection(instituteId, FEES).collectDocumentPages()
+            val paymentSnapshot = instituteCollection(instituteId, PAYMENTS).collectDocumentPages()
+            val receiptSnapshot = instituteCollection(instituteId, RECEIPTS).collectDocumentPages()
+            val reversalSnapshot = instituteCollection(instituteId, "payment_reversals").collectDocumentPages()
             val feeDocuments = feeSnapshot.documents
             val paymentDocuments = paymentSnapshot.documents
             val receiptDocuments = receiptSnapshot.documents
@@ -139,7 +172,7 @@ object FinanceSyncHelper {
                 paymentSnapshot,
                 receiptSnapshot,
                 reversalSnapshot
-            ).none { it.metadata.isFromCache }
+            ).all { it.isServerAuthoritative }
 
             val fees = feeDocuments.mapNotNull { doc ->
                 val studentId = doc.getString("studentId") ?: return@mapNotNull null
@@ -378,6 +411,19 @@ object FinanceSyncHelper {
             recordException(e)
         }
     }
+
+    suspend fun applyRealtimeChanges(
+        db: AppDatabase,
+        instituteId: String,
+        collection: String,
+        changes: List<DocumentChange>
+    ) = FinanceRealtimeChangeApplier.apply(
+        db = db,
+        instituteId = instituteId,
+        collection = collection,
+        changes = changes
+    )
+
 }
 
 object AttendanceSyncHelper {
@@ -466,59 +512,281 @@ object AttendanceSyncHelper {
         }
     }
 
-    suspend fun syncAllFromFirestore(db: AppDatabase, instituteId: String) = withContext(Dispatchers.IO) {
+    suspend fun syncAllFromFirestore(
+        db: AppDatabase,
+        instituteId: String,
+        syncStudentAttendance: Boolean = true,
+        syncStaffAttendance: Boolean = true
+    ) = withContext(Dispatchers.IO) {
         try {
-            instituteCollection(instituteId, ATTENDANCE).get().await().documents.mapNotNull { doc ->
-                val batchId = doc.getString("batchId") ?: return@mapNotNull null
-                val studentId = doc.getString("studentId") ?: return@mapNotNull null
-                AttendanceEntity(
-                    id = doc.id,
-                    instituteId = doc.getString("instituteId") ?: instituteId,
-                    batchId = batchId,
-                    studentId = studentId,
-                    attendanceDateMs = (doc.get("attendanceDateMs") as? Number).asLong() ?: 0L,
-                    status = doc.getString("status") ?: "present",
-                    note = doc.getString("note"),
-                    markedByUserId = doc.getString("markedByUserId") ?: "",
-                    createdAtMs = (doc.get("createdAtMs") as? Number).asLong() ?: System.currentTimeMillis(),
-                    updatedAtMs = (doc.get("updatedAtMs") as? Number).asLong() ?: System.currentTimeMillis()
-                )
-            }.forEach { db.attendanceDao().insertOrUpdateAttendance(it) }
+            if (syncStudentAttendance) {
+                instituteCollection(instituteId, ATTENDANCE).forEachDocumentPage { documents ->
+                    db.withTransaction {
+                        documents.mapNotNull { doc ->
+                            val batchId = doc.getString("batchId") ?: return@mapNotNull null
+                            val studentId = doc.getString("studentId") ?: return@mapNotNull null
+                            AttendanceEntity(
+                                id = doc.id,
+                                instituteId = doc.getString("instituteId") ?: instituteId,
+                                batchId = batchId,
+                                studentId = studentId,
+                                attendanceDateMs = (doc.get("attendanceDateMs") as? Number).asLong() ?: 0L,
+                                status = doc.getString("status") ?: "present",
+                                note = doc.getString("note"),
+                                markedByUserId = doc.getString("markedByUserId") ?: "",
+                                createdAtMs = (doc.get("createdAtMs") as? Number).asLong() ?: System.currentTimeMillis(),
+                                updatedAtMs = (doc.get("updatedAtMs") as? Number).asLong() ?: System.currentTimeMillis()
+                            )
+                        }.forEach { db.attendanceDao().insertOrUpdateAttendance(it) }
+                    }
+                }
 
-            instituteCollection(instituteId, ABSENT_MESSAGES).get().await().documents.mapNotNull { doc ->
-                val batchId = doc.getString("batchId") ?: return@mapNotNull null
-                val studentId = doc.getString("studentId") ?: return@mapNotNull null
-                AbsentMessageEntity(
-                    id = doc.id,
-                    instituteId = doc.getString("instituteId") ?: instituteId,
-                    batchId = batchId,
-                    studentId = studentId,
-                    attendanceDateMs = (doc.get("attendanceDateMs") as? Number).asLong() ?: 0L,
-                    messageType = doc.getString("messageType") ?: "sms",
-                    messageText = doc.getString("messageText") ?: "",
-                    sentByUserId = doc.getString("sentByUserId") ?: "",
-                    status = doc.getString("status") ?: "sent",
-                    createdAtMs = (doc.get("createdAtMs") as? Number).asLong() ?: System.currentTimeMillis()
-                )
-            }.forEach { db.absentMessageDao().insertMessage(it) }
+                instituteCollection(instituteId, ABSENT_MESSAGES).forEachDocumentPage { documents ->
+                    db.withTransaction {
+                        documents.mapNotNull { doc ->
+                            val batchId = doc.getString("batchId") ?: return@mapNotNull null
+                            val studentId = doc.getString("studentId") ?: return@mapNotNull null
+                            AbsentMessageEntity(
+                                id = doc.id,
+                                instituteId = doc.getString("instituteId") ?: instituteId,
+                                batchId = batchId,
+                                studentId = studentId,
+                                attendanceDateMs = (doc.get("attendanceDateMs") as? Number).asLong() ?: 0L,
+                                messageType = doc.getString("messageType") ?: "sms",
+                                messageText = doc.getString("messageText") ?: "",
+                                sentByUserId = doc.getString("sentByUserId") ?: "",
+                                status = doc.getString("status") ?: "sent",
+                                createdAtMs = (doc.get("createdAtMs") as? Number).asLong() ?: System.currentTimeMillis()
+                            )
+                        }.forEach { db.absentMessageDao().insertMessage(it) }
+                    }
+                }
+            }
 
-            instituteCollection(instituteId, STAFF_ATTENDANCE).get().await().documents.mapNotNull { doc ->
-                val staffId = doc.getString("staffId") ?: return@mapNotNull null
-                StaffAttendanceEntity(
-                    id = doc.id,
-                    instituteId = doc.getString("instituteId") ?: instituteId,
-                    staffId = staffId,
-                    attendanceDateMs = (doc.get("attendanceDateMs") as? Number).asLong() ?: 0L,
-                    status = doc.getString("status") ?: "present",
-                    note = doc.getString("note"),
-                    markedByUserId = doc.getString("markedByUserId") ?: "",
-                    createdAtMs = (doc.get("createdAtMs") as? Number).asLong() ?: System.currentTimeMillis(),
-                    updatedAtMs = (doc.get("updatedAtMs") as? Number).asLong() ?: System.currentTimeMillis()
-                )
-            }.forEach { db.staffAttendanceDao().insertOrUpdateAttendance(it) }
+            if (syncStaffAttendance) {
+                instituteCollection(instituteId, STAFF_ATTENDANCE).forEachDocumentPage { documents ->
+                    db.withTransaction {
+                        documents.mapNotNull { doc ->
+                            val staffId = doc.getString("staffId") ?: return@mapNotNull null
+                            StaffAttendanceEntity(
+                                id = doc.id,
+                                instituteId = doc.getString("instituteId") ?: instituteId,
+                                staffId = staffId,
+                                attendanceDateMs = (doc.get("attendanceDateMs") as? Number).asLong() ?: 0L,
+                                status = doc.getString("status") ?: "present",
+                                note = doc.getString("note"),
+                                markedByUserId = doc.getString("markedByUserId") ?: "",
+                                createdAtMs = (doc.get("createdAtMs") as? Number).asLong() ?: System.currentTimeMillis(),
+                                updatedAtMs = (doc.get("updatedAtMs") as? Number).asLong() ?: System.currentTimeMillis()
+                            )
+                        }.forEach { db.staffAttendanceDao().insertOrUpdateAttendance(it) }
+                    }
+                }
+            }
         } catch (e: Exception) {
             recordException(e)
         }
+    }
+
+}
+
+private object FinanceRealtimeChangeApplier {
+
+    /**
+     * Realtime listeners already contain the changed documents. Apply those changes directly
+     * instead of issuing four new full-collection reads for every ledger update.
+     */
+    suspend fun apply(
+        db: AppDatabase,
+        instituteId: String,
+        collection: String,
+        changes: List<DocumentChange>
+    ) = withContext(Dispatchers.IO) {
+        db.withTransaction {
+            changes.forEach { change ->
+                when (collection) {
+                    "fees" -> applyFeeChange(db, instituteId, change)
+                    "payments" -> applyPaymentChange(db, instituteId, change)
+                    "receipts" -> applyReceiptChange(db, instituteId, change)
+                    "payment_reversals" -> applyReversalChange(db, instituteId, change)
+                }
+            }
+        }
+    }
+
+    private suspend fun applyFeeChange(
+        db: AppDatabase,
+        instituteId: String,
+        change: DocumentChange
+    ) {
+        when (change.type) {
+            DocumentChange.Type.ADDED,
+            DocumentChange.Type.MODIFIED ->
+                change.document.toFee(instituteId)?.let { db.feeDao().insertFee(it) }
+
+            DocumentChange.Type.REMOVED ->
+                db.feeDao().deleteFeeById(instituteId, change.document.id)
+        }
+    }
+
+    private suspend fun applyPaymentChange(
+        db: AppDatabase,
+        instituteId: String,
+        change: DocumentChange
+    ) {
+        when (change.type) {
+            DocumentChange.Type.ADDED,
+            DocumentChange.Type.MODIFIED -> change.document.toPayment(instituteId)?.let { payment ->
+                val reversal = db.financialLedgerDao()
+                    .getReversalForPayment(instituteId, payment.id)
+                db.paymentDao().insertPayment(
+                    if (reversal == null) payment else payment.copy(status = "reversed")
+                )
+            }
+
+            DocumentChange.Type.REMOVED ->
+                db.paymentDao().deletePaymentById(instituteId, change.document.id)
+        }
+    }
+
+    private suspend fun applyReceiptChange(
+        db: AppDatabase,
+        instituteId: String,
+        change: DocumentChange
+    ) {
+        when (change.type) {
+            DocumentChange.Type.ADDED,
+            DocumentChange.Type.MODIFIED ->
+                change.document.toReceipt(instituteId)?.let { db.receiptDao().insertReceipt(it) }
+
+            DocumentChange.Type.REMOVED ->
+                db.receiptDao().deleteReceiptById(instituteId, change.document.id)
+        }
+    }
+
+    private suspend fun applyReversalChange(
+        db: AppDatabase,
+        instituteId: String,
+        change: DocumentChange
+    ) {
+        val reversal = change.document.toReversal(instituteId)
+        when (change.type) {
+            DocumentChange.Type.ADDED,
+            DocumentChange.Type.MODIFIED -> if (reversal != null) {
+                db.financialLedgerDao().upsertReversal(reversal)
+                db.paymentDao().updatePaymentStatus(
+                    instituteId,
+                    reversal.paymentId,
+                    "reversed",
+                    reversal.reversedAtMs
+                )
+            }
+
+            DocumentChange.Type.REMOVED -> {
+                db.financialLedgerDao().deleteReversalById(instituteId, change.document.id)
+                if (reversal != null) {
+                    db.paymentDao().updatePaymentStatus(
+                        instituteId,
+                        reversal.paymentId,
+                        "completed",
+                        System.currentTimeMillis()
+                    )
+                }
+            }
+        }
+    }
+
+    private fun DocumentSnapshot.toFee(instituteId: String): FeeEntity? {
+        val studentId = getString("studentId") ?: return null
+        return FeeEntity(
+            id = id,
+            instituteId = getString("instituteId") ?: instituteId,
+            studentId = studentId,
+            batchId = getString("batchId"),
+            feePeriod = getString("feePeriod") ?: "",
+            feeType = getString("feeType") ?: "monthly_fee",
+            dueDateMs = (get("dueDateMs") as? Number).asLong() ?: 0L,
+            baseAmount = (get("baseAmount") as? Number).asDouble() ?: 0.0,
+            discountAmount = (get("discountAmount") as? Number).asDouble() ?: 0.0,
+            lateFeeAmount = (get("lateFeeAmount") as? Number).asDouble() ?: 0.0,
+            totalAmount = (get("totalAmount") as? Number).asDouble() ?: 0.0,
+            paidAmount = (get("paidAmount") as? Number).asDouble() ?: 0.0,
+            dueAmount = (get("dueAmount") as? Number).asDouble() ?: 0.0,
+            status = getString("status") ?: "unpaid",
+            note = getString("note"),
+            createdAtMs = (get("createdAtMs") as? Number).asLong() ?: System.currentTimeMillis(),
+            updatedAtMs = (get("updatedAtMs") as? Number).asLong() ?: System.currentTimeMillis(),
+            cancelledAtMs = (get("cancelledAtMs") as? Number).asLong(),
+            sourceId = getString("sourceId"),
+            businessKey = getString("businessKey"),
+            ledgerVersion = (get("ledgerVersion") as? Number)?.toInt() ?: 0
+        )
+    }
+
+    private fun DocumentSnapshot.toPayment(instituteId: String): PaymentEntity? {
+        val feeId = getString("feeId") ?: return null
+        val studentId = getString("studentId") ?: return null
+        return PaymentEntity(
+            id = id,
+            instituteId = getString("instituteId") ?: instituteId,
+            feeId = feeId,
+            studentId = studentId,
+            amount = (get("amount") as? Number).asDouble() ?: 0.0,
+            paymentMethod = getString("paymentMethod") ?: "",
+            transactionId = getString("transactionId"),
+            receiptNumber = getString("receiptNumber") ?: "",
+            paymentDateMs = (get("paymentDateMs") as? Number).asLong() ?: 0L,
+            collectedByUserId = getString("collectedByUserId") ?: "",
+            status = getString("status") ?: "completed",
+            note = getString("note"),
+            createdAtMs = (get("createdAtMs") as? Number).asLong() ?: System.currentTimeMillis(),
+            updatedAtMs = (get("updatedAtMs") as? Number).asLong() ?: System.currentTimeMillis(),
+            operationId = getString("operationId"),
+            ledgerVersion = (get("ledgerVersion") as? Number)?.toInt() ?: 0
+        )
+    }
+
+    private fun DocumentSnapshot.toReceipt(instituteId: String): ReceiptEntity? {
+        val paymentId = getString("paymentId") ?: return null
+        val feeId = getString("feeId") ?: return null
+        val studentId = getString("studentId") ?: return null
+        return ReceiptEntity(
+            id = id,
+            instituteId = getString("instituteId") ?: instituteId,
+            paymentId = paymentId,
+            feeId = feeId,
+            studentId = studentId,
+            receiptNumber = getString("receiptNumber") ?: "",
+            receiptDateMs = (get("receiptDateMs") as? Number).asLong() ?: 0L,
+            totalAmount = (get("totalAmount") as? Number).asDouble() ?: 0.0,
+            paidAmount = (get("paidAmount") as? Number).asDouble() ?: 0.0,
+            dueAmount = (get("dueAmount") as? Number).asDouble() ?: 0.0,
+            paymentMethod = getString("paymentMethod") ?: "",
+            receiptText = getString("receiptText"),
+            createdAtMs = (get("createdAtMs") as? Number).asLong() ?: System.currentTimeMillis(),
+            operationId = getString("operationId"),
+            ledgerVersion = (get("ledgerVersion") as? Number)?.toInt() ?: 0
+        )
+    }
+
+    private fun DocumentSnapshot.toReversal(instituteId: String): PaymentReversalEntity? {
+        val paymentId = getString("paymentId") ?: return null
+        val feeId = getString("feeId") ?: return null
+        val studentId = getString("studentId") ?: return null
+        return PaymentReversalEntity(
+            id = id,
+            instituteId = getString("instituteId") ?: instituteId,
+            paymentId = paymentId,
+            feeId = feeId,
+            studentId = studentId,
+            amount = (get("amount") as? Number).asDouble() ?: 0.0,
+            receiptNumber = getString("receiptNumber") ?: "",
+            reason = getString("reason") ?: "Legacy reversal",
+            reversedByUserId = getString("reversedByUserId") ?: "",
+            reversedAtMs = (get("reversedAtMs") as? Number).asLong() ?: 0L,
+            operationId = getString("operationId") ?: id,
+            ledgerVersion = (get("ledgerVersion") as? Number)?.toInt() ?: 1
+        )
     }
 }
 
@@ -740,6 +1008,48 @@ object ExpenseSyncHelper {
             recordException(e)
         }
     }
+
+    suspend fun applyRealtimeChanges(
+        db: AppDatabase,
+        instituteId: String,
+        changes: List<DocumentChange>
+    ) = withContext(Dispatchers.IO) {
+        db.withTransaction {
+            changes.forEach { change ->
+                when (change.type) {
+                    DocumentChange.Type.ADDED,
+                    DocumentChange.Type.MODIFIED ->
+                        change.document.toExpense(instituteId)?.let {
+                            db.expenseDao().insertExpense(it)
+                        }
+
+                    DocumentChange.Type.REMOVED ->
+                        db.expenseDao().deleteExpense(instituteId, change.document.id)
+                }
+            }
+        }
+    }
+
+    private fun DocumentSnapshot.toExpense(instituteId: String): ExpenseEntity? {
+        val category = getString("category") ?: return null
+        val title = getString("title") ?: return null
+        val createdByUserId = getString("createdByUserId") ?: return null
+        return ExpenseEntity(
+            id = id,
+            instituteId = getString("instituteId") ?: instituteId,
+            category = category,
+            title = title,
+            amount = (get("amount") as? Number).asDouble() ?: 0.0,
+            expenseDateMs = (get("expenseDateMs") as? Number).asLong() ?: 0L,
+            paymentMethod = getString("paymentMethod"),
+            description = getString("description"),
+            attachmentUri = getString("attachmentUri"),
+            createdByUserId = createdByUserId,
+            createdAtMs = (get("createdAtMs") as? Number).asLong() ?: System.currentTimeMillis(),
+            updatedAtMs = (get("updatedAtMs") as? Number).asLong() ?: System.currentTimeMillis(),
+            archivedAtMs = (get("archivedAtMs") as? Number).asLong()
+        )
+    }
 }
 
 object SalarySyncHelper {
@@ -914,22 +1224,26 @@ object AuditLogSyncHelper {
 
     suspend fun syncAllFromFirestore(db: AppDatabase, instituteId: String) = withContext(Dispatchers.IO) {
         try {
-            instituteCollection(instituteId, COLLECTION).get().await().documents.mapNotNull { doc ->
-                val action = doc.getString("action") ?: return@mapNotNull null
-                val module = doc.getString("module") ?: return@mapNotNull null
-                val description = doc.getString("description") ?: return@mapNotNull null
-                AuditLogEntity(
-                    id = doc.id,
-                    instituteId = doc.getString("instituteId") ?: instituteId,
-                    userId = doc.getString("userId"),
-                    action = action,
-                    module = module,
-                    description = description,
-                    oldValue = doc.getString("oldValue"),
-                    newValue = doc.getString("newValue"),
-                    createdAtMs = (doc.get("createdAtMs") as? Number).asLong() ?: System.currentTimeMillis()
-                )
-            }.forEach { db.auditLogDao().insertAuditLog(it) }
+            instituteCollection(instituteId, COLLECTION).forEachDocumentPage { documents ->
+                db.withTransaction {
+                    documents.mapNotNull { doc ->
+                        val action = doc.getString("action") ?: return@mapNotNull null
+                        val module = doc.getString("module") ?: return@mapNotNull null
+                        val description = doc.getString("description") ?: return@mapNotNull null
+                        AuditLogEntity(
+                            id = doc.id,
+                            instituteId = doc.getString("instituteId") ?: instituteId,
+                            userId = doc.getString("userId"),
+                            action = action,
+                            module = module,
+                            description = description,
+                            oldValue = doc.getString("oldValue"),
+                            newValue = doc.getString("newValue"),
+                            createdAtMs = (doc.get("createdAtMs") as? Number).asLong() ?: System.currentTimeMillis()
+                        )
+                    }.forEach { db.auditLogDao().insertAuditLog(it) }
+                }
+            }
         } catch (e: Exception) {
             recordException(e)
         }

@@ -1,8 +1,11 @@
 ﻿package com.batchfee.edu.data.firestore
 
 import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.firebase.FirebaseFailureReporter
 import com.batchfee.edu.data.models.StaffEntity
-import com.google.firebase.crashlytics.FirebaseCrashlytics
+import androidx.room.withTransaction
+import com.google.firebase.firestore.DocumentChange
+import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
@@ -42,7 +45,7 @@ object StaffSyncHelper {
                     )
                 ).await()
             } catch (e: Exception) {
-                FirebaseCrashlytics.getInstance().recordException(e)
+                FirebaseFailureReporter.report(e, "create staff", permissionDeniedIsExpected = true)
             }
         }
     }
@@ -70,7 +73,7 @@ object StaffSyncHelper {
                     )
                 ).await()
             } catch (e: Exception) {
-                FirebaseCrashlytics.getInstance().recordException(e)
+                FirebaseFailureReporter.report(e, "update staff", permissionDeniedIsExpected = true)
             }
         }
     }
@@ -86,7 +89,7 @@ object StaffSyncHelper {
                     )
                 ).await()
             } catch (e: Exception) {
-                FirebaseCrashlytics.getInstance().recordException(e)
+                FirebaseFailureReporter.report(e, "sync staff status", permissionDeniedIsExpected = true)
             }
         }
     }
@@ -140,7 +143,7 @@ object StaffSyncHelper {
                     archivedAtMs = (doc.get("archivedAtMs") as? Number)?.toLong()
                 )
             } catch (e: Exception) {
-                FirebaseCrashlytics.getInstance().recordException(e)
+                FirebaseFailureReporter.report(e, "sync staff to Firestore", permissionDeniedIsExpected = true)
                 null
             }
         }
@@ -149,8 +152,8 @@ object StaffSyncHelper {
     suspend fun syncAllFromFirestore(db: AppDatabase, instituteId: String) {
         withContext(Dispatchers.IO) {
             try {
-                val snapshot = staffCollection(instituteId).get().await()
-                snapshot.documents.mapNotNull { doc ->
+                staffCollection(instituteId).forEachDocumentPage { documents ->
+                    val staff = documents.mapNotNull { doc ->
                     val fullName = doc.getString("fullName") ?: return@mapNotNull null
                     val staffCode = doc.getString("staffCode") ?: return@mapNotNull null
                     StaffEntity(
@@ -173,11 +176,62 @@ object StaffSyncHelper {
                         updatedAtMs = (doc.get("updatedAtMs") as? Number)?.toLong() ?: System.currentTimeMillis(),
                         archivedAtMs = (doc.get("archivedAtMs") as? Number)?.toLong()
                     )
-                }.forEach { db.staffDao().insertStaff(it) }
+                    }
+                    db.withTransaction {
+                        staff.forEach { db.staffDao().insertStaff(it) }
+                    }
+                }
             } catch (e: Exception) {
-                FirebaseCrashlytics.getInstance().recordException(e)
+                FirebaseFailureReporter.report(e, "sync staff from Firestore", permissionDeniedIsExpected = true)
             }
         }
+    }
+
+    /** Applies only the documents delivered by an active realtime listener. */
+    suspend fun applyRealtimeChanges(
+        db: AppDatabase,
+        instituteId: String,
+        changes: List<DocumentChange>
+    ) = withContext(Dispatchers.IO) {
+        db.withTransaction {
+            changes.forEach { change ->
+                when (change.type) {
+                    DocumentChange.Type.ADDED,
+                    DocumentChange.Type.MODIFIED ->
+                        change.document.toStaffEntity(instituteId)?.let {
+                            db.staffDao().insertStaff(it)
+                        }
+
+                    DocumentChange.Type.REMOVED ->
+                        db.staffDao().deleteStaff(instituteId, change.document.id)
+                }
+            }
+        }
+    }
+
+    private fun DocumentSnapshot.toStaffEntity(instituteId: String): StaffEntity? {
+        val fullName = getString("fullName") ?: return null
+        val staffCode = getString("staffCode") ?: return null
+        return StaffEntity(
+            id = id,
+            instituteId = getString("instituteId") ?: instituteId,
+            staffCode = staffCode,
+            fullName = fullName,
+            photoUri = getString("photoUri")?.takeIf { it.isNotBlank() },
+            roleTitle = getString("roleTitle") ?: "",
+            phone = getString("phone")?.takeIf { it.isNotBlank() },
+            email = getString("email")?.takeIf { it.isNotBlank() },
+            address = getString("address")?.takeIf { it.isNotBlank() },
+            joiningDateMs = (get("joiningDateMs") as? Number)?.toLong()?.takeIf { it > 0L },
+            monthlySalary = (get("monthlySalary") as? Number)?.toDouble() ?: 0.0,
+            assignedBatchIds = getString("assignedBatchIds")?.takeIf { it.isNotBlank() },
+            status = getString("status") ?: "active",
+            notes = getString("notes")?.takeIf { it.isNotBlank() },
+            permissions = getString("permissions")?.takeIf { it.isNotBlank() },
+            createdAtMs = (get("createdAtMs") as? Number)?.toLong() ?: System.currentTimeMillis(),
+            updatedAtMs = (get("updatedAtMs") as? Number)?.toLong() ?: System.currentTimeMillis(),
+            archivedAtMs = (get("archivedAtMs") as? Number)?.toLong()
+        )
     }
 }
 
