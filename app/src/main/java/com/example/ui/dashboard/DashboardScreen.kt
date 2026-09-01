@@ -570,7 +570,7 @@ class DashboardViewModel(private val db: AppDatabase) : ViewModel() {
                 }
             }
             launch {
-                db.studentDao().countStudents(instId).collect { _studentCount.value = it }
+                    db.studentDao().countActiveStudents(instId).collect { _studentCount.value = it }
             }
             launch {
                 db.batchDao().getBatchesByInstitute(instId).collect { _batchCount.value = it.size }

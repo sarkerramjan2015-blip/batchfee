@@ -1094,7 +1094,7 @@ async function updateStudentProfileHandler(request) {
   const allowed = [
     "studentCode", "fullName", "photoUri", "gender", "dateOfBirthMs", "phone",
     "email", "address", "schoolName", "className", "guardianName", "guardianPhone",
-    "guardianEmail", "emergencyContact", "bloodGroup", "admissionDateMs", "notes",
+    "guardianEmail", "emergencyContact", "bloodGroup", "admissionDateMs", "status", "notes",
   ];
   optionalString(entity.photoUri, 2048);
   optionalString(entity.gender, 32);
@@ -1110,6 +1110,14 @@ async function updateStudentProfileHandler(request) {
   optionalString(entity.notes, 2000);
   optionalNumber(entity.dateOfBirthMs, 0, 4102444800000);
   optionalNumber(entity.admissionDateMs, 0, 4102444800000);
+  const requestedStatus = optionalString(entity.status, 32);
+  let normalizedStatus = requestedStatus == null ? null : requestedStatus.trim().toLowerCase();
+  // Older releases used "close"/"closed". Normalize those values rather
+  // than rejecting a legitimate legacy record during an edit or reactivation.
+  if (normalizedStatus === "close" || normalizedStatus === "closed") normalizedStatus = "inactive";
+  if (normalizedStatus != null && !["active", "inactive"].includes(normalizedStatus)) {
+    throw new HttpsError("invalid-argument", "Student status must be active or inactive.");
+  }
 
   const students = db.collection("institutes").doc(instituteId).collection("students");
   const studentRef = students.doc(studentId);
@@ -1167,8 +1175,10 @@ async function updateStudentProfileHandler(request) {
         previousClaimSnap.get("studentId") === studentId) {
       transaction.delete(previousClaimRef);
     }
+    const profileFields = copyFields(entity, allowed);
+    if (normalizedStatus != null) profileFields.status = normalizedStatus;
     transaction.update(studentRef, {
-      ...copyFields(entity, allowed),
+      ...profileFields,
       studentCode,
       studentCodeNormalized,
       fullName,

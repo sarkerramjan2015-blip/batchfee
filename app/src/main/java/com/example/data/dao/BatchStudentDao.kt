@@ -8,10 +8,10 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface BatchStudentDao {
-    @Query("SELECT s.* FROM students s INNER JOIN batch_students bs ON s.id = bs.studentId WHERE bs.batchId = :batchId AND bs.instituteId = :instituteId AND bs.status = 'active'")
+    @Query("SELECT s.* FROM students s INNER JOIN batch_students bs ON s.id = bs.studentId WHERE bs.batchId = :batchId AND bs.instituteId = :instituteId AND bs.status = 'active' AND s.archivedAtMs IS NULL AND (s.status IS NULL OR LOWER(TRIM(s.status)) NOT IN ('inactive', 'close', 'closed', 'archived'))")
     fun getStudentsForBatch(batchId: String, instituteId: String): Flow<List<StudentEntity>>
 
-    @Query("SELECT s.* FROM students s INNER JOIN batch_students bs ON s.id = bs.studentId WHERE bs.batchId = :batchId AND bs.instituteId = :instituteId AND bs.status = 'active'")
+    @Query("SELECT s.* FROM students s INNER JOIN batch_students bs ON s.id = bs.studentId WHERE bs.batchId = :batchId AND bs.instituteId = :instituteId AND bs.status = 'active' AND s.archivedAtMs IS NULL AND (s.status IS NULL OR LOWER(TRIM(s.status)) NOT IN ('inactive', 'close', 'closed', 'archived'))")
     suspend fun getStudentsForBatchOnce(batchId: String, instituteId: String): List<StudentEntity>
 
     @Query("SELECT b.* FROM batches b INNER JOIN batch_students bs ON b.id = bs.batchId WHERE bs.studentId = :studentId AND bs.instituteId = :instituteId AND bs.status = 'active' AND b.archivedAtMs IS NULL ORDER BY b.name ASC")

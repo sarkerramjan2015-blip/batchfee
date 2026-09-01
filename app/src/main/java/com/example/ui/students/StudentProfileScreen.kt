@@ -44,7 +44,6 @@ import com.batchfee.edu.data.audit.StaffActivityLogger
 import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.data.firestore.BatchStudentSyncHelper
 import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
-import com.batchfee.edu.data.firestore.InstituteSyncHelper
 import com.batchfee.edu.data.firestore.StudentSyncHelper
 import com.batchfee.edu.data.media.FirebaseStorageImageUploadHelper
 import com.batchfee.edu.data.models.BatchEntity
@@ -86,6 +85,9 @@ private val DashboardLine = Color(0x5522D3EE)
 private val DashboardSoft = Color(0x1A22D3EE)
 private val DangerRed     = Color(0xFFEF4444)
 
+private fun isInactiveStudentStatus(status: String?): Boolean =
+    status.orEmpty().trim().lowercase() in setOf("inactive", "close", "closed")
+
 private data class StudentPdfExport(
     val file: File,
     val title: String,
@@ -121,6 +123,7 @@ fun StudentProfileScreen(
     var directMessage by remember { mutableStateOf("") }
     var pendingConfirmAction by remember { mutableStateOf<StudentMenuConfirmAction?>(null) }
     var isDeletingStudent by remember { mutableStateOf(false) }
+    var isUpdatingStudentStatus by remember { mutableStateOf(false) }
     var showStudentInsights by remember { mutableStateOf(false) }
     var showSetStudentPasswordDialog by remember { mutableStateOf(false) }
     var showCustomMonthlyFeeDialog by remember { mutableStateOf(false) }
@@ -1367,9 +1370,14 @@ fun StudentProfileScreen(
                         showStudentMenu = false
                         showShiftDialog = true
                     },
-                    onCloseStudent = {
+                    isStudentInactive = isInactiveStudentStatus(s.status),
+                    onChangeStudentActivity = {
                         showStudentMenu = false
-                        pendingConfirmAction = StudentMenuConfirmAction.Close
+                        pendingConfirmAction = if (isInactiveStudentStatus(s.status)) {
+                            StudentMenuConfirmAction.Activate
+                        } else {
+                            StudentMenuConfirmAction.Close
+                        }
                     },
                     onShareLogin = {
                         showStudentMenu = false
@@ -1575,22 +1583,32 @@ fun StudentProfileScreen(
 
             pendingConfirmAction?.let { action ->
                 AlertDialog(
-                    onDismissRequest = { if (!isDeletingStudent) pendingConfirmAction = null },
+                    onDismissRequest = {
+                        if (!isDeletingStudent && !isUpdatingStudentStatus) pendingConfirmAction = null
+                    },
                     containerColor = CardBgAlt,
                     shape = RoundedCornerShape(14.dp),
                     title = {
                         Text(
-                            if (action == StudentMenuConfirmAction.Delete) "Archive student safely?" else "Close student?",
+                            when (action) {
+                                StudentMenuConfirmAction.Delete -> "Archive student safely?"
+                                StudentMenuConfirmAction.Activate -> "Activate student?"
+                                StudentMenuConfirmAction.Close -> "Mark student inactive?"
+                            },
                             color = TextWhite,
                             fontWeight = FontWeight.Bold
                         )
                     },
                     text = {
                         Text(
-                            if (action == StudentMenuConfirmAction.Delete)
-                                "The student account will be disabled and hidden, while fees, payments, receipts, enrolments, attendance, results and media remain retained for recovery and audit."
-                            else
-                                "This will mark the student status as inactive.",
+                            when (action) {
+                                StudentMenuConfirmAction.Delete ->
+                                    "The student account will be disabled and hidden, while fees, payments, receipts, enrolments, attendance, results and media remain retained for recovery and audit."
+                                StudentMenuConfirmAction.Activate ->
+                                    "The student will return to active lists and attendance. Existing batches, fees and history will remain unchanged."
+                                StudentMenuConfirmAction.Close ->
+                                    "The student will be removed from active lists and attendance. Fees, receipts and complete history will remain safe."
+                            },
                             color = TextMuted
                         )
                     },
@@ -1615,32 +1633,60 @@ fun StudentProfileScreen(
                                             isDeletingStudent = false
                                         }
                                     } else {
-                                        val updated = currentStudent.copy(
-                                            status = "inactive",
-                                            updatedAtMs = System.currentTimeMillis()
-                                        )
-                                        StudentSyncHelper.upsertStudent(updated)
-                                        db.studentDao().updateStudent(updated)
+                                        isUpdatingStudentStatus = true
                                         try {
-                                            val count = withContext(Dispatchers.IO) {
-                                                db.studentDao().getStudentsByInstituteOnce(instId ?: "").size
-                                            }
-                                            InstituteSyncHelper.updateStudentCount(instId ?: "", count)
-                                        } catch (_: Exception) { }
-                                        pendingConfirmAction = null
+                                            val becomingActive = action == StudentMenuConfirmAction.Activate
+                                            val updated = currentStudent.copy(
+                                                status = if (becomingActive) "active" else "inactive",
+                                                updatedAtMs = System.currentTimeMillis()
+                                            )
+                                            // Status is a cloud-first operational change. Do not let a
+                                            // failed request create a local-only inactive/active state.
+                                            StudentSyncHelper.upsertStudentOrThrow(updated)
+                                            db.studentDao().updateStudent(updated)
+                                            StaffActivityLogger.logCompletedAction(
+                                                db,
+                                                if (becomingActive) "student_activated" else "student_inactivated",
+                                                "students",
+                                                if (becomingActive) "Activated student ${updated.fullName}" else "Marked student ${updated.fullName} inactive"
+                                            )
+                                            Toast.makeText(
+                                                context,
+                                                if (becomingActive) "Student is active again." else "Student marked inactive.",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                            pendingConfirmAction = null
+                                        } catch (_: Exception) {
+                                            Toast.makeText(
+                                                context,
+                                                "Student status could not be updated. Check your connection and try again.",
+                                                Toast.LENGTH_LONG
+                                            ).show()
+                                        } finally {
+                                            isUpdatingStudentStatus = false
+                                        }
                                     }
                                 }
                             },
-                            enabled = !isDeletingStudent
+                            enabled = !isDeletingStudent && !isUpdatingStudentStatus
                         ) {
                             Text(
-                                if (isDeletingStudent) "Securing..." else if (action == StudentMenuConfirmAction.Delete) "Archive safely" else "Close",
-                                color = Color(0xFFEF4444)
+                                when {
+                                    isDeletingStudent -> "Securing..."
+                                    isUpdatingStudentStatus -> "Saving..."
+                                    action == StudentMenuConfirmAction.Delete -> "Archive safely"
+                                    action == StudentMenuConfirmAction.Activate -> "Activate"
+                                    else -> "Mark inactive"
+                                },
+                                color = if (action == StudentMenuConfirmAction.Activate) Teal else Color(0xFFEF4444)
                             )
                         }
                     },
                     dismissButton = {
-                        TextButton(onClick = { pendingConfirmAction = null }, enabled = !isDeletingStudent) {
+                        TextButton(
+                            onClick = { pendingConfirmAction = null },
+                            enabled = !isDeletingStudent && !isUpdatingStudentStatus
+                        ) {
                             Text("Cancel", color = TextMuted)
                         }
                     }
@@ -1652,6 +1698,7 @@ fun StudentProfileScreen(
 
 // ── Helpers ─────────────────────────────────────────────────────
 private enum class StudentMenuConfirmAction {
+    Activate,
     Close,
     Delete
 }
@@ -1855,7 +1902,8 @@ private fun StudentBatchMenuDialog(
     onEdit: () -> Unit,
     onAssignBatch: () -> Unit,
     onShiftBatch: () -> Unit,
-    onCloseStudent: () -> Unit,
+    isStudentInactive: Boolean,
+    onChangeStudentActivity: () -> Unit,
     onShareLogin: () -> Unit,
     onMessage: () -> Unit,
     onDeleteStudent: () -> Unit,
@@ -1870,7 +1918,17 @@ private fun StudentBatchMenuDialog(
         StudentBatchMenuItem("Edit Student", "You can edit student details here", Icons.Filled.Edit, onEdit),
         StudentBatchMenuItem("Assign Batch", "You can assign new batch here", Icons.Filled.Groups, onAssignBatch),
         StudentBatchMenuItem("Shift Batch", "You can shift this student to another batch", Icons.Filled.SwapHoriz, onShiftBatch),
-        StudentBatchMenuItem("Close", "You can mark student status as inactive.", Icons.Filled.Close, onCloseStudent, isDestructive = true),
+        StudentBatchMenuItem(
+            title = if (isStudentInactive) "Activate Student" else "Mark Inactive",
+            subtitle = if (isStudentInactive) {
+                "Return this student to active lists and attendance."
+            } else {
+                "Stop attendance without losing history."
+            },
+            icon = if (isStudentInactive) Icons.Filled.CheckCircle else Icons.Filled.Close,
+            onClick = onChangeStudentActivity,
+            isDestructive = !isStudentInactive
+        ),
         StudentBatchMenuItem("Share Login Info", "Share student ID and app access status", Icons.Filled.Share, onShareLogin),
         StudentBatchMenuItem("Message", "Send a direct message", Icons.Filled.Email, onMessage),
         StudentBatchMenuItem("Generate Report", "Create a professional PDF student report", Icons.Filled.Article, onGenerateReport),

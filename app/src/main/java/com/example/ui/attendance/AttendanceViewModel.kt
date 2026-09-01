@@ -513,6 +513,21 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
         )
     }
 
+    /**
+     * Attendance rows are historic records and may still exist after an owner
+     * closes a student. Dashboard totals, however, describe today's active
+     * class list. Keep historic rows in Room/cloud but exclude them from the
+     * current operational summary.
+     */
+    private fun recordsForActiveStudents(
+        records: List<AttendanceEntity>,
+        students: List<StudentEntity>
+    ): List<AttendanceEntity> {
+        if (records.isEmpty() || students.isEmpty()) return emptyList()
+        val activeStudentIds = students.asSequence().map { it.id }.toHashSet()
+        return records.filter { it.studentId in activeStudentIds }
+    }
+
     private fun buildStaffSummary(
         totalStaff: Int,
         records: List<com.batchfee.edu.data.models.StaffAttendanceEntity>,
@@ -545,7 +560,7 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
                             batchId = batch.id,
                             batchName = batch.name,
                             totalStudents = students.size,
-                            records = records,
+                            records = recordsForActiveStudents(records, students),
                             expectedStudentDays = students.size
                         )
                     )
@@ -578,7 +593,10 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
                 val summaries = mutableListOf<BatchAttendanceSummary>()
                 allBatches.filter { it.id in assignedIds }.forEach { batch ->
                     val students = db.batchStudentDao().getStudentsForBatch(batch.id, instId).firstOrNull().orEmpty()
-                    val batchRecords = monthRecords.filter { it.batchId == batch.id }
+                    val batchRecords = recordsForActiveStudents(
+                        monthRecords.filter { it.batchId == batch.id },
+                        students
+                    )
                     summaries.add(
                         buildBatchSummary(
                             batchId = batch.id,
@@ -612,7 +630,7 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
                     batchId = batchId,
                     batchName = batch.name,
                     totalStudents = students.size,
-                    records = records,
+                    records = recordsForActiveStudents(records, students),
                     expectedStudentDays = students.size * activeDayCount
                 )
             }

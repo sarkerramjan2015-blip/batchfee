@@ -21,6 +21,24 @@ interface StudentDao {
     @Query("SELECT COUNT(*) FROM students WHERE instituteId = :instituteId AND archivedAtMs IS NULL")
     fun countStudents(instituteId: String): Flow<Int>
 
+    /**
+     * Operational screens must only count students who can currently attend
+     * classes. Historic inactive/closed students are kept for audit and fee
+     * history, but must not make the Home snapshot or attendance total larger
+     * than the default Active student list.
+     */
+    @Query(
+        """
+        SELECT COUNT(*) FROM students
+        WHERE instituteId = :instituteId
+          AND archivedAtMs IS NULL
+          AND (
+            status IS NULL OR LOWER(TRIM(status)) NOT IN ('inactive', 'close', 'closed', 'archived')
+          )
+        """
+    )
+    fun countActiveStudents(instituteId: String): Flow<Int>
+
     @Query(
         """
         SELECT EXISTS(
