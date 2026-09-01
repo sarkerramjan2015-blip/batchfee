@@ -13,6 +13,7 @@ test("public registration validation normalizes a valid Bangladesh submission", 
     whatsappNumber: "+880 1812 345678",
     gender: "Male",
     dateOfBirth: "2010-02-18",
+    bloodGroup: "ab-",
     schoolName: "Dhaka Model School",
     className: "Class 10",
     address: "Mirpur, Dhaka",
@@ -21,6 +22,7 @@ test("public registration validation normalizes a valid Bangladesh submission", 
   assert.equal(result.whatsappNumber, "+8801812345678");
   assert.equal(result.fullName, "Rahat Hossain");
   assert.equal(result.dateOfBirthMs, Date.UTC(2010, 1, 18));
+  assert.equal(result.bloodGroup, "AB-");
 });
 
 test("public registration validation rejects unsafe or malformed input", () => {
@@ -38,6 +40,12 @@ test("public registration validation rejects unsafe or malformed input", () => {
     slug: "bright-coaching-abc123",
     fullName: "Rahat",
     phone: "0171234567",
+  }));
+  assert.throws(() => canonicalRegistrationPayload({
+    slug: "bright-coaching-abc123",
+    fullName: "Rahat",
+    phone: "01712345678",
+    bloodGroup: "A++",
   }));
 });
 

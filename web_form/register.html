@@ -114,6 +114,22 @@
           <p id="dateOfBirthError" class="error"></p>
         </div>
         <div class="field">
+          <label for="bloodGroup">Blood group</label>
+          <select id="bloodGroup" name="bloodGroup">
+            <option value="">Not provided</option>
+            <option value="A+">A+</option>
+            <option value="A-">A-</option>
+            <option value="B+">B+</option>
+            <option value="B-">B-</option>
+            <option value="AB+">AB+</option>
+            <option value="AB-">AB-</option>
+            <option value="O+">O+</option>
+            <option value="O-">O-</option>
+          </select>
+          <p class="hint">Optional. Select only if the information is known.</p>
+          <p id="bloodGroupError" class="error"></p>
+        </div>
+        <div class="field">
           <label for="studentPhoto">Student photo</label>
           <input id="studentPhoto" name="studentPhoto" type="file" accept="image/*">
           <p class="hint">Optional. Choose a clear face photo from your gallery. It is cropped and compressed safely before submission.</p>
@@ -238,6 +254,7 @@
         if (reason.includes("whatsapp number")) return ["whatsappNumber", "Enter a valid Bangladesh mobile number."];
         if (reason.includes("guardian name")) return ["guardianName", "Enter a valid guardian name."];
         if (reason.includes("date of birth")) return ["dateOfBirth", "Enter a valid date of birth."];
+        if (reason.includes("blood group")) return ["bloodGroup", "Choose a valid blood group."];
         if (reason.includes("school name")) return ["schoolName", "Enter a valid school or institute name."];
         if (reason.includes("class")) return ["className", "Enter a valid class."];
         if (reason.includes("address")) return ["address", "Enter a valid address."];
@@ -350,6 +367,9 @@
         }
         if (!validOptionalText(payload.guardianName, 120, namePattern)) { showFieldError("guardianName", "Enter a valid guardian name."); valid = false; }
         if (!validBirthDate(payload.dateOfBirth)) { showFieldError("dateOfBirth", "Enter a valid date of birth."); valid = false; }
+        if (payload.bloodGroup && !["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"].includes(payload.bloodGroup)) {
+          showFieldError("bloodGroup", "Choose a valid blood group."); valid = false;
+        }
         if (!validOptionalText(payload.schoolName, 160)) { showFieldError("schoolName", "Remove unsupported characters from the school name."); valid = false; }
         if (!validOptionalText(payload.className, 80)) { showFieldError("className", "Remove unsupported characters from the class."); valid = false; }
         if (!validOptionalText(payload.address, 300)) { showFieldError("address", "Remove unsupported characters from the address."); valid = false; }
@@ -630,6 +650,7 @@
           whatsappNumber: formValue("whatsappNumber"),
           gender: document.getElementById("gender").value,
           dateOfBirth: document.getElementById("dateOfBirth").value,
+          bloodGroup: document.getElementById("bloodGroup").value,
           schoolName: formValue("schoolName"),
           className: formValue("className"),
           address: formValue("address"),

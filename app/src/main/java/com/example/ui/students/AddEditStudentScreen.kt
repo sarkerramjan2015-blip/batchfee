@@ -115,6 +115,7 @@ private val TextMuted = Color(0xFF94A3B8)
 private val AccentRed = Color(0xFFEF4444)
 
 private val GenderOptions = listOf("Male", "Female", "Other")
+private val BloodGroupOptions = listOf("A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-")
 private const val DefaultCountryCode = "+880"
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -140,6 +141,7 @@ fun AddEditStudentScreen(
     var whatsappNumber by remember { mutableStateOf("") }
     var gender by remember { mutableStateOf<String?>(null) }
     var dateOfBirthMs by remember { mutableStateOf<Long?>(null) }
+    var bloodGroup by remember { mutableStateOf<String?>(null) }
     var schoolName by remember { mutableStateOf("") }
     var className by remember { mutableStateOf("") }
     var address by remember { mutableStateOf("") }
@@ -207,6 +209,7 @@ fun AddEditStudentScreen(
                 phone = s.phone ?: ""
                 gender = s.gender
                 dateOfBirthMs = s.dateOfBirthMs
+                bloodGroup = s.bloodGroup
                 schoolName = s.schoolName ?: ""
                 className = s.className ?: ""
                 address = s.address ?: ""
@@ -470,6 +473,12 @@ fun AddEditStudentScreen(
             )
             Spacer(Modifier.height(10.dp))
 
+            BloodGroupSelector(
+                selectedBloodGroup = bloodGroup,
+                onBloodGroupSelected = { bloodGroup = it }
+            )
+            Spacer(Modifier.height(10.dp))
+
             SectionLabel("Institute Name")
             DarkTextField(
                 value = schoolName,
@@ -655,6 +664,7 @@ fun AddEditStudentScreen(
                                         whatsappNumber = whatsappNumber.trim().takeIf { it.isNotEmpty() },
                                         gender = gender,
                                         dateOfBirthMs = dateOfBirthMs,
+                                        bloodGroup = bloodGroup,
                                         schoolName = schoolName.trim().takeIf { it.isNotEmpty() },
                                         className = className.trim().takeIf { it.isNotEmpty() },
                                         address = address.trim().takeIf { it.isNotEmpty() },
@@ -688,6 +698,7 @@ fun AddEditStudentScreen(
                                         whatsappNumber = whatsappNumber.trim().takeIf { it.isNotEmpty() },
                                         gender = gender,
                                         dateOfBirthMs = dateOfBirthMs,
+                                        bloodGroup = bloodGroup,
                                         schoolName = schoolName.trim().takeIf { it.isNotEmpty() },
                                         className = className.trim().takeIf { it.isNotEmpty() },
                                         address = address.trim().takeIf { it.isNotEmpty() },
@@ -1016,6 +1027,57 @@ private fun DateValueField(
                 fontWeight = FontWeight.SemiBold
             )
             Icon(Icons.Filled.CalendarMonth, contentDescription = null, tint = Cyan, modifier = Modifier.size(20.dp))
+        }
+    }
+}
+
+@Composable
+private fun BloodGroupSelector(
+    selectedBloodGroup: String?,
+    onBloodGroupSelected: (String?) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    SectionLabel("Blood Group (Optional)")
+    Box(modifier = Modifier.fillMaxWidth()) {
+        OutlinedButton(
+            onClick = { expanded = true },
+            modifier = Modifier.fillMaxWidth().height(50.dp),
+            shape = RoundedCornerShape(12.dp),
+            border = BorderStroke(1.dp, BorderSub),
+            colors = ButtonDefaults.outlinedButtonColors(
+                containerColor = CardBgAlt,
+                contentColor = TextWhite
+            )
+        ) {
+            Text(
+                selectedBloodGroup ?: "Not provided",
+                modifier = Modifier.weight(1f),
+                color = if (selectedBloodGroup == null) TextMuted else TextWhite,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Start
+            )
+            Icon(Icons.Filled.ArrowDropDown, contentDescription = "Choose blood group", tint = Cyan)
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            modifier = Modifier.background(CardBg)
+        ) {
+            DropdownMenuItem(
+                text = { Text("Not provided", color = TextMuted) },
+                onClick = {
+                    onBloodGroupSelected(null)
+                    expanded = false
+                }
+            )
+            BloodGroupOptions.forEach { option ->
+                DropdownMenuItem(
+                    text = { Text(option, color = TextWhite) },
+                    onClick = {
+                        onBloodGroupSelected(option)
+                        expanded = false
+                    }
+                )
+            }
         }
     }
 }

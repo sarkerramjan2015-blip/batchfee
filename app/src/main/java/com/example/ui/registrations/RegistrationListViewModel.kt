@@ -141,7 +141,7 @@ class RegistrationListViewModel(private val db: AppDatabase) : ViewModel() {
                     guardianPhone = null,
                     guardianEmail = null,
                     emergencyContact = null,
-                    bloodGroup = null,
+                    bloodGroup = registration.bloodGroup,
                     admissionDateMs = System.currentTimeMillis(),
                     status = "active",
                     notes = combinedNotes,

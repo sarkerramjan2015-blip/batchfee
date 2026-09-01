@@ -9,6 +9,7 @@ data class PendingRegistration(
     val whatsappNumber: String? = null,
     val gender: String? = null,
     val dateOfBirthMs: Long? = null,
+    val bloodGroup: String? = null,
     val schoolName: String? = null,
     val className: String? = null,
     val address: String? = null,

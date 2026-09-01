@@ -72,6 +72,7 @@ fun RegistrationDetailSheet(
             registration.whatsappNumber?.takeIf { it.isNotBlank() }?.let { DetailField("WhatsApp", it) }
             registration.gender?.takeIf { it.isNotBlank() }?.let { DetailField("Gender", it) }
             registration.dateOfBirthMs?.let { DetailField("Date of Birth", dateFormat.format(Date(it))) }
+            registration.bloodGroup?.takeIf { it.isNotBlank() }?.let { DetailField("Blood Group", it) }
             registration.schoolName?.takeIf { it.isNotBlank() }?.let { DetailField("Institute / School", it) }
             registration.className?.takeIf { it.isNotBlank() }?.let { DetailField("Class", it) }
             registration.address?.takeIf { it.isNotBlank() }?.let { DetailField("Address", it) }

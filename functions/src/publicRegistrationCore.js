@@ -13,6 +13,7 @@ const MAX = {
 
 const BANGLADESH_MOBILE = /^1[3-9][0-9]{8}$/;
 const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const BLOOD_GROUPS = new Set(["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"]);
 const NAME = /^[\p{L}\p{M}][\p{L}\p{M}\p{N} .,'’-]*$/u;
 
 function cleanText(value, field, { required = false, max, pattern = null } = {}) {
@@ -60,6 +61,14 @@ function parseBirthDate(value) {
   return timestamp;
 }
 
+function canonicalBloodGroup(value) {
+  if (value == null || value === "") return null;
+  if (typeof value !== "string") throw new Error("Invalid blood group.");
+  const clean = value.normalize("NFKC").trim().toUpperCase().replace("−", "-");
+  if (!BLOOD_GROUPS.has(clean)) throw new Error("Invalid blood group.");
+  return clean;
+}
+
 function canonicalRegistrationPayload(input) {
   const raw = input && typeof input === "object" ? input : {};
   const slug = cleanText(raw.slug, "registration link", {
@@ -94,6 +103,7 @@ function canonicalRegistrationPayload(input) {
     whatsappNumber: normalizeBangladeshMobile(raw.whatsappNumber, "WhatsApp number"),
     gender,
     dateOfBirthMs: parseBirthDate(raw.dateOfBirth),
+    bloodGroup: canonicalBloodGroup(raw.bloodGroup),
     schoolName,
     className,
     address,
@@ -107,4 +117,4 @@ function stableHash(secret, value) {
   return crypto.createHmac("sha256", secret).update(value).digest("hex");
 }
 
-module.exports = { canonicalRegistrationPayload, stableHash };
+module.exports = { canonicalBloodGroup, canonicalRegistrationPayload, stableHash };

@@ -192,6 +192,7 @@ function createPublicRegistrationHandler({ db, bucket, rateLimitSecret }) {
           whatsappNumber: registration.whatsappNumber,
           gender: registration.gender,
           dateOfBirthMs: registration.dateOfBirthMs,
+          bloodGroup: registration.bloodGroup,
           schoolName: registration.schoolName,
           className: registration.className,
           address: registration.address,
