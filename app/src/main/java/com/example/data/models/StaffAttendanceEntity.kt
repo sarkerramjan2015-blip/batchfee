@@ -13,6 +13,8 @@ data class StaffAttendanceEntity(
     val note: String?,
     val markedByUserId: String,
     val createdAtMs: Long,
-    val updatedAtMs: Long
+    val updatedAtMs: Long,
+    val entryTimeMs: Long? = null,
+    val exitTimeMs: Long? = null
 )
 

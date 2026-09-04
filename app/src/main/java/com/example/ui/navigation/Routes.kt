@@ -63,6 +63,10 @@ object BillingRoute
 @Serializable object StaffActivityRoute
 @Serializable object StudentActivityRoute
 @Serializable object RoutineRoute
+@Serializable object CustomRoutineListRoute
+@Serializable object CreateCustomRoutineRoute
+@Serializable data class EditCustomRoutineRoute(val routineId: String)
+@Serializable data class CustomRoutineDetailRoute(val routineId: String)
 @Serializable object StaffAttendanceRoute
 @Serializable object StaffAttendanceReportRoute
 @Serializable object SalaryRoute

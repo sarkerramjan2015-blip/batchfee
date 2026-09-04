@@ -69,10 +69,14 @@ object AccessControl {
         "StaffActivityRoute",
         "StudentActivityRoute",
         "RoutineRoute",
+        "CreateCustomRoutineRoute",
+        "EditCustomRoutineRoute",
         "AllArchivesRoute"
     )
 
     private val routePermissions = mapOf(
+        "CustomRoutineListRoute" to setOf(StaffPermissions.VIEW_BATCHES),
+        "CustomRoutineDetailRoute" to setOf(StaffPermissions.VIEW_BATCHES),
         "StudentsRoute" to setOf(StaffPermissions.VIEW_STUDENTS, StaffPermissions.MANAGE_STUDENTS),
         "ArchivedStudentsRoute" to setOf(StaffPermissions.MANAGE_STUDENTS),
         "StudentProfileRoute" to setOf(StaffPermissions.VIEW_STUDENTS, StaffPermissions.MANAGE_STUDENTS),

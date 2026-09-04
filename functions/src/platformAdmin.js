@@ -229,7 +229,7 @@ async function createInstitute({ db, adminAuth, request, operationId, requestHas
       transaction.create(operationRef, { actorUid: request.auth.uid, requestHash, action: "create_institute", result, createdAtMs: now });
     });
   } catch (error) {
-    if (owner.created) await adminAuth.deleteUser(owner.user.uid).catch(() => {});
+    if (owner.created) await adminAuth.deleteUser(owner.user.uid).catch(() => { });
     throw error;
   }
   let recoveryLink = "";
@@ -294,10 +294,17 @@ async function dashboardMetrics(db) {
   monthStartDate.setUTCDate(1);
   monthStartDate.setUTCHours(0, 0, 0, 0);
   const monthStart = monthStartDate.getTime();
-  const activeInstitutes = institutesSnap.docs.filter((doc) => doc.get("deletionState") !== "retained");
-  const active = activeInstitutes.filter((doc) => {
+  const nonRetainedInstitutes = institutesSnap.docs.filter((doc) => doc.get("deletionState") !== "retained");
+  // "Active" mirrors firestore.rules hasActiveSubscription: the institute must be
+  // enabled (isActive === true), hold a trial/active subscription status, and still
+  // be inside its current subscription period. Statuses such as past_due, expired,
+  // blocked, or cancelled must not count as active.
+  const active = nonRetainedInstitutes.filter((doc) => {
     const end = Number(doc.get("currentPeriodEndMs") || doc.get("trialEndDate") || 0);
-    return doc.get("isActive") !== false && end > now;
+    const status = String(doc.get("subscriptionStatus") || "");
+    return doc.get("isActive") === true
+      && (status === "trial" || status === "active")
+      && end > now;
   });
   const revenue = receiptsSnap.docs.reduce((totals, doc) => {
     const amount = Number(doc.get("amountPaid") || 0);
@@ -314,12 +321,14 @@ async function dashboardMetrics(db) {
   }).length;
   return {
     snapshotAtMs: now,
-    totalInstitutes: activeInstitutes.length,
+    // "Institutes" is the true total of every institute document, including
+    // soft-deleted ("retained") records.
+    totalInstitutes: institutesSnap.size,
     activeInstitutes: active.length,
     expiringIn7Days: expiringWithin(7),
     expiringIn30Days: expiringWithin(30),
-    totalStudents: activeInstitutes.reduce((sum, doc) => sum + Number(doc.get("studentCount") || 0), 0),
-    totalStaff: activeInstitutes.reduce((sum, doc) => sum + Number(doc.get("staffCount") || 0), 0),
+    totalStudents: nonRetainedInstitutes.reduce((sum, doc) => sum + Number(doc.get("studentCount") || 0), 0),
+    totalStaff: nonRetainedInstitutes.reduce((sum, doc) => sum + Number(doc.get("staffCount") || 0), 0),
     lifetimeRevenue: Math.round(revenue.lifetime * 100) / 100,
     thisMonthRevenue: Math.round(revenue.thisMonth * 100) / 100,
     canonicalReceiptCount: receiptsSnap.size,
@@ -367,11 +376,11 @@ async function transferOwner({ db, adminAuth, request, operationId, requestHash,
       transaction.create(operationRef, { actorUid: request.auth.uid, requestHash, action: "transfer_owner", result, createdAtMs: now });
     });
   } catch (error) {
-    if (owner.created) await adminAuth.deleteUser(owner.user.uid).catch(() => {});
+    if (owner.created) await adminAuth.deleteUser(owner.user.uid).catch(() => { });
     throw error;
   }
   let recoveryLink = "";
-  try { recoveryLink = await adminAuth.generatePasswordResetLink(email); } catch (_) {}
+  try { recoveryLink = await adminAuth.generatePasswordResetLink(email); } catch (_) { }
   return { ...result, recoveryLink };
 }
 
@@ -434,7 +443,7 @@ async function managePlatformAdmin({ db, adminAuth, request, operationId, reques
       transaction.create(operationRef, { actorUid: request.auth.uid, requestHash, action: "manage_platform_admin", result, createdAtMs: now });
     });
   } catch (error) {
-    if (owner.created) await adminAuth.deleteUser(owner.user.uid).catch(() => {});
+    if (owner.created) await adminAuth.deleteUser(owner.user.uid).catch(() => { });
     throw error;
   }
   return { ...result, recoveryLink: await adminAuth.generatePasswordResetLink(email) };

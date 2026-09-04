@@ -12,6 +12,7 @@ import com.batchfee.edu.data.firestore.TeachingSessionSyncHelper
 import com.batchfee.edu.data.models.ExpenseEntity
 import com.batchfee.edu.data.models.SalaryEntity
 import com.batchfee.edu.data.models.StaffEntity
+import com.batchfee.edu.data.models.TeachingSessionEntity
 import com.batchfee.edu.domain.SessionManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -22,7 +23,18 @@ import java.util.Calendar
 import java.nio.charset.StandardCharsets
 
 class SalaryViewModel(private val db: AppDatabase) : ViewModel() {
-    data class TeacherPayPreview(val sessionCount: Int = 0, val amount: Double = 0.0)
+    data class TeacherPayPreview(
+        val sessionCount: Int = 0,
+        val amount: Double = 0.0,
+        val sessions: List<TeachingSessionEntity> = emptyList()
+    )
+
+    /** Sessions locked into one generated salary, for the class-wise breakdown view. */
+    data class SalaryBreakdown(
+        val salary: SalaryEntity,
+        val sessions: List<TeachingSessionEntity>
+    )
+
     private val _salaries = MutableStateFlow<List<SalaryEntity>>(emptyList())
     val salaries = _salaries.asStateFlow()
 
@@ -31,6 +43,9 @@ class SalaryViewModel(private val db: AppDatabase) : ViewModel() {
 
     private val _teacherPayPreview = MutableStateFlow(TeacherPayPreview())
     val teacherPayPreview = _teacherPayPreview.asStateFlow()
+
+    private val _salaryBreakdown = MutableStateFlow<SalaryBreakdown?>(null)
+    val salaryBreakdown = _salaryBreakdown.asStateFlow()
 
     // A salary receipt must never be saved twice when the user taps the
     // payment button again while the first cloud request is still running.
@@ -92,9 +107,26 @@ class SalaryViewModel(private val db: AppDatabase) : ViewModel() {
             )
             _teacherPayPreview.value = TeacherPayPreview(
                 sessionCount = sessions.size,
-                amount = sessions.sumOf { it.calculatedAmount }
+                amount = sessions.sumOf { it.calculatedAmount },
+                sessions = sessions
             )
         }
+    }
+
+    /** Loads the class-session records already locked into a generated salary. */
+    fun loadSalaryBreakdown(salaryId: String) {
+        val instId = SessionManager.currentInstituteId.value ?: return
+        viewModelScope.launch {
+            val salary = db.salaryDao().getSalaryById(salaryId, instId)
+            val sessions = salary?.let {
+                db.teachingSessionDao().getSessionsForSalary(instId, salary.id)
+            }.orEmpty()
+            _salaryBreakdown.value = salary?.let { SalaryBreakdown(it, sessions) }
+        }
+    }
+
+    fun clearSalaryBreakdown() {
+        _salaryBreakdown.value = null
     }
 
     private fun buildSalaryExpense(

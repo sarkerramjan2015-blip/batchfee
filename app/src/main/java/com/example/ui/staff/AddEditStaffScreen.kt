@@ -1,9 +1,11 @@
 package com.batchfee.edu.ui.staff
 
+import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -45,6 +47,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
@@ -134,7 +137,13 @@ fun AddEditStaffScreen(
             }
         }
     }
-
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) {
+            runCatching { cameraLauncher.launch(tempPhotoUri) }
+                .onFailure { galleryLauncher.launch("image/*") }
+        }
+    }
+ 
     val staff by viewModel.selectedStaff.collectAsState()
     val batches by viewModel.batches.collectAsState()
 
@@ -201,7 +210,16 @@ fun AddEditStaffScreen(
             Spacer(Modifier.height(14.dp))
             StaffPhotoPicker(
                 photoUri = photoUri,
-                onCameraClick = { cameraLauncher.launch(tempPhotoUri) },
+                onCameraClick = {
+                    val camPerm = Manifest.permission.CAMERA
+                    val granted = ContextCompat.checkSelfPermission(context, camPerm) == PackageManager.PERMISSION_GRANTED
+                    if (granted) {
+                        runCatching { cameraLauncher.launch(tempPhotoUri) }
+                            .onFailure { galleryLauncher.launch("image/*") }
+                    } else {
+                        cameraPermissionLauncher.launch(camPerm)
+                    }
+                },
                 onGalleryClick = { galleryLauncher.launch("image/*") }
             )
             Spacer(Modifier.height(16.dp))

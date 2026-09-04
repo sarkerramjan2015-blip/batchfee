@@ -59,6 +59,9 @@ object InstituteSyncHelper {
                     ?: if (currentPlanId == "plan_free_trial") "trial" else "active"
                 val cloudPhone = data["phone"] as? String
                 val cloudWhatsApp = data["whatsappNumber"] as? String
+                // Preserve the local Entry & Exit tracking toggle — Firestore is not the
+                // authority for this setting, so a cloud sync must not reset it.
+                val localTrackStaffEntryExit = db.instituteDao().getInstitute(instituteId)?.trackStaffEntryExit ?: false
                 db.instituteDao().insertInstitute(
                     InstituteEntity(
                         id = snapshot.id,
@@ -85,7 +88,8 @@ object InstituteSyncHelper {
                         ownerName = data["ownerName"] as? String,
                         email = data["email"] as? String,
                         instituteCode = data["instituteCode"] as? String,
-                        securityPin = data["securityPin"] as? String
+                        securityPin = data["securityPin"] as? String,
+                        trackStaffEntryExit = localTrackStaffEntryExit
                     )
                 )
             } catch (e: Exception) {

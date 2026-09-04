@@ -64,9 +64,11 @@ import java.util.Locale
         com.batchfee.edu.data.models.AssignmentSubmissionEntity::class,
         com.batchfee.edu.data.models.FinalExamEntity::class,
         com.batchfee.edu.data.models.FinalExamSubjectEntity::class,
-        com.batchfee.edu.data.models.FinalExamMarksEntity::class
+        com.batchfee.edu.data.models.FinalExamMarksEntity::class,
+        com.batchfee.edu.data.models.CustomRoutineEntity::class,
+        com.batchfee.edu.data.models.CustomRoutineEntryEntity::class
     ],
-    version = 37,
+    version = 41,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -99,6 +101,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun homeworkDao(): com.batchfee.edu.data.dao.HomeworkDao
     abstract fun assignmentDao(): com.batchfee.edu.data.dao.AssignmentDao
     abstract fun finalExamDao(): com.batchfee.edu.data.dao.FinalExamDao
+    abstract fun customRoutineDao(): com.batchfee.edu.data.dao.CustomRoutineDao
 
     companion object {
         @Volatile
@@ -576,6 +579,85 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** Adds owner-created custom day-wise class routines. */
+        internal val MIGRATION_37_38 = object : androidx.room.migration.Migration(37, 38) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS custom_routines (" +
+                        "id TEXT NOT NULL PRIMARY KEY, " +
+                        "instituteId TEXT NOT NULL, " +
+                        "routineName TEXT NOT NULL, " +
+                        "className TEXT NOT NULL, " +
+                        "section TEXT, " +
+                        "academicSession TEXT, " +
+                        "effectiveDateMs INTEGER, " +
+                        "createdAtMs INTEGER NOT NULL, " +
+                        "updatedAtMs INTEGER NOT NULL, " +
+                        "archivedAtMs INTEGER)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_custom_routines_instituteId ON custom_routines(instituteId)"
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS custom_routine_entries (" +
+                        "id TEXT NOT NULL PRIMARY KEY, " +
+                        "routineId TEXT NOT NULL, " +
+                        "instituteId TEXT NOT NULL, " +
+                        "dayIndex INTEGER NOT NULL, " +
+                        "subjectName TEXT NOT NULL, " +
+                        "teacherName TEXT NOT NULL, " +
+                        "teacherId TEXT, " +
+                        "startMinutes INTEGER NOT NULL, " +
+                        "endMinutes INTEGER NOT NULL, " +
+                        "sortOrder INTEGER NOT NULL DEFAULT 0)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_custom_routine_entries_routineId ON custom_routine_entries(routineId)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_custom_routine_entries_instituteId ON custom_routine_entries(instituteId)"
+                )
+            }
+        }
+
+        /**
+         * Repairs index names created by an earlier debug migration (38) that did
+         * not match the entity's expected index names.
+         */
+        internal val MIGRATION_38_39 = object : androidx.room.migration.Migration(38, 39) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("DROP INDEX IF EXISTS idx_custom_routines_institute")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_custom_routines_instituteId ON custom_routines(instituteId)")
+                db.execSQL("DROP INDEX IF EXISTS idx_custom_routine_entries_routine")
+                db.execSQL("DROP INDEX IF EXISTS idx_custom_routine_entries_institute")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_custom_routine_entries_routineId ON custom_routine_entries(routineId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_custom_routine_entries_instituteId ON custom_routine_entries(instituteId)")
+            }
+        }
+
+        /**
+         * Staff Attendance Entry & Exit Time Tracking:
+         *  - staff_attendance: nullable entry/exit timestamps (existing rows keep null).
+         *  - institutes: per-institute ON/OFF switch (default OFF).
+         */
+        internal val MIGRATION_39_40 = object : androidx.room.migration.Migration(39, 40) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE staff_attendance ADD COLUMN entryTimeMs INTEGER")
+                db.execSQL("ALTER TABLE staff_attendance ADD COLUMN exitTimeMs INTEGER")
+                db.execSQL("ALTER TABLE institutes ADD COLUMN trackStaffEntryExit INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        /**
+         * Custom Routine Period Count:
+         *  - custom_routines: owner-configurable number of periods per day (default 7).
+         */
+        internal val MIGRATION_40_41 = object : androidx.room.migration.Migration(40, 41) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE custom_routines ADD COLUMN periodCount INTEGER NOT NULL DEFAULT 7")
+            }
+        }
+
         fun getDatabase(context: Context, scope: CoroutineScope): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val builder = Room.databaseBuilder(
@@ -583,7 +665,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "batchfee_database"
                 )
-                .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_18_19, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33, MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36, MIGRATION_36_37)
+                .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_18_19, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33, MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36, MIGRATION_36_37, MIGRATION_37_38, MIGRATION_38_39, MIGRATION_39_40, MIGRATION_40_41)
 
                 if (BuildConfig.DEBUG) {
                     builder.fallbackToDestructiveMigration()

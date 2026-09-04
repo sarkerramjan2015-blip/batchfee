@@ -1,7 +1,7 @@
 ﻿package com.batchfee.edu.data.repository
 
+import com.batchfee.edu.data.firebase.FirebaseFailureReporter
 import com.batchfee.edu.data.models.SubscriptionRequest
-import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.functions.FirebaseFunctions
 import com.google.firebase.functions.FirebaseFunctionsException
@@ -82,7 +82,7 @@ class SubscriptionRepository(
                 }
             }.sortedBy { it.requestSentAt }
         } catch (e: Exception) {
-            FirebaseCrashlytics.getInstance().recordException(e)
+            FirebaseFailureReporter.recordException(e)
             emptyList()
         }
     }
@@ -136,7 +136,7 @@ class SubscriptionRepository(
                 }
             }.sortedBy { it.requestSentAt }
         } catch (e: Exception) {
-            FirebaseCrashlytics.getInstance().recordException(e)
+            FirebaseFailureReporter.recordException(e)
             emptyList()
         }
     }

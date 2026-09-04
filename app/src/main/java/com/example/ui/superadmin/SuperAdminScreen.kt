@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -68,8 +69,8 @@ import com.batchfee.edu.data.repository.InstituteOwnerLoginActivity
 import com.batchfee.edu.data.repository.InstituteOwnerLoginActivityRepository
 import com.batchfee.edu.domain.SessionManager
 import com.batchfee.edu.domain.InstituteContactNumber
+import com.batchfee.edu.data.firebase.FirebaseFailureReporter
 import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.google.firebase.firestore.AggregateSource
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FirebaseFirestore
@@ -365,8 +366,8 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
         val planPriceMap = plans.associate { it.id to it.priceBdt }
         val activeCount = institutes.count { card ->
             val entity = card.entity
-            val isExpired = entity.subscriptionStatus == "expired" || entity.subscriptionStatus == "blocked"
-            !isExpired && effectiveSubscriptionExpiryMs(entity) > now
+            val validStatus = entity.subscriptionStatus == "trial" || entity.subscriptionStatus == "active"
+            validStatus && effectiveSubscriptionExpiryMs(entity) > now
         }
         val totalRevenue = institutes.sumOf { card ->
             val entity = card.entity
@@ -412,7 +413,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
         lifecycleListeners += firestore.collectionGroup("subscription_receipts")
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
-                    FirebaseCrashlytics.getInstance().recordException(error)
+                    FirebaseFailureReporter.recordException(error)
                     _operationMsg.value = "Receipt history unavailable: ${error.message}"
                     return@addSnapshotListener
                 }
@@ -473,7 +474,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
             .limit(ADMIN_LIST_WINDOW)
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
-                    FirebaseCrashlytics.getInstance().recordException(error)
+                    FirebaseFailureReporter.recordException(error)
                     _operationMsg.value = "Pending subscription requests unavailable: ${error.message}"
                     return@addSnapshotListener
                 }
@@ -491,7 +492,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
             } catch (error: Exception) {
                 // This is a best-effort migration for old invalid records. Never
                 // interrupt valid payment review if an offline session cannot run it.
-                FirebaseCrashlytics.getInstance().recordException(error)
+                FirebaseFailureReporter.recordException(error)
             }
         }
     }
@@ -520,7 +521,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                     }
                 } catch (e: Exception) {
                     roomFailed = true
-                    FirebaseCrashlytics.getInstance().recordException(e)
+                    FirebaseFailureReporter.recordException(e)
                 }
                 _pendingRequests.value = _pendingRequests.value.filterNot { it.requestId == request.requestId }
                 _institutes.value = _institutes.value.map { card ->
@@ -555,7 +556,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                 )
             } catch (e: Exception) {
                 _operationMsg.value = "Approve failed: ${subscriptionOperationErrorMessage(e)}"
-                FirebaseCrashlytics.getInstance().recordException(e)
+                FirebaseFailureReporter.recordException(e)
             } finally {
                 _approvingRequestIds.value = _approvingRequestIds.value - request.requestId
             }
@@ -578,7 +579,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                 _operationMsg.value = "Rejected ${request.instituteName}"
             } catch (e: Exception) {
                 _operationMsg.value = "Reject failed: ${subscriptionOperationErrorMessage(e)}"
-                FirebaseCrashlytics.getInstance().recordException(e)
+                FirebaseFailureReporter.recordException(e)
             }
         }
     }
@@ -594,7 +595,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
             .limit(INSTITUTE_PAGE_SIZE)
             .addSnapshotListener { page, error ->
                 if (error != null || page == null) {
-                    error?.let(FirebaseCrashlytics.getInstance()::recordException)
+                    error?.let(FirebaseFailureReporter::recordException)
                     _operationMsg.value = "Failed to load institutes: ${error?.message ?: "Unknown error"}"
                     _isLoading.value = false
                     return@addSnapshotListener
@@ -634,18 +635,10 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                 val allCount = withContext(Dispatchers.IO) {
                     firestore.collection("institutes").count().get(AggregateSource.SERVER).await().count
                 }
-                val archivedCount = withContext(Dispatchers.IO) {
-                    firestore.collection("institutes")
-                        .whereEqualTo("deletionState", "retained")
-                        .count()
-                        .get(AggregateSource.SERVER)
-                        .await()
-                        .count
-                }
-                totalInstituteCount = (allCount - archivedCount).coerceAtLeast(0L).toInt()
+                totalInstituteCount = allCount.coerceAtLeast(0L).toInt()
                 recalculateStats(_institutes.value)
             } catch (error: Exception) {
-                FirebaseCrashlytics.getInstance().recordException(error)
+                FirebaseFailureReporter.recordException(error)
             }
         }
     }
@@ -692,7 +685,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
             recalculateStats(mergedCards)
             rebuildReceiptHistory()
         } catch (error: Exception) {
-            FirebaseCrashlytics.getInstance().recordException(error)
+            FirebaseFailureReporter.recordException(error)
             _operationMsg.value = "Failed to load institutes: ${error.message}"
         } finally {
             _isLoading.value = false
@@ -875,7 +868,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
             .limit(ADMIN_LIST_WINDOW)
             .addSnapshotListener { docs, error ->
                 if (error != null || docs == null) {
-                    error?.let(FirebaseCrashlytics.getInstance()::recordException)
+                    error?.let(FirebaseFailureReporter::recordException)
                     _operationMsg.value = "Failed to load retained institutes."
                     return@addSnapshotListener
                 }
@@ -941,7 +934,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                 _operationMsg.value = "${card.entity.name} archived. Data and ledger are retained for recovery."
             } catch (e: Exception) {
                 _operationMsg.value = "Failed: ${e.message}"
-                FirebaseCrashlytics.getInstance().recordException(e)
+                FirebaseFailureReporter.recordException(e)
             }
         }
     }
@@ -965,7 +958,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                 _operationMsg.value = "${card.entity.name} restored."
             } catch (e: Exception) {
                 _operationMsg.value = "Failed: ${e.message}"
-                FirebaseCrashlytics.getInstance().recordException(e)
+                FirebaseFailureReporter.recordException(e)
             }
         }
     }
@@ -1045,7 +1038,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                     "Subscription plan updated."
                 }
             } catch (e: Exception) {
-                FirebaseCrashlytics.getInstance().recordException(e)
+                FirebaseFailureReporter.recordException(e)
                 _operationMsg.value = "Plan save failed: ${e.message}"
             }
         }
@@ -1068,7 +1061,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                 }
                 _operationMsg.value = "Subscription plan deleted."
             } catch (e: Exception) {
-                FirebaseCrashlytics.getInstance().recordException(e)
+                FirebaseFailureReporter.recordException(e)
                 _operationMsg.value = "Plan delete failed: ${e.message}"
             }
         }
@@ -1163,7 +1156,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                 _operationMsg.value = "${card?.entity?.name ?: "Institute"} permanently deleted."
             } catch (error: Exception) {
                 _operationMsg.value = "Permanent delete failed: ${error.message ?: "Please try again."}"
-                FirebaseCrashlytics.getInstance().recordException(error)
+                FirebaseFailureReporter.recordException(error)
             } finally {
                 _purgingInstituteIds.value = _purgingInstituteIds.value - instituteId
             }
@@ -1242,7 +1235,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                 }.sortedBy { it.fullName }
                 onResult(staffList)
             } catch (e: Exception) {
-                FirebaseCrashlytics.getInstance().recordException(e)
+                FirebaseFailureReporter.recordException(e)
                 onResult(emptyList())
             }
         }
@@ -1281,7 +1274,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                 }.sortedByDescending { it.startDateMs }
                 onResult(receipts)
             } catch (e: Exception) {
-                FirebaseCrashlytics.getInstance().recordException(e)
+                FirebaseFailureReporter.recordException(e)
                 onResult(emptyList())
             }
         }
@@ -1315,7 +1308,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                 }
             } catch (e: Exception) {
                 _operationMsg.value = "Failed: ${e.message}"
-                FirebaseCrashlytics.getInstance().recordException(e)
+                FirebaseFailureReporter.recordException(e)
             }
         }
     }
@@ -1334,7 +1327,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                     canonicalReceiptCount = metrics.canonicalReceiptCount, snapshotAtMs = metrics.snapshotAtMs
                 )
             } catch (error: Exception) {
-                FirebaseCrashlytics.getInstance().recordException(error)
+                FirebaseFailureReporter.recordException(error)
                 _operationMsg.value = "Live platform metrics unavailable: ${error.message}"
             }
         }
@@ -1348,7 +1341,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
             try {
                 onResult(ownerLoginActivityRepository.getOwnerLoginActivity(instituteId), null)
             } catch (error: Exception) {
-                FirebaseCrashlytics.getInstance().recordException(error)
+                FirebaseFailureReporter.recordException(error)
                 onResult(null, "Login activity could not be loaded right now.")
             }
         }
@@ -2205,7 +2198,7 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
                     snapshotAtMs = metrics.snapshotAtMs
                 )
             } catch (error: Exception) {
-                FirebaseCrashlytics.getInstance().recordException(error)
+                FirebaseFailureReporter.recordException(error)
                 _operationMsg.value = "Live platform metrics unavailable: ${error.message}"
             }
         }
@@ -2222,7 +2215,7 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
                 _lastRecoveryLink.value = result.recoveryLink.takeIf { it.isNotBlank() }
                 _operationMsg.value = "Owner access transferred and audited. The previous owner is now an institute admin."
             } catch (error: Exception) {
-                FirebaseCrashlytics.getInstance().recordException(error)
+                FirebaseFailureReporter.recordException(error)
                 _operationMsg.value = "Owner transfer failed: ${error.message}"
             }
         }
@@ -2237,7 +2230,7 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
                 loadInstitutesRealtime()
                 refreshPlatformDashboard()
             } catch (error: Exception) {
-                FirebaseCrashlytics.getInstance().recordException(error)
+                FirebaseFailureReporter.recordException(error)
                 _operationMsg.value = "Institute creation failed: ${error.message}"
             }
         }
@@ -2248,7 +2241,7 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
             try {
                 onPreview(PlatformAdminRepository().previewInstituteImport(rows))
             } catch (error: Exception) {
-                FirebaseCrashlytics.getInstance().recordException(error)
+                FirebaseFailureReporter.recordException(error)
                 _operationMsg.value = "CSV preview failed: ${error.message}"
                 onPreview(emptyList())
             }
@@ -2294,7 +2287,7 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
                 _lastRecoveryLink.value = result.recoveryLink.takeIf { it.isNotBlank() }
                 _operationMsg.value = "${role.replace('_', ' ')} access provisioned and audited."
             } catch (error: Exception) {
-                FirebaseCrashlytics.getInstance().recordException(error)
+                FirebaseFailureReporter.recordException(error)
                 _operationMsg.value = "Platform role update failed: ${error.message}"
             }
         }
@@ -2303,7 +2296,7 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
     private fun loadPlatformAudit() {
         firestore.collection("platform_audit").addSnapshotListener { snapshot, error ->
             if (error != null || snapshot == null) {
-                error?.let(FirebaseCrashlytics.getInstance()::recordException)
+                error?.let(FirebaseFailureReporter::recordException)
                 return@addSnapshotListener
             }
             _platformAudit.value = snapshot.documents.mapNotNull { document ->
@@ -2338,7 +2331,7 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
                     )
                 }.sortedByDescending { it.createdAtMs })
             } catch (error: Exception) {
-                FirebaseCrashlytics.getInstance().recordException(error)
+                FirebaseFailureReporter.recordException(error)
                 onResult(emptyList())
             }
         }
@@ -3017,7 +3010,7 @@ private fun InstituteOwnerLoginActivityPanel(activity: InstituteOwnerLoginActivi
                 modifier = Modifier.fillMaxWidth().heightIn(max = 260.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                items(activity.events, key = { it.id }) { event ->
+                itemsIndexed(activity.events, key = { index, _ -> index }) { _, event ->
                     Row(
                         modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(9.dp))
                             .background(BorderSub.copy(alpha = 0.34f)).padding(horizontal = 9.dp, vertical = 8.dp),

@@ -1,7 +1,7 @@
 ﻿package com.batchfee.edu.domain
 
+import com.batchfee.edu.data.firebase.FirebaseFailureReporter
 import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.tasks.await
 import java.util.Date
@@ -29,7 +29,7 @@ object DemoAuthRepository {
                 .set(data)
                 .await()
         } catch (e: Exception) {
-            FirebaseCrashlytics.getInstance().recordException(e)
+            FirebaseFailureReporter.recordException(e)
         }
     }
 }

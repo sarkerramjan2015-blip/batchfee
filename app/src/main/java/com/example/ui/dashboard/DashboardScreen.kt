@@ -2102,7 +2102,8 @@ fun DashboardScreen(
                                     phone = primaryContact,
                                     whatsappNumber = primaryContact,
                                     address = editAddress.trim().ifBlank { null },
-                                    profilePhotoUri = profilePhotoUri
+                                    profilePhotoUri = profilePhotoUri,
+                                    trackStaffEntryExit = inst.trackStaffEntryExit
                                 )
                                 val logoChanged = profilePhotoUri != inst.profilePhotoUri
 

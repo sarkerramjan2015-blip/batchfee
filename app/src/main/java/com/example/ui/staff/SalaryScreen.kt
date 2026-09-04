@@ -46,6 +46,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.data.models.StaffEntity
 import com.batchfee.edu.data.models.SalaryEntity
+import com.batchfee.edu.data.models.TeachingSessionEntity
 import com.batchfee.edu.domain.SessionManager
 import com.batchfee.edu.domain.InstituteContactNumber
 import com.batchfee.edu.ui.students.drawLogo
@@ -87,6 +88,7 @@ fun SalaryDashboardScreen(
     var receiptTarget by remember { mutableStateOf<SalaryEntity?>(null) }
     var receiptStaffName by remember { mutableStateOf("Staff") }
     var paymentTarget by remember { mutableStateOf<SalaryEntity?>(null) }
+    var breakdownTarget by remember { mutableStateOf<SalaryEntity?>(null) }
 
     // Pre-fetch institute info once
     var instName by remember { mutableStateOf("BatchFee Institute") }
@@ -239,9 +241,34 @@ fun SalaryDashboardScreen(
                                         fontSize = 11.sp,
                                     )
                                 }
+                                if (s.calculationType == "per_class" || s.calculationType == "per_hour") {
+                                    Spacer(Modifier.height(10.dp))
+                                    val classCount = s.calculationSessionIds
+                                        ?.split(",")?.filter { it.isNotBlank() }?.size ?: 0
+                                    Row(
+                                        Modifier.fillMaxWidth().clip(RoundedCornerShape(11.dp)).background(CardBgAlt)
+                                            .clickable {
+                                                breakdownTarget = s
+                                                viewModel.loadSalaryBreakdown(s.id)
+                                            }
+                                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(Icons.Filled.Schedule, null, tint = Cyan, modifier = Modifier.size(18.dp))
+                                        Spacer(Modifier.width(10.dp))
+                                        Column(Modifier.weight(1f)) {
+                                            Text("Class breakdown", color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                            Text(
+                                                "${if (classCount > 0) classCount else "?"} classes • class pay BDT ${salaryAmount(s.basicSalary)}",
+                                                color = TextMuted, fontSize = 11.sp
+                                            )
+                                        }
+                                        Icon(Icons.Filled.ChevronRight, null, tint = TextMuted, modifier = Modifier.size(18.dp))
+                                    }
+                                }
                                 Spacer(Modifier.height(12.dp))
                                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    OutlinedButton(
+                                        OutlinedButton(
                                         onClick = {
                                             receiptTarget = s
                                             receiptStaffName = staff?.fullName ?: "Staff"
@@ -320,6 +347,17 @@ fun SalaryDashboardScreen(
                     },
                     onError = { message -> scope.launch { snackbarHostState.showSnackbar(message) } },
                 )
+            },
+        )
+    }
+    breakdownTarget?.let { salary ->
+        val breakdown by viewModel.salaryBreakdown.collectAsState()
+        SalaryBreakdownDialog(
+            salary = salary,
+            breakdown = breakdown?.takeIf { it.salary.id == salary.id },
+            onDismiss = {
+                breakdownTarget = null
+                viewModel.clearSalaryBreakdown()
             },
         )
     }
@@ -482,6 +520,11 @@ fun GenerateSalaryScreen(db: AppDatabase, onBack: () -> Unit) {
                             modifier = Modifier.padding(top = 3.dp),
                         )
                     }
+                }
+                if (teacherPayPreview.sessions.isNotEmpty()) {
+                    Spacer(Modifier.height(12.dp))
+                    SectionLabel("Class-wise breakdown")
+                    ClassBreakdownList(teacherPayPreview.sessions)
                 }
             } else {
                 SectionLabel("Basic Salary")
@@ -1197,4 +1240,171 @@ private fun darkFieldColors() = OutlinedTextFieldDefaults.colors(
     focusedContainerColor = CardBgAlt, unfocusedContainerColor = CardBgAlt, cursorColor = Cyan,
     focusedLabelColor = Cyan, unfocusedLabelColor = TextMuted
 )
+
+// ═══════════════════════════════════════════════════════════════
+//  Per-class / per-hour class & payment breakdown
+// ═══════════════════════════════════════════════════════════════
+private class ClassDayGroup(
+    val dateMs: Long,
+    val label: String,
+    val sessions: List<TeachingSessionEntity>,
+)
+
+/** Groups completed classes by their calendar day (oldest first). */
+private fun groupSessionsByDay(sessions: List<TeachingSessionEntity>): List<ClassDayGroup> {
+    val dayKey = SimpleDateFormat("yyyyMMdd", Locale.getDefault())
+    val dayLabel = SimpleDateFormat("EEEE, dd MMM yyyy", Locale.getDefault())
+    return sessions
+        .sortedBy { it.sessionDateMs }
+        .groupBy { dayKey.format(Date(it.sessionDateMs)) }
+        .values
+        .mapNotNull { group ->
+            val first = group.minByOrNull { it.sessionDateMs } ?: return@mapNotNull null
+            ClassDayGroup(first.sessionDateMs, dayLabel.format(Date(first.sessionDateMs)), group)
+        }
+        .sortedBy { it.dateMs }
+}
+
+/**
+ * Lists completed classes grouped by day. Each day shows the class count and
+ * earned amount and can be expanded to reveal every class + its amount.
+ */
+@Composable
+private fun ClassBreakdownList(sessions: List<TeachingSessionEntity>, defaultExpanded: Boolean = false) {
+    if (sessions.isEmpty()) {
+        Text("No class records found.", color = TextMuted, fontSize = 12.sp)
+        return
+    }
+    val groups = groupSessionsByDay(sessions)
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        groups.forEach { group ->
+            val dayAmount = group.sessions.sumOf { it.calculatedAmount }
+            var expanded by remember(group.dateMs) { mutableStateOf(defaultExpanded) }
+            Column(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(CardBgAlt)
+                    .clickable { expanded = !expanded }
+                    .padding(horizontal = 12.dp, vertical = 8.dp)
+            ) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(group.label, color = TextWhite, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "${group.sessions.size} ${if (group.sessions.size == 1) "class" else "classes"}",
+                            color = TextMuted, fontSize = 10.sp
+                        )
+                    }
+                    Text("BDT ${salaryAmount(dayAmount)}", color = Cyan, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        if (expanded) "Hide" else "View",
+                        color = Cyan, fontSize = 10.sp, fontWeight = FontWeight.Bold
+                    )
+                }
+                if (expanded) {
+                    Spacer(Modifier.height(6.dp))
+                    HorizontalDivider(color = BorderSub)
+                    Spacer(Modifier.height(4.dp))
+                    group.sessions.forEach { session -> SessionLine(session) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SessionLine(session: TeachingSessionEntity) {
+    val timeLabel = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date(session.sessionDateMs))
+    Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(session.subject?.takeIf { it.isNotBlank() } ?: "Class", color = TextWhite, fontSize = 11.sp)
+            Text(timeLabel, color = TextMuted, fontSize = 9.5.sp)
+        }
+        Text("BDT ${salaryAmount(session.calculatedAmount)}", color = Cyan, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+/**
+ * Detail view for a generated per-class / per-hour salary: the classes by day,
+ * the class-salary total, bonus / deduction / advance, paid and remaining due.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SalaryBreakdownDialog(
+    salary: SalaryEntity,
+    breakdown: SalaryViewModel.SalaryBreakdown?,
+    onDismiss: () -> Unit,
+) {
+    val paid = salary.paidAmount.coerceIn(0.0, salary.netSalary)
+    val due = (salary.netSalary - paid).coerceAtLeast(0.0)
+    val sessions = breakdown?.sessions.orEmpty()
+    val isPerClass = salary.calculationType == "per_class" || salary.calculationType == "per_hour"
+    val sessionsLoaded = breakdown != null
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = CardBg,
+        shape = RoundedCornerShape(20.dp),
+        title = {
+            Column {
+                Text("Class & payment details", color = TextWhite, fontWeight = FontWeight.Bold, fontSize = 19.sp)
+                Text(salary.salaryMonth, color = TextMuted, fontSize = 12.sp)
+            }
+        },
+        text = {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 500.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                if (!sessionsLoaded) {
+                    Box(Modifier.fillMaxWidth().padding(vertical = 44.dp), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(color = ElectricBlue, strokeWidth = 2.dp, modifier = Modifier.size(22.dp))
+                    }
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                        if (isPerClass) {
+                            Row(
+                                Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(CardBgAlt).padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("Completed classes", color = TextMuted, fontSize = 11.sp)
+                                    Text("${sessions.size}", color = TextWhite, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold)
+                                }
+                                Column(horizontalAlignment = Alignment.End) {
+                                    Text("Class salary", color = TextMuted, fontSize = 11.sp)
+                                    Text("BDT ${salaryAmount(salary.basicSalary)}", color = Cyan, fontSize = 15.sp, fontWeight = FontWeight.ExtraBold)
+                                }
+                            }
+                        }
+                        ReceiptLine("Basic salary", salary.basicSalary)
+                        if (salary.bonusAmount > 0) ReceiptLine("Bonus", salary.bonusAmount, WAGreen)
+                        if (salary.deductionAmount > 0) ReceiptLine("Deduction", salary.deductionAmount, AccentRed)
+                        if (salary.advanceAmount > 0) ReceiptLine("Advance", salary.advanceAmount, AccentRed)
+                        HorizontalDivider(color = BorderSub)
+                        ReceiptLine("Net salary", salary.netSalary, Cyan, bold = true)
+                        ReceiptLine("Paid to date", paid, WAGreen, bold = true)
+                        ReceiptLine("Remaining due", due, if (due > 0) AccentAmber else WAGreen, bold = true)
+
+                        if (isPerClass) {
+                            Spacer(Modifier.height(2.dp))
+                            SectionLabel("Classes by day")
+                            if (sessions.isEmpty()) {
+                                Text("No saved class records are linked to this salary.", color = TextMuted, fontSize = 11.sp)
+                            } else {
+                                ClassBreakdownList(sessions)
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Close", color = ElectricBlue, fontWeight = FontWeight.Bold)
+            }
+        },
+    )
+}
 

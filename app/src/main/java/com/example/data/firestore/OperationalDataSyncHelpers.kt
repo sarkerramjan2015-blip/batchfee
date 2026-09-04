@@ -1,4 +1,4 @@
-﻿package com.batchfee.edu.data.firestore
+package com.batchfee.edu.data.firestore
 
 import androidx.room.withTransaction
 import com.batchfee.edu.data.database.AppDatabase
@@ -21,6 +21,7 @@ import com.batchfee.edu.data.models.StaffAttendanceEntity
 import com.batchfee.edu.data.models.SubscriptionPlanEntity
 import com.batchfee.edu.data.models.TeachingSessionEntity
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.firestore.DocumentChange
 import com.google.firebase.firestore.DocumentSnapshot
 import kotlinx.coroutines.Dispatchers
@@ -38,6 +39,17 @@ private fun recordException(e: Exception) {
         operation = "operational data sync",
         permissionDeniedIsExpected = true
     )
+}
+
+/**
+ * PERMISSION_DENIED means the institute's access genuinely ended (subscription
+ * lapsed, staff/student deactivated, etc.). Re-throwing it turns an expected
+ * state into an uncaught crash, so it is swallowed here while every other error
+ * keeps propagating to its caller.
+ */
+private fun rethrowUnlessAccessDenied(e: Exception) {
+    if (e is FirebaseFirestoreException && e.code == FirebaseFirestoreException.Code.PERMISSION_DENIED) return
+    throw e
 }
 
 private fun Number?.asLong(): Long? = this?.toLong()
@@ -68,7 +80,7 @@ object BatchStudentSyncHelper {
                 ).await()
         } catch (e: Exception) {
             recordException(e)
-            throw e
+            rethrowUnlessAccessDenied(e)
         }
     }
 
@@ -94,7 +106,7 @@ object BatchStudentSyncHelper {
             }
         } catch (e: Exception) {
             recordException(e)
-            throw e
+            rethrowUnlessAccessDenied(e)
         }
     }
 
@@ -449,7 +461,7 @@ object AttendanceSyncHelper {
             ).await()
         } catch (e: Exception) {
             recordException(e)
-            throw e
+            rethrowUnlessAccessDenied(e)
         }
     }
 
@@ -468,7 +480,7 @@ object AttendanceSyncHelper {
             snapshot.documents.forEach { it.reference.delete().await() }
         } catch (e: Exception) {
             recordException(e)
-            throw e
+            rethrowUnlessAccessDenied(e)
         }
     }
 
@@ -489,7 +501,7 @@ object AttendanceSyncHelper {
             ).await()
         } catch (e: Exception) {
             recordException(e)
-            throw e
+            rethrowUnlessAccessDenied(e)
         }
     }
 
@@ -504,12 +516,14 @@ object AttendanceSyncHelper {
                     "note" to record.note,
                     "markedByUserId" to record.markedByUserId,
                     "createdAtMs" to record.createdAtMs,
-                    "updatedAtMs" to record.updatedAtMs
+                    "updatedAtMs" to record.updatedAtMs,
+                    "entryTimeMs" to record.entryTimeMs,
+                    "exitTimeMs" to record.exitTimeMs
                 )
             ).await()
         } catch (e: Exception) {
             recordException(e)
-            throw e
+            rethrowUnlessAccessDenied(e)
         }
     }
 
@@ -578,7 +592,9 @@ object AttendanceSyncHelper {
                                 note = doc.getString("note"),
                                 markedByUserId = doc.getString("markedByUserId") ?: "",
                                 createdAtMs = (doc.get("createdAtMs") as? Number).asLong() ?: System.currentTimeMillis(),
-                                updatedAtMs = (doc.get("updatedAtMs") as? Number).asLong() ?: System.currentTimeMillis()
+                                updatedAtMs = (doc.get("updatedAtMs") as? Number).asLong() ?: System.currentTimeMillis(),
+                                entryTimeMs = (doc.get("entryTimeMs") as? Number)?.toLong(),
+                                exitTimeMs = (doc.get("exitTimeMs") as? Number)?.toLong()
                             )
                         }.forEach { db.staffAttendanceDao().insertOrUpdateAttendance(it) }
                     }
@@ -814,7 +830,7 @@ object EnquirySyncHelper {
             ).await()
         } catch (e: Exception) {
             recordException(e)
-            throw e
+            rethrowUnlessAccessDenied(e)
         }
     }
 
@@ -880,7 +896,7 @@ object ExamSyncHelper {
             ).await()
         } catch (e: Exception) {
             recordException(e)
-            throw e
+            rethrowUnlessAccessDenied(e)
         }
     }
 
@@ -903,7 +919,7 @@ object ExamSyncHelper {
             ).await()
         } catch (e: Exception) {
             recordException(e)
-            throw e
+            rethrowUnlessAccessDenied(e)
         }
     }
 
@@ -979,7 +995,7 @@ object ExpenseSyncHelper {
             ).await()
         } catch (e: Exception) {
             recordException(e)
-            throw e
+            rethrowUnlessAccessDenied(e)
         }
     }
 
@@ -1099,7 +1115,7 @@ object SalarySyncHelper {
                 .set(salaryFields(salary)).await()
         } catch (e: Exception) {
             recordException(e)
-            throw e
+            rethrowUnlessAccessDenied(e)
         }
     }
 
@@ -1117,7 +1133,7 @@ object SalarySyncHelper {
                 }.await()
             } catch (e: Exception) {
                 recordException(e)
-                throw e
+                rethrowUnlessAccessDenied(e)
             }
         }
 
@@ -1205,7 +1221,7 @@ object TeachingSessionSyncHelper {
                 .set(sessionFields(session)).await()
         } catch (e: Exception) {
             recordException(e)
-            throw e
+            rethrowUnlessAccessDenied(e)
         }
     }
 
@@ -1235,7 +1251,7 @@ object TeachingSessionSyncHelper {
             throw e
         } catch (e: Exception) {
             recordException(e)
-            throw e
+            rethrowUnlessAccessDenied(e)
         }
     }
 
@@ -1328,7 +1344,7 @@ object TeachingSessionSyncHelper {
             throw e
         } catch (e: Exception) {
             recordException(e)
-            throw e
+            rethrowUnlessAccessDenied(e)
         }
     }
 
@@ -1404,7 +1420,7 @@ object ReminderTemplateSyncHelper {
             ).await()
         } catch (e: Exception) {
             recordException(e)
-            throw e
+            rethrowUnlessAccessDenied(e)
         }
     }
 
@@ -1450,7 +1466,7 @@ object AuditLogSyncHelper {
             ).await()
         } catch (e: Exception) {
             recordException(e)
-            throw e
+            rethrowUnlessAccessDenied(e)
         }
     }
 
@@ -1505,7 +1521,7 @@ object SubscriptionPlanSyncHelper {
             }
         } catch (e: Exception) {
             recordException(e)
-            throw e
+            rethrowUnlessAccessDenied(e)
         }
     }
 
@@ -1514,7 +1530,7 @@ object SubscriptionPlanSyncHelper {
             firestore.collection(COLLECTION).document(planId).delete().await()
         } catch (e: Exception) {
             recordException(e)
-            throw e
+            rethrowUnlessAccessDenied(e)
         }
     }
 

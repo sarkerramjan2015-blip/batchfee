@@ -25,8 +25,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.IosShare
+import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -90,7 +92,7 @@ private enum class RoutineScope { SINGLE, SELECTED, ALL }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun RoutineScreen(db: AppDatabase, onBack: () -> Unit) {
+fun RoutineScreen(db: AppDatabase, onBack: () -> Unit, onOpenCustomRoutines: () -> Unit = {}) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -198,6 +200,7 @@ fun RoutineScreen(db: AppDatabase, onBack: () -> Unit) {
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            item { CustomRoutineEntryCard(onOpenCustomRoutines) }
             item { RoutineIntroCard(activeBatches.size) }
             item {
                 Text("Create routine for", color = RoutineText, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
@@ -385,6 +388,32 @@ fun RoutineScreen(db: AppDatabase, onBack: () -> Unit) {
                 }) { Text("Cancel") }
             },
         )
+    }
+}
+
+@Composable
+private fun CustomRoutineEntryCard(onOpen: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = RoutineCard),
+        border = BorderStroke(1.5.dp, Color(0xFF8B5CF6).copy(alpha = 0.6f))
+    ) {
+        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier.size(43.dp).clip(RoundedCornerShape(13.dp))
+                    .background(Brush.horizontalGradient(listOf(Color(0xFF8B5CF6), RoutineCyan))),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Filled.CalendarMonth, null, tint = Color.White, modifier = Modifier.size(22.dp))
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Custom Routine", color = RoutineText, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                Text("Create day-wise class routines with subjects & teachers", color = RoutineMuted, fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+            Icon(Icons.Filled.KeyboardArrowRight, null, tint = Color(0xFF8B5CF6))
+        }
     }
 }
 

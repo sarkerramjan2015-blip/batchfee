@@ -1,8 +1,8 @@
 package com.batchfee.edu.data.firestore
 
 import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.firebase.FirebaseFailureReporter
 import com.batchfee.edu.data.models.WorkEntity
-import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
@@ -20,7 +20,7 @@ object WorkSyncHelper {
                 worksCollection(work.instituteId).document(work.id)
                     .set(work.toFirestore()).await()
             } catch (e: Exception) {
-                FirebaseCrashlytics.getInstance().recordException(e)
+                FirebaseFailureReporter.recordException(e)
             }
         }
     }
@@ -30,7 +30,7 @@ object WorkSyncHelper {
             try {
                 worksCollection(work.instituteId).document(work.id).delete().await()
             } catch (e: Exception) {
-                FirebaseCrashlytics.getInstance().recordException(e)
+                FirebaseFailureReporter.recordException(e)
             }
         }
     }
@@ -42,7 +42,7 @@ object WorkSyncHelper {
                 snapshot.documents.mapNotNull { it.toWorkEntity(instituteId) }
                     .forEach { db.workDao().upsertWork(it) }
             } catch (e: Exception) {
-                FirebaseCrashlytics.getInstance().recordException(e)
+                FirebaseFailureReporter.recordException(e)
             }
         }
     }

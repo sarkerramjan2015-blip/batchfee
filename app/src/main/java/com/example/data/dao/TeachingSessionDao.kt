@@ -18,6 +18,15 @@ interface TeachingSessionDao {
 
     @Query("""
         SELECT * FROM teaching_sessions
+        WHERE instituteId = :instituteId
+          AND sessionDateMs >= :fromMs AND sessionDateMs < :untilMs
+          AND deletedAtMs IS NULL
+        ORDER BY sessionDateMs ASC, createdAtMs ASC
+    """)
+    suspend fun getSessionsForDate(instituteId: String, fromMs: Long, untilMs: Long): List<TeachingSessionEntity>
+
+    @Query("""
+        SELECT * FROM teaching_sessions
         WHERE instituteId = :instituteId AND staffId = :staffId
           AND sessionDateMs >= :fromMs AND sessionDateMs < :untilMs
           AND salaryId IS NULL AND deletedAtMs IS NULL

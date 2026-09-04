@@ -11,6 +11,17 @@ import kotlinx.coroutines.CancellationException
  * Crashlytics issue counts while retaining a breadcrumb for a later real crash.
  */
 object FirebaseFailureReporter {
+    /**
+     * Records a non-fatal only when it is genuinely unexpected. Cancellation,
+     * auth, network and expected Firestore error codes are dropped so routine
+     * coroutine teardown and transient failures don't inflate Crashlytics.
+     */
+    fun recordException(error: Throwable) {
+        if (error is CancellationException) return
+        if (isExpected(error, permissionDeniedIsExpected = false)) return
+        FirebaseCrashlytics.getInstance().recordException(error)
+    }
+
     fun report(
         error: Throwable,
         operation: String,

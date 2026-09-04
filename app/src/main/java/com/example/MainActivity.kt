@@ -612,7 +612,47 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
         composable<RoutineRoute> {
             com.batchfee.edu.ui.batches.RoutineScreen(
                 db = appDb,
-                onBack = { navController.popBackStack() }
+                onBack = { navController.popBackStack() },
+                onOpenCustomRoutines = { navController.navigate(CustomRoutineListRoute) }
+            )
+        }
+
+        composable<CustomRoutineListRoute> {
+            com.batchfee.edu.ui.batches.CustomRoutineListScreen(
+                db = appDb,
+                onBack = { navController.popBackStack() },
+                onCreate = { navController.navigate(CreateCustomRoutineRoute) },
+                onEdit = { routineId -> navController.navigate(EditCustomRoutineRoute(routineId)) },
+                onView = { routineId -> navController.navigate(CustomRoutineDetailRoute(routineId)) }
+            )
+        }
+
+        composable<CreateCustomRoutineRoute> {
+            com.batchfee.edu.ui.batches.CustomRoutineEditorScreen(
+                db = appDb,
+                routineId = null,
+                onBack = { navController.popBackStack() },
+                onSaved = { routineId -> navController.navigate(CustomRoutineDetailRoute(routineId)) }
+            )
+        }
+
+        composable<EditCustomRoutineRoute> { backStackEntry ->
+            val route = backStackEntry.toRoute<EditCustomRoutineRoute>()
+            com.batchfee.edu.ui.batches.CustomRoutineEditorScreen(
+                db = appDb,
+                routineId = route.routineId,
+                onBack = { navController.popBackStack() },
+                onSaved = { routineId -> navController.navigate(CustomRoutineDetailRoute(routineId)) }
+            )
+        }
+
+        composable<CustomRoutineDetailRoute> { backStackEntry ->
+            val route = backStackEntry.toRoute<CustomRoutineDetailRoute>()
+            com.batchfee.edu.ui.batches.CustomRoutineDetailScreen(
+                db = appDb,
+                routineId = route.routineId,
+                onBack = { navController.popBackStack() },
+                onEdit = { routineId -> navController.navigate(EditCustomRoutineRoute(routineId)) }
             )
         }
 
