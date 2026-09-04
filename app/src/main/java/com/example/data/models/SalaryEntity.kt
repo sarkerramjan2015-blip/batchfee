@@ -23,6 +23,10 @@ data class SalaryEntity(
     val note: String?,
     val createdAtMs: Long,
     val updatedAtMs: Long,
-    val cancelledAtMs: Long?
+    val cancelledAtMs: Long?,
+    /** How this salary was calculated: monthly, per_class or per_hour. */
+    val calculationType: String = "monthly",
+    /** Completed class-session IDs included in this salary. Keeps a session from being paid twice. */
+    val calculationSessionIds: String? = null
 )
 

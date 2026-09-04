@@ -49,19 +49,24 @@ import java.util.Locale
         com.batchfee.edu.data.models.StaffEntity::class,
         com.batchfee.edu.data.models.StaffAttendanceEntity::class,
         com.batchfee.edu.data.models.SalaryEntity::class,
+        com.batchfee.edu.data.models.TeachingSessionEntity::class,
         com.batchfee.edu.data.models.ExpenseEntity::class,
         com.batchfee.edu.data.models.ExamEntity::class,
         com.batchfee.edu.data.models.ResultEntity::class,
         com.batchfee.edu.data.models.AuditLogEntity::class,
         com.batchfee.edu.data.models.AbsentMessageEntity::class,
+        com.batchfee.edu.data.models.BulkMessageLogEntity::class,
         com.batchfee.edu.data.models.EnquiryEntity::class,
         com.batchfee.edu.data.models.WorkEntity::class,
         com.batchfee.edu.data.models.HomeworkEntity::class,
         com.batchfee.edu.data.models.AssignmentEntity::class,
         com.batchfee.edu.data.models.HomeworkSubmissionEntity::class,
-        com.batchfee.edu.data.models.AssignmentSubmissionEntity::class
+        com.batchfee.edu.data.models.AssignmentSubmissionEntity::class,
+        com.batchfee.edu.data.models.FinalExamEntity::class,
+        com.batchfee.edu.data.models.FinalExamSubjectEntity::class,
+        com.batchfee.edu.data.models.FinalExamMarksEntity::class
     ],
-    version = 30,
+    version = 37,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -82,15 +87,18 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun staffDao(): com.batchfee.edu.data.dao.StaffDao
     abstract fun staffAttendanceDao(): com.batchfee.edu.data.dao.StaffAttendanceDao
     abstract fun salaryDao(): com.batchfee.edu.data.dao.SalaryDao
+    abstract fun teachingSessionDao(): com.batchfee.edu.data.dao.TeachingSessionDao
     abstract fun expenseDao(): com.batchfee.edu.data.dao.ExpenseDao
     abstract fun examDao(): com.batchfee.edu.data.dao.ExamDao
     abstract fun resultDao(): com.batchfee.edu.data.dao.ResultDao
     abstract fun auditLogDao(): com.batchfee.edu.data.dao.AuditLogDao
     abstract fun absentMessageDao(): com.batchfee.edu.data.dao.AbsentMessageDao
+    abstract fun bulkMessageLogDao(): com.batchfee.edu.data.dao.BulkMessageLogDao
     abstract fun enquiryDao(): com.batchfee.edu.data.dao.EnquiryDao
     abstract fun workDao(): com.batchfee.edu.data.dao.WorkDao
     abstract fun homeworkDao(): com.batchfee.edu.data.dao.HomeworkDao
     abstract fun assignmentDao(): com.batchfee.edu.data.dao.AssignmentDao
+    abstract fun finalExamDao(): com.batchfee.edu.data.dao.FinalExamDao
 
     companion object {
         @Volatile
@@ -410,6 +418,164 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** Existing batches are monthly by definition, so no old fee changes. */
+        internal val MIGRATION_30_31 = object : androidx.room.migration.Migration(30, 31) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE batches ADD COLUMN billingMode TEXT NOT NULL DEFAULT 'monthly'")
+                db.execSQL("ALTER TABLE batches ADD COLUMN courseFeeAmount REAL NOT NULL DEFAULT 0")
+            }
+        }
+
+        /** Adds teacher compensation without changing any existing monthly staff record. */
+        internal val MIGRATION_31_32 = object : androidx.room.migration.Migration(31, 32) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE staff ADD COLUMN staffCategory TEXT NOT NULL DEFAULT 'administration'")
+                db.execSQL("ALTER TABLE staff ADD COLUMN salaryType TEXT NOT NULL DEFAULT 'monthly'")
+                db.execSQL("ALTER TABLE staff ADD COLUMN perClassRate REAL NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE staff ADD COLUMN perHourRate REAL NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE staff ADD COLUMN subjects TEXT")
+                db.execSQL("ALTER TABLE salaries ADD COLUMN calculationType TEXT NOT NULL DEFAULT 'monthly'")
+                db.execSQL("ALTER TABLE salaries ADD COLUMN calculationSessionIds TEXT")
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS teaching_sessions (
+                        id TEXT NOT NULL PRIMARY KEY,
+                        instituteId TEXT NOT NULL,
+                        staffId TEXT NOT NULL,
+                        batchId TEXT NOT NULL,
+                        sessionKey TEXT NOT NULL,
+                        subject TEXT,
+                        sessionDateMs INTEGER NOT NULL,
+                        durationMinutes INTEGER NOT NULL,
+                        salaryTypeSnapshot TEXT NOT NULL,
+                        rateSnapshot REAL NOT NULL,
+                        calculatedAmount REAL NOT NULL,
+                        salaryId TEXT,
+                        note TEXT,
+                        createdByUserId TEXT NOT NULL,
+                        createdAtMs INTEGER NOT NULL,
+                        updatedAtMs INTEGER NOT NULL,
+                        deletedAtMs INTEGER
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_teaching_sessions_instituteId_staffId_sessionDateMs ON teaching_sessions(instituteId, staffId, sessionDateMs)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_teaching_sessions_instituteId_batchId_sessionDateMs ON teaching_sessions(instituteId, batchId, sessionDateMs)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_teaching_sessions_instituteId_sessionKey ON teaching_sessions(instituteId, sessionKey)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_teaching_sessions_salaryId ON teaching_sessions(salaryId)")
+            }
+        }
+
+        /** Adds the bulk SMS/WhatsApp send log used for duplicate-send protection. */
+        internal val MIGRATION_32_33 = object : androidx.room.migration.Migration(32, 33) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS bulk_message_log (
+                        id TEXT NOT NULL PRIMARY KEY,
+                        instituteId TEXT NOT NULL,
+                        studentId TEXT NOT NULL,
+                        channel TEXT NOT NULL,
+                        messageText TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        createdAtMs INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_bulk_message_log_instituteId_studentId_channel_messageText ON bulk_message_log(instituteId, studentId, channel, messageText)")
+            }
+        }
+
+        /** Adds the Final Exam module tables (multi-subject exams with approval workflow). */
+        internal val MIGRATION_33_34 = object : androidx.room.migration.Migration(33, 34) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS final_exams (
+                        id TEXT NOT NULL PRIMARY KEY,
+                        instituteId TEXT NOT NULL,
+                        batchId TEXT NOT NULL,
+                        examName TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        createdAtMs INTEGER NOT NULL,
+                        updatedAtMs INTEGER NOT NULL,
+                        publishedAtMs INTEGER,
+                        archivedAtMs INTEGER
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_final_exams_instituteId ON final_exams(instituteId)")
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS final_exam_subjects (
+                        id TEXT NOT NULL PRIMARY KEY,
+                        finalExamId TEXT NOT NULL,
+                        instituteId TEXT NOT NULL,
+                        subjectName TEXT NOT NULL,
+                        fullMarks REAL NOT NULL,
+                        passMarks REAL NOT NULL,
+                        components TEXT NOT NULL,
+                        assignedStaffId TEXT,
+                        assignedStaffName TEXT,
+                        sortOrder INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_final_exam_subjects_finalExamId ON final_exam_subjects(finalExamId)")
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS final_exam_marks (
+                        id TEXT NOT NULL PRIMARY KEY,
+                        instituteId TEXT NOT NULL,
+                        finalExamId TEXT NOT NULL,
+                        subjectId TEXT NOT NULL,
+                        studentId TEXT NOT NULL,
+                        mcqMarks REAL NOT NULL,
+                        cqMarks REAL NOT NULL,
+                        practicalMarks REAL NOT NULL,
+                        totalMarks REAL NOT NULL,
+                        status TEXT NOT NULL,
+                        enteredByUserId TEXT NOT NULL,
+                        enteredByName TEXT NOT NULL,
+                        submittedAtMs INTEGER,
+                        reviewedAtMs INTEGER,
+                        approvedAtMs INTEGER,
+                        updatedAtMs INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_final_exam_marks_finalExamId ON final_exam_marks(finalExamId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_final_exam_marks_subjectId ON final_exam_marks(subjectId)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_final_exam_marks_finalExamId_subjectId_studentId ON final_exam_marks(finalExamId, subjectId, studentId)")
+            }
+        }
+
+        /** Adds per-component full marks (MCQ/CQ/Practical) to final exam subjects. */
+        internal val MIGRATION_34_35 = object : androidx.room.migration.Migration(34, 35) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE final_exam_subjects ADD COLUMN mcqFullMarks REAL NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE final_exam_subjects ADD COLUMN cqFullMarks REAL NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE final_exam_subjects ADD COLUMN practicalFullMarks REAL NOT NULL DEFAULT 0")
+            }
+        }
+
+        /** Adds optional exam fee and per-subject marks entry toggle to final exams. */
+        internal val MIGRATION_35_36 = object : androidx.room.migration.Migration(35, 36) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE final_exams ADD COLUMN examFeeAmount REAL NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE final_exam_subjects ADD COLUMN marksEntryEnabled INTEGER NOT NULL DEFAULT 1")
+            }
+        }
+
+        /** Adds per-component pass marks (MCQ/CQ/Practical) to final exam subjects. */
+        internal val MIGRATION_36_37 = object : androidx.room.migration.Migration(36, 37) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE final_exam_subjects ADD COLUMN mcqPassMarks REAL NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE final_exam_subjects ADD COLUMN cqPassMarks REAL NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE final_exam_subjects ADD COLUMN practicalPassMarks REAL NOT NULL DEFAULT 0")
+            }
+        }
+
         fun getDatabase(context: Context, scope: CoroutineScope): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val builder = Room.databaseBuilder(
@@ -417,7 +583,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "batchfee_database"
                 )
-                .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_18_19, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30)
+                .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_18_19, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33, MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36, MIGRATION_36_37)
 
                 if (BuildConfig.DEBUG) {
                     builder.fallbackToDestructiveMigration()
@@ -1253,22 +1419,22 @@ abstract class AppDatabase : RoomDatabase() {
                 com.batchfee.edu.data.models.ReminderTemplateEntity(
                     id = "demo_reminder_1", instituteId = demoInstituteId,
                     title = "Monthly Fee Reminder",
-                    type = "Fee",
-                    messageTemplate = "Dear Guardian, kindly pay the monthly fee of {amount} BDT for {studentName} by {dueDate}. — BatchFee",
+                    type = "DueFee",
+                    messageTemplate = com.example.domain.MessageTemplateStore.defaultFor("DueFee") ?: "",
                     isDefault = true, createdAtMs = now, updatedAtMs = now
                 ),
                 com.batchfee.edu.data.models.ReminderTemplateEntity(
                     id = "demo_reminder_2", instituteId = demoInstituteId,
                     title = "Birthday Wish",
                     type = "Birthday",
-                    messageTemplate = "Happy Birthday, {studentName}! Wishing you a fantastic day from all of us at {instituteName}. 🎂",
+                    messageTemplate = com.example.domain.MessageTemplateStore.defaultFor("Birthday") ?: "",
                     isDefault = true, createdAtMs = now, updatedAtMs = now
                 ),
                 com.batchfee.edu.data.models.ReminderTemplateEntity(
                     id = "demo_reminder_3", instituteId = demoInstituteId,
                     title = "Exam Schedule Alert",
                     type = "Exam",
-                    messageTemplate = "Dear Guardian, {studentName}'s exam ({examName}) is on {examDate}. Please ensure attendance. — {instituteName}",
+                    messageTemplate = com.example.domain.MessageTemplateStore.defaultFor("ResultPublished") ?: "",
                     isDefault = false, createdAtMs = now, updatedAtMs = now
                 )
             ).forEach { template ->

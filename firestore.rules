@@ -505,7 +505,14 @@ service cloud.firestore {
       allow update: if (isSuperAdmin()
         || isActiveInstitutePrincipal(instituteId)
         || hasStaffPermission(instituteId, 'manage_batch'))
-        && request.resource.data.archivedAtMs == resource.data.archivedAtMs;
+        && request.resource.data.archivedAtMs == resource.data.archivedAtMs
+        // Billing type is immutable. Legacy batches with no stored value may
+        // only be normalised to monthly; they can never be converted to a
+        // course after payments or enrollments already exist.
+        && (( !resource.data.keys().hasAll(['billingMode'])
+              && request.resource.data.billingMode == 'monthly')
+            || (resource.data.keys().hasAll(['billingMode'])
+              && request.resource.data.billingMode == resource.data.billingMode));
     }
 
     match /institutes/{instituteId}/batch_students/{enrollmentId} {
@@ -662,10 +669,24 @@ service cloud.firestore {
     }
 
     match /institutes/{instituteId}/staff_attendance/{attendanceId} {
-      allow read: if hasStaffPermission(instituteId, 'manage_staff_attendance')
+      allow read: if isActiveInstitutePrincipal(instituteId)
+        || hasStaffPermission(instituteId, 'manage_staff_attendance')
         || hasStaffPermission(instituteId, 'manage_staff')
         || hasStaffPermission(instituteId, 'view_reports');
-      allow write: if hasStaffPermission(instituteId, 'manage_staff_attendance')
+      allow write: if isActiveInstitutePrincipal(instituteId)
+        || hasStaffPermission(instituteId, 'manage_staff_attendance')
+        || hasStaffPermission(instituteId, 'manage_staff');
+    }
+
+    // Teacher class completion is distinct from daily staff attendance.  The
+    // owner records completed classes; staff with salary/staff management can
+    // read them for payroll and reports.
+    match /institutes/{instituteId}/teaching_sessions/{sessionId} {
+      allow read: if isActiveInstitutePrincipal(instituteId)
+        || hasStaffPermission(instituteId, 'manage_staff')
+        || hasStaffPermission(instituteId, 'manage_salary')
+        || hasStaffPermission(instituteId, 'view_reports');
+      allow create, update: if isActiveInstitutePrincipal(instituteId)
         || hasStaffPermission(instituteId, 'manage_staff');
     }
 
@@ -691,15 +712,19 @@ service cloud.firestore {
     }
 
     match /institutes/{instituteId}/expenses/{expenseId} {
-      allow read: if hasStaffPermission(instituteId, 'manage_expenses')
+      allow read: if isActiveInstitutePrincipal(instituteId)
+        || hasStaffPermission(instituteId, 'manage_expenses')
         || hasStaffPermission(instituteId, 'view_reports');
-      allow write: if hasStaffPermission(instituteId, 'manage_expenses');
+      allow write: if isActiveInstitutePrincipal(instituteId)
+        || hasStaffPermission(instituteId, 'manage_expenses');
     }
 
     match /institutes/{instituteId}/salaries/{salaryId} {
-      allow read: if hasStaffPermission(instituteId, 'manage_salary')
+      allow read: if isActiveInstitutePrincipal(instituteId)
+        || hasStaffPermission(instituteId, 'manage_salary')
         || hasStaffPermission(instituteId, 'view_reports');
-      allow write: if hasStaffPermission(instituteId, 'manage_salary');
+      allow write: if isActiveInstitutePrincipal(instituteId)
+        || hasStaffPermission(instituteId, 'manage_salary');
     }
 
     match /institutes/{instituteId}/reminder_templates/{templateId} {

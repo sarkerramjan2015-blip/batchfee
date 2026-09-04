@@ -21,6 +21,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.batchfee.edu.data.models.FeeEntity
 import com.batchfee.edu.domain.MonthlyDueCalculator
+import com.batchfee.edu.domain.StudentBillingBatch
+import com.batchfee.edu.domain.StudentBillingEnrollment
+import com.batchfee.edu.domain.StudentBillingFee
+import com.batchfee.edu.domain.StudentBillingSummaryCalculator
 import com.batchfee.edu.domain.StudentSessionManager
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreException
@@ -48,27 +52,10 @@ data class FeeCardInfo(
     val dueAmount: Double,
     val status: String,
     val batchId: String? = null,
-    val feeType: String? = null
+    val feeType: String? = null,
+    val cancelledAtMs: Long? = null
 )
 data class PaymentReceipt(val id: String, val amount: Double, val dateMs: Long, val method: String, val receiptNumber: String?, val note: String?)
-
-private data class StudentBillingEnrollment(
-    val batchId: String,
-    val status: String,
-    val joinedAtMs: Long,
-    val leftAtMs: Long?,
-    val firstMonthFeePeriod: String?,
-    val firstMonthFeeAmount: Double?,
-    val customMonthlyFeeAmount: Double?,
-    val customFeeEffectiveFromPeriod: String?
-)
-
-private data class StudentBillingBatch(
-    val id: String,
-    val name: String,
-    val monthlyFeeAmount: Double,
-    val admissionFeeAmount: Double
-)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -117,7 +104,9 @@ fun StudentFeeScreen(onBack: () -> Unit, onOpenDocuments: () -> Unit) {
                     billingEndedAtMs = enrollment.leftAtMs
                 )
             }
-        val activeActualFees = actualFees.filterNot { it.status.equals("cancelled", ignoreCase = true) }
+        val activeActualFees = actualFees.filterNot {
+            it.status.equals("cancelled", ignoreCase = true) || it.cancelledAtMs != null
+        }
         val visibleActualFees = activeActualFees.filterNot { fee ->
             MonthlyDueCalculator.isMonthlyFeeType(fee.feeType.orEmpty()) &&
                 fee.dueAmount > 0.0 &&
@@ -192,9 +181,15 @@ fun StudentFeeScreen(onBack: () -> Unit, onOpenDocuments: () -> Unit) {
         val merged = (visibleActualFees + virtualMonthly + virtualAdmission)
             .sortedWith(compareByDescending<FeeCardInfo> { it.dueAmount }.thenByDescending { it.totalAmount })
         fees = merged
-        totalAmount = merged.sumOf { it.totalAmount }
-        totalPaid = merged.sumOf { it.paidAmount }
-        totalDue = merged.sumOf { it.dueAmount }
+        val summary = StudentBillingSummaryCalculator.calculate(
+            studentAdmissionDateMs = studentAdmissionDateMs,
+            fees = actualFees.map(FeeCardInfo::toStudentBillingFee),
+            enrollments = billingEnrollments,
+            batches = billingBatches.values
+        )
+        totalAmount = summary.totalAmount
+        totalPaid = summary.totalPaid
+        totalDue = summary.totalDue
     }
 
     DisposableEffect(instituteId, studentId) {
@@ -240,7 +235,9 @@ fun StudentFeeScreen(onBack: () -> Unit, onOpenDocuments: () -> Unit) {
                         id = id,
                         name = doc.getString("name") ?: "Batch",
                         monthlyFeeAmount = doc.getDouble("monthlyFeeAmount") ?: 0.0,
-                        admissionFeeAmount = doc.getDouble("admissionFeeAmount") ?: 0.0
+                        admissionFeeAmount = doc.getDouble("admissionFeeAmount") ?: 0.0,
+                        billingMode = doc.getString("billingMode") ?: "monthly",
+                        courseFeeAmount = doc.getDouble("courseFeeAmount") ?: 0.0
                     )
                 }?.toMap().orEmpty()
             }
@@ -263,9 +260,10 @@ fun StudentFeeScreen(onBack: () -> Unit, onOpenDocuments: () -> Unit) {
                             ?: if (doc.getString("status") == "cancelled") 0.0 else (amount - paid)).coerceAtLeast(0.0),
                         status = doc.getString("status") ?: "pending",
                         batchId = doc.getString("batchId"),
-                        feeType = feeType
+                        feeType = feeType,
+                        cancelledAtMs = (doc.get("cancelledAtMs") as? Number)?.toLong()
                     )
-                }?.filter { it.status != "cancelled" } ?: emptyList()
+                } ?: emptyList()
                 actualFees = list
                 loading = false
             }
@@ -392,7 +390,19 @@ private fun FeeCardInfo.toLedgerFee(instituteId: String, studentId: String) = Fe
     note = null,
     createdAtMs = 0L,
     updatedAtMs = 0L,
-    cancelledAtMs = null
+    cancelledAtMs = cancelledAtMs
+)
+
+private fun FeeCardInfo.toStudentBillingFee() = StudentBillingFee(
+    id = id,
+    batchId = batchId,
+    feePeriod = monthYear.orEmpty(),
+    feeType = feeType.orEmpty(),
+    totalAmount = totalAmount,
+    paidAmount = paidAmount,
+    dueAmount = dueAmount,
+    status = status,
+    cancelledAtMs = cancelledAtMs
 )
 
 @Composable private fun FeeS(label: String, value: String, color: Color) = Column(horizontalAlignment = Alignment.CenterHorizontally) { Text(value, color = color, fontWeight = FontWeight.ExtraBold, fontSize = 15.sp); Text(label, color = FsMuted, fontSize = 11.sp) }

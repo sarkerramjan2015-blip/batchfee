@@ -17,6 +17,7 @@ import com.batchfee.edu.data.models.BatchEntity
 import com.batchfee.edu.data.models.ReminderTemplateEntity
 import com.batchfee.edu.data.models.StudentEntity
 import com.batchfee.edu.domain.SessionManager
+import com.example.domain.BulkMessageController
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.firstOrNull
@@ -26,13 +27,14 @@ import java.util.*
 
 private const val ATTENDANCE_ABSENT_TEMPLATE_TYPE = "AttendanceAbsent"
 private val DEFAULT_ATTENDANCE_ABSENT_TEMPLATE = """
-    প্রিয় {guardianName},
+    Dear Guardian,
 
-    আজ {date}-এ {studentName} ({studentCode}) {batchName} ব্যাচে অনুপস্থিত ছিল।
+    {studentName} ({studentCode}) was absent from {batchName} on {date}.
 
-    অনুগ্রহ করে অনুপস্থিতির কারণ জানাবেন।
+    Please let us know the reason at your earliest convenience.
 
-    — {instituteName}
+    - {instituteName}
+    Contact: {instituteContact}
 """.trimIndent()
 
 data class BatchAttendanceSummary(
@@ -120,9 +122,16 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
     private val _absentMessageTemplate = MutableStateFlow(DEFAULT_ATTENDANCE_ABSENT_TEMPLATE)
     val absentMessageTemplate = _absentMessageTemplate.asStateFlow()
     private val _instituteName = MutableStateFlow("BatchFee")
+    private val _instituteContact = MutableStateFlow("")
 
     private val _currentBatch = MutableStateFlow<BatchEntity?>(null)
     val currentBatch = _currentBatch.asStateFlow()
+
+    val bulkSender = BulkMessageController(
+        scope = viewModelScope,
+        db = db,
+        instituteId = SessionManager.currentInstituteId.value
+    )
 
     private val _batchSummaries = MutableStateFlow<List<BatchAttendanceSummary>>(emptyList())
     val batchSummaries = _batchSummaries.asStateFlow()
@@ -198,6 +207,7 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
                 ?.trim()
                 ?.takeIf { it.isNotBlank() }
                 ?: "BatchFee"
+            _instituteContact.value = com.example.domain.MessageTemplateStore.loadInstituteContact(db, instituteId)
             val existing = db.reminderTemplateDao()
                 .getTemplateByTypeOnce(instituteId, ATTENDANCE_ABSENT_TEMPLATE_TYPE)
             if (existing != null) {
@@ -262,32 +272,43 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
         status: String
     ): String {
         val date = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(startOfDay(dateMs)))
-        val guardianName = student.guardianName?.trim()?.takeIf { it.isNotBlank() } ?: "অভিভাবক"
         if (status != "absent") {
             val statusText = when (status) {
-                "present" -> "উপস্থিত ছিল"
-                "leave" -> "ছুটিতে ছিল"
-                "holiday" -> "ছুটির কারণে ক্লাসে উপস্থিত হওয়ার প্রয়োজন ছিল না"
-                else -> "attendance update করা হয়েছে"
+                "present" -> "was present"
+                "leave" -> "was on leave"
+                "holiday" -> "had a holiday"
+                else -> "has an attendance update"
             }
-            return """
-                প্রিয় $guardianName,
+            val values = mapOf(
+                "guardianName" to "Guardian",
+                "studentName" to student.fullName,
+                "studentCode" to student.studentCode,
+                "batchName" to batchName,
+                "date" to date,
+                "instituteName" to _instituteName.value,
+                "instituteContact" to _instituteContact.value
+            )
+            val template = """
+                Dear Guardian,
 
-                আজ $date-এ ${student.fullName} (${student.studentCode}) $batchName ব্যাচে $statusText।
+                {studentName} ({studentCode}) $statusText at {batchName} on {date}.
 
-                — ${_instituteName.value}
+                - {instituteName}
+                Contact: {instituteContact}
             """.trimIndent()
+            return com.example.domain.MessageTemplateStore.apply(template, values)
         }
         val replacements = mapOf(
-            "{guardianName}" to guardianName,
-            "{studentName}" to student.fullName,
-            "{studentCode}" to student.studentCode,
-            "{batchName}" to batchName,
-            "{date}" to date,
-            "{instituteName}" to _instituteName.value
+            "guardianName" to "Guardian",
+            "studentName" to student.fullName,
+            "studentCode" to student.studentCode,
+            "batchName" to batchName,
+            "date" to date,
+            "instituteName" to _instituteName.value,
+            "instituteContact" to _instituteContact.value
         )
         return replacements.entries.fold(_absentMessageTemplate.value.trim()) { message, (key, value) ->
-            message.replace(key, value)
+            message.replace("{$key}", value)
         }
     }
 

@@ -32,10 +32,14 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
 import com.batchfee.edu.data.models.BatchEntity
+import com.batchfee.edu.domain.BatchBillingMode
 import com.batchfee.edu.domain.SessionManager
+import com.batchfee.edu.domain.isCourseBatch
 import kotlinx.coroutines.launch
 import java.util.Calendar
+import java.util.Date
 import java.util.Locale
+import java.text.SimpleDateFormat
 import java.util.UUID
 
 // ── Colors (matching PricingScreen) ─────────────────────────────
@@ -85,6 +89,12 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
     var name by remember { mutableStateOf("") }
     var feeString by remember { mutableStateOf("") }
     var admissionFeeString by remember { mutableStateOf("") }
+    var billingMode by remember { mutableStateOf(BatchBillingMode.MONTHLY) }
+    var courseStartDateMs by remember { mutableStateOf<Long?>(null) }
+    var courseEndDateMs by remember { mutableStateOf<Long?>(null) }
+    var showCourseStartPicker by remember { mutableStateOf(false) }
+    var showCourseEndPicker by remember { mutableStateOf(false) }
+    var courseDateError by remember { mutableStateOf<String?>(null) }
     var selectedScheduleFrequency by remember { mutableStateOf<ScheduleFrequencyOption?>(null) }
     var selectedScheduleDays by remember { mutableStateOf<Set<String>>(emptySet()) }
     var startTime by remember { mutableStateOf<String?>(null) }
@@ -112,10 +122,12 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
                 editingBatch = batch
                 if (batch != null && loadedBatchId != batch.id) {
                     name = batch.name
-                    feeString = if (batch.monthlyFeeAmount % 1.0 == 0.0) {
-                        batch.monthlyFeeAmount.toLong().toString()
+                    billingMode = BatchBillingMode.normalize(batch.billingMode)
+                    val displayFee = if (batch.isCourseBatch()) batch.courseFeeAmount else batch.monthlyFeeAmount
+                    feeString = if (displayFee % 1.0 == 0.0) {
+                        displayFee.toLong().toString()
                     } else {
-                        batch.monthlyFeeAmount.toString()
+                        displayFee.toString()
                     }
                     admissionFeeString = if (batch.admissionFeeAmount > 0.0) {
                         if (batch.admissionFeeAmount % 1.0 == 0.0) {
@@ -139,6 +151,8 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
                     }
                     startTime = batch.startTime
                     endTime = batch.endTime
+                    courseStartDateMs = batch.startDateMs
+                    courseEndDateMs = batch.endDateMs
                     loadedBatchId = batch.id
                 }
             }
@@ -193,13 +207,65 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
 
             Spacer(Modifier.height(16.dp))
 
+            BatchTypeSelector(
+                selectedMode = billingMode,
+                enabled = !isEditMode,
+                onSelected = { selected ->
+                    billingMode = selected
+                    feeError = false
+                    courseDateError = null
+                }
+            )
+            if (isEditMode) {
+                Text(
+                    "Batch type is locked after creation to keep existing fee history safe.",
+                    color = TextMuted,
+                    fontSize = 11.sp,
+                    modifier = Modifier.padding(top = 6.dp)
+                )
+            }
+
+            Spacer(Modifier.height(16.dp))
+
             // ── Batch Name ──────────────────────────────────
-            SectionLabel("Batch Name *")
+            val isCourse = billingMode == BatchBillingMode.COURSE
+            SectionLabel(if (isCourse) "Course Name *" else "Batch Name *")
             BatchTemplateRow(
-                options = listOf(
-                    "Class 6", "Class 7", "Class 8", "Class 9", "Class 10",
-                    "SSC Science", "HSC Science", "HSC 2027", "HSC 2028"
-                ),
+                label = if (isCourse) "Course templates (optional)" else "Quick templates (optional)",
+                options = if (isCourse) {
+                    listOf(
+                        "HSC ICT Crash Course",
+                        "HSC Biology Crash Course",
+                        "HSC Chemistry Crash Course",
+                        "HSC Physics Crash Course",
+                        "HSC Higher Math Crash Course",
+                        "HSC Bangla Crash Course",
+                        "HSC English Crash Course",
+                        "HSC Accounting Crash Course",
+                        "HSC Finance & Banking Crash Course",
+                        "SSC ICT Crash Course",
+                        "SSC Science Crash Course",
+                        "SSC General Math Crash Course",
+                        "SSC Higher Math Crash Course",
+                        "SSC Bangla Crash Course",
+                        "SSC English Crash Course",
+                        "University Admission English",
+                        "University Admission Math",
+                        "University Admission Biology",
+                        "University Admission Chemistry",
+                        "University Admission Physics",
+                        "Medical Admission Biology",
+                        "Engineering Admission Math",
+                        "Engineering Admission Physics",
+                        "Engineering Admission Chemistry",
+                        "Admission GK & English"
+                    )
+                } else {
+                    listOf(
+                        "Class 6", "Class 7", "Class 8", "Class 9", "Class 10",
+                        "SSC Science", "HSC Science", "HSC 2027", "HSC 2028"
+                    )
+                },
                 onSelected = { name = it; nameError = false }
             )
             Spacer(Modifier.height(8.dp))
@@ -210,13 +276,13 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
                 supportingText = if (nameError) "Batch name is required" else null,
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
-                placeholder = "e.g. Class 10 Science"
+                placeholder = if (isCourse) "e.g. Spoken English – 3 Months" else "e.g. Class 10 Science"
             )
 
             Spacer(Modifier.height(12.dp))
 
             // ── Monthly Fee ─────────────────────────────────
-            SectionLabel("Monthly Fee (BDT) *")
+            SectionLabel(if (isCourse) "Course Fee (BDT) *" else "Monthly Fee (BDT) *")
             Row(verticalAlignment = Alignment.CenterVertically) {
                 DarkTextField(
                     value = feeString,
@@ -226,7 +292,7 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
                     modifier = Modifier.weight(1f),
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    placeholder = "e.g. 1500"
+                    placeholder = if (isCourse) "e.g. 5000" else "e.g. 1500"
                 )
                 Spacer(Modifier.width(10.dp))
                 Box(
@@ -244,7 +310,7 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
             Spacer(Modifier.height(12.dp))
 
             // ── Admission Fee (one-time) ───────────────────
-            SectionLabel("Admission Fee / One-Time Fee (BDT) *")
+            SectionLabel(if (isCourse) "Admission Fee (BDT) — one-time" else "Admission Fee / One-Time Fee (BDT) *")
             Row(verticalAlignment = Alignment.CenterVertically) {
                 DarkTextField(
                     value = admissionFeeString,
@@ -270,6 +336,17 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
             }
 
             Spacer(Modifier.height(12.dp))
+
+            if (isCourse) {
+                CourseDateSection(
+                    startDateMs = courseStartDateMs,
+                    endDateMs = courseEndDateMs,
+                    errorMessage = courseDateError,
+                    onStartClick = { showCourseStartPicker = true },
+                    onEndClick = { showCourseEndPicker = true }
+                )
+                Spacer(Modifier.height(16.dp))
+            }
 
             // ── Description ─────────────────────────────────
             BatchScheduleSection(
@@ -338,9 +415,13 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
                         feeError = (fee == null || fee <= 0)
                         val admissionFee = admissionFeeString.toDoubleOrNull() ?: 0.0
                         admissionFeeError = admissionFee < 0
+                        val isCourseBatch = billingMode == BatchBillingMode.COURSE
                         val scheduleConfigured = selectedScheduleFrequency != null ||
                             selectedScheduleDays.isNotEmpty() || startTime != null || endTime != null
                         val requiredDayCount = selectedScheduleFrequency?.dayCount
+                        courseDateError = if (isCourseBatch &&
+                            (courseStartDateMs == null || courseEndDateMs == null || courseEndDateMs!! < courseStartDateMs!!)
+                        ) "Choose a valid course start and end date." else null
                         scheduleError = when {
                             !scheduleConfigured -> null
                             selectedScheduleFrequency == null -> "Select how many classes run each week."
@@ -357,7 +438,7 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
                             .joinToString(", ")
                             .takeIf { scheduleConfigured && it.isNotBlank() }
 
-                        if (!nameError && !feeError && !admissionFeeError && scheduleError == null && fee != null) {
+                        if (!nameError && !feeError && !admissionFeeError && courseDateError == null && scheduleError == null && fee != null) {
                             val existing = editingBatch
                             if (isEditMode) {
                                 if (existing == null) {
@@ -367,8 +448,12 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
                                     viewModel.updateBatch(
                                         existing.copy(
                                             name = name.trim(),
-                                            monthlyFeeAmount = fee,
+                                            billingMode = billingMode,
+                                            monthlyFeeAmount = if (isCourseBatch) 0.0 else fee,
+                                            courseFeeAmount = if (isCourseBatch) fee else 0.0,
                                             admissionFeeAmount = admissionFee,
+                                            startDateMs = if (isCourseBatch) courseStartDateMs else existing.startDateMs,
+                                            endDateMs = if (isCourseBatch) courseEndDateMs else existing.endDateMs,
                                             scheduleDays = savedScheduleDays,
                                             startTime = if (scheduleConfigured) startTime else null,
                                             endTime = if (scheduleConfigured) endTime else null,
@@ -393,7 +478,11 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
                                 viewModel.addBatch(
                                     name = name.trim(),
                                     feeAmount = fee,
+                                    billingMode = billingMode,
+                                    courseFeeAmount = if (isCourseBatch) fee else 0.0,
                                     admissionFeeAmount = admissionFee,
+                                    startDateMs = if (isCourseBatch) courseStartDateMs else null,
+                                    endDateMs = if (isCourseBatch) courseEndDateMs else null,
                                     scheduleDays = savedScheduleDays,
                                     startTime = if (scheduleConfigured) startTime else null,
                                     endTime = if (scheduleConfigured) endTime else null,
@@ -434,13 +523,72 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
             Spacer(Modifier.height(20.dp))
         }
     }
+
+    CourseDatePickers(
+        showStart = showCourseStartPicker,
+        showEnd = showCourseEndPicker,
+        startDateMs = courseStartDateMs,
+        endDateMs = courseEndDateMs,
+        onStartChanged = { selected ->
+            courseStartDateMs = selected
+            courseDateError = null
+        },
+        onEndChanged = { selected ->
+            courseEndDateMs = selected
+            courseDateError = null
+        },
+        onDismissStart = { showCourseStartPicker = false },
+        onDismissEnd = { showCourseEndPicker = false }
+    )
 }
 
 // ── Helpers ─────────────────────────────────────────────────────
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun BatchTemplateRow(options: List<String>, onSelected: (String) -> Unit) {
+private fun CourseDatePickers(
+    showStart: Boolean,
+    showEnd: Boolean,
+    startDateMs: Long?,
+    endDateMs: Long?,
+    onStartChanged: (Long) -> Unit,
+    onEndChanged: (Long) -> Unit,
+    onDismissStart: () -> Unit,
+    onDismissEnd: () -> Unit
+) {
+    if (showStart) {
+        val state = rememberDatePickerState(initialSelectedDateMillis = startDateMs ?: System.currentTimeMillis())
+        DatePickerDialog(
+            onDismissRequest = onDismissStart,
+            confirmButton = {
+                TextButton(onClick = {
+                    state.selectedDateMillis?.let(onStartChanged)
+                    onDismissStart()
+                }) { Text("OK") }
+            }
+        ) { DatePicker(state = state) }
+    }
+    if (showEnd) {
+        val state = rememberDatePickerState(initialSelectedDateMillis = endDateMs ?: startDateMs ?: System.currentTimeMillis())
+        DatePickerDialog(
+            onDismissRequest = onDismissEnd,
+            confirmButton = {
+                TextButton(onClick = {
+                    state.selectedDateMillis?.let(onEndChanged)
+                    onDismissEnd()
+                }) { Text("OK") }
+            }
+        ) { DatePicker(state = state) }
+    }
+}
+
+@Composable
+private fun BatchTemplateRow(
+    label: String,
+    options: List<String>,
+    onSelected: (String) -> Unit
+) {
     Column(modifier = Modifier.fillMaxWidth()) {
-        Text("Quick templates (optional)", color = TextMuted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+        Text(label, color = TextMuted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(5.dp))
         LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             items(options, key = { it }) { option ->
@@ -460,6 +608,110 @@ private fun BatchTemplateRow(options: List<String>, onSelected: (String) -> Unit
             }
         }
     }
+
+}
+
+@Composable
+private fun BatchTypeSelector(
+    selectedMode: String,
+    enabled: Boolean,
+    onSelected: (String) -> Unit
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text("Batch Type", color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            BatchTypeChoice("Monthly Batch", "Monthly fee every month", BatchBillingMode.MONTHLY, selectedMode, enabled, onSelected, Modifier.weight(1f))
+            BatchTypeChoice("Course", "One-time course fee", BatchBillingMode.COURSE, selectedMode, enabled, onSelected, Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+private fun BatchTypeChoice(
+    title: String,
+    subtitle: String,
+    mode: String,
+    selectedMode: String,
+    enabled: Boolean,
+    onSelected: (String) -> Unit,
+    modifier: Modifier
+) {
+    val selected = mode == selectedMode
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (selected) Cyan.copy(alpha = 0.13f) else CardBg)
+            .border(1.dp, if (selected) Cyan else BorderSub, RoundedCornerShape(12.dp))
+            .clickable(enabled = enabled) { onSelected(mode) }
+            .padding(12.dp)
+    ) {
+        Text(title, color = if (selected) Cyan else TextWhite, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(3.dp))
+        Text(subtitle, color = TextMuted, fontSize = 10.sp, lineHeight = 13.sp)
+    }
+}
+
+@Composable
+private fun CourseDateSection(
+    startDateMs: Long?,
+    endDateMs: Long?,
+    errorMessage: String?,
+    onStartClick: () -> Unit,
+    onEndClick: () -> Unit
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        SectionLabel("Course Duration *")
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            CourseDateField("Start date", startDateMs, onStartClick, Modifier.weight(1f))
+            CourseDateField("End date", endDateMs, onEndClick, Modifier.weight(1f))
+        }
+        val duration = courseDurationLabel(startDateMs, endDateMs)
+        if (duration != null) {
+            Text("Duration: $duration", color = Cyan, fontSize = 11.sp, modifier = Modifier.padding(top = 7.dp))
+        }
+        errorMessage?.let { Text(it, color = Color(0xFFF87171), fontSize = 11.sp, modifier = Modifier.padding(top = 5.dp)) }
+    }
+}
+
+@Composable
+private fun CourseDateField(label: String, dateMs: Long?, onClick: () -> Unit, modifier: Modifier) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(CardBgAlt)
+            .border(1.dp, BorderSub, RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(Icons.Filled.CalendarMonth, contentDescription = null, tint = Cyan, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(8.dp))
+        Column {
+            Text(label, color = TextMuted, fontSize = 10.sp)
+            Text(dateMs?.let(::formatCourseDate) ?: "Select date", color = TextWhite, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+        }
+    }
+}
+
+private fun formatCourseDate(dateMs: Long): String =
+    SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(dateMs))
+
+private fun courseDurationLabel(startDateMs: Long?, endDateMs: Long?): String? {
+    if (startDateMs == null || endDateMs == null || endDateMs < startDateMs) return null
+    val start = Calendar.getInstance().apply { timeInMillis = startDateMs }
+    val end = Calendar.getInstance().apply { timeInMillis = endDateMs }
+    var months = (end.get(Calendar.YEAR) - start.get(Calendar.YEAR)) * 12 + end.get(Calendar.MONTH) - start.get(Calendar.MONTH)
+    var days = end.get(Calendar.DAY_OF_MONTH) - start.get(Calendar.DAY_OF_MONTH)
+    if (days < 0) {
+        months -= 1
+        val previousMonth = (end.clone() as Calendar).apply { add(Calendar.MONTH, -1) }
+        days += previousMonth.getActualMaximum(Calendar.DAY_OF_MONTH)
+    }
+    return listOfNotNull(
+        months.takeIf { it > 0 }?.let { "$it month${if (it == 1) "" else "s"}" },
+        days.takeIf { it > 0 }?.let { "$it day${if (it == 1) "" else "s"}" }
+    ).ifEmpty { listOf("1 day") }.joinToString(" ")
 }
 
 @Composable

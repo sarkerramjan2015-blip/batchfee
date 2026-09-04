@@ -11,8 +11,10 @@ import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
 import com.batchfee.edu.data.models.BatchEntity
 import com.batchfee.edu.data.repository.SafeDeletionRepository
 import com.batchfee.edu.data.repository.EntitledCreationRepository
-import com.batchfee.edu.domain.MonthlyDueCalculator
+import com.batchfee.edu.data.repository.BatchEnrollmentRepository
+import com.batchfee.edu.domain.BatchBillingMode
 import com.batchfee.edu.domain.SessionManager
+import com.batchfee.edu.domain.isCourseBatch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.firstOrNull
@@ -44,7 +46,11 @@ class BatchViewModel(private val db: AppDatabase) : ViewModel() {
     fun addBatch(
         name: String,
         feeAmount: Double,
+        billingMode: String = BatchBillingMode.MONTHLY,
+        courseFeeAmount: Double = 0.0,
         admissionFeeAmount: Double = 0.0,
+        startDateMs: Long? = null,
+        endDateMs: Long? = null,
         scheduleDays: String? = null,
         startTime: String? = null,
         endTime: String? = null,
@@ -58,8 +64,19 @@ class BatchViewModel(private val db: AppDatabase) : ViewModel() {
             onError("Batch name is required.")
             return
         }
-        if (feeAmount < 0) {
-            onError("Fee amount cannot be negative.")
+        val normalizedBillingMode = BatchBillingMode.normalize(billingMode)
+        if (normalizedBillingMode == BatchBillingMode.MONTHLY && feeAmount <= 0) {
+            onError("Monthly fee must be greater than 0.")
+            return
+        }
+        if (normalizedBillingMode == BatchBillingMode.COURSE && courseFeeAmount <= 0) {
+            onError("Course fee must be greater than 0.")
+            return
+        }
+        if (normalizedBillingMode == BatchBillingMode.COURSE &&
+            (startDateMs == null || endDateMs == null || endDateMs < startDateMs)
+        ) {
+            onError("Select a valid course start and end date.")
             return
         }
         if (admissionFeeAmount < 0) {
@@ -83,10 +100,10 @@ class BatchViewModel(private val db: AppDatabase) : ViewModel() {
             subject = null,
             className = null,
             teacherName = null,
-            monthlyFeeAmount = feeAmount,
+            monthlyFeeAmount = if (normalizedBillingMode == BatchBillingMode.MONTHLY) feeAmount else 0.0,
             admissionFeeAmount = admissionFeeAmount,
-            startDateMs = System.currentTimeMillis(),
-            endDateMs = null,
+            startDateMs = if (normalizedBillingMode == BatchBillingMode.COURSE) startDateMs else System.currentTimeMillis(),
+            endDateMs = if (normalizedBillingMode == BatchBillingMode.COURSE) endDateMs else null,
             scheduleDays = scheduleDays,
             startTime = startTime,
             endTime = endTime,
@@ -95,7 +112,9 @@ class BatchViewModel(private val db: AppDatabase) : ViewModel() {
             description = description?.trim()?.takeIf { it.isNotEmpty() },
             createdAtMs = System.currentTimeMillis(),
             updatedAtMs = System.currentTimeMillis(),
-            archivedAtMs = null
+            archivedAtMs = null,
+            billingMode = normalizedBillingMode,
+            courseFeeAmount = if (normalizedBillingMode == BatchBillingMode.COURSE) courseFeeAmount else 0.0
         )
         viewModelScope.launch {
             try {
@@ -118,8 +137,17 @@ class BatchViewModel(private val db: AppDatabase) : ViewModel() {
             onError("Batch name is required.")
             return
         }
-        if (batch.monthlyFeeAmount <= 0) {
-            onError("Fee amount must be greater than 0.")
+        if (batch.isCourseBatch()) {
+            if (batch.courseFeeAmount <= 0.0) {
+                onError("Course fee must be greater than 0.")
+                return
+            }
+            if (batch.startDateMs == null || batch.endDateMs == null || batch.endDateMs < batch.startDateMs) {
+                onError("Select a valid course start and end date.")
+                return
+            }
+        } else if (batch.monthlyFeeAmount <= 0) {
+            onError("Monthly fee must be greater than 0.")
             return
         }
         val mutationKey = "update:${batch.id}"
@@ -129,7 +157,19 @@ class BatchViewModel(private val db: AppDatabase) : ViewModel() {
         }
         viewModelScope.launch {
             try {
-                val updated = batch.copy(updatedAtMs = System.currentTimeMillis())
+                val persisted = withContext(Dispatchers.IO) {
+                    db.batchDao().getBatchById(batch.id, batch.instituteId).firstOrNull()
+                }
+                val persistedMode = persisted?.let { BatchBillingMode.normalize(it.billingMode) }
+                val requestedMode = BatchBillingMode.normalize(batch.billingMode)
+                if (persistedMode != null && persistedMode != requestedMode) {
+                    onError("Batch type is locked after creation. Create a new batch for a different billing type.")
+                    return@launch
+                }
+                val updated = batch.copy(
+                    billingMode = persistedMode ?: requestedMode,
+                    updatedAtMs = System.currentTimeMillis()
+                )
                 BatchSyncHelper.upsertBatch(updated)
                 db.batchDao().updateBatch(updated)
                 StaffActivityLogger.logCompletedAction(
@@ -192,38 +232,36 @@ class BatchViewModel(private val db: AppDatabase) : ViewModel() {
         viewModelScope.launch {
             try {
                 val now = System.currentTimeMillis()
-                val students = withContext(Dispatchers.IO) {
-                    db.batchStudentDao().getStudentsForBatch(fromBatch.id, instId).firstOrNull() ?: emptyList()
+                val sourceEnrollments = withContext(Dispatchers.IO) {
+                    db.batchStudentDao().getActiveEnrollmentsForBatchOnce(fromBatch.id, instId)
                 }
-                if (students.isEmpty()) {
+                if (sourceEnrollments.isEmpty()) {
                     onError("No active students found in this batch.")
                     return@launch
                 }
+                val targetStudentIds = withContext(Dispatchers.IO) {
+                    db.batchStudentDao().getStudentsForBatchOnce(toBatch.id, instId).map { it.id }.toSet()
+                }
+                val duplicates = sourceEnrollments.count { it.studentId in targetStudentIds }
+                if (duplicates > 0) {
+                    onError("$duplicates student(s) are already in the target batch. Remove duplicates before moving everyone.")
+                    return@launch
+                }
                 withContext(Dispatchers.IO) {
-                    students.forEach { student ->
-                        db.batchStudentDao().removeStudentFromBatch(fromBatch.id, student.id, instId, now)
-                        val enrollment = com.batchfee.edu.data.models.BatchStudentEntity(
-                            id = UUID.randomUUID().toString(),
-                            instituteId = instId,
-                            batchId = toBatch.id,
-                            studentId = student.id,
-                            joinedAtMs = now,
-                            status = "active",
-                            leftAtMs = null,
-                            firstMonthFeePeriod = MonthlyDueCalculator.periodFor(now),
-                            firstMonthFeeAmount = MonthlyDueCalculator.calculateFirstMonthFee(
-                                toBatch.monthlyFeeAmount,
-                                now
-                            )
+                    val enrollmentRepository = BatchEnrollmentRepository(db)
+                    sourceEnrollments.forEach { sourceEnrollment ->
+                        enrollmentRepository.shift(
+                            sourceEnrollment = sourceEnrollment,
+                            targetBatch = toBatch,
+                            shiftDateMs = now
                         )
-                        db.batchStudentDao().enrollStudent(enrollment)
                     }
                 }
                 StaffActivityLogger.logCompletedAction(
                     db,
                     "batch_students_shifted",
                     "batches",
-                    "Moved ${students.size} students from ${fromBatch.name} to ${toBatch.name}"
+                    "Moved ${sourceEnrollments.size} students from ${fromBatch.name} to ${toBatch.name}"
                 )
                 onSuccess()
             } catch (e: Exception) {

@@ -362,9 +362,30 @@ fun BirthdayReminderScreen(db: AppDatabase, onBack: () -> Unit, onNavigateToPric
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
     var instituteSignature by remember { mutableStateOf("") }
+    var birthdayTemplate by remember { mutableStateOf<String?>(null) }
+    var instituteContact by remember { mutableStateOf("") }
 
     LaunchedEffect(instId) {
         instituteSignature = loadInstituteSignature(db, instId)
+        birthdayTemplate = com.example.domain.MessageTemplateStore.load(
+            db, instId, com.example.domain.MessageTemplateStore.TYPE_BIRTHDAY
+        )
+        instituteContact = com.example.domain.MessageTemplateStore.loadInstituteContact(db, instId)
+    }
+
+    fun birthdayMessage(studentName: String): String {
+        val template = birthdayTemplate
+            ?: com.example.domain.MessageTemplateStore.defaultFor(com.example.domain.MessageTemplateStore.TYPE_BIRTHDAY)
+            ?: return "Happy Birthday, $studentName!"
+        return com.example.domain.MessageTemplateStore.apply(
+            template,
+            mapOf(
+                "guardianName" to "Guardian",
+                "studentName" to studentName,
+                "instituteName" to instituteSignature.removePrefix("-").trim(),
+                "instituteContact" to instituteContact
+            )
+        )
     }
 
     var wishDialogTarget by remember { mutableStateOf<StudentEntity?>(null) }
@@ -506,10 +527,7 @@ fun BirthdayReminderScreen(db: AppDatabase, onBack: () -> Unit, onNavigateToPric
                                     putExtra(Intent.EXTRA_STREAM, cardUri)
                                     putExtra(
                                         Intent.EXTRA_TEXT,
-                                        appendInstituteSignature(
-                                            "Happy Birthday ${student.fullName}! Turning $age today.",
-                                            instituteSignature
-                                        )
+                                        birthdayMessage(student.fullName)
                                     )
                                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                                     `package` = "com.whatsapp"
@@ -524,10 +542,7 @@ fun BirthdayReminderScreen(db: AppDatabase, onBack: () -> Unit, onNavigateToPric
                                         putExtra(Intent.EXTRA_STREAM, cardUri)
                                         putExtra(
                                             Intent.EXTRA_TEXT,
-                                            appendInstituteSignature(
-                                                "Happy Birthday ${student.fullName}! Turning $age today.",
-                                                instituteSignature
-                                            )
+                                            birthdayMessage(student.fullName)
                                         )
                                         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                                     },
@@ -546,11 +561,7 @@ fun BirthdayReminderScreen(db: AppDatabase, onBack: () -> Unit, onNavigateToPric
                         color = ElectricBlue,
                         onClick = {
                             wishDialogTarget = null
-                            val msg = appendInstituteSignature(
-                                "Happy Birthday ${student.fullName}! \uD83C\uDF82 Turning $age today. " +
-                                    "Wishing you a year filled with success and happiness. \uD83C\uDF89\uD83C\uDF81",
-                                instituteSignature
-                            )
+                            val msg = birthdayMessage(student.fullName)
                             val phone = student.phone?.takeIf { it.isNotBlank() }
                             try {
                                 val intent = Intent(Intent.ACTION_SENDTO).apply {

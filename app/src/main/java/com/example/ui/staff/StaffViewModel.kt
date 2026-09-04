@@ -147,6 +147,11 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
         phone: String,
         email: String?,
         monthlySalary: Double,
+        staffCategory: String,
+        salaryType: String,
+        perClassRate: Double,
+        perHourRate: Double,
+        subjects: String?,
         permissions: Set<String>,
         assignedBatchIds: Set<String>,
         password: String,
@@ -168,6 +173,9 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
         val role = roleTitle.trim()
         val staffEmail = email?.trim()?.takeIf { it.isNotBlank() }
         val cleanPassword = password.trim()
+        val normalizedCategory = staffCategory.normalizedStaffCategory()
+        val normalizedSalaryType = salaryType.normalizedSalaryType()
+        val cleanSubjects = subjects?.normalizeSubjects()
 
         when {
             name.isBlank() -> onError("Staff name is required.")
@@ -175,6 +183,9 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
             staffEmail == null -> onError("Email is required.")
             role.isBlank() -> onError("Role title is required.")
             monthlySalary < 0 -> onError("Monthly salary cannot be negative.")
+            normalizedSalaryType == "per_class" && perClassRate <= 0 -> onError("Enter a valid per-class rate.")
+            normalizedSalaryType == "per_hour" && perHourRate <= 0 -> onError("Enter a valid per-hour rate.")
+            normalizedCategory == "teacher" && cleanSubjects == null -> onError("Add at least one subject for this teacher.")
             cleanPassword.length < 6 -> onError("Password must be at least 6 characters.")
             else -> viewModelScope.launch {
                 val existingLogin = db.userDao().getUserByEmail(staffEmail)
@@ -204,7 +215,12 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
                     permissions = permissionCsv,
                     createdAtMs = now,
                     updatedAtMs = now,
-                    archivedAtMs = null
+                    archivedAtMs = null,
+                    staffCategory = normalizedCategory,
+                    salaryType = normalizedSalaryType,
+                    perClassRate = perClassRate.coerceAtLeast(0.0),
+                    perHourRate = perHourRate.coerceAtLeast(0.0),
+                    subjects = cleanSubjects
                 )
                 val firebaseUid: String
                 try {
@@ -241,6 +257,11 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
         phone: String,
         email: String?,
         monthlySalary: Double,
+        staffCategory: String,
+        salaryType: String,
+        perClassRate: Double,
+        perHourRate: Double,
+        subjects: String?,
         permissions: Set<String>,
         assignedBatchIds: Set<String>,
         status: String,
@@ -258,12 +279,18 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
         val role = roleTitle.trim()
         val staffEmail = email?.trim()?.takeIf { it.isNotBlank() }
         val cleanPassword = password?.trim().orEmpty()
+        val normalizedCategory = staffCategory.normalizedStaffCategory()
+        val normalizedSalaryType = salaryType.normalizedSalaryType()
+        val cleanSubjects = subjects?.normalizeSubjects()
 
         when {
             name.isBlank() -> onError("Staff name is required.")
             loginId.isBlank() -> onError("Staff login ID is required.")
             role.isBlank() -> onError("Role title is required.")
             monthlySalary < 0 -> onError("Monthly salary cannot be negative.")
+            normalizedSalaryType == "per_class" && perClassRate <= 0 -> onError("Enter a valid per-class rate.")
+            normalizedSalaryType == "per_hour" && perHourRate <= 0 -> onError("Enter a valid per-hour rate.")
+            normalizedCategory == "teacher" && cleanSubjects == null -> onError("Add at least one subject for this teacher.")
             cleanPassword.isNotBlank() && cleanPassword.length < 6 -> onError("Password must be at least 6 characters.")
             else -> viewModelScope.launch {
                 val instId = SessionManager.currentInstituteId.value ?: run {
@@ -295,6 +322,11 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
                     assignedBatchIds = batchCsv,
                     permissions = permissionCsv,
                     status = status,
+                    staffCategory = normalizedCategory,
+                    salaryType = normalizedSalaryType,
+                    perClassRate = perClassRate.coerceAtLeast(0.0),
+                    perHourRate = perHourRate.coerceAtLeast(0.0),
+                    subjects = cleanSubjects,
                     updatedAtMs = System.currentTimeMillis()
                 )
                 try {
@@ -404,6 +436,23 @@ class StaffViewModel(private val db: AppDatabase) : ViewModel() {
         }
     }
 }
+
+private fun String.normalizedStaffCategory(): String =
+    if (trim().equals("teacher", ignoreCase = true)) "teacher" else "administration"
+
+private fun String.normalizedSalaryType(): String = when (trim().lowercase()) {
+    "per_class" -> "per_class"
+    "per_hour" -> "per_hour"
+    else -> "monthly"
+}
+
+private fun String.normalizeSubjects(): String? =
+    split(",")
+        .map(String::trim)
+        .filter(String::isNotBlank)
+        .distinctBy { it.lowercase() }
+        .joinToString(", ")
+        .takeIf { it.isNotBlank() }
 
 class StaffViewModelFactory(private val db: AppDatabase) : ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>): T {

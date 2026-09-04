@@ -14,11 +14,13 @@ import com.batchfee.edu.domain.SessionManager
 import com.batchfee.edu.domain.MonthlyDueCalculator
 import com.batchfee.edu.domain.StudentIdGenerator
 import com.batchfee.edu.data.firestore.InstituteSyncHelper
-import com.batchfee.edu.data.firestore.BatchStudentSyncHelper
 import com.batchfee.edu.data.models.BatchStudentEntity
 import com.batchfee.edu.data.repository.StudentAccountRepository
 import com.batchfee.edu.data.repository.EntitledCreationRepository
 import com.batchfee.edu.data.repository.FeeCollectionRepository
+import com.batchfee.edu.data.repository.BatchEnrollmentRepository
+import com.batchfee.edu.domain.isCourseBatch
+import com.example.domain.BulkMessageController
 import com.google.firebase.functions.FirebaseFunctionsException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -38,6 +40,12 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
 
     private val _batchList = MutableStateFlow<List<BatchEntity>>(emptyList())
     val batchList = _batchList.asStateFlow()
+
+    val bulkSender = BulkMessageController(
+        scope = viewModelScope,
+        db = db,
+        instituteId = SessionManager.currentInstituteId.value
+    )
 
     init {
         loadStudents()
@@ -387,11 +395,10 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
             val batch = batchesById[enrollment.batchId] ?: return@forEach
             db.batchStudentDao().enrollStudent(
                 enrollment.copy(
-                    firstMonthFeePeriod = MonthlyDueCalculator.periodFor(admissionDateMs),
-                    firstMonthFeeAmount = MonthlyDueCalculator.calculateFirstMonthFee(
-                        batch.monthlyFeeAmount,
-                        admissionDateMs
-                    )
+                    firstMonthFeePeriod = if (batch.isCourseBatch()) null else MonthlyDueCalculator.periodFor(admissionDateMs),
+                    firstMonthFeeAmount = if (batch.isCourseBatch()) null else {
+                        MonthlyDueCalculator.calculateFirstMonthFee(batch.monthlyFeeAmount, admissionDateMs)
+                    }
                 )
             )
         }
@@ -416,50 +423,27 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
         viewModelScope.launch {
             try {
                 val now = System.currentTimeMillis()
-
-                // Step 1: Remove from old batch (local)
-                withContext(Dispatchers.IO) {
-                    db.batchStudentDao().removeStudentFromBatch(oldBatchId, studentId, instId, now)
-                }
-
-                // Step 2: Enroll in new batch (local). Freeze the first-month
-                // amount now; future batch price edits must not alter it.
-                val targetBatch = withContext(Dispatchers.IO) {
-                    db.batchDao().getBatchesByInstituteOnce(instId)
+                val (sourceEnrollment, targetBatch) = withContext(Dispatchers.IO) {
+                    val source = db.batchStudentDao()
+                        .getActiveEnrollmentsForStudentOnce(studentId, instId)
+                        .firstOrNull { it.batchId == oldBatchId }
+                        ?: error("Student is no longer active in the source batch.")
+                    val target = db.batchDao().getBatchesByInstituteOnce(instId)
                         .firstOrNull { it.id == newBatchId }
+                        ?: error("Target batch was not found.")
+                    source to target
                 }
-                val enrollment = BatchStudentEntity(
-                    id = UUID.randomUUID().toString(),
-                    instituteId = instId,
-                    batchId = newBatchId,
-                    studentId = studentId,
-                    joinedAtMs = now,
-                    status = "active",
-                    leftAtMs = null,
-                    firstMonthFeePeriod = MonthlyDueCalculator.periodFor(now),
-                    firstMonthFeeAmount = MonthlyDueCalculator.calculateFirstMonthFee(
-                        targetBatch?.monthlyFeeAmount ?: 0.0,
-                        now
-                    )
+                BatchEnrollmentRepository(db).shift(
+                    sourceEnrollment = sourceEnrollment,
+                    targetBatch = targetBatch,
+                    shiftDateMs = now
                 )
-                withContext(Dispatchers.IO) {
-                    db.batchStudentDao().enrollStudent(enrollment)
-                }
 
                 StaffActivityLogger.logCompletedAction(
                     db, "student_batch_changed", "batches", "Moved a student to another batch"
                 )
 
                 onSuccess()
-
-                // Historical fee ledger entries retain the batch under which they
-                // were posted. Only the enrollment relationship is moved.
-                launch {
-                    try {
-                        BatchStudentSyncHelper.markRemoved(instId, oldBatchId, studentId, now)
-                        BatchStudentSyncHelper.upsertEnrollment(enrollment)
-                    } catch (_: Exception) { }
-                }
             } catch (e: Exception) {
                 onError(e.message ?: "Failed to shift student batch.")
             }

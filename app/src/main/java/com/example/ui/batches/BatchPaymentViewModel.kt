@@ -10,6 +10,7 @@ import com.batchfee.edu.data.models.FeeEntity
 import com.batchfee.edu.data.models.PaymentEntity
 import com.batchfee.edu.data.models.StudentEntity
 import com.batchfee.edu.domain.SessionManager
+import com.example.domain.BulkMessageController
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
@@ -92,6 +93,12 @@ class BatchPaymentViewModel(private val db: AppDatabase) : ViewModel() {
     // Send-all in progress flag
     private val _isSendingAll = MutableStateFlow(false)
     val isSendingAll = _isSendingAll.asStateFlow()
+
+    val bulkSender = BulkMessageController(
+        scope = viewModelScope,
+        db = db,
+        instituteId = SessionManager.currentInstituteId.value
+    )
 
     fun loadBatchDetail(batchId: String) {
             val instId = SessionManager.currentInstituteId.value ?: return

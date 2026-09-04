@@ -46,6 +46,27 @@ interface FeeDao {
     @Query("DELETE FROM fees WHERE instituteId = :instituteId AND id = :feeId")
     suspend fun deleteFeeById(instituteId: String, feeId: String)
 
+    /**
+     * Used only after the trusted batch-unassign operation confirms that these
+     * unpaid fees belong to a mistaken enrollment.  Keeping a cancelled row is
+     * safer than deleting it: reconciliation and the cloud audit remain intact
+     * while it disappears from active due/collection screens.
+     */
+    @Query("""
+        UPDATE fees
+        SET status = 'cancelled',
+            dueAmount = 0,
+            cancelledAtMs = :cancelledAtMs,
+            updatedAtMs = :updatedAtMs
+        WHERE instituteId = :instituteId AND id IN (:feeIds)
+    """)
+    suspend fun markFeesCancelled(
+        instituteId: String,
+        feeIds: List<String>,
+        cancelledAtMs: Long,
+        updatedAtMs: Long
+    )
+
     @Query("SELECT SUM(paidAmount) FROM fees WHERE instituteId = :instituteId AND cancelledAtMs IS NULL")
     fun getTotalCollected(instituteId: String): Flow<Double?>
 

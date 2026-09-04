@@ -59,6 +59,7 @@ object BillingRoute
 @Serializable object AddStaffRoute
 @Serializable data class EditStaffRoute(val staffId: String)
 @Serializable data class StaffProfileRoute(val staffId: String)
+@Serializable data class TeacherClassSessionsRoute(val staffId: String)
 @Serializable object StaffActivityRoute
 @Serializable object StudentActivityRoute
 @Serializable object RoutineRoute
@@ -77,6 +78,11 @@ object BillingRoute
 @Serializable data class ExamDetailRoute(val examId: String)
 @Serializable data class AddResultRoute(val examId: String)
 @Serializable object ResultReportRoute
+@Serializable object FinalExamsRoute
+@Serializable object CreateFinalExamRoute
+@Serializable data class FinalExamDetailRoute(val examId: String)
+@Serializable data class FinalExamMarksRoute(val examId: String, val subjectId: String)
+@Serializable data class FinalExamResultsRoute(val examId: String)
 @Serializable object IdCardGeneratorRoute
 @Serializable data class IdCardPreviewRoute(val type: String, val id: String)
 @Serializable object BirthdayReminderRoute

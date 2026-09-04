@@ -7,12 +7,14 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -39,6 +41,7 @@ import androidx.compose.material.icons.filled.Sms
 import androidx.compose.material.icons.filled.TableChart
 import androidx.compose.material.icons.filled.TrendingUp
 import androidx.compose.material.icons.filled.Whatsapp
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
@@ -47,6 +50,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
@@ -56,12 +60,15 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -71,17 +78,29 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.domain.SessionManager
 import com.batchfee.edu.domain.appendInstituteSignature
 import com.batchfee.edu.domain.loadInstituteSignature
+import com.batchfee.edu.ui.components.buildWhatsAppUrl
+import com.example.domain.BulkMessageController
+import com.example.domain.BulkMessagePreferences
+import com.example.ui.components.BulkActionBar
+import com.example.ui.components.BulkMessageDialog
+import com.example.ui.components.BulkSelectionTopBar
+import com.example.ui.components.BulkSendProgressPanel
+import com.example.ui.components.SelectionBadge
 import kotlinx.coroutines.launch
 import java.net.URLEncoder
 import java.text.NumberFormat
@@ -126,9 +145,14 @@ fun DueFeeListScreen(db: AppDatabase, onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
     var instituteSignature by remember { mutableStateOf("") }
+    var instituteName by remember { mutableStateOf("") }
+    var instituteContact by remember { mutableStateOf("") }
 
     LaunchedEffect(instId) {
         instituteSignature = loadInstituteSignature(db, instId)
+        val institute = instId?.let { db.instituteDao().getInstitute(it) }
+        instituteName = institute?.name?.trim().orEmpty().ifBlank { "BatchFee" }
+        instituteContact = com.example.domain.MessageTemplateStore.loadInstituteContact(db, instId)
     }
 
     var searchVisible by remember { mutableStateOf(true) }
@@ -139,6 +163,42 @@ fun DueFeeListScreen(db: AppDatabase, onBack: () -> Unit) {
     var selectedBatch by remember { mutableStateOf("All Batches") }
     var sortBy by remember { mutableStateOf("Name") }
     var statusFilter by remember { mutableStateOf("Any") }
+    var selectionMode by remember { mutableStateOf(false) }
+    var selectedIds by rememberSaveable(stateSaver = listSaver(
+        save = { it.toList() },
+        restore = { it.toSet() }
+    )) { mutableStateOf(setOf<String>()) }
+    var showBulkComposer by remember { mutableStateOf(false) }
+    var bulkMessageText by remember { mutableStateOf("") }
+    var showRecipientPicker by remember { mutableStateOf(false) }
+    var bulkChannel by remember { mutableStateOf("sms") }
+    var pickerSelectedIds by remember { mutableStateOf(setOf<String>()) }
+    var broadcastMode by remember { mutableStateOf(false) }
+    var showBroadcastChannel by remember { mutableStateOf(false) }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_PAUSE -> viewModel.bulkSender.onPaused()
+                Lifecycle.Event.ON_RESUME -> viewModel.bulkSender.onResumed()
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    val bulkState by viewModel.bulkSender.state.collectAsState()
+
+    fun clearSelection() {
+        selectionMode = false
+        selectedIds = emptySet()
+    }
+
+    fun toggleSelection(studentId: String) {
+        selectedIds = if (studentId in selectedIds) selectedIds - studentId else selectedIds + studentId
+        if (selectedIds.isEmpty()) selectionMode = false
+    }
 
     val batchOptions = remember(dueDetails) {
         listOf("All Batches") + dueDetails.map { it.batchName.ifBlank { "No Batch" } }.distinct().sorted()
@@ -223,37 +283,185 @@ fun DueFeeListScreen(db: AppDatabase, onBack: () -> Unit) {
         )
     }
 
+    fun startBulkSend(channel: String, delayMs: Long, recipientIds: Set<String> = selectedIds) {
+        val customText = bulkMessageText.trim()
+        val dateLabel = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date())
+        val targets = filteredDetails
+            .filter { it.studentId in recipientIds }
+            .map { group ->
+                BulkMessageController.BulkTarget(
+                    key = group.studentId,
+                    name = group.studentName,
+                    phone = group.studentPhone
+                )
+            }
+        if (targets.isEmpty()) {
+            scope.launch { snackbarHostState.showSnackbar("Select at least one student.") }
+            return
+        }
+        BulkMessagePreferences.setDelayMs(context, delayMs)
+        val started = viewModel.bulkSender.start(
+            targets = targets,
+            channel = channel,
+            delayMs = delayMs,
+            messageBuilder = { target ->
+                val group = filteredDetails.firstOrNull { it.studentId == target.key }
+                val periods = group?.items?.joinToString(", ") { it.feePeriod }?.ifBlank { "fee period" } ?: "fee period"
+                val due = group?.totalDue ?: 0.0
+                val customNote = bulkMessageText.trim()
+                    .replace("{name}", target.name)
+                    .replace("{amount}", formatAmount(due))
+                    .replace("{period}", periods)
+                val template = com.example.domain.MessageTemplateStore.defaultFor(com.example.domain.MessageTemplateStore.TYPE_DUE_FEE)
+                val base = template?.let {
+                    com.example.domain.MessageTemplateStore.apply(
+                        it,
+                        mapOf(
+                            "guardianName" to "Guardian",
+                            "studentName" to target.name,
+                            "amount" to formatAmount(due),
+                            "period" to periods,
+                            "date" to dateLabel,
+                            "instituteName" to instituteName,
+                            "instituteContact" to instituteContact
+                        )
+                    )
+                } ?: buildString {
+                    appendLine("Dear Guardian,")
+                    appendLine()
+                    appendLine("${target.name} has a pending fee of ${formatCurrency(due)} for $periods.")
+                    appendLine("Please clear the due fees at your earliest convenience.")
+                    appendLine()
+                    appendLine("- $instituteName")
+                    appendLine("Contact: $instituteContact")
+                }
+                val withNote = if (customNote.isBlank()) base else "$customNote\n\n$base"
+                withNote.trim()
+            },
+            launcher = { target, body ->
+                if (channel == "whatsapp") {
+                    runCatching {
+                        context.startActivity(
+                            Intent(Intent.ACTION_VIEW, Uri.parse(buildWhatsAppUrl(target.phone, body)))
+                        )
+                    }.isSuccess
+                } else {
+                    runCatching {
+                        context.startActivity(
+                            Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${target.phone?.filter(Char::isDigit).orEmpty()}"))
+                                .apply { putExtra("sms_body", body) }
+                        )
+                    }.isSuccess
+                }
+            }
+        )
+        if (!started) {
+            scope.launch { snackbarHostState.showSnackbar("Sending is already in progress.") }
+        }
+    }
+
+    fun startBroadcastSend(channel: String, delayMs: Long, recipientIds: Set<String> = selectedIds) {
+        val customText = bulkMessageText.trim()
+        val targets = filteredDetails
+            .filter { it.studentId in recipientIds }
+            .map { group ->
+                BulkMessageController.BulkTarget(
+                    key = group.studentId,
+                    name = group.studentName,
+                    phone = group.studentPhone
+                )
+            }
+        if (targets.isEmpty()) {
+            scope.launch { snackbarHostState.showSnackbar("Select at least one student.") }
+            return
+        }
+        if (customText.isBlank()) {
+            scope.launch { snackbarHostState.showSnackbar("Write a common message for everyone.") }
+            return
+        }
+        BulkMessagePreferences.setDelayMs(context, delayMs)
+        val started = viewModel.bulkSender.start(
+            targets = targets,
+            channel = channel,
+            delayMs = delayMs,
+            messageBuilder = { target ->
+                appendInstituteSignature(customText.replace("{name}", target.name), instituteSignature)
+            },
+            launcher = { target, body ->
+                if (channel == "whatsapp") {
+                    runCatching {
+                        context.startActivity(
+                            Intent(Intent.ACTION_VIEW, Uri.parse(buildWhatsAppUrl(target.phone, body)))
+                        )
+                    }.isSuccess
+                } else {
+                    runCatching {
+                        context.startActivity(
+                            Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${target.phone?.filter(Char::isDigit).orEmpty()}"))
+                                .apply { putExtra("sms_body", body) }
+                        )
+                    }.isSuccess
+                }
+            }
+        )
+        if (!started) {
+            scope.launch { snackbarHostState.showSnackbar("Sending is already in progress.") }
+        }
+    }
+
     Scaffold(
         containerColor = BgColor,
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
-            TopAppBar(
-                title = { Text("Due Fees", color = TextWhite, fontWeight = FontWeight.Bold, fontSize = 20.sp) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = TextWhite)
+            if (selectionMode) {
+                BulkSelectionTopBar(
+                    selectedCount = selectedIds.size,
+                    totalCount = filteredDetails.size,
+                    onClear = { clearSelection() },
+                    onSelectAll = {
+                        selectedIds = if (selectedIds.size == filteredDetails.size) emptySet()
+                        else filteredDetails.map { it.studentId }.toSet()
+                        if (selectedIds.isEmpty()) selectionMode = false
                     }
-                },
-                actions = {
-                    IconButton(onClick = { searchVisible = !searchVisible }) {
-                        Icon(Icons.Filled.Search, contentDescription = "Search", tint = if (searchVisible) AccentCyan else TextWhite)
-                    }
-                    IconButton(onClick = { showFilter = true }) {
-                        Icon(Icons.Filled.FilterList, contentDescription = "Filter", tint = TextWhite)
-                    }
-                    IconButton(onClick = { showChart = !showChart }) {
-                        Icon(
-                            if (showChart) Icons.Filled.TableChart else Icons.Filled.TrendingUp,
-                            contentDescription = "Report",
-                            tint = if (showChart) AccentCyan else TextWhite
-                        )
-                    }
-                    IconButton(onClick = { showMenu = true }) {
-                        Icon(Icons.Filled.MoreVert, contentDescription = "Menu", tint = TextWhite)
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = BgColor)
-            )
+                )
+            } else {
+                TopAppBar(
+                    title = { Text("Due Fees", color = TextWhite, fontWeight = FontWeight.Bold, fontSize = 20.sp) },
+                    navigationIcon = {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = TextWhite)
+                        }
+                    },
+                    actions = {
+                        IconButton(onClick = { searchVisible = !searchVisible }) {
+                            Icon(Icons.Filled.Search, contentDescription = "Search", tint = if (searchVisible) AccentCyan else TextWhite)
+                        }
+                        IconButton(onClick = { showFilter = true }) {
+                            Icon(Icons.Filled.FilterList, contentDescription = "Filter", tint = TextWhite)
+                        }
+                        IconButton(onClick = { showChart = !showChart }) {
+                            Icon(
+                                if (showChart) Icons.Filled.TableChart else Icons.Filled.TrendingUp,
+                                contentDescription = "Report",
+                                tint = if (showChart) AccentCyan else TextWhite
+                            )
+                        }
+                        IconButton(onClick = { showMenu = true }) {
+                            Icon(Icons.Filled.MoreVert, contentDescription = "Menu", tint = TextWhite)
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = BgColor)
+                )
+            }
+        },
+        bottomBar = {
+            if (selectionMode) {
+                BulkActionBar(
+                    selectedCount = selectedIds.size,
+                    onWhatsApp = { showBulkComposer = true },
+                    onSms = { showBulkComposer = true }
+                )
+            }
         }
     ) { padding ->
         LazyColumn(
@@ -305,8 +513,23 @@ fun DueFeeListScreen(db: AppDatabase, onBack: () -> Unit) {
                 items(filteredDetails, key = { it.studentId }) { group ->
                     DueStudentCard(
                         group = group,
+                        selected = group.studentId in selectedIds,
+                        selectionMode = selectionMode,
                         onSms = { sendReminder(group, "sms") },
-                        onWhatsApp = { sendReminder(group, "whatsapp") }
+                        onWhatsApp = { sendReminder(group, "whatsapp") },
+                        onClick = {
+                            if (selectionMode) {
+                                toggleSelection(group.studentId)
+                            }
+                        },
+                        onLongPress = {
+                            if (!selectionMode) {
+                                selectionMode = true
+                                selectedIds = setOf(group.studentId)
+                            } else {
+                                toggleSelection(group.studentId)
+                            }
+                        }
                     )
                 }
             }
@@ -331,11 +554,25 @@ fun DueFeeListScreen(db: AppDatabase, onBack: () -> Unit) {
             onDismiss = { showMenu = false },
             onSms = {
                 showMenu = false
-                openSms(reportText)
+                broadcastMode = false
+                bulkChannel = "sms"
+                pickerSelectedIds = filteredDetails.map { it.studentId }.toSet()
+                showRecipientPicker = true
             },
             onWhatsApp = {
                 showMenu = false
-                openWhatsApp(reportText)
+                broadcastMode = false
+                bulkChannel = "whatsapp"
+                pickerSelectedIds = filteredDetails.map { it.studentId }.toSet()
+                showRecipientPicker = true
+            },
+            onBroadcastSms = {
+                showMenu = false
+                showBroadcastChannel = true
+            },
+            onBroadcastWhatsApp = {
+                showMenu = false
+                showBroadcastChannel = true
             },
             onReminder = {
                 showMenu = false
@@ -346,6 +583,98 @@ fun DueFeeListScreen(db: AppDatabase, onBack: () -> Unit) {
                 shareText("Due Fee Report", reportText)
             }
         )
+    }
+
+    if (showBroadcastChannel) {
+        BroadcastChannelDialog(
+            onDismiss = { showBroadcastChannel = false },
+            onSms = {
+                showBroadcastChannel = false
+                broadcastMode = true
+                bulkChannel = "sms"
+                pickerSelectedIds = filteredDetails.map { it.studentId }.toSet()
+                showRecipientPicker = true
+            },
+            onWhatsApp = {
+                showBroadcastChannel = false
+                broadcastMode = true
+                bulkChannel = "whatsapp"
+                pickerSelectedIds = filteredDetails.map { it.studentId }.toSet()
+                showRecipientPicker = true
+            }
+        )
+    }
+
+    if (showRecipientPicker) {
+        DueRecipientPickerDialog(
+            title = buildString {
+                if (broadcastMode) append("Broadcast") else append("Message")
+                append(" - ")
+                append(if (bulkChannel == "whatsapp") "WhatsApp Recipients" else "SMS Recipients")
+            },
+            groups = filteredDetails,
+            selectedIds = pickerSelectedIds,
+            onToggle = { id ->
+                pickerSelectedIds = if (id in pickerSelectedIds) pickerSelectedIds - id else pickerSelectedIds + id
+            },
+            onSelectAll = { pickerSelectedIds = filteredDetails.map { it.studentId }.toSet() },
+            onClear = { pickerSelectedIds = emptySet() },
+            onConfirm = {
+                if (pickerSelectedIds.isEmpty()) {
+                    scope.launch { snackbarHostState.showSnackbar("Select at least one student.") }
+                    return@DueRecipientPickerDialog
+                }
+                showRecipientPicker = false
+                showBulkComposer = true
+            },
+            onDismiss = { showRecipientPicker = false }
+        )
+    }
+
+    if (showBulkComposer) {
+        BulkMessageDialog(
+            title = if (broadcastMode) "Broadcast Message" else "Bulk Due Reminder",
+            recipientCount = pickerSelectedIds.size,
+            broadcastMode = broadcastMode,
+            messageText = bulkMessageText,
+            onMessageChange = { bulkMessageText = it },
+            initialDelaySeconds = (BulkMessagePreferences.getDelayMs(context) / 1000L).toInt(),
+            onStartWhatsApp = { delayMs ->
+                if (broadcastMode) {
+                    startBroadcastSend("whatsapp", delayMs, pickerSelectedIds)
+                } else {
+                    startBulkSend("whatsapp", delayMs, pickerSelectedIds)
+                }
+                showBulkComposer = false
+                clearSelection()
+            },
+            onStartSms = { delayMs ->
+                if (broadcastMode) {
+                    startBroadcastSend("sms", delayMs, pickerSelectedIds)
+                } else {
+                    startBulkSend("sms", delayMs, pickerSelectedIds)
+                }
+                showBulkComposer = false
+                clearSelection()
+            },
+            onDismiss = { showBulkComposer = false }
+        )
+    }
+
+    if (bulkState.active) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 12.dp),
+            contentAlignment = Alignment.BottomCenter
+        ) {
+            BulkSendProgressPanel(
+                state = bulkState,
+                onRetryFailed = { viewModel.bulkSender.retryFailed() },
+                onStop = { viewModel.bulkSender.cancel() },
+                onClose = { viewModel.bulkSender.reset() }
+            )
+        }
     }
 }
 
@@ -493,15 +822,34 @@ private fun DueEmptyState() {
 }
 
 @Composable
-private fun DueStudentCard(group: DueStudentGroup, onSms: () -> Unit, onWhatsApp: () -> Unit) {
+private fun DueStudentCard(
+    group: DueStudentGroup,
+    onSms: () -> Unit,
+    onWhatsApp: () -> Unit,
+    selectionMode: Boolean = false,
+    selected: Boolean = false,
+    onClick: () -> Unit = {},
+    onLongPress: () -> Unit = {}
+) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .pointerInput(selectionMode, selected) {
+                detectTapGestures(
+                    onTap = { if (selectionMode) onClick() },
+                    onLongPress = { onLongPress() }
+                )
+            },
         shape = RoundedCornerShape(18.dp),
-        colors = CardDefaults.cardColors(containerColor = CardBg),
-        border = BorderStroke(1.dp, SoftLine)
+        colors = CardDefaults.cardColors(containerColor = if (selected) CardHi else CardBg),
+        border = BorderStroke(if (selected) 1.5.dp else 1.dp, if (selected) AccentCyan else SoftLine)
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+                if (selectionMode) {
+                    SelectionBadge(selected = selected)
+                    Spacer(Modifier.width(12.dp))
+                }
                 Box(
                     modifier = Modifier
                         .size(46.dp)
@@ -539,8 +887,8 @@ private fun DueStudentCard(group: DueStudentGroup, onSms: () -> Unit, onWhatsApp
             }
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                DueReminderButton(Icons.Filled.Sms, "SMS", ElectricBlue, Modifier.weight(1f), onSms)
-                DueReminderButton(Icons.Filled.Whatsapp, "WhatsApp", WAGreen, Modifier.weight(1f), onWhatsApp)
+                DueReminderButton(Icons.Filled.Sms, "SMS", ElectricBlue, Modifier.weight(1f), { if (!selectionMode) onSms() })
+                DueReminderButton(Icons.Filled.Whatsapp, "WhatsApp", WAGreen, Modifier.weight(1f), { if (!selectionMode) onWhatsApp() })
             }
         }
     }
@@ -799,10 +1147,150 @@ private fun FilterChipRow(label: String, options: List<String>, selected: String
 }
 
 @Composable
+private fun DueRecipientPickerDialog(
+    title: String,
+    groups: List<DueStudentGroup>,
+    selectedIds: Set<String>,
+    onToggle: (String) -> Unit,
+    onSelectAll: () -> Unit,
+    onClear: () -> Unit,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val channelColor = if (title.contains("WhatsApp", ignoreCase = true)) WAGreen else ElectricBlue
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth(0.96f)
+                .fillMaxHeight(0.86f),
+            shape = RoundedCornerShape(18.dp),
+            colors = CardDefaults.cardColors(containerColor = CardBg),
+            border = BorderStroke(1.dp, SoftLine)
+        ) {
+            Column(Modifier.fillMaxSize()) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        if (title.contains("WhatsApp", ignoreCase = true)) Icons.Filled.Whatsapp else Icons.Filled.Sms,
+                        contentDescription = null,
+                        tint = channelColor,
+                        modifier = Modifier.size(26.dp)
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(title, color = AccentCyan, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                        Text(
+                            "${selectedIds.size} of ${groups.size} selected",
+                            color = TextMuted,
+                            fontSize = 12.sp
+                        )
+                    }
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Filled.Close, contentDescription = "Close", tint = AccentRed, modifier = Modifier.size(28.dp))
+                    }
+                }
+                HorizontalDivider(color = BorderSub)
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onSelectAll,
+                        modifier = Modifier.weight(1f).height(42.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.dp, AccentCyan.copy(alpha = 0.5f)),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentCyan)
+                    ) {
+                        Text("Select All", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    }
+                    OutlinedButton(
+                        onClick = onClear,
+                        modifier = Modifier.weight(1f).height(42.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.dp, TextMuted.copy(alpha = 0.5f)),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = TextMuted)
+                    ) {
+                        Text("Clear", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+                LazyColumn(
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(groups, key = { it.studentId }) { group ->
+                        val selected = group.studentId in selectedIds
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(if (selected) CardHi else CardBgAlt)
+                                .border(1.dp, if (selected) AccentCyan.copy(alpha = 0.6f) else BorderSub, RoundedCornerShape(14.dp))
+                                .clickable { onToggle(group.studentId) }
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            SelectionBadge(selected = selected)
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    group.studentName,
+                                    color = TextWhite,
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    group.studentPhone ?: "No phone",
+                                    color = if (group.studentPhone.isNullOrBlank()) AccentRed else TextMuted,
+                                    fontSize = 12.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Text(
+                                formatCurrency(group.totalDue),
+                                color = AccentRed,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1
+                            )
+                        }
+                    }
+                }
+                HorizontalDivider(color = BorderSub)
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp)
+                        .height(52.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Brush.horizontalGradient(listOf(ElectricBlue, AccentCyan)))
+                        .clickable(onClick = onConfirm),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        "Continue with ${selectedIds.size} student${if (selectedIds.size == 1) "" else "s"}",
+                        color = Color.White,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun DueFeeMenuDialog(
     onDismiss: () -> Unit,
     onSms: () -> Unit,
     onWhatsApp: () -> Unit,
+    onBroadcastSms: () -> Unit,
+    onBroadcastWhatsApp: () -> Unit,
     onReminder: () -> Unit,
     onExport: () -> Unit
 ) {
@@ -821,10 +1309,38 @@ private fun DueFeeMenuDialog(
                     }
                 }
                 HorizontalDivider(color = BorderSub)
-                MenuRow(Icons.Filled.Sms, "SMS All", "Share this due report by SMS", ElectricBlue, onSms)
-                MenuRow(Icons.Filled.Whatsapp, "WhatsApp All", "Share this due report by WhatsApp", WAGreen, onWhatsApp)
-                MenuRow(Icons.Filled.Notifications, "Reminder Note", "Use student cards for direct reminders", AccentCyan, onReminder)
+                MenuRow(Icons.Filled.Sms, "SMS All", "Each student gets their own due report", ElectricBlue, onSms)
+                MenuRow(Icons.Filled.Whatsapp, "WhatsApp All", "Each student gets their own due report", WAGreen, onWhatsApp)
+                MenuRow(Icons.Filled.Notifications, "Broadcast", "Same common message for everyone", AccentCyan, onBroadcastSms)
                 MenuRow(Icons.Filled.Download, "Export Report", "Download or share due fee records", AccentCyan, onExport, showDivider = false)
+            }
+        }
+    }
+}
+
+@Composable
+private fun BroadcastChannelDialog(
+    onDismiss: () -> Unit,
+    onSms: () -> Unit,
+    onWhatsApp: () -> Unit
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            modifier = Modifier.fillMaxWidth(0.96f),
+            shape = RoundedCornerShape(18.dp),
+            colors = CardDefaults.cardColors(containerColor = CardBg),
+            border = BorderStroke(1.dp, SoftLine)
+        ) {
+            Column {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Broadcast Channel", color = AccentCyan, fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Filled.Close, contentDescription = "Close", tint = AccentRed, modifier = Modifier.size(28.dp))
+                    }
+                }
+                HorizontalDivider(color = BorderSub)
+                MenuRow(Icons.Filled.Sms, "Broadcast by SMS", "Same message to every selected number", ElectricBlue, onSms)
+                MenuRow(Icons.Filled.Whatsapp, "Broadcast by WhatsApp", "Same message to every selected number", WAGreen, onWhatsApp, showDivider = false)
             }
         }
     }

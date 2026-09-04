@@ -7,6 +7,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -14,6 +15,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
@@ -32,13 +34,26 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.data.media.FirebaseStorageImageUploadHelper
 import com.batchfee.edu.data.models.StudentEntity
 import com.batchfee.edu.domain.appendInstituteSignature
 import com.batchfee.edu.domain.loadInstituteSignature
 import com.batchfee.edu.domain.SessionManager
+import com.batchfee.edu.ui.components.buildWhatsAppUrl
+import com.example.domain.BulkMessageController
+import com.example.domain.BulkMessagePreferences
+import com.example.ui.components.BulkActionBar
+import com.example.ui.components.BulkMessageDialog
+import com.example.ui.components.BulkSelectionTopBar
+import com.example.ui.components.BulkSendProgressPanel
+import com.example.ui.components.SelectionBadge
 import kotlinx.coroutines.launch
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
@@ -90,6 +105,38 @@ fun StudentListScreen(
     var sortBy by remember { mutableStateOf("name") }
     var batchStudentIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var activeBatchEnrollments by remember { mutableStateOf(emptyList<com.batchfee.edu.data.models.BatchStudentEntity>()) }
+    var selectionMode by remember { mutableStateOf(false) }
+    var selectedIds by rememberSaveable(stateSaver = listSaver(
+        save = { it.toList() },
+        restore = { it.toSet() }
+    )) { mutableStateOf(setOf<String>()) }
+    var showBulkComposer by remember { mutableStateOf(false) }
+    var bulkChannel by remember { mutableStateOf("") }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_PAUSE -> viewModel.bulkSender.onPaused()
+                Lifecycle.Event.ON_RESUME -> viewModel.bulkSender.onResumed()
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    val bulkState by viewModel.bulkSender.state.collectAsState()
+
+    fun clearSelection() {
+        selectionMode = false
+        selectedIds = emptySet()
+    }
+
+    fun toggleSelection(studentId: String) {
+        selectedIds = if (studentId in selectedIds) selectedIds - studentId else selectedIds + studentId
+        if (selectedIds.isEmpty()) selectionMode = false
+    }
 
     LaunchedEffect(instId) {
         if (instId == null) {
@@ -166,45 +213,113 @@ fun StudentListScreen(
             .onFailure { scope.launch { snackbarHostState.showSnackbar("No app found to send this message.") } }
     }
 
+    fun startBulkSend(channel: String, delayMs: Long) {
+        val message = appendInstituteSignature(messageText.trim(), instituteSignature)
+        if (message.isBlank()) return
+        val targets = filteredStudents
+            .filter { it.id in selectedIds }
+            .map { BulkMessageController.BulkTarget(key = it.id, name = it.fullName, phone = it.phone) }
+        if (targets.isEmpty()) {
+            scope.launch { snackbarHostState.showSnackbar("Select at least one student.") }
+            return
+        }
+        BulkMessagePreferences.setDelayMs(context, delayMs)
+        val started = viewModel.bulkSender.start(
+            targets = targets,
+            channel = channel,
+            delayMs = delayMs,
+            messageBuilder = { message },
+            launcher = { target, body ->
+                if (channel == "whatsapp") {
+                    runCatching {
+                        context.startActivity(
+                            Intent(Intent.ACTION_VIEW, Uri.parse(buildWhatsAppUrl(target.phone, body)))
+                        )
+                    }.isSuccess
+                } else {
+                    runCatching {
+                        context.startActivity(
+                            Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${target.phone?.filter(Char::isDigit).orEmpty()}"))
+                                .apply { putExtra("sms_body", body) }
+                        )
+                    }.isSuccess
+                }
+            }
+        )
+        if (!started) {
+            scope.launch { snackbarHostState.showSnackbar("Sending is already in progress.") }
+        }
+    }
+
     Scaffold(
         containerColor = BgColor,
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
-            TopAppBar(
-                title = { Text("Students", color = TextWhite, fontWeight = FontWeight.Bold, fontSize = 21.sp) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = TextWhite)
+            if (selectionMode) {
+                BulkSelectionTopBar(
+                    selectedCount = selectedIds.size,
+                    totalCount = filteredStudents.size,
+                    onClear = { clearSelection() },
+                    onSelectAll = {
+                        selectedIds = if (selectedIds.size == filteredStudents.size) emptySet()
+                        else filteredStudents.map { it.id }.toSet()
+                        if (selectedIds.isEmpty()) selectionMode = false
                     }
-                },
-                actions = {
-                    IconButton(onClick = { showSearch = !showSearch }) {
-                        Icon(Icons.Filled.Search, contentDescription = "Search", tint = TextWhite, modifier = Modifier.size(28.dp))
-                    }
-                    IconButton(onClick = { showFilterDialog = true }) {
-                        Icon(Icons.Filled.FilterList, contentDescription = "Filter", tint = TextWhite, modifier = Modifier.size(28.dp))
-                    }
-                    IconButton(onClick = { showStudentsMenu = true }) {
-                        Icon(Icons.Filled.MoreVert, contentDescription = "Student menu", tint = TextWhite, modifier = Modifier.size(28.dp))
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = BgColor)
-            )
+                )
+            } else {
+                TopAppBar(
+                    title = { Text("Students", color = TextWhite, fontWeight = FontWeight.Bold, fontSize = 21.sp) },
+                    navigationIcon = {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = TextWhite)
+                        }
+                    },
+                    actions = {
+                        IconButton(onClick = { showSearch = !showSearch }) {
+                            Icon(Icons.Filled.Search, contentDescription = "Search", tint = TextWhite, modifier = Modifier.size(28.dp))
+                        }
+                        IconButton(onClick = { showFilterDialog = true }) {
+                            Icon(Icons.Filled.FilterList, contentDescription = "Filter", tint = TextWhite, modifier = Modifier.size(28.dp))
+                        }
+                        IconButton(onClick = { showStudentsMenu = true }) {
+                            Icon(Icons.Filled.MoreVert, contentDescription = "Student menu", tint = TextWhite, modifier = Modifier.size(28.dp))
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = BgColor)
+                )
+            }
         },
         floatingActionButton = {
-            FloatingActionButton(
-                onClick = onAddStudent,
-                containerColor = Color.Transparent, // Use custom brush
-                contentColor = Color.White,
-                shape = CircleShape,
-                modifier = Modifier
-                    .size(56.dp)
-                    .clip(CircleShape)
-                    .background(
-                        brush = Brush.horizontalGradient(listOf(ElectricBlue, Cyan))
-                    )
-            ) {
-                Icon(Icons.Default.Add, contentDescription = "Add Student", tint = Color.White)
+            if (!selectionMode) {
+                FloatingActionButton(
+                    onClick = onAddStudent,
+                    containerColor = Color.Transparent, // Use custom brush
+                    contentColor = Color.White,
+                    shape = CircleShape,
+                    modifier = Modifier
+                        .size(56.dp)
+                        .clip(CircleShape)
+                        .background(
+                            brush = Brush.horizontalGradient(listOf(ElectricBlue, Cyan))
+                        )
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = "Add Student", tint = Color.White)
+                }
+            }
+        },
+        bottomBar = {
+            if (selectionMode) {
+                BulkActionBar(
+                    selectedCount = selectedIds.size,
+                    onWhatsApp = {
+                        bulkChannel = "whatsapp"
+                        showBulkComposer = true
+                    },
+                    onSms = {
+                        bulkChannel = "sms"
+                        showBulkComposer = true
+                    }
+                )
             }
         }
     ) { padding ->
@@ -303,13 +418,29 @@ fun StudentListScreen(
             } else {
                 LazyColumn(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
-                    contentPadding = PaddingValues(bottom = 80.dp) // Clear FAB
+                    contentPadding = PaddingValues(bottom = 120.dp) // Clear FAB / bulk bar
                 ) {
                     items(filteredStudents, key = { it.id }) { student ->
                         StudentCard(
                             student = student,
                             batchNames = batchNamesByStudent[student.id].orEmpty(),
-                            onClick = { onNavigateToProfile(student.id) }
+                            selected = student.id in selectedIds,
+                            selectionMode = selectionMode,
+                            onClick = {
+                                if (selectionMode) {
+                                    toggleSelection(student.id)
+                                } else {
+                                    onNavigateToProfile(student.id)
+                                }
+                            },
+                            onLongPress = {
+                                if (!selectionMode) {
+                                    selectionMode = true
+                                    selectedIds = setOf(student.id)
+                                } else {
+                                    toggleSelection(student.id)
+                                }
+                            }
                         )
                     }
                 }
@@ -489,6 +620,43 @@ fun StudentListScreen(
             }
         )
     }
+
+    if (showBulkComposer) {
+        BulkMessageDialog(
+            title = "Bulk Message",
+            recipientCount = selectedIds.size,
+            messageText = messageText,
+            onMessageChange = { messageText = it },
+            initialDelaySeconds = (BulkMessagePreferences.getDelayMs(context) / 1000L).toInt(),
+            onStartWhatsApp = { delayMs ->
+                startBulkSend("whatsapp", delayMs)
+                showBulkComposer = false
+                clearSelection()
+            },
+            onStartSms = { delayMs ->
+                startBulkSend("sms", delayMs)
+                showBulkComposer = false
+                clearSelection()
+            },
+            onDismiss = { showBulkComposer = false }
+        )
+    }
+
+    if (bulkState.active) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 12.dp),
+            contentAlignment = Alignment.BottomCenter
+        ) {
+            BulkSendProgressPanel(
+                state = bulkState,
+                onRetryFailed = { viewModel.bulkSender.retryFailed() },
+                onStop = { viewModel.bulkSender.cancel() },
+                onClose = { viewModel.bulkSender.reset() }
+            )
+        }
+    }
 }
 
 // ── Student Card ────────────────────────────────────────────────
@@ -594,7 +762,14 @@ private fun StudentMenuRow(
 }
 
 @Composable
-private fun StudentCard(student: StudentEntity, batchNames: List<String>, onClick: () -> Unit) {
+private fun StudentCard(
+    student: StudentEntity,
+    batchNames: List<String>,
+    onClick: () -> Unit,
+    selectionMode: Boolean = false,
+    selected: Boolean = false,
+    onLongPress: () -> Unit = {}
+) {
     val context = LocalContext.current
     val statusColor = when (student.status.lowercase()) {
         "active" -> WAGreen
@@ -602,23 +777,32 @@ private fun StudentCard(student: StudentEntity, batchNames: List<String>, onClic
         else -> TextMuted
     }
 
-    // polish: Card.onClick provides built-in Material3 ripple + elevation press animation;
-    // adding shadow() gives the card a subtle glow depth.
+    // polish: Card provides the ripple + elevation press animation; the pointerInput
+    // inside handles tap (navigate / toggle) and long-press (enter selection mode).
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .shadow(4.dp, RoundedCornerShape(14.dp), spotColor = Cyan.copy(alpha = 0.25f)),
         shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = CardBg),
-        border = BorderStroke(1.dp, BorderSub),
-        onClick = onClick
+        colors = CardDefaults.cardColors(containerColor = if (selected) CardBgAlt else CardBg),
+        border = BorderStroke(if (selected) 1.5.dp else 1.dp, if (selected) Cyan else BorderSub)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .pointerInput(selectionMode, selected) {
+                    detectTapGestures(
+                        onTap = { onClick() },
+                        onLongPress = { onLongPress() }
+                    )
+                }
                 .padding(14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            if (selectionMode) {
+                SelectionBadge(selected = selected)
+                Spacer(Modifier.width(12.dp))
+            }
             // The initial remains beneath the image as a dependable fallback while a
             // private student photo is being fetched or when no photo was added.
             Box(

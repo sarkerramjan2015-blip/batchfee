@@ -19,6 +19,7 @@ import com.batchfee.edu.data.models.ResultEntity
 import com.batchfee.edu.data.models.SalaryEntity
 import com.batchfee.edu.data.models.StaffAttendanceEntity
 import com.batchfee.edu.data.models.SubscriptionPlanEntity
+import com.batchfee.edu.data.models.TeachingSessionEntity
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.DocumentChange
 import com.google.firebase.firestore.DocumentSnapshot
@@ -1055,7 +1056,7 @@ object ExpenseSyncHelper {
 object SalarySyncHelper {
     private const val COLLECTION = "salaries"
 
-    private fun salaryFields(salary: SalaryEntity) = mapOf(
+    internal fun salaryFields(salary: SalaryEntity) = mapOf(
         "instituteId" to salary.instituteId,
         "staffId" to salary.staffId,
         "salaryMonth" to salary.salaryMonth,
@@ -1072,10 +1073,12 @@ object SalarySyncHelper {
         "note" to salary.note,
         "createdAtMs" to salary.createdAtMs,
         "updatedAtMs" to salary.updatedAtMs,
-        "cancelledAtMs" to salary.cancelledAtMs
+        "cancelledAtMs" to salary.cancelledAtMs,
+        "calculationType" to salary.calculationType,
+        "calculationSessionIds" to salary.calculationSessionIds
     )
 
-    private fun expenseFields(expense: ExpenseEntity) = mapOf(
+    internal fun expenseFields(expense: ExpenseEntity) = mapOf(
         "instituteId" to expense.instituteId,
         "category" to expense.category,
         "title" to expense.title,
@@ -1120,37 +1123,266 @@ object SalarySyncHelper {
 
     suspend fun syncAllFromFirestore(db: AppDatabase, instituteId: String) = withContext(Dispatchers.IO) {
         try {
-            instituteCollection(instituteId, COLLECTION).get().await().documents.mapNotNull { doc ->
-                val staffId = doc.getString("staffId") ?: return@mapNotNull null
-                val status = doc.getString("status") ?: "unpaid"
-                val netSalary = (doc.get("netSalary") as? Number).asDouble() ?: 0.0
-                val paidAmount = (doc.get("paidAmount") as? Number).asDouble()
-                    // Paid salaries from earlier versions had no paidAmount field.
-                    ?: if (status.equals("paid", ignoreCase = true)) netSalary else 0.0
-                SalaryEntity(
-                    id = doc.id,
-                    instituteId = doc.getString("instituteId") ?: instituteId,
-                    staffId = staffId,
-                    salaryMonth = doc.getString("salaryMonth") ?: "",
-                    basicSalary = (doc.get("basicSalary") as? Number).asDouble() ?: 0.0,
-                    bonusAmount = (doc.get("bonusAmount") as? Number).asDouble() ?: 0.0,
-                    deductionAmount = (doc.get("deductionAmount") as? Number).asDouble() ?: 0.0,
-                    advanceAmount = (doc.get("advanceAmount") as? Number).asDouble() ?: 0.0,
-                    netSalary = netSalary,
-                    paidAmount = paidAmount.coerceIn(0.0, netSalary),
-                    paymentMethod = doc.getString("paymentMethod"),
-                    paymentDateMs = (doc.get("paymentDateMs") as? Number).asLong(),
-                    status = status,
-                    salarySlipNumber = doc.getString("salarySlipNumber") ?: "",
-                    note = doc.getString("note"),
-                    createdAtMs = (doc.get("createdAtMs") as? Number).asLong() ?: System.currentTimeMillis(),
-                    updatedAtMs = (doc.get("updatedAtMs") as? Number).asLong() ?: System.currentTimeMillis(),
-                    cancelledAtMs = (doc.get("cancelledAtMs") as? Number).asLong()
-                )
-            }.forEach { db.salaryDao().insertSalary(it) }
+            instituteCollection(instituteId, COLLECTION).get().await().documents
+                .mapNotNull { it.toSalary(instituteId) }
+                .forEach { db.salaryDao().insertSalary(it) }
         } catch (e: Exception) {
             recordException(e)
         }
+    }
+
+    suspend fun applyRealtimeChanges(
+        db: AppDatabase,
+        instituteId: String,
+        changes: List<DocumentChange>
+    ) = withContext(Dispatchers.IO) {
+        db.withTransaction {
+            changes.forEach { change ->
+                if (change.type != DocumentChange.Type.REMOVED) {
+                    change.document.toSalary(instituteId)?.let { db.salaryDao().insertSalary(it) }
+                }
+            }
+        }
+    }
+
+    private fun DocumentSnapshot.toSalary(instituteId: String): SalaryEntity? {
+        val staffId = getString("staffId") ?: return null
+        val status = getString("status") ?: "unpaid"
+        val netSalary = (get("netSalary") as? Number).asDouble() ?: 0.0
+        val paidAmount = (get("paidAmount") as? Number).asDouble()
+            ?: if (status.equals("paid", ignoreCase = true)) netSalary else 0.0
+        return SalaryEntity(
+            id = id,
+            instituteId = getString("instituteId") ?: instituteId,
+            staffId = staffId,
+            salaryMonth = getString("salaryMonth") ?: "",
+            basicSalary = (get("basicSalary") as? Number).asDouble() ?: 0.0,
+            bonusAmount = (get("bonusAmount") as? Number).asDouble() ?: 0.0,
+            deductionAmount = (get("deductionAmount") as? Number).asDouble() ?: 0.0,
+            advanceAmount = (get("advanceAmount") as? Number).asDouble() ?: 0.0,
+            netSalary = netSalary,
+            paidAmount = paidAmount.coerceIn(0.0, netSalary),
+            paymentMethod = getString("paymentMethod"),
+            paymentDateMs = (get("paymentDateMs") as? Number).asLong(),
+            status = status,
+            salarySlipNumber = getString("salarySlipNumber") ?: "",
+            note = getString("note"),
+            createdAtMs = (get("createdAtMs") as? Number).asLong() ?: System.currentTimeMillis(),
+            updatedAtMs = (get("updatedAtMs") as? Number).asLong() ?: System.currentTimeMillis(),
+            cancelledAtMs = (get("cancelledAtMs") as? Number).asLong(),
+            calculationType = getString("calculationType") ?: "monthly",
+            calculationSessionIds = getString("calculationSessionIds")?.takeIf { it.isNotBlank() }
+        )
+    }
+}
+
+/** Cloud/Room bridge for teacher class completions and their salary locks. */
+object TeachingSessionSyncHelper {
+    private const val COLLECTION = "teaching_sessions"
+
+    internal fun sessionFields(session: TeachingSessionEntity) = mapOf(
+        "instituteId" to session.instituteId,
+        "staffId" to session.staffId,
+        "batchId" to session.batchId,
+        "sessionKey" to session.sessionKey,
+        "subject" to session.subject,
+        "sessionDateMs" to session.sessionDateMs,
+        "durationMinutes" to session.durationMinutes,
+        "salaryTypeSnapshot" to session.salaryTypeSnapshot,
+        "rateSnapshot" to session.rateSnapshot,
+        "calculatedAmount" to session.calculatedAmount,
+        "salaryId" to session.salaryId,
+        "note" to session.note,
+        "createdByUserId" to session.createdByUserId,
+        "createdAtMs" to session.createdAtMs,
+        "updatedAtMs" to session.updatedAtMs,
+        "deletedAtMs" to session.deletedAtMs
+    )
+
+    suspend fun upsertSession(session: TeachingSessionEntity) = withContext(Dispatchers.IO) {
+        try {
+            instituteCollection(session.instituteId, COLLECTION).document(session.id)
+                .set(sessionFields(session)).await()
+        } catch (e: Exception) {
+            recordException(e)
+            throw e
+        }
+    }
+
+    /**
+     * Confirms a completed class exactly once, even if another device has an
+     * outdated Room cache. The authoritative check is made inside a Firestore
+     * transaction before any class data is written.
+     */
+    suspend fun createSessionIfAvailable(session: TeachingSessionEntity) = withContext(Dispatchers.IO) {
+        try {
+            val reference = instituteCollection(session.instituteId, COLLECTION).document(session.id)
+            firestore.runTransaction { transaction ->
+                val existing = transaction.get(reference)
+                if (existing.exists() && existing.get("deletedAtMs") == null) {
+                    val lockedSalaryId = existing.getString("salaryId")?.takeIf { it.isNotBlank() }
+                    throw IllegalStateException(
+                        if (lockedSalaryId == null) {
+                            "This scheduled class is already completed."
+                        } else {
+                            "This class is already included in a salary record."
+                        }
+                    )
+                }
+                transaction.set(reference, sessionFields(session))
+            }.await()
+        } catch (e: IllegalStateException) {
+            throw e
+        } catch (e: Exception) {
+            recordException(e)
+            throw e
+        }
+    }
+
+    /**
+     * Salary, expense and every included class are committed atomically. The
+     * transaction checks the cloud record first, so a stale Room cache on a
+     * second device cannot create a second salary for the same staff/month or
+     * pay a class that another salary has already locked.
+     */
+    suspend fun upsertSalaryWithExpenseAndSessions(
+        salary: SalaryEntity,
+        expense: ExpenseEntity,
+        sessions: List<TeachingSessionEntity>,
+    ) = withContext(Dispatchers.IO) {
+        try {
+            val salaryReference = instituteCollection(salary.instituteId, "salaries").document(salary.id)
+            val cancellingExistingSalary = salary.cancelledAtMs != null
+
+            // Versions before the deterministic salary id may already have
+            // created a salary with a random document id. Check those legacy
+            // records first, while the transaction below protects all new
+            // concurrent requests through the deterministic document id.
+            if (!cancellingExistingSalary) {
+                val legacySalary = instituteCollection(salary.instituteId, "salaries")
+                    .whereEqualTo("staffId", salary.staffId)
+                    .get()
+                    .await()
+                    .documents
+                    .firstOrNull { document ->
+                        document.id != salary.id &&
+                            document.getString("salaryMonth") == salary.salaryMonth &&
+                            document.get("cancelledAtMs") == null
+                    }
+                if (legacySalary != null) {
+                    throw IllegalStateException("Salary already exists for this staff and month.")
+                }
+            }
+
+            firestore.runTransaction { transaction ->
+                val existingSalary = transaction.get(salaryReference)
+                if (!cancellingExistingSalary && existingSalary.exists() &&
+                    existingSalary.get("cancelledAtMs") == null
+                ) {
+                    throw IllegalStateException("Salary already exists for this staff and month.")
+                }
+
+                // Firestore transactions require every read to happen before
+                // the first write. Read and validate every selected class
+                // first, then lock all of them below.
+                val sessionReferences = sessions.map { session ->
+                    session to instituteCollection(session.instituteId, COLLECTION).document(session.id)
+                }
+                val existingSessions = sessionReferences.map { (session, reference) ->
+                    session to transaction.get(reference)
+                }
+                existingSessions.forEach { (session, existingSession) ->
+                    if (!existingSession.exists()) {
+                        throw IllegalStateException("A completed class is missing. Refresh and try again.")
+                    }
+                    if (!cancellingExistingSalary && existingSession.get("deletedAtMs") != null) {
+                        throw IllegalStateException("A completed class was removed. Refresh and try again.")
+                    }
+                    val existingSalaryId = existingSession.getString("salaryId")?.takeIf { it.isNotBlank() }
+                    val validLock = if (cancellingExistingSalary) {
+                        existingSalaryId == salary.id
+                    } else {
+                        existingSalaryId == null
+                    }
+                    if (!validLock) {
+                        throw IllegalStateException(
+                            if (cancellingExistingSalary) {
+                                "A class is linked to another salary. Refresh and try again."
+                            } else {
+                                "A completed class is already included in another salary."
+                            }
+                        )
+                    }
+                }
+
+                transaction.set(salaryReference, SalarySyncHelper.salaryFields(salary))
+                transaction.set(
+                    instituteCollection(expense.instituteId, "expenses").document(expense.id),
+                    SalarySyncHelper.expenseFields(expense)
+                )
+                sessionReferences.forEach { (session, reference) ->
+                    transaction.set(reference, sessionFields(session))
+                }
+            }.await()
+        } catch (e: IllegalStateException) {
+            throw e
+        } catch (e: Exception) {
+            recordException(e)
+            throw e
+        }
+    }
+
+    suspend fun syncAllFromFirestore(db: AppDatabase, instituteId: String) = withContext(Dispatchers.IO) {
+        try {
+            instituteCollection(instituteId, COLLECTION).get().await().documents
+                .mapNotNull { it.toTeachingSession(instituteId) }
+                .forEach { db.teachingSessionDao().insertSession(it) }
+        } catch (e: Exception) {
+            recordException(e)
+        }
+    }
+
+    suspend fun applyRealtimeChanges(
+        db: AppDatabase,
+        instituteId: String,
+        changes: List<DocumentChange>
+    ) = withContext(Dispatchers.IO) {
+        db.withTransaction {
+            changes.forEach { change ->
+                when (change.type) {
+                    DocumentChange.Type.ADDED,
+                    DocumentChange.Type.MODIFIED -> change.document.toTeachingSession(instituteId)?.let {
+                        db.teachingSessionDao().insertSession(it)
+                    }
+                    DocumentChange.Type.REMOVED -> db.teachingSessionDao().deleteSession(instituteId, change.document.id)
+                }
+            }
+        }
+    }
+
+    private fun DocumentSnapshot.toTeachingSession(instituteId: String): TeachingSessionEntity? {
+        val staffId = getString("staffId") ?: return null
+        val batchId = getString("batchId") ?: return null
+        val sessionKey = getString("sessionKey") ?: return null
+        return TeachingSessionEntity(
+            id = id,
+            instituteId = getString("instituteId") ?: instituteId,
+            staffId = staffId,
+            batchId = batchId,
+            sessionKey = sessionKey,
+            subject = getString("subject")?.takeIf { it.isNotBlank() },
+            sessionDateMs = (get("sessionDateMs") as? Number).asLong() ?: 0L,
+            durationMinutes = ((get("durationMinutes") as? Number).asLong() ?: 0L).toInt(),
+            salaryTypeSnapshot = getString("salaryTypeSnapshot") ?: "monthly",
+            rateSnapshot = (get("rateSnapshot") as? Number).asDouble() ?: 0.0,
+            calculatedAmount = (get("calculatedAmount") as? Number).asDouble() ?: 0.0,
+            salaryId = getString("salaryId")?.takeIf { it.isNotBlank() },
+            note = getString("note")?.takeIf { it.isNotBlank() },
+            createdByUserId = getString("createdByUserId") ?: "system",
+            createdAtMs = (get("createdAtMs") as? Number).asLong() ?: System.currentTimeMillis(),
+            updatedAtMs = (get("updatedAtMs") as? Number).asLong() ?: System.currentTimeMillis(),
+            deletedAtMs = (get("deletedAtMs") as? Number).asLong()
+        )
     }
 }
 

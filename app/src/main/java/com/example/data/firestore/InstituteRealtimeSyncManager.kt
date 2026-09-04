@@ -133,6 +133,10 @@ object InstituteRealtimeSyncManager {
         if (activePlan.listenStaff) {
             listenToCollection(instituteId, "staffs", generation)
         }
+        if (activePlan.listenSalary) {
+            listenToCollection(instituteId, "salaries", generation)
+            listenToCollection(instituteId, "teaching_sessions", generation)
+        }
         if (activePlan.listenFinance) {
             listOf("fees", "payments", "receipts", "payment_reversals").forEach { collection ->
                 listenToCollection(instituteId, collection, generation)
@@ -188,6 +192,12 @@ object InstituteRealtimeSyncManager {
                                     db, instituteId, changes
                                 )
                                 "staffs" -> StaffSyncHelper.applyRealtimeChanges(
+                                    db, instituteId, changes
+                                )
+                                "salaries" -> SalarySyncHelper.applyRealtimeChanges(
+                                    db, instituteId, changes
+                                )
+                                "teaching_sessions" -> TeachingSessionSyncHelper.applyRealtimeChanges(
                                     db, instituteId, changes
                                 )
                                 "fees", "payments", "receipts", "payment_reversals" ->

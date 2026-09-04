@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.data.models.FeeEntity
+import com.batchfee.edu.domain.isCourseBatch
 import com.batchfee.edu.domain.SessionManager
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
@@ -212,7 +213,15 @@ private fun BatchCard(
                     batch.name, color = TextWhite, fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
                     maxLines = 1, overflow = TextOverflow.Ellipsis
                 )
-                Text("BDT ${"%.0f".format(batch.monthlyFeeAmount)}/mo · $enrolled students", color = TextMuted, fontSize = 12.sp)
+                Text(
+                    if (batch.isCourseBatch()) {
+                        "Course · BDT ${"%.0f".format(batch.courseFeeAmount)} · $enrolled students"
+                    } else {
+                        "BDT ${"%.0f".format(batch.monthlyFeeAmount)}/mo · $enrolled students"
+                    },
+                    color = TextMuted,
+                    fontSize = 12.sp
+                )
             }
             Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)

@@ -50,10 +50,17 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.data.media.FirebaseStorageImageUploadHelper
 import com.batchfee.edu.data.models.ExamEntity
 import com.batchfee.edu.domain.SessionManager
+import com.example.domain.BulkMessageController
+import com.example.ui.components.BulkMessageDialog
+import com.example.ui.components.BulkSendProgressPanel
+import com.example.ui.components.SelectionBadge
+import com.batchfee.edu.ui.components.buildWhatsAppUrl
 import coil.compose.AsyncImage
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
@@ -66,6 +73,7 @@ import kotlinx.coroutines.launch
 private val BgColor = Color(0xFF07111F)
 private val CardBg = Color(0xFF0F172A)
 private val CardBgAlt = Color(0xFF111827)
+private val CardHi = Color(0xFF132033)
 private val BorderSub = Color(0xFF1E293B)
 private val Cyan = Color(0xFF22D3EE)
 private val ElectricBlue = Color(0xFF3B82F6)
@@ -82,11 +90,20 @@ private val WAGreen = Color(0xFF25D366)
 // ═══════════════════════════════════════════════════════════
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ExamListScreen(db: AppDatabase, onBack: () -> Unit, onAddExam: () -> Unit, onNavigateToDetail: (String) -> Unit, onNavigateToPricing: () -> Unit) {
+fun ExamListScreen(
+    db: AppDatabase,
+    onBack: () -> Unit,
+    onAddExam: () -> Unit,
+    onNavigateToDetail: (String) -> Unit,
+    onNavigateToPricing: () -> Unit,
+    onOpenFinalExams: () -> Unit = {},
+    onCreateFinalExam: () -> Unit = {}
+) {
     val viewModel: ExamViewModel = viewModel(factory = ExamViewModelFactory(db))
     val exams by viewModel.exams.collectAsState()
     val batches by viewModel.batches.collectAsState()
     val dateFormat = remember { SimpleDateFormat("dd MMM yyyy", Locale.getDefault()) }
+    var showCreateChoice by remember { mutableStateOf(false) }
 
     Scaffold(
         containerColor = BgColor,
@@ -99,7 +116,7 @@ fun ExamListScreen(db: AppDatabase, onBack: () -> Unit, onAddExam: () -> Unit, o
         },
         floatingActionButton = {
             FloatingActionButton(
-                onClick = onAddExam,
+                onClick = { showCreateChoice = true },
                 containerColor = Color.Transparent, contentColor = Color.White,
                 shape = RoundedCornerShape(16.dp),
                 modifier = Modifier.size(52.dp).clip(RoundedCornerShape(16.dp))
@@ -107,76 +124,171 @@ fun ExamListScreen(db: AppDatabase, onBack: () -> Unit, onAddExam: () -> Unit, o
             ) { Icon(Icons.Default.Add, "Add", tint = Color.White) }
         }
     ) { padding ->
-        if (exams.isEmpty()) {
-            Box(Modifier.padding(padding).fillMaxSize(), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(Icons.Filled.School, null, tint = TextMuted.copy(alpha = 0.4f), modifier = Modifier.size(56.dp))
-                    Spacer(Modifier.height(12.dp))
-                    Text("No exams yet.", color = TextMuted, fontSize = 15.sp)
-                    Spacer(Modifier.height(4.dp))
-                    Text("Tap + to create your first exam.", color = TextMuted.copy(alpha = 0.6f), fontSize = 12.sp)
+        Column(
+            Modifier.padding(padding).fillMaxSize()
+        ) {
+            // Final Exam module entry
+            Card(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp)
+                    .shadow(3.dp, RoundedCornerShape(16.dp), spotColor = AccentViolet.copy(alpha = 0.25f))
+                    .clickable { onOpenFinalExams() },
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = CardBg),
+                border = BorderStroke(1.5.dp, AccentViolet.copy(alpha = 0.6f))
+            ) {
+                Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        Modifier.size(46.dp).clip(RoundedCornerShape(13.dp))
+                            .background(Brush.linearGradient(listOf(AccentViolet, Cyan))),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Filled.School, null, tint = Color.White, modifier = Modifier.size(24.dp))
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("Final Exams", color = TextWhite, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(2.dp))
+                        Text("Multi-subject exams with approval workflow", color = TextMuted, fontSize = 12.sp)
+                    }
+                    Icon(Icons.Filled.ChevronRight, null, tint = AccentViolet)
                 }
             }
-        } else {
-            LazyColumn(
-                modifier = Modifier.padding(padding).fillMaxSize(),
-                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                item {
-                    Text("${exams.size} exam${if (exams.size != 1) "s" else ""}", color = TextMuted, fontSize = 12.sp)
-                    Spacer(Modifier.height(4.dp))
-                }
-                items(exams, key = { it.id }) { exam ->
-                    val batch = batches.find { it.id == exam.batchId }
-                    val statusColor = when (exam.status) {
-                        "completed" -> AccentGreen
-                        "scheduled" -> Cyan
-                        else -> TextMuted
+
+            if (exams.isEmpty()) {
+                Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(Icons.Filled.School, null, tint = TextMuted.copy(alpha = 0.4f), modifier = Modifier.size(56.dp))
+                        Spacer(Modifier.height(12.dp))
+                        Text("No exams yet.", color = TextMuted, fontSize = 15.sp)
+                        Spacer(Modifier.height(4.dp))
+                        Text("Tap + to create your first exam.", color = TextMuted.copy(alpha = 0.6f), fontSize = 12.sp)
                     }
-                    Card(
-                        modifier = Modifier.fillMaxWidth()
-                            .shadow(2.dp, RoundedCornerShape(14.dp), spotColor = statusColor.copy(alpha = 0.12f))
-                            .clickable { onNavigateToDetail(exam.id) },
-                        shape = RoundedCornerShape(14.dp),
-                        colors = CardDefaults.cardColors(containerColor = CardBg),
-                        border = BorderStroke(1.dp, BorderSub)
-                    ) {
-                        Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Box(
-                                modifier = Modifier.size(44.dp).clip(RoundedCornerShape(12.dp))
-                                    .background(statusColor.copy(alpha = 0.15f)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(exam.examName.take(1).uppercase(), color = statusColor, fontSize = 17.sp, fontWeight = FontWeight.Bold)
-                            }
-                            Spacer(Modifier.width(12.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text(exam.examName, color = TextWhite, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(
-                                    "${batch?.name ?: "Batch"} · ${dateFormat.format(Date(exam.examDateMs))}",
-                                    color = TextMuted, fontSize = 12.sp
-                                )
-                                if (exam.subject != null) Text(exam.subject, color = TextMuted.copy(alpha = 0.7f), fontSize = 11.sp)
-                                if (exam.examFeeAmount > 0.0) {
-                                    Text(
-                                        "Exam fee: BDT ${formatNum(exam.examFeeAmount)} per student",
-                                        color = AccentAmber, fontSize = 11.sp, fontWeight = FontWeight.SemiBold
-                                    )
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    contentPadding = PaddingValues(horizontal = 20.dp, vertical = 2.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    item {
+                        Text("${exams.size} exam${if (exams.size != 1) "s" else ""}", color = TextMuted, fontSize = 12.sp)
+                        Spacer(Modifier.height(4.dp))
+                    }
+                    items(exams, key = { it.id }) { exam ->
+                        val batch = batches.find { it.id == exam.batchId }
+                        val statusColor = when (exam.status) {
+                            "completed" -> AccentGreen
+                            "scheduled" -> Cyan
+                            else -> TextMuted
+                        }
+                        Card(
+                            modifier = Modifier.fillMaxWidth()
+                                .shadow(2.dp, RoundedCornerShape(14.dp), spotColor = statusColor.copy(alpha = 0.12f))
+                                .clickable { onNavigateToDetail(exam.id) },
+                            shape = RoundedCornerShape(14.dp),
+                            colors = CardDefaults.cardColors(containerColor = CardBg),
+                            border = BorderStroke(1.dp, BorderSub)
+                        ) {
+                            Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    modifier = Modifier.size(44.dp).clip(RoundedCornerShape(12.dp))
+                                        .background(statusColor.copy(alpha = 0.15f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(exam.examName.take(1).uppercase(), color = statusColor, fontSize = 17.sp, fontWeight = FontWeight.Bold)
                                 }
-                            }
-                            Box(
-                                modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(statusColor.copy(alpha = 0.12f))
-                                    .padding(horizontal = 8.dp, vertical = 3.dp)
-                            ) {
-                                Text(exam.status.replaceFirstChar { it.uppercase() }, color = statusColor, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                Spacer(Modifier.width(12.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(exam.examName, color = TextWhite, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(
+                                        "${batch?.name ?: "Batch"} · ${dateFormat.format(Date(exam.examDateMs))}",
+                                        color = TextMuted, fontSize = 12.sp
+                                    )
+                                    if (exam.subject != null) Text(exam.subject, color = TextMuted.copy(alpha = 0.7f), fontSize = 11.sp)
+                                    if (exam.examFeeAmount > 0.0) {
+                                        Text(
+                                            "Exam fee: BDT ${formatNum(exam.examFeeAmount)} per student",
+                                            color = AccentAmber, fontSize = 11.sp, fontWeight = FontWeight.SemiBold
+                                        )
+                                    }
+                                }
+                                Box(
+                                    modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(statusColor.copy(alpha = 0.12f))
+                                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                                ) {
+                                    Text(exam.status.replaceFirstChar { it.uppercase() }, color = statusColor, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                }
                             }
                         }
                     }
+                    item { Spacer(Modifier.height(80.dp)) }
                 }
-                item { Spacer(Modifier.height(80.dp)) }
             }
         }
+    }
+
+    if (showCreateChoice) {
+        AlertDialog(
+            onDismissRequest = { showCreateChoice = false },
+            containerColor = CardBg,
+            shape = RoundedCornerShape(18.dp),
+            title = { Text("Create Exam", color = TextWhite, fontSize = 18.sp, fontWeight = FontWeight.Bold) },
+            text = {
+                Column {
+                    Box(
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                            .background(CardBgAlt).border(1.dp, Cyan.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
+                            .clickable {
+                                showCreateChoice = false
+                                onAddExam()
+                            }
+                            .padding(horizontal = 14.dp, vertical = 12.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                Modifier.size(38.dp).clip(RoundedCornerShape(10.dp))
+                                    .background(Brush.linearGradient(listOf(ElectricBlue, Cyan))),
+                                contentAlignment = Alignment.Center
+                            ) { Icon(Icons.Filled.School, null, tint = Color.White, modifier = Modifier.size(20.dp)) }
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text("Regular Exam", color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                Text("Single-subject exam with results & fee", color = TextMuted, fontSize = 11.sp)
+                            }
+                            Icon(Icons.Filled.ChevronRight, null, tint = TextMuted)
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Box(
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                            .background(CardBgAlt).border(1.dp, AccentViolet.copy(alpha = 0.6f), RoundedCornerShape(12.dp))
+                            .clickable {
+                                showCreateChoice = false
+                                onCreateFinalExam()
+                            }
+                            .padding(horizontal = 14.dp, vertical = 12.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                Modifier.size(38.dp).clip(RoundedCornerShape(10.dp))
+                                    .background(Brush.linearGradient(listOf(AccentViolet, Cyan))),
+                                contentAlignment = Alignment.Center
+                            ) { Icon(Icons.Filled.School, null, tint = Color.White, modifier = Modifier.size(20.dp)) }
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text("Final Exam", color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                Text("Multi-subject with approval workflow", color = TextMuted, fontSize = 11.sp)
+                            }
+                            Icon(Icons.Filled.ChevronRight, null, tint = TextMuted)
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { showCreateChoice = false }) { Text("Cancel", color = TextMuted) }
+            }
+        )
     }
 }
 
@@ -528,6 +640,71 @@ fun ExamDetailScreen(db: AppDatabase, examId: String, onBack: () -> Unit, onEdit
     var showExamMenu by remember { mutableStateOf(false) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
     var isSavingResults by remember { mutableStateOf(false) }
+    var showResultPicker by remember { mutableStateOf(false) }
+    var resultBulkChannel by remember { mutableStateOf("sms") }
+    var resultPickerIds by remember { mutableStateOf(setOf<String>()) }
+    var showResultComposer by remember { mutableStateOf(false) }
+    var resultBulkText by remember { mutableStateOf("") }
+    val bulkState by viewModel.bulkSender.state.collectAsState()
+
+    fun startResultBulkSend(channel: String, delayMs: Long, recipientIds: Set<String>, exam: ExamEntity) {
+        val customText = resultBulkText.trim()
+        val targets = studentResults
+            .filter { it.result != null && it.student.id in recipientIds }
+            .map { item ->
+                BulkMessageController.BulkTarget(
+                    key = item.student.id,
+                    name = item.student.fullName,
+                    phone = item.student.phone
+                )
+            }
+        if (targets.isEmpty()) {
+            scope.launch { snackbarHostState.showSnackbar("Select at least one student.") }
+            return
+        }
+        val started = viewModel.bulkSender.start(
+            targets = targets,
+            channel = channel,
+            delayMs = delayMs,
+            messageBuilder = { target ->
+                val item = studentResults.firstOrNull { it.student.id == target.key }
+                val base = if (item != null) viewModel.buildStudentMessage(item, exam) else ""
+                if (customText.isBlank()) base else "$customText\n\n$base"
+            },
+            launcher = { target, body ->
+                if (channel == "whatsapp") {
+                    runCatching {
+                        context.startActivity(
+                            Intent(Intent.ACTION_VIEW, Uri.parse(buildWhatsAppUrl(target.phone, body)))
+                        )
+                    }.isSuccess
+                } else {
+                    runCatching {
+                        context.startActivity(
+                            Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${target.phone?.filter(Char::isDigit).orEmpty()}"))
+                                .apply { putExtra("sms_body", body) }
+                        )
+                    }.isSuccess
+                }
+            }
+        )
+        if (!started) {
+            scope.launch { snackbarHostState.showSnackbar("Sending is already in progress.") }
+        }
+    }
+
+    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            when (event) {
+                androidx.lifecycle.Lifecycle.Event.ON_PAUSE -> viewModel.bulkSender.onPaused()
+                androidx.lifecycle.Lifecycle.Event.ON_RESUME -> viewModel.bulkSender.onResumed()
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     LaunchedEffect(examId) { viewModel.loadExamDetails(examId) }
 
@@ -733,7 +910,6 @@ fun ExamDetailScreen(db: AppDatabase, examId: String, onBack: () -> Unit, onEdit
     // ── Share sheet ─────────────────────────────────
     if (showShareSheet && selectedExam != null) {
         val exam = selectedExam!!
-        val meritMsg = viewModel.buildMeritMessage(exam)
         Dialog(onDismissRequest = { showShareSheet = false }) {
             Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = CardBg), border = BorderStroke(1.dp, BorderSub)) {
                 Column(modifier = Modifier.padding(20.dp)) {
@@ -741,27 +917,179 @@ fun ExamDetailScreen(db: AppDatabase, examId: String, onBack: () -> Unit, onEdit
                     Spacer(Modifier.height(6.dp))
                     Text(exam.examName, color = TextMuted, fontSize = 13.sp)
                     Spacer(Modifier.height(16.dp))
-                    ShareOption("Merit List (All)", Icons.Filled.ListAlt, WAGreen) {
+                    ShareOption("All Results (PDF)", Icons.Filled.PictureAsPdf, WAGreen) {
                         showShareSheet = false
-                        shareText(context, meritMsg, "Merit List")
+                        val items = studentResults.filter { it.result != null }
+                        if (items.isEmpty()) {
+                            scope.launch { snackbarHostState.showSnackbar("No results to share yet.") }
+                        } else {
+                            shareResultsPdf(context, items, exam, batchName, instituteName, institute?.profilePhotoUri)
+                        }
                     }
                     Spacer(Modifier.height(8.dp))
-                    ShareOption("Top 10", Icons.Filled.Leaderboard, AccentViolet) {
+                    ShareOption("Top 10 (PDF)", Icons.Filled.PictureAsPdf, AccentViolet) {
                         showShareSheet = false
-                        shareText(context, viewModel.buildMeritMessage(exam, false), "Top 10")
+                        val items = studentResults.filter { it.result != null }.take(10)
+                        if (items.isEmpty()) {
+                            scope.launch { snackbarHostState.showSnackbar("No results to share yet.") }
+                        } else {
+                            shareResultsPdf(context, items, exam, batchName, instituteName, institute?.profilePhotoUri)
+                        }
                     }
                     Spacer(Modifier.height(8.dp))
-                    ShareOption("Group Message (All Students)", Icons.Filled.Forum, Cyan) {
+                    ShareOption("Message All (SMS)", Icons.Filled.Sms, ElectricBlue) {
                         showShareSheet = false
-                        // Build a message per student and let user share
-                        val allMsg = studentResults.filter { it.result != null }
-                            .joinToString("\n\n") { viewModel.buildStudentMessage(it, exam) }
-                        shareText(context, allMsg, "Individual Results")
+                        resultBulkChannel = "sms"
+                        resultPickerIds = studentResults.filter { it.result != null }.map { it.student.id }.toSet()
+                        showResultPicker = true
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    ShareOption("Message All (WhatsApp)", Icons.Filled.Whatsapp, WAGreen) {
+                        showShareSheet = false
+                        resultBulkChannel = "whatsapp"
+                        resultPickerIds = studentResults.filter { it.result != null }.map { it.student.id }.toSet()
+                        showResultPicker = true
                     }
                     Spacer(Modifier.height(12.dp))
                     TextButton(onClick = { showShareSheet = false }, modifier = Modifier.fillMaxWidth()) { Text("Cancel", color = TextMuted) }
                 }
             }
+        }
+    }
+
+    // ── Result recipient picker ───────────────────
+    if (showResultPicker && selectedExam != null) {
+        val exam = selectedExam!!
+        val withResults = studentResults.filter { it.result != null }
+        Dialog(onDismissRequest = { showResultPicker = false }) {
+            Card(
+                modifier = Modifier.fillMaxWidth(0.96f).fillMaxHeight(0.84f),
+                shape = RoundedCornerShape(18.dp),
+                colors = CardDefaults.cardColors(containerColor = CardBg),
+                border = BorderStroke(1.dp, BorderSub)
+            ) {
+                Column(Modifier.fillMaxSize()) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            if (resultBulkChannel == "whatsapp") Icons.Filled.Whatsapp else Icons.Filled.Sms,
+                            contentDescription = null,
+                            tint = if (resultBulkChannel == "whatsapp") WAGreen else ElectricBlue,
+                            modifier = Modifier.size(26.dp)
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Send Results", color = Cyan, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                            Text("${resultPickerIds.size} of ${withResults.size} selected", color = TextMuted, fontSize = 12.sp)
+                        }
+                        IconButton(onClick = { showResultPicker = false }) {
+                            Icon(Icons.Filled.Close, contentDescription = "Close", tint = AccentRed, modifier = Modifier.size(28.dp))
+                        }
+                    }
+                    HorizontalDivider(color = BorderSub)
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        OutlinedButton(
+                            onClick = { resultPickerIds = withResults.map { it.student.id }.toSet() },
+                            modifier = Modifier.weight(1f).height(42.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, Cyan.copy(alpha = 0.5f)),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Cyan)
+                        ) { Text("Select All", fontSize = 13.sp, fontWeight = FontWeight.Bold) }
+                        OutlinedButton(
+                            onClick = { resultPickerIds = emptySet() },
+                            modifier = Modifier.weight(1f).height(42.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, TextMuted.copy(alpha = 0.5f)),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = TextMuted)
+                        ) { Text("Clear", fontSize = 13.sp, fontWeight = FontWeight.Bold) }
+                    }
+                    LazyColumn(
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(withResults, key = { it.student.id }) { item ->
+                            val selected = item.student.id in resultPickerIds
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(if (selected) CardHi else CardBgAlt)
+                                    .border(1.dp, if (selected) Cyan.copy(alpha = 0.6f) else BorderSub, RoundedCornerShape(14.dp))
+                                    .clickable {
+                                        resultPickerIds = if (item.student.id in resultPickerIds) resultPickerIds - item.student.id else resultPickerIds + item.student.id
+                                    }
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                SelectionBadge(selected = selected)
+                                Spacer(Modifier.width(12.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(item.student.fullName, color = TextWhite, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(item.student.phone ?: "No phone", color = if (item.student.phone.isNullOrBlank()) AccentRed else TextMuted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                                Text("${item.result?.grade ?: "-"} · #${item.position}", color = Cyan, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                    HorizontalDivider(color = BorderSub)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp)
+                            .height(52.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(Brush.horizontalGradient(listOf(ElectricBlue, Cyan)))
+                            .clickable {
+                                if (resultPickerIds.isEmpty()) {
+                                    scope.launch { snackbarHostState.showSnackbar("Select at least one student.") }
+                                } else {
+                                    showResultPicker = false
+                                    showResultComposer = true
+                                }
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("Continue with ${resultPickerIds.size} student${if (resultPickerIds.size == 1) "" else "s"}", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Result composer ────────────────────────────
+    if (showResultComposer && selectedExam != null) {
+        val exam = selectedExam!!
+        BulkMessageDialog(
+            title = "Send Exam Results",
+            recipientCount = resultPickerIds.size,
+            messageText = resultBulkText,
+            onMessageChange = { resultBulkText = it },
+            initialDelaySeconds = 3,
+            onStartWhatsApp = { delayMs ->
+                startResultBulkSend("whatsapp", delayMs, resultPickerIds, exam)
+                showResultComposer = false
+            },
+            onStartSms = { delayMs ->
+                startResultBulkSend("sms", delayMs, resultPickerIds, exam)
+                showResultComposer = false
+            },
+            onDismiss = { showResultComposer = false },
+            broadcastMode = false
+        )
+    }
+
+    // ── Bulk send progress ─────────────────────────
+    if (bulkState.active) {
+        Box(
+            modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
+            contentAlignment = Alignment.BottomCenter
+        ) {
+            BulkSendProgressPanel(
+                state = bulkState,
+                onRetryFailed = { viewModel.bulkSender.retryFailed() },
+                onStop = { viewModel.bulkSender.cancel() },
+                onClose = { viewModel.bulkSender.reset() }
+            )
         }
     }
 
@@ -882,7 +1210,32 @@ fun ExamDetailScreen(db: AppDatabase, examId: String, onBack: () -> Unit, onEdit
                         // Actions
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             ResultActionButton(
-                                label = "Share",
+                                label = "WhatsApp",
+                                icon = Icons.Filled.Chat,
+                                color = WAGreen,
+                                onClick = {
+                                    showStudentMessageDialog = null
+                                    val msg = viewModel.buildStudentMessage(item, exam)
+                                    sendWhatsApp(context, item.student.phone, msg)
+                                },
+                                modifier = Modifier.weight(1f)
+                            )
+                            ResultActionButton(
+                                label = "SMS",
+                                icon = Icons.Filled.Sms,
+                                color = ElectricBlue,
+                                onClick = {
+                                    showStudentMessageDialog = null
+                                    val msg = viewModel.buildStudentMessage(item, exam)
+                                    sendSMS(context, item.student.phone, msg)
+                                },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            ResultActionButton(
+                                label = "Share Card",
                                 icon = Icons.Filled.Share,
                                 color = Cyan,
                                 onClick = {
@@ -894,21 +1247,10 @@ fun ExamDetailScreen(db: AppDatabase, examId: String, onBack: () -> Unit, onEdit
                             ResultActionButton(
                                 label = "Print",
                                 icon = Icons.Filled.Print,
-                                color = ElectricBlue,
+                                color = AccentViolet,
                                 onClick = {
                                     showStudentMessageDialog = null
                                     printResultCard(context, item, exam, batchName, gradeColor, passColor, passFail, instituteName, institute?.profilePhotoUri)
-                                },
-                                modifier = Modifier.weight(1f)
-                            )
-                            ResultActionButton(
-                                label = "WhatsApp",
-                                icon = Icons.Filled.Chat,
-                                color = WAGreen,
-                                onClick = {
-                                    showStudentMessageDialog = null
-                                    val msg = viewModel.buildStudentMessage(item, exam)
-                                    sendWhatsApp(context, item.student.phone, msg)
                                 },
                                 modifier = Modifier.weight(1f)
                             )
@@ -1126,6 +1468,183 @@ private fun shareText(context: android.content.Context, text: String, title: Str
     ))
 }
 
+/**
+ * Generates a compact result-sheet PDF: one table with every student on it,
+ * roughly 20-25 rows per page, same header (logo, institute, exam info) on
+ * every page. The Top 10 variant simply receives the first 10 rows.
+ */
+private fun shareResultsPdf(
+    context: android.content.Context,
+    items: List<StudentResultItem>,
+    exam: ExamEntity,
+    batchName: String,
+    instituteName: String,
+    instituteLogoUri: String?,
+) {
+    val document = PdfDocument()
+    val pageWidth = 595
+    val pageHeight = 842
+    val rowsPerPage = 22
+    val pages = items.chunked(rowsPerPage)
+    val safeInstituteName = instituteName.trim().takeIf { it.isNotBlank() } ?: "BatchFee"
+    val dateLabel = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(exam.examDateMs))
+
+    // Colors
+    val navy = android.graphics.Color.parseColor("#0B1F3A")
+    val navyMid = android.graphics.Color.parseColor("#123C6A")
+    val cyan = android.graphics.Color.parseColor("#22D3EE")
+    val ink = android.graphics.Color.parseColor("#10233F")
+    val muted = android.graphics.Color.parseColor("#64748B")
+    val white = android.graphics.Color.WHITE
+    val paleBlue = android.graphics.Color.parseColor("#E0F2FE")
+    val paleRow = android.graphics.Color.parseColor("#F1F6FC")
+    val line = android.graphics.Color.parseColor("#DCE6F2")
+    val green = android.graphics.Color.parseColor("#16A34A")
+    val red = android.graphics.Color.parseColor("#DC2626")
+
+    try {
+        pages.forEachIndexed { pageIndex, pageItems ->
+            val page = document.startPage(PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageIndex + 1).create())
+            val canvas = page.canvas
+            canvas.drawColor(white)
+            val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+
+            // ── Header band ──────────────────────────────
+            val headerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                shader = android.graphics.LinearGradient(0f, 0f, pageWidth.toFloat(), 0f, navy, navyMid, android.graphics.Shader.TileMode.CLAMP)
+            }
+            canvas.drawRect(0f, 0f, pageWidth.toFloat(), 150f, headerPaint)
+            fill.color = android.graphics.Color.argb(24, 255, 255, 255)
+            canvas.drawCircle(560f, 20f, 90f, fill)
+
+            // Logo / initials
+            val logoRect = RectF(24f, 28f, 110f, 114f)
+            val logoBitmap = loadResultCardLogo(context, instituteLogoUri)
+            canvas.save()
+            canvas.clipPath(android.graphics.Path().apply { addCircle(67f, 71f, 43f, android.graphics.Path.Direction.CW) })
+            fill.color = if (logoBitmap == null) cyan else white
+            canvas.drawRect(logoRect, fill)
+            if (logoBitmap != null) {
+                canvas.drawBitmap(logoBitmap, null, logoRect, Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
+            } else {
+                val brandPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = navy; textSize = 24f; isFakeBoldText = true; textAlign = Paint.Align.CENTER }
+                canvas.drawText(safeInstituteName.take(2).uppercase(), 67f, 80f, brandPaint)
+            }
+            canvas.restore()
+            logoBitmap?.recycle()
+
+            val headerInst = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.argb(210, 255, 255, 255); textSize = 17f; isFakeBoldText = true }
+            canvas.drawText(fitResultCardText(safeInstituteName.uppercase(), headerInst, 300f), 128f, 48f, headerInst)
+            val headerTitle = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = white; textSize = 27f; isFakeBoldText = true }
+            canvas.drawText(fitResultCardText(exam.examName, headerTitle, 400f), 128f, 88f, headerTitle)
+            val headerMeta = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.argb(180, 255, 255, 255); textSize = 15f }
+            canvas.drawText(
+                fitResultCardText("$batchName  •  ${exam.subject ?: "General"}  •  $dateLabel", headerMeta, 420f),
+                128f, 118f, headerMeta
+            )
+            val headerLabel = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = cyan; textSize = 14f; isFakeBoldText = true; letterSpacing = 0.14f }
+            canvas.drawText("RESULT SHEET", 128f, 141f, headerLabel)
+
+            // ── Summary strip ───────────────────────────
+            val summaryPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = muted; textSize = 14f }
+            canvas.drawText(
+                "Total: ${items.size} students   •   Exam marks: ${formatNum(exam.totalMarks)}   •   Pass marks: ${formatNum(exam.passingMarks)}   •   Page ${pageIndex + 1}/${pages.size}",
+                24f, 180f, summaryPaint
+            )
+
+            // ── Table header ────────────────────────────
+            val tableTop = 196f
+            val colSl = 24f
+            val colName = 66f
+            val colId = 226f
+            val colMarks = 320f
+            val colGrade = 404f
+            val colGpa = 452f
+            val colPos = 502f
+            val colStatus = 550f
+            val rowHeight = 28f
+
+            val theadPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                shader = android.graphics.LinearGradient(0f, tableTop, pageWidth.toFloat(), tableTop + rowHeight, navy, navyMid, android.graphics.Shader.TileMode.CLAMP)
+            }
+            canvas.drawRect(0f, tableTop, pageWidth.toFloat(), tableTop + rowHeight, theadPaint)
+            val thText = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = white; textSize = 13f; isFakeBoldText = true }
+            canvas.drawText("SL", colSl + 2f, tableTop + 19f, thText)
+            canvas.drawText("STUDENT NAME", colName, tableTop + 19f, thText)
+            canvas.drawText("STUDENT ID", colId, tableTop + 19f, thText)
+            canvas.drawText("MARKS", colMarks, tableTop + 19f, thText)
+            canvas.drawText("GRADE", colGrade, tableTop + 19f, thText)
+            canvas.drawText("GPA", colGpa, tableTop + 19f, thText)
+            canvas.drawText("POS", colPos, tableTop + 19f, thText)
+            canvas.drawText("STATUS", colStatus, tableTop + 19f, thText)
+
+            // ── Table rows ──────────────────────────────
+            val rowText = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = ink; textSize = 13f }
+            val rowTextBold = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = ink; textSize = 13f; isFakeBoldText = true }
+            val rowTextMuted = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = muted; textSize = 11f }
+            pageItems.forEachIndexed { rowIndex, item ->
+                val y = tableTop + (rowIndex + 1) * rowHeight
+                if (rowIndex % 2 == 1) {
+                    fill.color = paleRow
+                    canvas.drawRect(0f, y, pageWidth.toFloat(), y + rowHeight, fill)
+                }
+                val globalIndex = pageIndex * rowsPerPage + rowIndex
+                val marks = item.result?.marksObtained ?: 0.0
+                val passed = marks >= exam.passingMarks
+                val grade = item.result?.grade ?: "-"
+                val gpa = gradeToGpa(grade)
+                val statusColor = if (passed) green else red
+
+                canvas.drawText("${globalIndex + 1}", colSl + 2f, y + 19f, rowText)
+                canvas.drawText(fitResultCardText(item.student.fullName, rowTextBold, 150f), colName, y + 19f, rowTextBold)
+                canvas.drawText(item.student.studentCode.ifBlank { "N/A" }, colId, y + 19f, rowTextMuted)
+                canvas.drawText("${formatNum(marks)}/${formatNum(exam.totalMarks)}", colMarks, y + 19f, rowText)
+                canvas.drawText(grade, colGrade, y + 19f, rowTextBold)
+                canvas.drawText(gpa, colGpa, y + 19f, rowText)
+                canvas.drawText(if (item.position > 0) "#${item.position}" else "—", colPos, y + 19f, rowText)
+                canvas.drawText(if (passed) "PASS" else "FAIL", colStatus, y + 19f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = statusColor; textSize = 13f; isFakeBoldText = true })
+            }
+
+            // ── Footer ──────────────────────────────────
+            val footerLine = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = line; strokeWidth = 1.5f }
+            canvas.drawLine(24f, pageHeight - 46f, pageWidth - 24f, pageHeight - 46f, footerLine)
+            val footerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = muted; textSize = 12f; textAlign = Paint.Align.CENTER }
+            canvas.drawText("Generated by BatchFee  •  ${SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault()).format(Date())}", pageWidth / 2f, pageHeight - 24f, footerPaint)
+
+            document.finishPage(page)
+        }
+
+        val safeName = exam.examName.trim().replace(Regex("[^A-Za-z0-9_-]"), "_").ifBlank { "Exam" }
+        val file = java.io.File(context.cacheDir, "results_${safeName}.pdf")
+        FileOutputStream(file).use { document.writeTo(it) }
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        context.startActivity(
+            Intent.createChooser(
+                Intent(Intent.ACTION_SEND).apply {
+                    type = "application/pdf"
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                },
+                "Share Results PDF"
+            )
+        )
+    } finally {
+        document.close()
+    }
+}
+
+/** Maps a letter grade to the standard Bangladeshi 5.00 GPA scale. */
+private fun gradeToGpa(grade: String): String = when (grade.trim().uppercase()) {
+    "A+" -> "5.00"
+    "A" -> "4.00"
+    "A-" -> "3.50"
+    "B" -> "3.00"
+    "C" -> "2.00"
+    "D" -> "1.00"
+    "F" -> "0.00"
+    else -> "—"
+}
+
 private fun sendWhatsApp(context: android.content.Context, phone: String?, msg: String) {
     try {
         val jid = phone?.replace(Regex("[+\\s-]"), "")?.let { "$it@s.whatsapp.net" }
@@ -1164,135 +1683,170 @@ private fun createResultCardBitmap(
     val height = 1350
     val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bitmap)
-    val navy = android.graphics.Color.parseColor("#0B1F3A")
-    val navyMid = android.graphics.Color.parseColor("#123C6A")
-    val cyan = android.graphics.Color.parseColor("#22D3EE")
-    val ink = android.graphics.Color.parseColor("#10233F")
+    val ink = android.graphics.Color.parseColor("#0F172A")
+    val slate = android.graphics.Color.parseColor("#334155")
     val muted = android.graphics.Color.parseColor("#64748B")
-    val pale = android.graphics.Color.parseColor("#F6F9FF")
-    val paleBlue = android.graphics.Color.parseColor("#E0F2FE")
-    val line = android.graphics.Color.parseColor("#DCE6F2")
     val white = android.graphics.Color.WHITE
+    val softBg = android.graphics.Color.parseColor("#F8FAFC")
+    val line = android.graphics.Color.parseColor("#E2E8F0")
+    val cyan = android.graphics.Color.parseColor("#0891B2")
+    val cyanSoft = android.graphics.Color.parseColor("#ECFEFF")
     val grade = gradeColor.toArgb()
     val pass = passColor.toArgb()
     val resultMarks = item.result?.marksObtained ?: 0.0
     val percentage = if (exam.totalMarks > 0.0) ((resultMarks / exam.totalMarks) * 100).coerceIn(0.0, 100.0) else 0.0
 
     val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
-    canvas.drawColor(pale)
-    fill.color = paleBlue
-    canvas.drawCircle(width * 0.94f, 410f, 260f, fill)
-    fill.color = android.graphics.Color.parseColor("#DBEAFE")
-    canvas.drawCircle(90f, 1060f, 190f, fill)
+    canvas.drawColor(white)
 
-    val headerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        shader = android.graphics.LinearGradient(
-            0f, 0f, width.toFloat(), 0f,
-            navy, navyMid, android.graphics.Shader.TileMode.CLAMP,
-        )
+    // ── Top accent strip ──────────────────────────────────────────
+    val accent = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        shader = android.graphics.LinearGradient(0f, 0f, width.toFloat(), 0f,
+            android.graphics.Color.parseColor("#0EA5E9"), cyan, android.graphics.Shader.TileMode.CLAMP)
     }
-    canvas.drawRoundRect(28f, 28f, width - 28f, 282f, 34f, 34f, headerPaint)
-    fill.color = android.graphics.Color.argb(26, 255, 255, 255)
-    canvas.drawCircle(900f, 75f, 185f, fill)
-    canvas.drawCircle(1000f, 240f, 120f, fill)
+    canvas.drawRect(0f, 0f, width.toFloat(), 10f, accent)
 
+    // ── Header (white, clean) ─────────────────────────────────────
     val safeInstituteName = instituteName.trim().takeIf { it.isNotBlank() } ?: "BatchFee"
-    val logoRect = RectF(52f, 52f, 112f, 112f)
-    val logoPath = android.graphics.Path().apply { addCircle(82f, 82f, 30f, android.graphics.Path.Direction.CW) }
+    val logoRect = RectF(48f, 40f, 132f, 124f)
     val logoBitmap = loadResultCardLogo(context, instituteLogoUri)
     canvas.save()
-    canvas.clipPath(logoPath)
+    canvas.clipPath(android.graphics.Path().apply { addCircle(90f, 82f, 42f, android.graphics.Path.Direction.CW) })
     fill.color = if (logoBitmap == null) cyan else white
     canvas.drawRect(logoRect, fill)
     if (logoBitmap != null) {
         canvas.drawBitmap(logoBitmap, null, logoRect, Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
     } else {
-        val brandPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = navy; textSize = 20f; isFakeBoldText = true; textAlign = Paint.Align.CENTER }
-        canvas.drawText(safeInstituteName.take(2).uppercase(), 82f, 89f, brandPaint)
+        val brandPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = white; textSize = 26f; isFakeBoldText = true; textAlign = Paint.Align.CENTER }
+        canvas.drawText(safeInstituteName.take(2).uppercase(), 90f, 93f, brandPaint)
     }
     canvas.restore()
     logoBitmap?.recycle()
-    val badgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = white; textSize = 18f; isFakeBoldText = true; letterSpacing = 0.10f }
-    canvas.drawText("RESULT STATEMENT", 130f, 70f, badgePaint)
-    val headerSmall = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.argb(185, 255, 255, 255); textSize = 18f }
-    canvas.drawText(fitResultCardText(safeInstituteName, headerSmall, 500f), 130f, 101f, headerSmall)
-    val examPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = white; textSize = 34f; isFakeBoldText = true }
-    canvas.drawText(fitResultCardText(exam.examName, examPaint, 780f), 66f, 173f, examPaint)
-    val examMeta = listOf(batchName, SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(exam.examDateMs))).filter { it.isNotBlank() }.joinToString("  |  ")
-    canvas.drawText(fitResultCardText(examMeta, headerSmall, 760f), 66f, 212f, headerSmall)
 
-    val identityRect = RectF(54f, 232f, width - 54f, 422f)
-    fill.color = white
-    canvas.drawRoundRect(identityRect, 26f, 26f, fill)
-    val identityStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = line; style = Paint.Style.STROKE; strokeWidth = 2f }
-    canvas.drawRoundRect(identityRect, 26f, 26f, identityStroke)
-    fill.color = navy
-    canvas.drawCircle(132f, 327f, 49f, fill)
-    val initialPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = white; textSize = 44f; isFakeBoldText = true; textAlign = Paint.Align.CENTER }
-    canvas.drawText(item.student.fullName.trim().take(1).uppercase(), 132f, 343f, initialPaint)
-    val studentNamePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = ink; textSize = 36f; isFakeBoldText = true }
-    canvas.drawText(fitResultCardText(item.student.fullName, studentNamePaint, 590f), 210f, 313f, studentNamePaint)
-    val studentMetaPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = muted; textSize = 20f; isFakeBoldText = true; letterSpacing = 0.05f }
-    canvas.drawText("STUDENT ID  |  ${item.student.studentCode.ifBlank { "N/A" }}", 210f, 348f, studentMetaPaint)
-    val statusRect = RectF(794f, 291f, 982f, 360f)
+    val instPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = ink; textSize = 26f; isFakeBoldText = true }
+    canvas.drawText(fitResultCardText(safeInstituteName.uppercase(), instPaint, 620f), 156f, 76f, instPaint)
+    val badgeBg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = cyanSoft }
+    val badgeRect = RectF(156f, 92f, 404f, 134f)
+    canvas.drawRoundRect(badgeRect, 21f, 21f, badgeBg)
+    val badgeStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.argb(90, 8, 145, 178); style = Paint.Style.STROKE; strokeWidth = 1.5f }
+    canvas.drawRoundRect(badgeRect, 21f, 21f, badgeStroke)
+    val badgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = cyan; textSize = 16f; isFakeBoldText = true; letterSpacing = 0.14f }
+    canvas.drawText("RESULT STATEMENT", 176f, 120f, badgePaint)
+
+    // Exam name + meta (right aligned block)
+    val examPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = ink; textSize = 40f; isFakeBoldText = true; textAlign = Paint.Align.RIGHT }
+    canvas.drawText(fitResultCardText(exam.examName, examPaint, 700f), width - 48f, 78f, examPaint)
+    val examMeta = listOf(
+        batchName,
+        exam.subject?.takeIf { it.isNotBlank() } ?: "General",
+        SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(exam.examDateMs))
+    ).filter { it.isNotBlank() }.joinToString("   •   ")
+    val metaPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = muted; textSize = 20f; textAlign = Paint.Align.RIGHT }
+    canvas.drawText(fitResultCardText(examMeta, metaPaint, 700f), width - 48f, 116f, metaPaint)
+
+    // ── Divider ───────────────────────────────────────────────────
+    val divider = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = line; strokeWidth = 2f }
+    canvas.drawLine(48f, 168f, width - 48f, 168f, divider)
+
+    // ── Student identity ──────────────────────────────────────────
+    fill.color = ink
+    canvas.drawCircle(96f, 240f, 52f, fill)
+    val initialPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = white; textSize = 46f; isFakeBoldText = true; textAlign = Paint.Align.CENTER }
+    canvas.drawText(item.student.fullName.trim().take(1).uppercase(), 96f, 257f, initialPaint)
+    val namePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = ink; textSize = 38f; isFakeBoldText = true }
+    canvas.drawText(fitResultCardText(item.student.fullName, namePaint, 560f), 172f, 224f, namePaint)
+    val idPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = muted; textSize = 21f }
+    canvas.drawText("Student ID: ${item.student.studentCode.ifBlank { "N/A" }}", 172f, 262f, idPaint)
+
+    // Status pill (right)
+    val statusRect = RectF(820f, 198f, 1032f, 282f)
     fill.color = pass
-    canvas.drawRoundRect(statusRect, 35f, 35f, fill)
-    val statusPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = white; textSize = 19f; isFakeBoldText = true; textAlign = Paint.Align.CENTER; letterSpacing = 0.07f }
-    canvas.drawText(passFail, statusRect.centerX(), 334f, statusPaint)
+    canvas.drawRoundRect(statusRect, 42f, 42f, fill)
+    val statusPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = white; textSize = 24f; isFakeBoldText = true; textAlign = Paint.Align.CENTER; letterSpacing = 0.08f }
+    canvas.drawText(passFail, statusRect.centerX(), 252f, statusPaint)
 
-    val scoreRect = RectF(54f, 465f, width - 54f, 900f)
-    val scorePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        shader = android.graphics.LinearGradient(0f, scoreRect.top, scoreRect.right, scoreRect.bottom, navy, navyMid, android.graphics.Shader.TileMode.CLAMP)
-    }
-    canvas.drawRoundRect(scoreRect, 30f, 30f, scorePaint)
-    fill.color = android.graphics.Color.argb(25, 255, 255, 255)
-    canvas.drawCircle(scoreRect.right - 70f, scoreRect.top + 70f, 120f, fill)
-    canvas.drawCircle(scoreRect.right - 150f, scoreRect.bottom - 25f, 170f, fill)
-    val scoreLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.argb(190, 255, 255, 255); textSize = 18f; isFakeBoldText = true; letterSpacing = 0.12f }
-    canvas.drawText("FINAL SCORE", 100f, 527f, scoreLabelPaint)
-    val scoreNumberPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = white; textSize = 104f; isFakeBoldText = true }
-    canvas.drawText(formatNum(resultMarks), 98f, 648f, scoreNumberPaint)
-    val outOfPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.argb(190, 255, 255, 255); textSize = 23f }
-    canvas.drawText("out of ${formatNum(exam.totalMarks)} marks", 103f, 687f, outOfPaint)
-    val progressBg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.argb(45, 255, 255, 255) }
-    canvas.drawRoundRect(102f, 728f, 690f, 746f, 9f, 9f, progressBg)
-    val progressWidth = (588f * (percentage / 100.0)).toFloat()
-    val progressPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = cyan }
-    canvas.drawRoundRect(102f, 728f, 102f + progressWidth.coerceAtLeast(8f), 746f, 9f, 9f, progressPaint)
-    val percentagePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = cyan; textSize = 22f; isFakeBoldText = true; textAlign = Paint.Align.RIGHT }
-    canvas.drawText("${"%.0f".format(percentage)}%", 690f, 786f, percentagePaint)
-    val gradeCirclePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = grade }
-    canvas.drawCircle(843f, 659f, 100f, gradeCirclePaint)
-    val gradePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = white; textSize = 72f; isFakeBoldText = true; textAlign = Paint.Align.CENTER }
-    canvas.drawText(item.result?.grade ?: "-", 843f, 682f, gradePaint)
-    val gradeLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.argb(210, 255, 255, 255); textSize = 15f; isFakeBoldText = true; textAlign = Paint.Align.CENTER; letterSpacing = 0.10f }
-    canvas.drawText("GRADE", 843f, 817f, gradeLabelPaint)
+    // ── Marks + Grade (two big cards) ─────────────────────────────
+    // Marks card
+    val marksRect = RectF(48f, 320f, 660f, 620f)
+    fill.color = softBg
+    canvas.drawRoundRect(marksRect, 28f, 28f, fill)
+    val cardStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = line; style = Paint.Style.STROKE; strokeWidth = 2f }
+    canvas.drawRoundRect(marksRect, 28f, 28f, cardStroke)
+    val marksLabel = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = muted; textSize = 20f; isFakeBoldText = true; letterSpacing = 0.12f }
+    canvas.drawText("OBTAINED MARKS", 90f, 382f, marksLabel)
+    val marksBig = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = ink; textSize = 120f; isFakeBoldText = true }
+    canvas.drawText(formatNum(resultMarks), 86f, 516f, marksBig)
+    val marksOut = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = muted; textSize = 26f }
+    canvas.drawText("out of ${formatNum(exam.totalMarks)}", 92f, 562f, marksOut)
 
-    val statLabels = listOf(
-        "POSITION" to if (item.position > 0) "#${item.position}" else "—",
+    // Progress bar inside marks card
+    val barBg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = line }
+    canvas.drawRoundRect(92f, 580f, 600f, 592f, 6f, 6f, barBg)
+    val barWidth = (508f * (percentage / 100.0)).toFloat()
+    val barFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = cyan }
+    canvas.drawRoundRect(92f, 580f, 92f + barWidth.coerceAtLeast(8f), 592f, 6f, 6f, barFill)
+    val pctPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = cyan; textSize = 24f; isFakeBoldText = true; textAlign = Paint.Align.RIGHT }
+    canvas.drawText("${"%.0f".format(percentage)}%", 600f, 606f, pctPaint)
+
+    // Grade card
+    val gradeRect = RectF(700f, 320f, 1032f, 620f)
+    fill.color = grade
+    canvas.drawRoundRect(gradeRect, 28f, 28f, fill)
+    val gradeLabel = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.argb(200, 255, 255, 255); textSize = 20f; isFakeBoldText = true; letterSpacing = 0.12f }
+    canvas.drawText("GRADE", 742f, 382f, gradeLabel)
+    val gradeBig = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = white; textSize = 120f; isFakeBoldText = true; textAlign = Paint.Align.CENTER }
+    canvas.drawText(item.result?.grade ?: "-", 866f, 516f, gradeBig)
+    val gpaText = gradeToGpa(item.result?.grade ?: "-")
+    val gpaPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.argb(210, 255, 255, 255); textSize = 24f; isFakeBoldText = true; textAlign = Paint.Align.CENTER }
+    canvas.drawText("GPA $gpaText", 866f, 578f, gpaPaint)
+
+    // ── Info row ──────────────────────────────────────────────────
+    val infoLabels = listOf(
+        "MERIT POSITION" to if (item.position > 0) "#${item.position}" else "—",
         "PASS MARK" to formatNum(exam.passingMarks),
         "SUBJECT" to (exam.subject ?: "General"),
     )
-    statLabels.forEachIndexed { index, (label, value) ->
-        val left = 54f + index * 326f
-        val statRect = RectF(left, 944f, left + 300f, 1058f)
-        fill.color = white
-        canvas.drawRoundRect(statRect, 20f, 20f, fill)
-        canvas.drawRoundRect(statRect, 20f, 20f, identityStroke)
-        val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = muted; textSize = 14f; isFakeBoldText = true; letterSpacing = 0.10f }
-        val valueStatPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = ink; textSize = if (label == "SUBJECT") 20f else 28f; isFakeBoldText = true }
-        canvas.drawText(label, left + 22f, 978f, labelPaint)
-        canvas.drawText(fitResultCardText(value, valueStatPaint, 250f), left + 22f, 1025f, valueStatPaint)
+    infoLabels.forEachIndexed { index, (label, value) ->
+        val left = 48f + index * 336f
+        val infoRect = RectF(left, 660f, left + 316f, 780f)
+        fill.color = softBg
+        canvas.drawRoundRect(infoRect, 20f, 20f, fill)
+        canvas.drawRoundRect(infoRect, 20f, 20f, cardStroke)
+        val lPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = muted; textSize = 15f; isFakeBoldText = true; letterSpacing = 0.10f }
+        val vPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = ink; textSize = if (label == "SUBJECT") 22f else 30f; isFakeBoldText = true }
+        canvas.drawText(label, left + 24f, 700f, lPaint)
+        canvas.drawText(fitResultCardText(value, vPaint, 264f), left + 24f, 752f, vPaint)
     }
 
-    val messagePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = if (passFail == "PASSED") android.graphics.Color.parseColor("#15803D") else android.graphics.Color.parseColor("#B91C1C"); textSize = 23f; isFakeBoldText = true; textAlign = Paint.Align.CENTER }
+    // ── Message ───────────────────────────────────────────────────
+    val messagePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = if (passFail == "PASSED") android.graphics.Color.parseColor("#15803D") else android.graphics.Color.parseColor("#B91C1C")
+        textSize = 24f; isFakeBoldText = true; textAlign = Paint.Align.CENTER
+    }
     val message = if (passFail == "PASSED") "Congratulations on your achievement!" else "Keep learning — your next result can be stronger."
-    canvas.drawText(message, width / 2f, 1135f, messagePaint)
-    val footerLine = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = line; strokeWidth = 2f }
-    canvas.drawLine(92f, 1193f, width - 92f, 1193f, footerLine)
-    val footerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = muted; textSize = 17f; textAlign = Paint.Align.CENTER }
-    canvas.drawText("Verified academic record  |  Generated by BatchFee", width / 2f, 1235f, footerPaint)
-    canvas.drawText(SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault()).format(Date()), width / 2f, 1265f, footerPaint)
+    canvas.drawText(message, width / 2f, 852f, messagePaint)
+
+    // ── Comment box ───────────────────────────────────────────────
+    val commentRect = RectF(48f, 890f, width - 48f, 1010f)
+    fill.color = softBg
+    canvas.drawRoundRect(commentRect, 20f, 20f, fill)
+    canvas.drawRoundRect(commentRect, 20f, 20f, cardStroke)
+    val commentLabel = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = cyan; textSize = 18f; isFakeBoldText = true; letterSpacing = 0.12f }
+    canvas.drawText("COMMENT", 76f, 928f, commentLabel)
+    val commentPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = slate; textSize = 22f }
+    val commentText = when {
+        passFail == "PASSED" && item.position == 1 -> "Outstanding performance — top of the class!"
+        passFail == "PASSED" && (item.result?.grade in listOf("A+", "A")) -> "Excellent result. Keep up the great work!"
+        passFail == "PASSED" -> "Good result. A little more effort can make it even better."
+        else -> "Needs improvement. Regular practice will bring better results."
+    }
+    canvas.drawText(fitResultCardText(commentText, commentPaint, 900f), 76f, 968f, commentPaint)
+
+    // ── Footer ────────────────────────────────────────────────────
+    val footLine = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = line; strokeWidth = 2f }
+    canvas.drawLine(48f, 1060f, width - 48f, 1060f, footLine)
+    val footPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = muted; textSize = 17f; textAlign = Paint.Align.CENTER }
+    canvas.drawText("Generated by BatchFee  •  ${SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault()).format(Date())}", width / 2f, 1096f, footPaint)
 
     return bitmap
 }

@@ -8,6 +8,7 @@ import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.data.audit.StaffActivityLogger
 import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
 import com.batchfee.edu.data.firestore.SalarySyncHelper
+import com.batchfee.edu.data.firestore.TeachingSessionSyncHelper
 import com.batchfee.edu.data.models.ExpenseEntity
 import com.batchfee.edu.data.models.SalaryEntity
 import com.batchfee.edu.data.models.StaffEntity
@@ -17,18 +18,34 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
 import java.util.UUID
+import java.util.Calendar
+import java.nio.charset.StandardCharsets
 
 class SalaryViewModel(private val db: AppDatabase) : ViewModel() {
+    data class TeacherPayPreview(val sessionCount: Int = 0, val amount: Double = 0.0)
     private val _salaries = MutableStateFlow<List<SalaryEntity>>(emptyList())
     val salaries = _salaries.asStateFlow()
 
     private val _activeStaff = MutableStateFlow<List<StaffEntity>>(emptyList())
     val activeStaff = _activeStaff.asStateFlow()
 
+    private val _teacherPayPreview = MutableStateFlow(TeacherPayPreview())
+    val teacherPayPreview = _teacherPayPreview.asStateFlow()
+
     // A salary receipt must never be saved twice when the user taps the
     // payment button again while the first cloud request is still running.
     private val paymentsInProgress = mutableSetOf<String>()
     private val salaryMutationsInProgress = mutableSetOf<String>()
+
+    /**
+     * Every newly generated salary has the same id for one institute, staff
+     * member and salary month. This lets the Firestore transaction reject a
+     * second tap (or a second device) before it can create another salary.
+     */
+    private fun salaryIdFor(instituteId: String, staffId: String, salaryMonth: String): String =
+        "salary-" + UUID.nameUUIDFromBytes(
+            "$instituteId|$staffId|$salaryMonth".toByteArray(StandardCharsets.UTF_8)
+        ).toString()
 
     init {
         loadData()
@@ -56,6 +73,29 @@ class SalaryViewModel(private val db: AppDatabase) : ViewModel() {
     }
 
     private fun salaryExpenseId(salaryId: String) = "salary-expense-$salaryId"
+
+    fun loadTeacherPayPreview(staffId: String?, salaryMonth: String) {
+        if (staffId == null) {
+            _teacherPayPreview.value = TeacherPayPreview()
+            return
+        }
+        val instituteId = SessionManager.currentInstituteId.value ?: return
+        viewModelScope.launch {
+            val staff = db.staffDao().getStaffByIdOnce(staffId, instituteId)
+            val bounds = salaryMonthBounds(salaryMonth)
+            if (staff == null || staff.salaryType == "monthly" || bounds == null) {
+                _teacherPayPreview.value = TeacherPayPreview()
+                return@launch
+            }
+            val sessions = db.teachingSessionDao().getUnpaidSessionsForPeriod(
+                instituteId, staffId, bounds.first, bounds.second
+            )
+            _teacherPayPreview.value = TeacherPayPreview(
+                sessionCount = sessions.size,
+                amount = sessions.sumOf { it.calculatedAmount }
+            )
+        }
+    }
 
     private fun buildSalaryExpense(
         salary: SalaryEntity,
@@ -109,7 +149,6 @@ class SalaryViewModel(private val db: AppDatabase) : ViewModel() {
         bonusAmount: Double,
         deductionAmount: Double,
         advanceAmount: Double,
-        salaryId: String = UUID.randomUUID().toString(),
         onSuccess: () -> Unit,
         onError: (String) -> Unit = {}
     ) {
@@ -121,9 +160,6 @@ class SalaryViewModel(private val db: AppDatabase) : ViewModel() {
             onError("No user session found. Please sign in again.")
             return
         }
-        val net = basicSalary + bonusAmount - (deductionAmount + advanceAmount)
-        if (net < 0) { onError("Net salary cannot be negative."); return }
-        if (basicSalary <= 0) { onError("Basic salary must be greater than zero."); return }
         val mutationKey = "$instId:$staffId:$salaryMonth"
         if (!synchronized(salaryMutationsInProgress) { salaryMutationsInProgress.add(mutationKey) }) {
             onError("Salary generation is already in progress for this staff and month.")
@@ -138,12 +174,37 @@ class SalaryViewModel(private val db: AppDatabase) : ViewModel() {
                     return@launch
                 }
 
+                val staff = db.staffDao().getStaffByIdOnce(staffId, instId) ?: run {
+                    onError("The selected staff profile no longer exists.")
+                    return@launch
+                }
+                val (fromMs, untilMs) = salaryMonthBounds(salaryMonth) ?: run {
+                    onError("Choose a valid salary month.")
+                    return@launch
+                }
+                val payableSessions = if (staff.salaryType == "monthly") {
+                    emptyList()
+                } else {
+                    db.teachingSessionDao().getUnpaidSessionsForPeriod(instId, staffId, fromMs, untilMs)
+                }
+                val calculatedBasic = when (staff.salaryType) {
+                    "per_class", "per_hour" -> payableSessions.sumOf { it.calculatedAmount }
+                    else -> basicSalary
+                }
+                val net = calculatedBasic + bonusAmount - (deductionAmount + advanceAmount)
+                if (calculatedBasic <= 0) {
+                    val label = if (staff.salaryType == "monthly") "Basic salary" else "Completed class amount"
+                    onError("$label must be greater than zero.")
+                    return@launch
+                }
+                if (net < 0) { onError("Net salary cannot be negative."); return@launch }
+
                 val entity = SalaryEntity(
-                    id = salaryId,
+                    id = salaryIdFor(instId, staffId, salaryMonth),
                     instituteId = instId,
                     staffId = staffId,
                     salaryMonth = salaryMonth,
-                    basicSalary = basicSalary,
+                    basicSalary = calculatedBasic,
                     bonusAmount = bonusAmount,
                     deductionAmount = deductionAmount,
                     advanceAmount = advanceAmount,
@@ -156,19 +217,26 @@ class SalaryViewModel(private val db: AppDatabase) : ViewModel() {
                     note = null,
                     createdAtMs = System.currentTimeMillis(),
                     updatedAtMs = System.currentTimeMillis(),
-                    cancelledAtMs = null
+                    cancelledAtMs = null,
+                    calculationType = staff.salaryType,
+                    calculationSessionIds = payableSessions.joinToString(",") { it.id }.takeIf { it.isNotBlank() }
                 )
-                val staff = db.staffDao().getStaffByIdOnce(staffId, instId)
                 val expense = buildSalaryExpense(entity, staff, userId)
-                SalarySyncHelper.upsertSalaryWithExpense(entity, expense)
+                val lockedSessions = payableSessions.map {
+                    it.copy(salaryId = entity.id, updatedAtMs = System.currentTimeMillis())
+                }
+                TeachingSessionSyncHelper.upsertSalaryWithExpenseAndSessions(entity, expense, lockedSessions)
                 db.withTransaction {
                     db.salaryDao().insertSalary(entity)
                     db.expenseDao().insertExpense(expense)
+                    if (lockedSessions.isNotEmpty()) db.teachingSessionDao().insertSessions(lockedSessions)
                 }
                 StaffActivityLogger.logCompletedAction(
                     db, "salary_generated", "salary", "Generated salary for $salaryMonth"
                 )
                 onSuccess()
+            } catch (error: IllegalStateException) {
+                onError(error.message ?: "Salary could not be generated. Refresh and try again.")
             } catch (_: Exception) {
                 onError("Could not generate salary. Check your connection and try again.")
             } finally {
@@ -200,10 +268,13 @@ class SalaryViewModel(private val db: AppDatabase) : ViewModel() {
                     SessionManager.currentUserId.value ?: "system",
                     existingExpense,
                 ).copy(archivedAtMs = now, updatedAtMs = now)
-                SalarySyncHelper.upsertSalaryWithExpense(updated, archivedExpense)
+                val unlockedSessions = db.teachingSessionDao().getSessionsForSalary(instId, salaryId)
+                    .map { it.copy(salaryId = null, updatedAtMs = now) }
+                TeachingSessionSyncHelper.upsertSalaryWithExpenseAndSessions(updated, archivedExpense, unlockedSessions)
                 db.withTransaction {
                     db.salaryDao().updateSalary(updated)
                     db.expenseDao().insertExpense(archivedExpense)
+                    if (unlockedSessions.isNotEmpty()) db.teachingSessionDao().insertSessions(unlockedSessions)
                 }
                 StaffActivityLogger.logCompletedAction(
                     db, "salary_cancelled", "salary", "Cancelled a salary record"
@@ -289,6 +360,19 @@ class SalaryViewModel(private val db: AppDatabase) : ViewModel() {
         }
     }
 }
+
+private fun salaryMonthBounds(value: String): Pair<Long, Long>? = runCatching {
+    val parts = value.trim().split("-")
+    val year = parts[0].toInt()
+    val month = parts[1].toInt()
+    require(month in 1..12)
+    val start = Calendar.getInstance().apply {
+        clear()
+        set(year, month - 1, 1, 0, 0, 0)
+    }
+    val end = (start.clone() as Calendar).apply { add(Calendar.MONTH, 1) }
+    start.timeInMillis to end.timeInMillis
+}.getOrNull()
 
 class SalaryViewModelFactory(private val db: AppDatabase) : ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>): T {

@@ -57,7 +57,13 @@ private val WAGreen = Color(0xFF25D366)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun StaffProfileScreen(db: AppDatabase, staffId: String, onBack: () -> Unit, onEdit: (() -> Unit)? = null) {
+fun StaffProfileScreen(
+    db: AppDatabase,
+    staffId: String,
+    onBack: () -> Unit,
+    onEdit: (() -> Unit)? = null,
+    onTeachingSessions: (() -> Unit)? = null,
+) {
     val viewModel: StaffViewModel = viewModel(factory = StaffViewModelFactory(db))
     val staff by viewModel.selectedStaff.collectAsState()
     val batches by viewModel.batches.collectAsState()
@@ -140,7 +146,13 @@ fun StaffProfileScreen(db: AppDatabase, staffId: String, onBack: () -> Unit, onE
                             Spacer(Modifier.height(10.dp))
                             InfoRow("Phone", s.phone ?: "N/A")
                             InfoRow("Email", s.email ?: "N/A")
-                            InfoRow("Salary", "BDT ${s.monthlySalary.toLong()}")
+                            val compensation = when (s.salaryType) {
+                                "per_class" -> "BDT ${s.perClassRate.toLong()} per class"
+                                "per_hour" -> "BDT ${s.perHourRate.toLong()} per hour"
+                                else -> "BDT ${s.monthlySalary.toLong()} monthly"
+                            }
+                            InfoRow("Salary", compensation)
+                            if (s.staffCategory == "teacher") InfoRow("Subjects", s.subjects ?: "Not set")
                             InfoRow("Joined", s.joiningDateMs?.let { SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(it)) } ?: "N/A")
                             InfoRow("Address", s.address ?: "N/A")
                         }
@@ -162,6 +174,30 @@ fun StaffProfileScreen(db: AppDatabase, staffId: String, onBack: () -> Unit, onE
                                     Spacer(Modifier.width(8.dp))
                                     Text(listOfNotNull(b.name, b.subject).joinToString(" - "), color = TextWhite, fontSize = 13.sp)
                                 }
+                            }
+                        }
+                    }
+                }
+
+                if (s.staffCategory == "teacher" && isAdmin && onTeachingSessions != null) {
+                    item {
+                        Card(
+                            modifier = Modifier.fillMaxWidth().clickable(onClick = onTeachingSessions),
+                            shape = RoundedCornerShape(14.dp),
+                            colors = CardDefaults.cardColors(containerColor = CardBg),
+                            border = BorderStroke(1.dp, Cyan.copy(alpha = .55f)),
+                        ) {
+                            Row(
+                                Modifier.padding(14.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Icon(Icons.Filled.DoneAll, null, tint = Cyan)
+                                Spacer(Modifier.width(10.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text("Teacher Classes", color = TextWhite, fontWeight = FontWeight.SemiBold)
+                                    Text("Confirm completed classes and calculate salary", color = TextMuted, fontSize = 12.sp)
+                                }
+                                Icon(Icons.Filled.ChevronRight, null, tint = Cyan)
                             }
                         }
                     }

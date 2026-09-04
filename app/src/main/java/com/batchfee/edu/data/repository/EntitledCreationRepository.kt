@@ -115,7 +115,8 @@ class EntitledCreationRepository {
     private fun batchPayload(b: BatchEntity) = mapOf(
         "batchCode" to b.batchCode, "name" to b.name, "subject" to b.subject,
         "className" to b.className, "teacherName" to b.teacherName,
-        "monthlyFeeAmount" to b.monthlyFeeAmount, "admissionFeeAmount" to b.admissionFeeAmount,
+        "monthlyFeeAmount" to b.monthlyFeeAmount, "billingMode" to b.billingMode,
+        "courseFeeAmount" to b.courseFeeAmount, "admissionFeeAmount" to b.admissionFeeAmount,
         "startDateMs" to b.startDateMs, "endDateMs" to b.endDateMs,
         "scheduleDays" to b.scheduleDays, "startTime" to b.startTime, "endTime" to b.endTime,
         "maxStudents" to b.maxStudents, "description" to b.description
@@ -126,6 +127,9 @@ class EntitledCreationRepository {
         "roleTitle" to s.roleTitle, "phone" to s.phone, "email" to s.email,
         "address" to s.address, "joiningDateMs" to s.joiningDateMs,
         "monthlySalary" to s.monthlySalary, "assignedBatchIds" to s.assignedBatchIds,
-        "notes" to s.notes, "permissions" to s.permissions
+        "notes" to s.notes, "permissions" to s.permissions,
+        "staffCategory" to s.staffCategory, "salaryType" to s.salaryType,
+        "perClassRate" to s.perClassRate, "perHourRate" to s.perHourRate,
+        "subjects" to s.subjects
     )
 }

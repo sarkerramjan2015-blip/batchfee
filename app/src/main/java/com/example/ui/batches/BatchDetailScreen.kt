@@ -8,6 +8,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -21,30 +22,43 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.batchfee.edu.data.database.AppDatabase
-import com.batchfee.edu.data.firestore.BatchStudentSyncHelper
 import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
 import com.batchfee.edu.data.models.AttendanceEntity
 import com.batchfee.edu.data.models.PaymentEntity
+import com.batchfee.edu.data.models.BatchEntity
+import com.batchfee.edu.data.repository.BatchEnrollmentRepository
 import com.batchfee.edu.data.models.StaffEntity
 import com.batchfee.edu.domain.appendInstituteSignature
 import com.batchfee.edu.domain.loadInstituteSignature
-import com.batchfee.edu.domain.MonthlyDueCalculator
 import com.batchfee.edu.domain.SessionManager
 import com.batchfee.edu.ui.components.buildWhatsAppUrl
+import com.example.domain.BulkMessageController
+import com.example.domain.BulkMessagePreferences
+import com.example.ui.components.BulkActionBar
+import com.example.ui.components.BulkMessageDialog
+import com.example.ui.components.BulkSelectionTopBar
+import com.example.ui.components.BulkSendProgressPanel
+import com.example.ui.components.SelectionBadge
 import kotlinx.coroutines.launch
 import java.net.URLEncoder
 import java.text.SimpleDateFormat
@@ -87,9 +101,14 @@ fun BatchDetailScreen(
     val totalCollected by paymentVM.totalCollected.collectAsState()
     val isLoading by paymentVM.isLoading.collectAsState()
     var instituteSignature by remember { mutableStateOf("") }
+    var instituteName by remember { mutableStateOf("") }
+    var instituteContact by remember { mutableStateOf("") }
 
     LaunchedEffect(instId) {
         instituteSignature = loadInstituteSignature(db, instId)
+        val institute = instId?.let { db.instituteDao().getInstitute(it) }
+        instituteName = institute?.name?.trim().orEmpty().ifBlank { "BatchFee" }
+        instituteContact = com.example.domain.MessageTemplateStore.loadInstituteContact(db, instId)
     }
 
     // This-month stats
@@ -117,6 +136,39 @@ fun BatchDetailScreen(
     var sendMessageTarget by remember { mutableStateOf<BatchStudentWithFee?>(null) }
     var sendAllDueChoice by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
+
+    // Bulk multi-select
+    var selectionMode by remember { mutableStateOf(false) }
+    var selectedIds by rememberSaveable(stateSaver = listSaver(
+        save = { it.toList() },
+        restore = { it.toSet() }
+    )) { mutableStateOf(setOf<String>()) }
+    var showBulkComposer by remember { mutableStateOf(false) }
+    var bulkMessageText by remember { mutableStateOf("") }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_PAUSE -> paymentVM.bulkSender.onPaused()
+                Lifecycle.Event.ON_RESUME -> paymentVM.bulkSender.onResumed()
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    val bulkState by paymentVM.bulkSender.state.collectAsState()
+
+    fun clearSelection() {
+        selectionMode = false
+        selectedIds = emptySet()
+    }
+
+    fun toggleSelection(studentId: String) {
+        selectedIds = if (studentId in selectedIds) selectedIds - studentId else selectedIds + studentId
+        if (selectedIds.isEmpty()) selectionMode = false
+    }
 
     // Load data on first composition
     LaunchedEffect(batchId) { paymentVM.loadBatchDetail(batchId) }
@@ -165,13 +217,25 @@ fun BatchDetailScreen(
     fun buildDueMessage(target: BatchStudentWithFee): String {
         val months = target.monthsDue(monthlyFee)
         val monthText = if (months > 1) "$months months" else (target.fee?.feePeriod ?: "this month")
-        return "Dear Parent, Fee for ${target.student.fullName} — " +
-                "$monthText due: BDT ${target.dueAmount.toLong()}. " +
-                "Batch: ${batch?.name ?: ""}. Please clear at your earliest. - BatchFee"
+        val template = com.example.domain.MessageTemplateStore.defaultFor(com.example.domain.MessageTemplateStore.TYPE_DUE_FEE)
+        return template?.let {
+            com.example.domain.MessageTemplateStore.apply(
+                it,
+                mapOf(
+                    "guardianName" to "Guardian",
+                    "studentName" to target.student.fullName,
+                    "amount" to target.dueAmount.toLong().toString(),
+                    "period" to monthText,
+                    "date" to "",
+                    "instituteName" to instituteName,
+                    "instituteContact" to instituteContact
+                )
+            )
+        } ?: "Dear Guardian,\n\nFee for ${target.student.fullName} — $monthText due: BDT ${target.dueAmount.toLong()}.\n\n- ${instituteName}\nContact: $instituteContact"
     }
 
     fun openWhatsApp(target: BatchStudentWithFee) {
-        val msg = appendInstituteSignature(buildDueMessage(target), instituteSignature)
+        val msg = buildDueMessage(target)
         val url = buildWhatsAppUrl(target.student.phone, msg)
         try { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
         catch (_: Exception) { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/?text=${
@@ -179,7 +243,7 @@ fun BatchDetailScreen(
     }
 
     fun openSMS(target: BatchStudentWithFee) {
-        val msg = appendInstituteSignature(buildDueMessage(target), instituteSignature)
+        val msg = buildDueMessage(target)
         val phone = target.student.phone?.takeIf { it.isNotBlank() }
         val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${phone ?: ""}"))
         intent.putExtra("sms_body", msg)
@@ -230,6 +294,50 @@ fun BatchDetailScreen(
         }
     }
 
+    fun startBulkSend(channel: String, delayMs: Long) {
+        val customText = bulkMessageText.trim()
+        val targets = displayedStudents
+            .filter { it.student.id in selectedIds }
+            .map { BulkMessageController.BulkTarget(key = it.student.id, name = it.student.fullName, phone = it.student.phone) }
+        if (targets.isEmpty()) {
+            scope.launch { snackbarHostState.showSnackbar("Select at least one student.") }
+            return
+        }
+        BulkMessagePreferences.setDelayMs(context, delayMs)
+        val started = paymentVM.bulkSender.start(
+            targets = targets,
+            channel = channel,
+            delayMs = delayMs,
+            messageBuilder = { target ->
+                val swf = displayedStudents.firstOrNull { it.student.id == target.key }
+                if (customText.isNotBlank()) {
+                    appendInstituteSignature(customText.replace("{name}", target.name), instituteSignature)
+                } else if (swf != null && swf.dueAmount > 0) {
+                    buildDueMessage(swf)
+                } else {
+                    "Dear Guardian,\n\nThis is a message from ${instituteName} about ${target.name}.\n\n- $instituteName\nContact: $instituteContact"
+                }
+            },
+            launcher = { target, body ->
+                if (channel == "whatsapp") {
+                    runCatching {
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(buildWhatsAppUrl(target.phone, body))))
+                    }.isSuccess
+                } else {
+                    runCatching {
+                        context.startActivity(
+                            Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${target.phone?.filter(Char::isDigit).orEmpty()}"))
+                                .apply { putExtra("sms_body", body) }
+                        )
+                    }.isSuccess
+                }
+            }
+        )
+        if (!started) {
+            scope.launch { snackbarHostState.showSnackbar("Sending is already in progress.") }
+        }
+    }
+
     fun shareBatchReport(title: String, text: String) {
         context.startActivity(
             Intent.createChooser(
@@ -248,40 +356,62 @@ fun BatchDetailScreen(
         containerColor = BgColor,
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
-            TopAppBar(
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        BatchAvatar(Modifier.size(48.dp))
-                        Spacer(Modifier.width(12.dp))
-                        Column {
-                            Text(
-                                batch?.name ?: "Batch Details",
-                                color = TextWhite,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 20.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Text(
-                                batch?.status?.replaceFirstChar { it.uppercase() } ?: "",
-                                color = TextMuted,
-                                fontSize = 14.sp
-                            )
+            if (selectionMode) {
+                BulkSelectionTopBar(
+                    selectedCount = selectedIds.size,
+                    totalCount = displayedStudents.size,
+                    onClear = { clearSelection() },
+                    onSelectAll = {
+                        selectedIds = if (selectedIds.size == displayedStudents.size) emptySet()
+                        else displayedStudents.map { it.student.id }.toSet()
+                        if (selectedIds.isEmpty()) selectionMode = false
+                    }
+                )
+            } else {
+                TopAppBar(
+                    title = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            BatchAvatar(Modifier.size(48.dp))
+                            Spacer(Modifier.width(12.dp))
+                            Column {
+                                Text(
+                                    batch?.name ?: "Batch Details",
+                                    color = TextWhite,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 20.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    batch?.status?.replaceFirstChar { it.uppercase() } ?: "",
+                                    color = TextMuted,
+                                    fontSize = 14.sp
+                                )
+                            }
                         }
-                    }
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = TextWhite)
-                    }
-                },
-                actions = {
-                    IconButton(onClick = { showBatchMenu = true }) {
-                        Icon(Icons.Filled.MoreVert, contentDescription = "Batch menu", tint = TextWhite)
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = BgColor)
-            )
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = TextWhite)
+                        }
+                    },
+                    actions = {
+                        IconButton(onClick = { showBatchMenu = true }) {
+                            Icon(Icons.Filled.MoreVert, contentDescription = "Batch menu", tint = TextWhite)
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = BgColor)
+                )
+            }
+        },
+        bottomBar = {
+            if (selectionMode) {
+                BulkActionBar(
+                    selectedCount = selectedIds.size,
+                    onWhatsApp = { showBulkComposer = true },
+                    onSms = { showBulkComposer = true }
+                )
+            }
         }
     ) { padding ->
         if (isLoading) {
@@ -411,6 +541,21 @@ fun BatchDetailScreen(
                             monthlyFee = monthlyFee,
                             isDueMsgSent = isSent,
                             isSendingDueMsg = isSending,
+                            selectionMode = selectionMode,
+                            selected = swf.student.id in selectedIds,
+                            onClick = {
+                                if (selectionMode) {
+                                    toggleSelection(swf.student.id)
+                                }
+                            },
+                            onLongPress = {
+                                if (!selectionMode) {
+                                    selectionMode = true
+                                    selectedIds = setOf(swf.student.id)
+                                } else {
+                                    toggleSelection(swf.student.id)
+                                }
+                            },
                             onSendDueMessage = {
                                 if (!isSent && !isSending) sendMessageTarget = swf
                             },
@@ -635,6 +780,44 @@ fun BatchDetailScreen(
             confirmButton = {},
             dismissButton = { TextButton(onClick = { sendAllDueChoice = false }) { Text("Cancel", color = TextMuted) } }
         )
+    }
+
+    // ── Bulk composer + progress ─────────────────────────
+    if (showBulkComposer) {
+        BulkMessageDialog(
+            title = "Bulk Message",
+            recipientCount = selectedIds.size,
+            messageText = bulkMessageText,
+            onMessageChange = { bulkMessageText = it },
+            initialDelaySeconds = (BulkMessagePreferences.getDelayMs(context) / 1000L).toInt(),
+            onStartWhatsApp = { delayMs ->
+                startBulkSend("whatsapp", delayMs)
+                showBulkComposer = false
+                clearSelection()
+            },
+            onStartSms = { delayMs ->
+                startBulkSend("sms", delayMs)
+                showBulkComposer = false
+                clearSelection()
+            },
+            onDismiss = { showBulkComposer = false }
+        )
+    }
+
+    if (bulkState.active) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 12.dp),
+            contentAlignment = Alignment.BottomCenter
+        ) {
+            BulkSendProgressPanel(
+                state = bulkState,
+                onRetryFailed = { paymentVM.bulkSender.retryFailed() },
+                onStop = { paymentVM.bulkSender.cancel() },
+                onClose = { paymentVM.bulkSender.reset() }
+            )
+        }
     }
 }
 
@@ -1182,7 +1365,11 @@ private fun BatchStudentCard(
     isDueMsgSent: Boolean,
     isSendingDueMsg: Boolean,
     onSendDueMessage: () -> Unit,
-    onViewHistory: () -> Unit
+    onViewHistory: () -> Unit,
+    selectionMode: Boolean = false,
+    selected: Boolean = false,
+    onClick: () -> Unit = {},
+    onLongPress: () -> Unit = {}
 ) {
     val fee = studentWF.fee
     val statusColor = when {
@@ -1200,14 +1387,24 @@ private fun BatchStudentCard(
 
     Card(
         modifier = Modifier.fillMaxWidth()
+            .pointerInput(selectionMode, selected) {
+                detectTapGestures(
+                    onTap = { if (selectionMode) onClick() },
+                    onLongPress = { onLongPress() }
+                )
+            }
             .shadow(3.dp, RoundedCornerShape(12.dp), spotColor = statusColor.copy(alpha = 0.15f)),
         shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = CardBg),
-        border = BorderStroke(1.dp, BorderSub)
+        colors = CardDefaults.cardColors(containerColor = if (selected) CardBg else CardBg),
+        border = BorderStroke(if (selected) 1.5.dp else 1.dp, if (selected) Cyan else BorderSub)
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically) {
+                if (selectionMode) {
+                    SelectionBadge(selected = selected)
+                    Spacer(Modifier.width(10.dp))
+                }
                 Column(Modifier.weight(1f)) {
                     Text(studentWF.student.fullName, color = TextWhite, fontSize = 15.sp,
                         fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -1257,7 +1454,7 @@ private fun BatchStudentCard(
             // Action buttons
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 // Send Due Message (only if due and student has fee)
-                if (studentWF.dueAmount > 0) {
+                if (studentWF.dueAmount > 0 && !selectionMode) {
                     OutlinedButton(
                         onClick = onSendDueMessage,
                         enabled = !isSendingDueMsg && !isDueMsgSent,
@@ -1287,17 +1484,19 @@ private fun BatchStudentCard(
                     }
                 }
                 // View History
-                OutlinedButton(
-                    onClick = onViewHistory,
-                    modifier = Modifier.weight(1f).height(34.dp),
-                    shape = RoundedCornerShape(8.dp),
-                    border = BorderStroke(1.dp, Cyan.copy(alpha = 0.5f)),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Cyan),
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
-                ) {
-                    Icon(Icons.Filled.History, null, tint = Cyan, modifier = Modifier.size(14.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("History", fontSize = 11.sp)
+                if (!selectionMode) {
+                    OutlinedButton(
+                        onClick = onViewHistory,
+                        modifier = Modifier.weight(1f).height(34.dp),
+                        shape = RoundedCornerShape(8.dp),
+                        border = BorderStroke(1.dp, Cyan.copy(alpha = 0.5f)),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Cyan),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                    ) {
+                        Icon(Icons.Filled.History, null, tint = Cyan, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("History", fontSize = 11.sp)
+                    }
                 }
             }
         }
@@ -1330,7 +1529,7 @@ fun EnrollStudentsScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
     val context = LocalContext.current
     var allStudents by remember { mutableStateOf<List<com.batchfee.edu.data.models.StudentEntity>>(emptyList()) }
     var enrolledStudents by remember { mutableStateOf<List<com.batchfee.edu.data.models.StudentEntity>>(emptyList()) }
-    var batchMonthlyFee by remember { mutableStateOf(0.0) }
+    var batchForEnrollment by remember { mutableStateOf<BatchEntity?>(null) }
     var enrollingStudentIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     val scope = rememberCoroutineScope()
 
@@ -1344,7 +1543,7 @@ fun EnrollStudentsScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
                 db.batchStudentDao().getStudentsForBatch(batchId, instId).collect { enrolledStudents = it }
             }
             launch {
-                db.batchDao().getBatchById(batchId, instId).collect { batchMonthlyFee = it?.monthlyFeeAmount ?: 0.0 }
+                db.batchDao().getBatchById(batchId, instId).collect { batchForEnrollment = it }
             }
         }
     }
@@ -1379,22 +1578,14 @@ fun EnrollStudentsScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
                                         try {
                                             val enrollmentStart = s.admissionDateMs.takeIf { it > 0L }
                                                 ?: System.currentTimeMillis()
-                                            val enrollment = com.batchfee.edu.data.models.BatchStudentEntity(
-                                                id = UUID.randomUUID().toString(),
+                                            val selectedBatch = batchForEnrollment
+                                                ?: error("Batch details are still loading. Please try again.")
+                                            BatchEnrollmentRepository(db).enroll(
                                                 instituteId = instId,
-                                                batchId = batchId,
                                                 studentId = s.id,
-                                                joinedAtMs = enrollmentStart,
-                                                status = "active",
-                                                leftAtMs = null,
-                                                firstMonthFeePeriod = MonthlyDueCalculator.periodFor(enrollmentStart),
-                                                firstMonthFeeAmount = MonthlyDueCalculator.calculateFirstMonthFee(
-                                                    batchMonthlyFee,
-                                                    enrollmentStart
-                                                )
+                                                batch = selectedBatch,
+                                                enrollmentStartMs = enrollmentStart
                                             )
-                                            BatchStudentSyncHelper.upsertEnrollment(enrollment)
-                                            db.batchStudentDao().enrollStudent(enrollment)
                                         } catch (error: Exception) {
                                             Toast.makeText(
                                                 context,

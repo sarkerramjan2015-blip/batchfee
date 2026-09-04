@@ -26,6 +26,7 @@ const {
   studentIdClaimDocumentId,
 } = require("./studentIdCore");
 const { createFinancialLedgerHandler } = require("./financialLedger");
+const { feeBusinessKey, ledgerStatus, toMoney } = require("./financialLedgerCore");
 const { createExamFeeBillingHandler } = require("./examFeeBilling");
 const { createMediaSecurityHandlers } = require("./mediaSecurity");
 const { createSafeDeletionHandler } = require("./safeDeletion");
@@ -234,6 +235,363 @@ async function assertCanManageTenantResource(authContext, instituteId, permissio
   return instituteSnap;
 }
 
+/**
+ * Removes exactly one active enrollment chosen by the owner.  This is not a
+ * destructive student delete: the enrollment and any fee with payment/receipt
+ * history are retained for audit.  Unpaid fees attached to the accidentally
+ * assigned batch are cancelled so they cannot remain in the due list.
+ */
+async function unassignStudentFromBatchHandler(request) {
+  const instituteId = requireString(request.data, "instituteId");
+  const studentId = requireString(request.data, "studentId", 128);
+  const enrollmentId = requireString(request.data, "enrollmentId", 128);
+  const instituteSnap = await assertCanManageTenantResource(
+    request.auth, instituteId, "manage_batch",
+  );
+  const instituteRef = instituteSnap.ref;
+  const enrollmentRef = instituteRef.collection("batch_students").doc(enrollmentId);
+  const studentFeesQuery = instituteRef.collection("fees").where("studentId", "==", studentId);
+  const studentPaymentsQuery = instituteRef.collection("payments").where("studentId", "==", studentId);
+  const studentReceiptsQuery = instituteRef.collection("receipts").where("studentId", "==", studentId);
+
+  return db.runTransaction(async (transaction) => {
+    const enrollmentSnap = await transaction.get(enrollmentRef);
+    if (!enrollmentSnap.exists) {
+      throw new HttpsError("not-found", "Batch assignment was not found.");
+    }
+    const enrollment = enrollmentSnap.data();
+    if (enrollment.instituteId !== instituteId || enrollment.studentId !== studentId) {
+      throw new HttpsError("permission-denied", "Batch assignment does not match this student.");
+    }
+    if (enrollment.status !== "active") {
+      return {
+        enrollmentId,
+        batchId: enrollment.batchId,
+        alreadyRemoved: true,
+        removedAtMs: Number(enrollment.leftAtMs) || Date.now(),
+        cancelledFeeIds: [],
+        retainedHistoryFeeCount: 0,
+      };
+    }
+
+    const [feeSnap, paymentSnap, receiptSnap] = await Promise.all([
+      transaction.get(studentFeesQuery),
+      transaction.get(studentPaymentsQuery),
+      transaction.get(studentReceiptsQuery),
+    ]);
+    const feeHistoryIds = new Set();
+    paymentSnap.docs.forEach((doc) => {
+      const feeId = doc.get("feeId");
+      if (typeof feeId === "string" && feeId) feeHistoryIds.add(feeId);
+    });
+    receiptSnap.docs.forEach((doc) => {
+      const feeId = doc.get("feeId");
+      if (typeof feeId === "string" && feeId) feeHistoryIds.add(feeId);
+    });
+
+    const now = Date.now();
+    const cancelledFeeIds = [];
+    let retainedHistoryFeeCount = 0;
+    feeSnap.docs.forEach((feeDoc) => {
+      const fee = feeDoc.data();
+      if (fee.batchId !== enrollment.batchId || fee.cancelledAtMs != null) return;
+      const paidAmount = Number(fee.paidAmount) || 0;
+      const hasHistory = feeHistoryIds.has(feeDoc.id) || paidAmount > 0 || fee.status === "completed";
+      if (hasHistory) {
+        retainedHistoryFeeCount += 1;
+        return;
+      }
+      const existingNote = typeof fee.note === "string" ? fee.note.trim() : "";
+      transaction.update(feeDoc.ref, {
+        status: "cancelled",
+        dueAmount: 0,
+        cancelledAtMs: now,
+        updatedAtMs: now,
+        note: existingNote
+          ? `${existingNote}\nCancelled after batch unassignment.`
+          : "Cancelled after batch unassignment.",
+      });
+      cancelledFeeIds.push(feeDoc.id);
+    });
+
+    transaction.update(enrollmentRef, {
+      status: "removed",
+      leftAtMs: now,
+      removalReason: "owner_unassigned",
+      updatedAtMs: now,
+    });
+    return {
+      enrollmentId,
+      batchId: enrollment.batchId,
+      alreadyRemoved: false,
+      removedAtMs: now,
+      cancelledFeeIds,
+      retainedHistoryFeeCount,
+    };
+  });
+}
+
+function bangladeshMonthPeriod(timestampMs) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Dhaka",
+    month: "short",
+    year: "numeric",
+  }).formatToParts(new Date(timestampMs));
+  const month = parts.find((part) => part.type === "month")?.value;
+  const year = parts.find((part) => part.type === "year")?.value;
+  if (!month || !year) throw new HttpsError("invalid-argument", "Invalid shift date.");
+  return `${month} ${year}`;
+}
+
+function proratedMonthlyTerms(monthlyFeeAmount, shiftDateMs) {
+  let day = 1;
+  for (const part of new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Dhaka",
+    day: "numeric",
+  }).formatToParts(new Date(shiftDateMs))) {
+    if (part.type === "day") day = Number(part.value) || 1;
+  }
+  const billableDays = Math.max(1, 31 - Math.min(day, 30));
+  return {
+    firstMonthFeePeriod: bangladeshMonthPeriod(shiftDateMs),
+    firstMonthFeeAmount: Math.round((monthlyFeeAmount / 30) * billableDays),
+  };
+}
+
+/**
+ * Safely moves one student between two batches.  The source enrollment is
+ * never removed locally first: the source removal, target enrollment and a
+ * course's one-time fee (when applicable) are committed together on the
+ * server.  Paid receipts and fees from the old batch remain untouched.
+ */
+async function shiftStudentBetweenBatchesHandler(request) {
+  const instituteId = requireString(request.data, "instituteId");
+  const studentId = requireString(request.data, "studentId", 128);
+  const sourceEnrollmentId = requireString(request.data, "sourceEnrollmentId", 128);
+  const targetBatchId = requireString(request.data, "targetBatchId", 128);
+  const targetEnrollmentId = requireString(request.data, "targetEnrollmentId", 128);
+  const operationId = optionalDocumentId(request.data, "operationId");
+  const rawShiftDate = optionalNumber(request.data && request.data.shiftDateMs, 1, 4102444800000);
+  if (!operationId || !rawShiftDate) {
+    throw new HttpsError("invalid-argument", "A valid shift operation and date are required.");
+  }
+  const shiftDateMs = Math.floor(rawShiftDate);
+  if (sourceEnrollmentId === targetEnrollmentId) {
+    throw new HttpsError("invalid-argument", "Source and target enrollment must be different.");
+  }
+  if (shiftDateMs > Date.now() + 5 * 60 * 1000) {
+    throw new HttpsError("invalid-argument", "A batch shift cannot be dated in the future.");
+  }
+
+  const instituteSnap = await assertCanManageTenantResource(
+    request.auth, instituteId, "manage_batch",
+  );
+  const instituteRef = instituteSnap.ref;
+  const sourceEnrollmentRef = instituteRef.collection("batch_students").doc(sourceEnrollmentId);
+  const targetEnrollmentRef = instituteRef.collection("batch_students").doc(targetEnrollmentId);
+  const targetBatchRef = instituteRef.collection("batches").doc(targetBatchId);
+  const studentRef = instituteRef.collection("students").doc(studentId);
+  const operationRef = instituteRef.collection("batch_shift_operations").doc(operationId);
+  // A client creates a fresh enrollment ID for each shift. Check the business
+  // identity too, so two devices cannot create two active enrollments for the
+  // same student and target batch at the same time.
+  const activeTargetEnrollmentsQuery = instituteRef.collection("batch_students")
+    .where("studentId", "==", studentId)
+    .where("batchId", "==", targetBatchId)
+    .where("status", "==", "active");
+  const requestHash = trustedCreationHash({
+    kind: "student_batch_shift",
+    instituteId,
+    studentId,
+    sourceEnrollmentId,
+    targetBatchId,
+    targetEnrollmentId,
+    shiftDateMs,
+  });
+
+  return db.runTransaction(async (transaction) => {
+    const [sourceSnap, targetEnrollmentSnap, targetBatchSnap, studentSnap, operationSnap, activeTargetEnrollmentsSnap] =
+      await Promise.all([
+        transaction.get(sourceEnrollmentRef),
+        transaction.get(targetEnrollmentRef),
+        transaction.get(targetBatchRef),
+        transaction.get(studentRef),
+        transaction.get(operationRef),
+        transaction.get(activeTargetEnrollmentsQuery),
+      ]);
+
+    if (operationSnap.exists) {
+      const operation = operationSnap.data();
+      if (operation.actorUid === request.auth.uid && operation.requestHash === requestHash &&
+        operation.status === "completed" && operation.result) {
+        return operation.result;
+      }
+      if (operation.actorUid === request.auth.uid && operation.requestHash === requestHash) {
+        throw new HttpsError("aborted", "The previous batch shift is still being reconciled.");
+      }
+      throw new HttpsError("already-exists", "This shift operation belongs to another request.");
+    }
+    if (!studentSnap.exists || !isActiveRecord(studentSnap.data())) {
+      throw new HttpsError("failed-precondition", "Student is not available for batch shifting.");
+    }
+    if (!sourceSnap.exists) {
+      throw new HttpsError("not-found", "Source batch assignment was not found.");
+    }
+    const source = sourceSnap.data();
+    if (source.instituteId !== instituteId || source.studentId !== studentId) {
+      throw new HttpsError("permission-denied", "Source batch assignment does not match this student.");
+    }
+    if (source.status !== "active") {
+      throw new HttpsError("failed-precondition", "This student is no longer active in the source batch.");
+    }
+    if (source.batchId === targetBatchId) {
+      throw new HttpsError("invalid-argument", "Source and target batch must be different.");
+    }
+    if (Number.isFinite(source.joinedAtMs) && source.joinedAtMs > 0 && shiftDateMs < source.joinedAtMs) {
+      throw new HttpsError("invalid-argument", "Shift date cannot be before the student's source-batch join date.");
+    }
+    if ((targetEnrollmentSnap.exists && targetEnrollmentSnap.get("status") === "active") ||
+      !activeTargetEnrollmentsSnap.empty) {
+      throw new HttpsError("already-exists", "Student is already assigned to the selected batch.");
+    }
+    if (!targetBatchSnap.exists || !isActiveRecord(targetBatchSnap.data())) {
+      throw new HttpsError("failed-precondition", "Target batch is no longer active.");
+    }
+
+    const targetBatch = targetBatchSnap.data();
+    const billingMode = String(targetBatch.billingMode || "monthly").trim().toLowerCase() === "course"
+      ? "course" : "monthly";
+    let firstMonthFeePeriod = null;
+    let firstMonthFeeAmount = null;
+    let courseFee = null;
+    let courseFeeRef = null;
+    let courseFeeKeyRef = null;
+
+    if (billingMode === "monthly") {
+      let monthlyFeeAmount;
+      try {
+        monthlyFeeAmount = toMoney(Number(targetBatch.monthlyFeeAmount), "monthlyFeeAmount", { allowZero: false });
+      } catch (_) {
+        throw new HttpsError("failed-precondition", "Target batch has no valid monthly fee.");
+      }
+      ({ firstMonthFeePeriod, firstMonthFeeAmount } = proratedMonthlyTerms(monthlyFeeAmount, shiftDateMs));
+    } else {
+      let courseFeeAmount;
+      try {
+        courseFeeAmount = toMoney(Number(targetBatch.courseFeeAmount), "courseFeeAmount", { allowZero: false });
+      } catch (_) {
+        throw new HttpsError("failed-precondition", "Target course has no valid course fee.");
+      }
+      const sourceId = `course:${targetBatchId}`;
+      const businessKey = feeBusinessKey({
+        studentId,
+        batchId: targetBatchId,
+        feePeriod: "Course",
+        feeType: "course_fee",
+        sourceId,
+      });
+      const feeId = `fee_${createHash("sha256").update(`${instituteId}:${businessKey}`).digest("hex").slice(0, 40)}`;
+      courseFeeRef = instituteRef.collection("fees").doc(feeId);
+      courseFeeKeyRef = instituteRef.collection("ledger_internal").doc(`fee_key_${businessKey}`);
+      const legacyCourseFeesQuery = instituteRef.collection("fees").where("studentId", "==", studentId);
+      const [feeSnap, feeKeySnap, legacyCourseFeesSnap] = await Promise.all([
+        transaction.get(courseFeeRef), transaction.get(courseFeeKeyRef), transaction.get(legacyCourseFeesQuery),
+      ]);
+      const hasLegacyEquivalent = legacyCourseFeesSnap.docs.some((doc) => {
+        const fee = doc.data();
+        return feeBusinessKey({
+          studentId: fee.studentId,
+          batchId: fee.batchId,
+          feePeriod: fee.feePeriod,
+          feeType: fee.feeType,
+          sourceId: fee.sourceId,
+        }) === businessKey;
+      });
+      if (!feeSnap.exists && !feeKeySnap.exists && !hasLegacyEquivalent) {
+        const ledger = ledgerStatus(courseFeeAmount, 0);
+        courseFee = {
+          id: feeId,
+          instituteId,
+          studentId,
+          batchId: targetBatchId,
+          feePeriod: "Course",
+          feeType: "course_fee",
+          sourceId,
+          dueDateMs: Number(targetBatch.startDateMs) || shiftDateMs,
+          baseAmount: courseFeeAmount,
+          discountAmount: 0,
+          lateFeeAmount: 0,
+          totalAmount: courseFeeAmount,
+          ...ledger,
+          note: `Course fee - ${String(targetBatch.name || "Course").slice(0, 160)}`,
+          createdAtMs: Date.now(),
+          updatedAtMs: Date.now(),
+          cancelledAtMs: null,
+          businessKey,
+          ledgerVersion: 1,
+        };
+      }
+    }
+
+    const now = Date.now();
+    const targetEnrollment = {
+      instituteId,
+      batchId: targetBatchId,
+      studentId,
+      joinedAtMs: shiftDateMs,
+      status: "active",
+      leftAtMs: null,
+      firstMonthFeePeriod,
+      firstMonthFeeAmount,
+      customMonthlyFeeAmount: null,
+      customFeeReason: null,
+      customFeeEffectiveFromPeriod: null,
+      customFeePolicySyncedAtMs: null,
+      createdAtMs: now,
+      updatedAtMs: now,
+    };
+    transaction.update(sourceEnrollmentRef, {
+      status: "removed",
+      leftAtMs: shiftDateMs,
+      removalReason: "student_batch_shift",
+      shiftedToBatchId: targetBatchId,
+      shiftOperationId: operationId,
+      updatedAtMs: now,
+    });
+    transaction.set(targetEnrollmentRef, targetEnrollment);
+    if (courseFee && courseFeeRef && courseFeeKeyRef) {
+      transaction.create(courseFeeRef, courseFee);
+      transaction.create(courseFeeKeyRef, {
+        feeId: courseFee.id,
+        businessKey: courseFee.businessKey,
+        createdAtMs: now,
+      });
+    }
+    const result = {
+      sourceEnrollmentId,
+      targetEnrollmentId,
+      sourceBatchId: source.batchId,
+      targetBatchId,
+      shiftDateMs,
+      billingMode,
+      firstMonthFeePeriod,
+      firstMonthFeeAmount,
+      courseFeeCreated: Boolean(courseFee),
+      courseFeeId: courseFee ? courseFee.id : null,
+      completedAtMs: now,
+    };
+    transaction.create(operationRef, {
+      actorUid: request.auth.uid,
+      requestHash,
+      status: "completed",
+      result,
+      createdAtMs: now,
+      completedAtMs: now,
+    });
+    return result;
+  });
+}
+
 async function assertPlatformRoot(authContext) {
   if (!authContext || !authContext.uid) {
     throw new HttpsError("unauthenticated", "Sign in is required.");
@@ -361,6 +719,37 @@ function copyFields(source, fields) {
     if (Object.prototype.hasOwnProperty.call(source, field)) output[field] = source[field];
   }
   return output;
+}
+
+/** Validates new teacher-pay fields while keeping every legacy staff record monthly. */
+function normalizeStaffCompensation(entity) {
+  const staffCategory = String(entity.staffCategory || "administration").trim().toLowerCase();
+  const salaryType = String(entity.salaryType || "monthly").trim().toLowerCase();
+  if (!["administration", "teacher"].includes(staffCategory)) {
+    throw new HttpsError("invalid-argument", "Invalid staff category.");
+  }
+  if (!["monthly", "per_class", "per_hour"].includes(salaryType)) {
+    throw new HttpsError("invalid-argument", "Invalid salary type.");
+  }
+  const perClassRate = entity.perClassRate == null ? 0 : optionalNumber(entity.perClassRate, 0);
+  const perHourRate = entity.perHourRate == null ? 0 : optionalNumber(entity.perHourRate, 0);
+  const subjects = optionalString(entity.subjects, 500);
+  if (salaryType === "per_class" && !(perClassRate > 0)) {
+    throw new HttpsError("invalid-argument", "A per-class rate is required.");
+  }
+  if (salaryType === "per_hour" && !(perHourRate > 0)) {
+    throw new HttpsError("invalid-argument", "A per-hour rate is required.");
+  }
+  if (staffCategory === "teacher" && !(subjects || "").trim()) {
+    throw new HttpsError("invalid-argument", "At least one teacher subject is required.");
+  }
+  return {
+    staffCategory,
+    salaryType,
+    perClassRate,
+    perHourRate,
+    subjects: (subjects || "").trim(),
+  };
 }
 
 async function createEntitledStudentHandler(request) {
@@ -606,10 +995,29 @@ async function createEntitledBatchHandler(request) {
   const requestHash = operationId
     ? trustedCreationHash({ kind: "batch", instituteId, batchId, entity }) : null;
   const batchCountQuery = batches.where("status", "==", "active").count();
-  const allowed = ["batchCode", "name", "subject", "className", "teacherName", "monthlyFeeAmount", "admissionFeeAmount", "startDateMs", "endDateMs", "scheduleDays", "startTime", "endTime", "maxStudents", "description"];
+  const allowed = ["batchCode", "name", "subject", "className", "teacherName", "monthlyFeeAmount", "billingMode", "courseFeeAmount", "admissionFeeAmount", "startDateMs", "endDateMs", "scheduleDays", "startTime", "endTime", "maxStudents", "description"];
   const batchCode = requireString(entity, "batchCode", 64);
   const name = requireString(entity, "name", 160);
-  optionalNumber(entity.monthlyFeeAmount, 0); optionalNumber(entity.admissionFeeAmount, 0);
+  const billingMode = String(entity.billingMode || "monthly").trim().toLowerCase();
+  if (!["monthly", "course"].includes(billingMode)) {
+    throw new HttpsError("invalid-argument", "Batch billing mode must be monthly or course.");
+  }
+  const monthlyFeeAmount = optionalNumber(entity.monthlyFeeAmount, 0) || 0;
+  const courseFeeAmount = optionalNumber(entity.courseFeeAmount, 0) || 0;
+  optionalNumber(entity.admissionFeeAmount, 0);
+  if (billingMode === "monthly" && monthlyFeeAmount <= 0) {
+    throw new HttpsError("invalid-argument", "Monthly fee must be greater than zero.");
+  }
+  if (billingMode === "course") {
+    if (courseFeeAmount <= 0) {
+      throw new HttpsError("invalid-argument", "Course fee must be greater than zero.");
+    }
+    const startDateMs = optionalNumber(entity.startDateMs, 0);
+    const endDateMs = optionalNumber(entity.endDateMs, 0);
+    if (!startDateMs || !endDateMs || endDateMs < startDateMs) {
+      throw new HttpsError("invalid-argument", "A valid course start and end date is required.");
+    }
+  }
   return db.runTransaction(async (transaction) => {
     const reads = [
       transaction.get(instituteRef), transaction.get(batchRef), transaction.get(batchCountQuery),
@@ -632,6 +1040,9 @@ async function createEntitledBatchHandler(request) {
     const now = Date.now();
     transaction.create(batchRef, {
       ...copyFields(entity, allowed), instituteId, batchCode, name,
+      billingMode,
+      monthlyFeeAmount: billingMode === "monthly" ? monthlyFeeAmount : 0,
+      courseFeeAmount: billingMode === "course" ? courseFeeAmount : 0,
       status: "active", archivedAtMs: null, createdAtMs: now, updatedAtMs: now,
     });
     transaction.update(instituteRef, { batchCount: count + 1, updatedAtMs: now });
@@ -670,10 +1081,11 @@ async function createEntitledStaffHandler(request) {
   const requestHash = operationId
     ? trustedCreationHash({ kind: "staff", instituteId, staffId, entity }) : null;
   const staffCountQuery = staffs.where("status", "==", "active").count();
-  const allowed = ["staffCode", "fullName", "photoUri", "roleTitle", "phone", "email", "address", "joiningDateMs", "monthlySalary", "assignedBatchIds", "notes", "permissions"];
+  const allowed = ["staffCode", "fullName", "photoUri", "roleTitle", "phone", "email", "address", "joiningDateMs", "monthlySalary", "assignedBatchIds", "notes", "permissions", "staffCategory", "salaryType", "perClassRate", "perHourRate", "subjects"];
   const staffCode = requireString(entity, "staffCode", 64);
   const fullName = requireString(entity, "fullName", 160);
   optionalString(entity.email, 160); optionalNumber(entity.monthlySalary, 0);
+  Object.assign(entity, normalizeStaffCompensation(entity));
   return db.runTransaction(async (transaction) => {
     const reads = [
       transaction.get(instituteRef), transaction.get(staffRef), transaction.get(staffCountQuery),
@@ -734,11 +1146,12 @@ async function provisionStaffAccountHandler(request) {
   }
   await assertCanManageTenantResource(request.auth, instituteId, "manage_staff", false);
 
-  const allowed = ["staffCode", "fullName", "photoUri", "roleTitle", "phone", "email", "address", "joiningDateMs", "monthlySalary", "assignedBatchIds", "notes", "permissions"];
+  const allowed = ["staffCode", "fullName", "photoUri", "roleTitle", "phone", "email", "address", "joiningDateMs", "monthlySalary", "assignedBatchIds", "notes", "permissions", "staffCategory", "salaryType", "perClassRate", "perHourRate", "subjects"];
   const staffCode = requireString(entity, "staffCode", 64).toLocaleUpperCase("en-US");
   const fullName = requireString(entity, "fullName", 160);
   const email = requireString(entity, "email", 160).toLocaleLowerCase("en-US");
   optionalNumber(entity.monthlySalary, 0);
+  Object.assign(entity, normalizeStaffCompensation(entity));
   const loginKey = staffLoginDocumentId(staffCode);
   const uid = deterministicStaffUid(instituteId, operationId);
   const instituteRef = db.collection("institutes").doc(instituteId);
@@ -850,12 +1263,13 @@ async function updateStaffAccountHandler(request) {
   const password = typeof suppliedPassword === "string" && suppliedPassword ? suppliedPassword : null;
   await assertCanManageTenantResource(request.auth, instituteId, "manage_staff", false);
 
-  const allowed = ["staffCode", "fullName", "photoUri", "roleTitle", "phone", "email", "address", "joiningDateMs", "monthlySalary", "assignedBatchIds", "notes", "permissions"];
+  const allowed = ["staffCode", "fullName", "photoUri", "roleTitle", "phone", "email", "address", "joiningDateMs", "monthlySalary", "assignedBatchIds", "notes", "permissions", "staffCategory", "salaryType", "perClassRate", "perHourRate", "subjects"];
   const staffCode = requireString(entity, "staffCode", 64).toLocaleUpperCase("en-US");
   const fullName = requireString(entity, "fullName", 160);
   const email = requireString(entity, "email", 160).toLocaleLowerCase("en-US");
   optionalString(entity.photoUri, 2048);
   optionalNumber(entity.monthlySalary, 0);
+  Object.assign(entity, normalizeStaffCompensation(entity));
   const newLoginKey = staffLoginDocumentId(staffCode);
   const instituteRef = db.collection("institutes").doc(instituteId);
   const staffRef = instituteRef.collection("staffs").doc(staffId);
@@ -1773,6 +2187,14 @@ exports.createEntitledStudent = onCall(
 exports.createEntitledBatch = onCall(
   { ...callableOptions, timeoutSeconds: 60 },
   guarded(createEntitledBatchHandler),
+);
+exports.unassignStudentFromBatch = onCall(
+  { ...callableOptions, timeoutSeconds: 60 },
+  guarded(unassignStudentFromBatchHandler),
+);
+exports.shiftStudentBetweenBatches = onCall(
+  { ...callableOptions, timeoutSeconds: 60 },
+  guarded(shiftStudentBetweenBatchesHandler),
 );
 exports.createEntitledStaff = onCall(
   { ...callableOptions, timeoutSeconds: 60 },

@@ -33,6 +33,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.data.models.EnquiryEntity
+import com.batchfee.edu.domain.SessionManager
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -79,6 +80,30 @@ fun EnquiryListScreen(db: AppDatabase, onBack: () -> Unit, onAddEnquiry: () -> U
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val dateFormat = remember { SimpleDateFormat("dd MMM yyyy", Locale.getDefault()) }
+    val instId = SessionManager.currentInstituteId.value
+    var instituteName by remember { mutableStateOf("") }
+    var instituteContact by remember { mutableStateOf("") }
+
+    LaunchedEffect(instId) {
+        val institute = instId?.let { db.instituteDao().getInstitute(it) }
+        instituteName = institute?.name?.trim().orEmpty().ifBlank { "our institute" }
+        instituteContact = com.example.domain.MessageTemplateStore.loadInstituteContact(db, instId)
+    }
+
+    fun enquiryOpener(enquiryName: String): String {
+        val template = com.example.domain.MessageTemplateStore.defaultFor(com.example.domain.MessageTemplateStore.TYPE_ENQUIRY_FOLLOW_UP)
+        return template?.let {
+            com.example.domain.MessageTemplateStore.apply(
+                it,
+                mapOf(
+                    "guardianName" to "Guardian",
+                    "studentName" to enquiryName,
+                    "instituteName" to instituteName,
+                    "instituteContact" to instituteContact
+                )
+            )
+        } ?: "Dear Guardian,\n\nThank you for your enquiry at $instituteName.\n\nContact: $instituteContact"
+    }
 
     val filteredEnquiries = remember(allEnquiries, filterStatus) {
         when (filterStatus) {
@@ -168,9 +193,9 @@ fun EnquiryListScreen(db: AppDatabase, onBack: () -> Unit, onAddEnquiry: () -> U
                             items(enquiries, key = { it.id }) { enquiry ->
                                 EnquiryCard(enquiry = enquiry, dateFormat = dateFormat, onClick = { selectedEnquiry = enquiry; showDetailDialog = true },
                                     onCall = { context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:${enquiry.phone}"))) },
-                                    onSms = { context.startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${enquiry.phone}")).apply { putExtra("sms_body", "Hello ${enquiry.name}, ") }) },
+                                    onSms = { context.startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${enquiry.phone}")).apply { putExtra("sms_body", enquiryOpener(enquiry.name)) }) },
                                     onWhatsApp = {
-                                        val enc = java.net.URLEncoder.encode("Hello ${enquiry.name}, ", "UTF-8")
+                                        val enc = java.net.URLEncoder.encode(enquiryOpener(enquiry.name), "UTF-8")
                                         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/${enquiry.phone.replace("+","").replace(" ","")}?text=$enc")))
                                     })
                             }
@@ -179,9 +204,9 @@ fun EnquiryListScreen(db: AppDatabase, onBack: () -> Unit, onAddEnquiry: () -> U
                         items(filteredEnquiries, key = { it.id }) { enquiry ->
                             EnquiryCard(enquiry = enquiry, dateFormat = dateFormat, onClick = { selectedEnquiry = enquiry; showDetailDialog = true },
                                 onCall = { context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:${enquiry.phone}"))) },
-                                onSms = { context.startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${enquiry.phone}")).apply { putExtra("sms_body", "Hello ${enquiry.name}, ") }) },
+                                onSms = { context.startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${enquiry.phone}")).apply { putExtra("sms_body", enquiryOpener(enquiry.name)) }) },
                                 onWhatsApp = {
-                                    val enc = java.net.URLEncoder.encode("Hello ${enquiry.name}, ", "UTF-8")
+                                    val enc = java.net.URLEncoder.encode(enquiryOpener(enquiry.name), "UTF-8")
                                     context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/${enquiry.phone.replace("+","").replace(" ","")}?text=$enc")))
                                 })
                         }
@@ -257,9 +282,9 @@ fun EnquiryListScreen(db: AppDatabase, onBack: () -> Unit, onAddEnquiry: () -> U
                     Spacer(Modifier.height(12.dp))
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         ContactButton(Icons.Filled.Call, "Call", AccentGreen, Modifier.weight(1f)) { context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:${e.phone}"))) }
-                        ContactButton(Icons.Filled.Sms, "SMS", ElectricBlue, Modifier.weight(1f)) { context.startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${e.phone}")).apply { putExtra("sms_body", "Hello ${e.name}, ") }) }
+                        ContactButton(Icons.Filled.Sms, "SMS", ElectricBlue, Modifier.weight(1f)) { context.startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${e.phone}")).apply { putExtra("sms_body", enquiryOpener(e.name)) }) }
                         ContactButton(Icons.Filled.Whatsapp, "WA", WAGreen, Modifier.weight(1f)) {
-                            val enc = java.net.URLEncoder.encode("Hello ${e.name}, ", "UTF-8")
+                            val enc = java.net.URLEncoder.encode(enquiryOpener(e.name), "UTF-8")
                             context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/${e.phone.replace("+","").replace(" ","")}?text=$enc")))
                         }
                     }

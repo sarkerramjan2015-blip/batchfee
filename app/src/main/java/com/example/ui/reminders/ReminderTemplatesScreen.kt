@@ -148,15 +148,15 @@ private fun TemplateEditorDialog(
         "WelcomeMessage" to "Welcome Message",
         "Custom" to "Custom"
     )
-    val placeholders = listOf("{guardianName}", "{studentName}", "{studentCode}", "{batchName}", "{date}", "{instituteName}", "{amount}", "{period}", "{grade}", "{rank}")
+    val placeholders = listOf("{guardianName}", "{studentName}", "{studentCode}", "{batchName}", "{className}", "{date}", "{instituteName}", "{instituteContact}", "{amount}", "{period}", "{grade}", "{rank}", "{position}", "{marks}", "{examName}")
     val typeDefaults = mapOf(
-        "AttendanceAbsent" to (listOf("Attendance Alert") to "Dear {guardianName},\n\n{studentName} ({batchName}) was absent today ({date}).\n\n\u2014 {instituteName}"),
-        "DueFee" to (listOf("Due Fee Reminder") to "Dear {guardianName},\n\n{studentName}'s fee of {amount} for {period} is due. Please pay by {date}.\n\n\u2014 {instituteName}"),
-        "Birthday" to (listOf("Happy Birthday!") to "Happy Birthday, {studentName}!\n\nWishing you a wonderful day from all of us at {instituteName}."),
-        "PaymentConfirmation" to (listOf("Payment Received") to "Dear {guardianName},\n\nPayment of {amount} for {studentName} has been received for {period}. Thank you!\n\n\u2014 {instituteName}"),
-        "EnquiryFollowUp" to (listOf("Follow-Up") to "Dear {guardianName},\n\nFollowing up on your enquiry for {studentName}. Feel free to contact us at {instituteName}.\n\nWe'd love to have you on board!"),
-        "ResultPublished" to (listOf("Results Out!") to "Dear {guardianName},\n\n{studentName}'s result for the recent exam is out! Grade: {grade}, Rank: {rank}.\n\n\u2014 {instituteName}"),
-        "WelcomeMessage" to (listOf("Welcome!") to "Welcome to {instituteName}, {studentName}!\n\nWe're excited to have you in {batchName}. Your student code is {studentCode}.\n\nLet's make this a great journey!"),
+        "AttendanceAbsent" to (listOf("Attendance Alert") to (com.example.domain.MessageTemplateStore.defaultFor("AttendanceAbsent") ?: "")),
+        "DueFee" to (listOf("Due Fee Reminder") to (com.example.domain.MessageTemplateStore.defaultFor("DueFee") ?: "")),
+        "Birthday" to (listOf("Happy Birthday!") to (com.example.domain.MessageTemplateStore.defaultFor("Birthday") ?: "")),
+        "PaymentConfirmation" to (listOf("Payment Received") to (com.example.domain.MessageTemplateStore.defaultFor("PaymentConfirmation") ?: "")),
+        "EnquiryFollowUp" to (listOf("Follow-Up") to (com.example.domain.MessageTemplateStore.defaultFor("EnquiryFollowUp") ?: "")),
+        "ResultPublished" to (listOf("Results Out!") to (com.example.domain.MessageTemplateStore.defaultFor("ResultPublished") ?: "")),
+        "WelcomeMessage" to (listOf("Welcome!") to (com.example.domain.MessageTemplateStore.defaultFor("WelcomeMessage") ?: "")),
         "Custom" to (listOf("Custom Reminder") to "")
     )
 

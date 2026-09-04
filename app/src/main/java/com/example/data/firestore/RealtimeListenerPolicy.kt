@@ -7,6 +7,7 @@ internal data class RealtimeListenerPlan(
     val listenStudents: Boolean = false,
     val listenBatchStructure: Boolean = false,
     val listenStaff: Boolean = false,
+    val listenSalary: Boolean = false,
     val listenFinance: Boolean = false,
     val listenExpenses: Boolean = false
 )
@@ -57,6 +58,7 @@ internal object RealtimeListenerPolicy {
                     listenStudents = true,
                     listenBatchStructure = true,
                     listenStaff = true,
+                    listenSalary = true,
                     listenFinance = true,
                     listenExpenses = true
                 )
@@ -66,6 +68,8 @@ internal object RealtimeListenerPolicy {
                 listenStudents = permissions.any(studentPermissions::contains),
                 listenBatchStructure = permissions.any(batchPermissions::contains),
                 listenStaff = StaffPermissions.MANAGE_STAFF in permissions,
+                listenSalary = StaffPermissions.MANAGE_SALARY in permissions ||
+                    StaffPermissions.VIEW_REPORTS in permissions,
                 listenFinance = permissions.any(financePermissions::contains),
                 listenExpenses = StaffPermissions.MANAGE_EXPENSES in permissions ||
                     StaffPermissions.VIEW_REPORTS in permissions

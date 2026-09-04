@@ -1,11 +1,14 @@
 package com.batchfee.edu.ui.attendance
 
+import android.content.Intent
+import android.net.Uri
 import android.widget.Toast
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -18,21 +21,36 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.domain.SessionManager
+import com.batchfee.edu.ui.components.buildWhatsAppUrl
+import com.example.domain.BulkMessageController
+import com.example.domain.BulkMessagePreferences
+import com.example.ui.components.BulkActionBar
+import com.example.ui.components.BulkMessageDialog
+import com.example.ui.components.BulkSelectionTopBar
+import com.example.ui.components.BulkSendProgressPanel
+import com.example.ui.components.SelectionBadge
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -346,6 +364,86 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
     var showTemplateEditor by remember { mutableStateOf(false) }
     var templateDraft by remember { mutableStateOf("") }
 
+    // Bulk multi-select
+    var selectionMode by remember { mutableStateOf(false) }
+    var selectedIds by rememberSaveable(stateSaver = listSaver(
+        save = { it.toList() },
+        restore = { it.toSet() }
+    )) { mutableStateOf(setOf<String>()) }
+    var showBulkComposer by remember { mutableStateOf(false) }
+    var bulkMessageText by remember { mutableStateOf("") }
+    var showRecipientPicker by remember { mutableStateOf(false) }
+    var pickerSelectedIds by remember { mutableStateOf(setOf<String>()) }
+    var bulkChannel by remember { mutableStateOf("whatsapp") }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_PAUSE -> viewModel.bulkSender.onPaused()
+                Lifecycle.Event.ON_RESUME -> viewModel.bulkSender.onResumed()
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    val bulkState by viewModel.bulkSender.state.collectAsState()
+
+    fun clearSelection() {
+        selectionMode = false
+        selectedIds = emptySet()
+    }
+
+    fun toggleSelection(studentId: String) {
+        selectedIds = if (studentId in selectedIds) selectedIds - studentId else selectedIds + studentId
+        if (selectedIds.isEmpty()) selectionMode = false
+    }
+
+    fun startBulkSend(channel: String, delayMs: Long, recipientIds: Set<String> = selectedIds) {
+        val customText = bulkMessageText.trim()
+        val selectedStudents = students.filter { it.id in recipientIds }
+        val targets = selectedStudents.map {
+            BulkMessageController.BulkTarget(key = it.id, name = it.fullName, phone = it.phone)
+        }
+        if (targets.isEmpty()) return
+        BulkMessagePreferences.setDelayMs(context, delayMs)
+        val batchName = batch?.name.orEmpty()
+        viewModel.bulkSender.start(
+            targets = targets,
+            channel = channel,
+            delayMs = delayMs,
+            messageBuilder = { target ->
+                val student = selectedStudents.firstOrNull { it.id == target.key }
+                val status = records[target.key]?.status ?: "absent"
+                val base = if (customText.isNotBlank()) {
+                    customText.replace("{name}", target.name)
+                } else if (student != null) {
+                    viewModel.buildAttendanceMessage(student, batchName, selectedDateMs, status)
+                } else {
+                    target.name
+                }
+                base
+            },
+            launcher = { target, body ->
+                if (channel == "whatsapp") {
+                    runCatching {
+                        context.startActivity(
+                            Intent(Intent.ACTION_VIEW, Uri.parse(buildWhatsAppUrl(target.phone, body)))
+                        )
+                    }.isSuccess
+                } else {
+                    runCatching {
+                        context.startActivity(
+                            Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${target.phone?.filter(Char::isDigit).orEmpty()}"))
+                                .apply { putExtra("sms_body", body) }
+                        )
+                    }.isSuccess
+                }
+            }
+        )
+    }
+
     val studentsWithStatus = remember(students, records) {
         students.map { s ->
             val rec = records[s.id]
@@ -356,11 +454,33 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
     Scaffold(
         containerColor = BgColor,
         topBar = {
-            TopAppBar(
-                title = { Text("${batch?.name ?: ""}", color = TextWhite, fontWeight = FontWeight.Bold, fontSize = 20.sp) },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = TextWhite) } },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = BgColor)
-            )
+            if (selectionMode) {
+                BulkSelectionTopBar(
+                    selectedCount = selectedIds.size,
+                    totalCount = students.size,
+                    onClear = { clearSelection() },
+                    onSelectAll = {
+                        selectedIds = if (selectedIds.size == students.size) emptySet()
+                        else students.map { it.id }.toSet()
+                        if (selectedIds.isEmpty()) selectionMode = false
+                    }
+                )
+            } else {
+                TopAppBar(
+                    title = { Text("${batch?.name ?: ""}", color = TextWhite, fontWeight = FontWeight.Bold, fontSize = 20.sp) },
+                    navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = TextWhite) } },
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = BgColor)
+                )
+            }
+        },
+        bottomBar = {
+            if (selectionMode) {
+                BulkActionBar(
+                    selectedCount = selectedIds.size,
+                    onWhatsApp = { showBulkComposer = true },
+                    onSms = { showBulkComposer = true }
+                )
+            }
         }
     ) { padding ->
         Column(
@@ -409,17 +529,54 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 gradientButton("Mark All Present", { viewModel.markAll(batchId, selectedDateMs, "present") }, Modifier.weight(1f).height(42.dp))
                 OutlinedButton(
-                    onClick = { showAllChannelDialog = true },
+                    onClick = {
+                        bulkChannel = "whatsapp"
+                        pickerSelectedIds = if (aCount > 0) {
+                            studentsWithStatus.filter { it.second == "absent" }.map { it.first.id }.toSet()
+                        } else {
+                            students.map { it.id }.toSet()
+                        }
+                        showRecipientPicker = true
+                    },
                     modifier = Modifier.weight(1f).height(42.dp),
                     shape = RoundedCornerShape(12.dp),
-                    border = BorderStroke(1.dp, WAGreen.copy(0.5f)),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = WAGreen),
-                    enabled = aCount > 0
+                    border = BorderStroke(1.5.dp, WAGreen),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        containerColor = WAGreen.copy(alpha = 0.12f),
+                        contentColor = WAGreen,
+                        disabledContainerColor = WAGreen.copy(alpha = 0.12f),
+                        disabledContentColor = WAGreen
+                    )
                 ) {
                     Icon(Icons.Filled.Message, null, tint = WAGreen, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("Msg All", fontSize = 12.sp)
+                    Text("WhatsApp All", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
+            }
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = {
+                    bulkChannel = "sms"
+                    pickerSelectedIds = if (aCount > 0) {
+                        studentsWithStatus.filter { it.second == "absent" }.map { it.first.id }.toSet()
+                    } else {
+                        students.map { it.id }.toSet()
+                    }
+                    showRecipientPicker = true
+                },
+                modifier = Modifier.fillMaxWidth().height(42.dp),
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(1.5.dp, ElectricBlue),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    containerColor = ElectricBlue.copy(alpha = 0.12f),
+                    contentColor = ElectricBlue,
+                    disabledContainerColor = ElectricBlue.copy(alpha = 0.12f),
+                    disabledContentColor = ElectricBlue
+                )
+            ) {
+                Icon(Icons.Filled.Sms, null, tint = ElectricBlue, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("SMS All", fontSize = 12.sp, fontWeight = FontWeight.Bold)
             }
             Spacer(Modifier.height(14.dp))
 
@@ -433,6 +590,19 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
                     status = status,
                     hasMessage = hasMessage,
                     isSending = isSending,
+                    selectionMode = selectionMode,
+                    selected = student.id in selectedIds,
+                    onClick = {
+                        if (selectionMode) toggleSelection(student.id)
+                    },
+                    onLongPress = {
+                        if (!selectionMode) {
+                            selectionMode = true
+                            selectedIds = setOf(student.id)
+                        } else {
+                            toggleSelection(student.id)
+                        }
+                    },
                     onMark = { st -> viewModel.markAttendance(student.id, batchId, selectedDateMs, st) },
                     onUndo = { viewModel.undoAttendance(student.id, selectedDateMs, batchId) },
                     onSendMessage = {
@@ -555,18 +725,169 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
                     Spacer(Modifier.height(12.dp))
                     channelCard("WhatsApp (all)", Icons.Filled.Message, WAGreen, {
                         showAllChannelDialog = false
-                        viewModel.sendAllAbsentMessages(context, batchId, selectedDateMs, "whatsapp") {}
+                        pickerSelectedIds = studentsWithStatus.filter { it.second == "absent" }.map { it.first.id }.toSet()
+                        showRecipientPicker = true
                     })
                     Spacer(Modifier.height(8.dp))
                     channelCard("SMS (all)", Icons.Filled.Sms, ElectricBlue, {
                         showAllChannelDialog = false
-                        viewModel.sendAllAbsentMessages(context, batchId, selectedDateMs, "sms") {}
+                        pickerSelectedIds = studentsWithStatus.filter { it.second == "absent" }.map { it.first.id }.toSet()
+                        showRecipientPicker = true
                     })
                 }
             },
             confirmButton = {},
             dismissButton = { TextButton(onClick = { showAllChannelDialog = false }) { Text("Cancel", color = TextMuted) } }
         )
+    }
+
+    // ── Recipient picker ─────────────────────────────
+    if (showRecipientPicker) {
+        val absentIds = studentsWithStatus.filter { it.second == "absent" }.map { it.first.id }.toSet()
+        Dialog(onDismissRequest = { showRecipientPicker = false }) {
+            Card(
+                modifier = Modifier.fillMaxWidth(0.96f).fillMaxHeight(0.84f),
+                shape = RoundedCornerShape(18.dp),
+                colors = CardDefaults.cardColors(containerColor = CardBg),
+                border = BorderStroke(1.dp, BorderSub)
+            ) {
+                Column(Modifier.fillMaxSize()) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            if (bulkChannel == "whatsapp") Icons.Filled.Message else Icons.Filled.Sms,
+                            contentDescription = null,
+                            tint = if (bulkChannel == "whatsapp") WAGreen else ElectricBlue,
+                            modifier = Modifier.size(26.dp)
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                if (bulkChannel == "whatsapp") "WhatsApp All — Select Recipients" else "SMS All — Select Recipients",
+                                color = Cyan,
+                                fontSize = 19.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text("${pickerSelectedIds.size} of ${students.size} selected", color = TextMuted, fontSize = 12.sp)
+                        }
+                        IconButton(onClick = { showRecipientPicker = false }) {
+                            Icon(Icons.Filled.Close, contentDescription = "Close", tint = AccentRed, modifier = Modifier.size(28.dp))
+                        }
+                    }
+                    HorizontalDivider(color = BorderSub)
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = { pickerSelectedIds = absentIds },
+                            modifier = Modifier.weight(1f).height(42.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, AccentRed.copy(alpha = 0.5f)),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentRed),
+                            contentPadding = PaddingValues(horizontal = 4.dp)
+                        ) { Text("Absent", fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1) }
+                        OutlinedButton(
+                            onClick = { pickerSelectedIds = students.map { it.id }.toSet() },
+                            modifier = Modifier.weight(1f).height(42.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, Cyan.copy(alpha = 0.5f)),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Cyan),
+                            contentPadding = PaddingValues(horizontal = 4.dp)
+                        ) { Text("All", fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1) }
+                        OutlinedButton(
+                            onClick = { pickerSelectedIds = emptySet() },
+                            modifier = Modifier.weight(1f).height(42.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, TextMuted.copy(alpha = 0.5f)),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = TextMuted),
+                            contentPadding = PaddingValues(horizontal = 4.dp)
+                        ) { Text("Clear", fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1) }
+                    }
+                    LazyColumn(
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(students, key = { it.id }) { student ->
+                            val status = records[student.id]?.status ?: "not_marked"
+                            val selected = student.id in pickerSelectedIds
+                            val statusColor = when (status) {
+                                "present" -> AccentGreen
+                                "absent" -> AccentRed
+                                "leave" -> AccentSky
+                                "holiday" -> AccentGray
+                                else -> TextMuted
+                            }
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(if (selected) CardBgAlt.copy(alpha = 0.9f) else CardBgAlt)
+                                    .border(1.dp, if (selected) Cyan.copy(alpha = 0.6f) else BorderSub, RoundedCornerShape(14.dp))
+                                    .clickable {
+                                        pickerSelectedIds = if (student.id in pickerSelectedIds) pickerSelectedIds - student.id else pickerSelectedIds + student.id
+                                    }
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                SelectionBadge(selected = selected)
+                                Spacer(Modifier.width(12.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(student.fullName, color = TextWhite, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(student.phone ?: "No phone", color = if (student.phone.isNullOrBlank()) AccentRed else TextMuted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(999.dp))
+                                        .background(statusColor.copy(alpha = 0.15f))
+                                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                                ) {
+                                    Text(
+                                        when (status) {
+                                            "present" -> "Present"
+                                            "absent" -> "Absent"
+                                            "leave" -> "Leave"
+                                            "holiday" -> "Holiday"
+                                            else -> "Not marked"
+                                        },
+                                        color = statusColor,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    HorizontalDivider(color = BorderSub)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp)
+                            .height(52.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(Brush.horizontalGradient(listOf(ElectricBlue, Cyan)))
+                            .clickable {
+                                if (pickerSelectedIds.isEmpty()) {
+                                    Toast.makeText(context, "Select at least one student.", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    showRecipientPicker = false
+                                    selectedIds = pickerSelectedIds
+                                    selectionMode = false
+                                    showBulkComposer = true
+                                }
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            "Continue with ${pickerSelectedIds.size} student${if (pickerSelectedIds.size == 1) "" else "s"}",
+                            color = Color.White,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+        }
     }
 
     if (showTemplateEditor) {
@@ -577,7 +898,7 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
             text = {
                 Column {
                     Text(
-                        "Available: {guardianName}, {studentName}, {studentCode}, {batchName}, {date}, {instituteName}",
+                        "Available: {guardianName}, {studentName}, {studentCode}, {batchName}, {date}, {instituteName}, {instituteContact}",
                         color = TextMuted,
                         fontSize = 11.sp
                     )
@@ -609,6 +930,45 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
             }
         )
     }
+
+    // ── Bulk composer + progress ─────────────────────────
+    if (showBulkComposer) {
+        BulkMessageDialog(
+            title = if (bulkChannel == "whatsapp") "Bulk WhatsApp Message" else "Bulk SMS Message",
+            recipientCount = selectedIds.size,
+            messageText = bulkMessageText,
+            onMessageChange = { bulkMessageText = it },
+            initialDelaySeconds = (BulkMessagePreferences.getDelayMs(context) / 1000L).toInt(),
+            onStartWhatsApp = { delayMs ->
+                startBulkSend("whatsapp", delayMs, selectedIds)
+                showBulkComposer = false
+                clearSelection()
+            },
+            onStartSms = { delayMs ->
+                startBulkSend("sms", delayMs, selectedIds)
+                showBulkComposer = false
+                clearSelection()
+            },
+            onDismiss = { showBulkComposer = false },
+            broadcastMode = false
+        )
+    }
+
+    if (bulkState.active) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 12.dp),
+            contentAlignment = Alignment.BottomCenter
+        ) {
+            BulkSendProgressPanel(
+                state = bulkState,
+                onRetryFailed = { viewModel.bulkSender.retryFailed() },
+                onStop = { viewModel.bulkSender.cancel() },
+                onClose = { viewModel.bulkSender.reset() }
+            )
+        }
+    }
 }
 
 @Composable
@@ -632,7 +992,11 @@ private fun StudentAttendanceCard(
     studentName: String, studentCode: String, status: String,
     hasMessage: Boolean, isSending: Boolean,
     onMark: (String) -> Unit, onUndo: () -> Unit,
-    onSendMessage: () -> Unit
+    onSendMessage: () -> Unit,
+    selectionMode: Boolean = false,
+    selected: Boolean = false,
+    onClick: () -> Unit = {},
+    onLongPress: () -> Unit = {}
 ) {
     val chipData = listOf(
         "present" to Triple("P", AccentGreen, "Present"),
@@ -646,40 +1010,52 @@ private fun StudentAttendanceCard(
 
     Card(
         modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)
+            .pointerInput(selectionMode, selected) {
+                detectTapGestures(
+                    onTap = { if (selectionMode) onClick() },
+                    onLongPress = { onLongPress() }
+                )
+            }
             .shadow(2.dp, RoundedCornerShape(10.dp), spotColor = activeColor.copy(0.15f)),
-        shape = RoundedCornerShape(10.dp), colors = CardDefaults.cardColors(containerColor = CardBg),
-        border = BorderStroke(1.dp, BorderSub)
+        shape = RoundedCornerShape(10.dp), colors = CardDefaults.cardColors(containerColor = if (selected) CardBgAlt else CardBg),
+        border = BorderStroke(if (selected) 1.5.dp else 1.dp, if (selected) Cyan else BorderSub)
     ) {
         Row(Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (selectionMode) {
+                SelectionBadge(selected = selected)
+                Spacer(Modifier.width(10.dp))
+            }
             Column(Modifier.weight(1f)) {
                 Text(studentName, color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(studentCode, color = TextMuted, fontSize = 10.sp)
             }
 
             // Status chips
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                chipData.forEach { (key, triple) ->
-                    FilterChip(
-                        selected = status == key,
-                        onClick = { onMark(key) },
-                        label = { Text(triple.first, fontSize = 11.sp, fontWeight = FontWeight.Bold) },
-                        modifier = Modifier.height(30.dp),
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = triple.second.copy(alpha = 0.25f),
-                            selectedLabelColor = triple.second,
-                            containerColor = CardBgAlt,
-                            labelColor = TextMuted
-                        ),
-                        border = FilterChipDefaults.filterChipBorder(
-                            borderColor = BorderSub, selectedBorderColor = triple.second,
-                            enabled = true, selected = status == key
+            if (!selectionMode) {
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    chipData.forEach { (key, triple) ->
+                        FilterChip(
+                            selected = status == key,
+                            onClick = { onMark(key) },
+                            label = { Text(triple.first, fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                            modifier = Modifier.height(30.dp),
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = triple.second.copy(alpha = 0.25f),
+                                selectedLabelColor = triple.second,
+                                containerColor = CardBgAlt,
+                                labelColor = TextMuted
+                            ),
+                            border = FilterChipDefaults.filterChipBorder(
+                                borderColor = BorderSub, selectedBorderColor = triple.second,
+                                enabled = true, selected = status == key
+                            )
                         )
-                    )
+                    }
                 }
             }
         }
         // Bottom action row (undo + send msg)
-        if (status != "not_marked") {
+        if (status != "not_marked" && !selectionMode) {
             Row(Modifier.fillMaxWidth().padding(start = 10.dp, end = 10.dp, bottom = 6.dp),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 TextButton(

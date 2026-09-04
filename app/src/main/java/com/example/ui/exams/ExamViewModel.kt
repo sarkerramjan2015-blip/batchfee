@@ -14,6 +14,7 @@ import com.batchfee.edu.data.models.ResultEntity
 import com.batchfee.edu.data.models.StudentEntity
 import com.batchfee.edu.data.repository.ExamFeeRepository
 import com.batchfee.edu.domain.SessionManager
+import com.example.domain.BulkMessageController
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -39,6 +40,7 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
     val batches = _batches.asStateFlow()
 
     private val _instituteName = MutableStateFlow("")
+    private val _instituteContact = MutableStateFlow("")
 
     private val _institute = MutableStateFlow<InstituteEntity?>(null)
     val institute = _institute.asStateFlow()
@@ -55,6 +57,12 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
     private val _isLoading = MutableStateFlow(false)
     val isLoading = _isLoading.asStateFlow()
 
+    val bulkSender = BulkMessageController(
+        scope = viewModelScope,
+        db = db,
+        instituteId = SessionManager.currentInstituteId.value
+    )
+
     init { loadData() }
 
     private fun loadData() {
@@ -70,6 +78,7 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
             db.instituteDao().getInstituteFlow(instId).collect { institute ->
                 _institute.value = institute
                 _instituteName.value = institute?.name?.trim().orEmpty()
+                _instituteContact.value = com.example.domain.MessageTemplateStore.loadInstituteContact(db, instId)
             }
         }
     }
@@ -394,14 +403,26 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
         val marks = item.result?.marksObtained?.let { formatMarks(it) } ?: "-"
         val batchName = _batches.value.find { it.id == exam.batchId }?.name ?: "Batch"
         val instituteName = currentInstituteName()
-        val passFail = if ((item.result?.marksObtained ?: 0.0) >= exam.passingMarks) "Passed" else "Needs Improvement"
-        return buildString {
+        val template = com.example.domain.MessageTemplateStore.defaultFor(com.example.domain.MessageTemplateStore.TYPE_RESULT)
+        return template?.let {
+            com.example.domain.MessageTemplateStore.apply(
+                it,
+                mapOf(
+                    "guardianName" to "Guardian",
+                    "studentName" to item.student.fullName,
+                    "examName" to "${exam.examName} - $batchName",
+                    "marks" to "$marks / ${formatMarks(exam.totalMarks)}",
+                    "grade" to grade,
+                    "position" to item.position.toString(),
+                    "instituteName" to instituteName,
+                    "instituteContact" to _instituteContact.value
+                )
+            )
+        } ?: buildString {
             appendLine("Exam Result")
             appendLine("${exam.examName} - $batchName")
-            if (exam.subject != null) appendLine("Subject: ${exam.subject}")
             appendLine("Marks: $marks / ${formatMarks(exam.totalMarks)}")
             appendLine("Grade: $grade | Position: ${item.position}")
-            appendLine("Result: $passFail")
             appendLine()
             appendLine("-$instituteName")
         }

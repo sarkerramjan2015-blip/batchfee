@@ -581,7 +581,17 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
                 db = appDb,
                 staffId = route.staffId,
                 onBack = { navController.popBackStack() },
-                onEdit = { navController.navigate(EditStaffRoute(route.staffId)) }
+                onEdit = { navController.navigate(EditStaffRoute(route.staffId)) },
+                onTeachingSessions = { navController.navigate(TeacherClassSessionsRoute(route.staffId)) }
+            )
+        }
+
+        composable<TeacherClassSessionsRoute> { backStackEntry ->
+            val route = backStackEntry.toRoute<TeacherClassSessionsRoute>()
+            com.batchfee.edu.ui.staff.TeacherClassSessionsScreen(
+                db = appDb,
+                staffId = route.staffId,
+                onBack = { navController.popBackStack() },
             )
         }
 
@@ -656,7 +666,9 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
                 onBack = { navController.popBackStack() },
                 onAddExam = { navController.navigate(CreateExamRoute) },
                 onNavigateToDetail = { examId -> navController.navigate(ExamDetailRoute(examId)) },
-                onNavigateToPricing = { navController.navigate(PricingRoute) }
+                onNavigateToPricing = { navController.navigate(PricingRoute) },
+                onOpenFinalExams = { navController.navigate(FinalExamsRoute) },
+                onCreateFinalExam = { navController.navigate(CreateFinalExamRoute) }
             )
         }
         
@@ -680,6 +692,57 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
                 examId = route.examId,
                 onBack = { navController.popBackStack() },
                 onEdit = { navController.navigate(EditExamRoute(route.examId)) }
+            )
+        }
+
+        // ── Final Exam module ───────────────────────────────
+        composable<FinalExamsRoute> {
+            com.batchfee.edu.ui.exams.FinalExamListScreen(
+                db = appDb,
+                onBack = { navController.popBackStack() },
+                onCreateExam = { navController.navigate(CreateFinalExamRoute) },
+                onOpenExam = { examId -> navController.navigate(FinalExamDetailRoute(examId)) }
+            )
+        }
+
+        composable<CreateFinalExamRoute> {
+            com.batchfee.edu.ui.exams.CreateFinalExamScreen(
+                db = appDb,
+                onBack = { navController.popBackStack() },
+                onCreated = { examId ->
+                    navController.popBackStack()
+                    navController.navigate(FinalExamDetailRoute(examId))
+                }
+            )
+        }
+
+        composable<FinalExamDetailRoute> { backStackEntry ->
+            val route = backStackEntry.toRoute<FinalExamDetailRoute>()
+            com.batchfee.edu.ui.exams.FinalExamDetailScreen(
+                db = appDb,
+                examId = route.examId,
+                onBack = { navController.popBackStack() },
+                onOpenMarks = { examId, subjectId -> navController.navigate(FinalExamMarksRoute(examId, subjectId)) },
+                onOpenResults = { examId -> navController.navigate(FinalExamResultsRoute(examId)) }
+            )
+        }
+
+        composable<FinalExamMarksRoute> { backStackEntry ->
+            val route = backStackEntry.toRoute<FinalExamMarksRoute>()
+            com.batchfee.edu.ui.exams.FinalExamMarksEntryScreen(
+                db = appDb,
+                examId = route.examId,
+                subjectId = route.subjectId,
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        composable<FinalExamResultsRoute> { backStackEntry ->
+            val route = backStackEntry.toRoute<FinalExamResultsRoute>()
+            com.batchfee.edu.ui.exams.FinalExamResultsScreen(
+                db = appDb,
+                examId = route.examId,
+                onBack = { navController.popBackStack() }
             )
         }
         

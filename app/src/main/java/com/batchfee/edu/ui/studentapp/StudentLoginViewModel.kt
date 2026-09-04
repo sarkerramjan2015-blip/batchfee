@@ -3,7 +3,7 @@ package com.batchfee.edu.ui.studentapp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.batchfee.edu.data.repository.StudentAuthRepository
-import com.batchfee.edu.data.repository.StudentLoginResult
+import com.batchfee.edu.domain.RememberedStudentIdStore
 import com.batchfee.edu.domain.StudentSessionManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -12,23 +12,46 @@ import kotlinx.coroutines.launch
 
 data class StudentLoginUiState(
     val studentId: String = "",
+    val hasRememberedStudentId: Boolean = false,
     val password: String = "",
     val isLoading: Boolean = false,
     val errorMessage: String? = null,
     val passwordVisible: Boolean = false
 )
 
-class StudentLoginViewModel : ViewModel() {
+class StudentLoginViewModel(
+    private val rememberedStudentIdStore: RememberedStudentIdStore
+) : ViewModel() {
     private val authRepo = StudentAuthRepository()
 
-    private val _uiState = MutableStateFlow(StudentLoginUiState())
+    private val _uiState = MutableStateFlow(
+        rememberedStudentIdStore.load().let { rememberedId ->
+            StudentLoginUiState(
+                studentId = rememberedId,
+                hasRememberedStudentId = rememberedId.isNotBlank()
+            )
+        }
+    )
     val uiState: StateFlow<StudentLoginUiState> = _uiState.asStateFlow()
 
     private val _loginSuccess = MutableStateFlow(false)
     val loginSuccess: StateFlow<Boolean> = _loginSuccess.asStateFlow()
 
     fun updateStudentId(id: String) {
-        _uiState.value = _uiState.value.copy(studentId = id, errorMessage = null)
+        _uiState.value = _uiState.value.copy(
+            studentId = id,
+            hasRememberedStudentId = false,
+            errorMessage = null
+        )
+    }
+
+    fun useDifferentStudentId() {
+        rememberedStudentIdStore.clear()
+        _uiState.value = _uiState.value.copy(
+            studentId = "",
+            hasRememberedStudentId = false,
+            errorMessage = null
+        )
     }
 
     fun updatePassword(password: String) {
@@ -61,8 +84,14 @@ class StudentLoginViewModel : ViewModel() {
                     expiresAtMs = result.sessionExpiresAtMs
                 )
                 if (sessionStarted) {
+                    // Keep only the non-sensitive ID. The password and session remain unsaved.
+                    rememberedStudentIdStore.save(result.studentCode.ifBlank { id })
                     _loginSuccess.value = true
-                    _uiState.value = _uiState.value.copy(isLoading = false)
+                    _uiState.value = _uiState.value.copy(
+                        studentId = result.studentCode.ifBlank { id },
+                        hasRememberedStudentId = true,
+                        isLoading = false
+                    )
                 } else {
                     _uiState.value = _uiState.value.copy(
                         isLoading = false,

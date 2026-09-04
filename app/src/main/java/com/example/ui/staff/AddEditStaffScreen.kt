@@ -91,6 +91,11 @@ fun AddEditStaffScreen(
     var phone by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
     var monthlySalary by remember { mutableStateOf("") }
+    var staffCategory by remember { mutableStateOf("administration") }
+    var salaryType by remember { mutableStateOf("monthly") }
+    var perClassRate by remember { mutableStateOf("") }
+    var perHourRate by remember { mutableStateOf("") }
+    var subjects by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var passwordVisible by remember { mutableStateOf(false) }
     var selectedPermissions by remember { mutableStateOf<Set<String>>(emptySet()) }
@@ -149,6 +154,11 @@ fun AddEditStaffScreen(
             phone = s.phone ?: ""
             email = s.email ?: ""
             monthlySalary = if (s.monthlySalary % 1.0 == 0.0) s.monthlySalary.toLong().toString() else s.monthlySalary.toString()
+            staffCategory = s.staffCategory
+            salaryType = s.salaryType
+            perClassRate = s.perClassRate.takeIf { it > 0 }?.let { if (it % 1.0 == 0.0) it.toLong().toString() else it.toString() }.orEmpty()
+            perHourRate = s.perHourRate.takeIf { it > 0 }?.let { if (it % 1.0 == 0.0) it.toLong().toString() else it.toString() }.orEmpty()
+            subjects = s.subjects.orEmpty()
             selectedPermissions = StaffPermissions.parse(s.permissions)
             selectedBatchIds = s.assignedBatchIds?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() }?.toSet() ?: emptySet()
             status = s.status
@@ -238,6 +248,17 @@ fun AddEditStaffScreen(
             )
             Spacer(Modifier.height(12.dp))
 
+            SectionLabel("Staff Category")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                StatusChip("administration", "Administration", staffCategory == "administration", ElectricBlue, Modifier.weight(1f)) {
+                    staffCategory = "administration"
+                }
+                StatusChip("teacher", "Teacher", staffCategory == "teacher", AccentGreen, Modifier.weight(1f)) {
+                    staffCategory = "teacher"
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+
             SectionLabel("Phone")
             PhoneInputField(
                 value = phone,
@@ -256,13 +277,52 @@ fun AddEditStaffScreen(
             )
             Spacer(Modifier.height(12.dp))
 
-            SectionLabel("Monthly Salary (BDT)")
+            SectionLabel("Salary Type")
+            Row(horizontalArrangement = Arrangement.spacedBy(7.dp), modifier = Modifier.fillMaxWidth()) {
+                StatusChip("monthly", "Monthly", salaryType == "monthly", ElectricBlue, Modifier.weight(1f)) { salaryType = "monthly" }
+                StatusChip("per_class", "Per Class", salaryType == "per_class", AccentGreen, Modifier.weight(1f)) { salaryType = "per_class" }
+                StatusChip("per_hour", "Per Hour", salaryType == "per_hour", AccentAmber, Modifier.weight(1f)) { salaryType = "per_hour" }
+            }
+            Spacer(Modifier.height(10.dp))
+            val payLabel = when (salaryType) {
+                "per_class" -> "Per-Class Rate (BDT)"
+                "per_hour" -> "Per-Hour Rate (BDT)"
+                else -> "Monthly Salary (BDT)"
+            }
+            val payValue = when (salaryType) {
+                "per_class" -> perClassRate
+                "per_hour" -> perHourRate
+                else -> monthlySalary
+            }
+            SectionLabel(payLabel)
             DarkTextField(
-                value = monthlySalary,
-                onValueChange = { monthlySalary = it },
+                value = payValue,
+                onValueChange = {
+                    when (salaryType) {
+                        "per_class" -> perClassRate = it
+                        "per_hour" -> perHourRate = it
+                        else -> monthlySalary = it
+                    }
+                },
                 placeholder = "0",
                 keyboardType = KeyboardType.Number
             )
+
+            if (staffCategory == "teacher") {
+                Spacer(Modifier.height(12.dp))
+                SectionLabel("Subjects")
+                DarkTextField(
+                    value = subjects,
+                    onValueChange = { subjects = it },
+                    placeholder = "e.g. ICT, Physics (comma separated)"
+                )
+                Text(
+                    "Completed classes will use this teacher's selected salary rate.",
+                    color = TextMuted,
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(top = 6.dp)
+                )
+            }
 
             Spacer(Modifier.height(16.dp))
             SectionLabel("Account Status")
@@ -272,7 +332,7 @@ fun AddEditStaffScreen(
             }
 
             Spacer(Modifier.height(18.dp))
-            SectionLabel("Assigned Batches")
+            SectionLabel(if (staffCategory == "teacher") "Teacher Batch Assignment" else "Assigned Batches")
             Spacer(Modifier.height(6.dp))
             if (batches.isEmpty()) {
                 EmptyPanel("No batches available yet.")
@@ -324,13 +384,20 @@ fun AddEditStaffScreen(
             }
 
             Spacer(Modifier.height(20.dp))
-            val salary = monthlySalary.toDoubleOrNull()
+            val monthlySalaryAmount = monthlySalary.toDoubleOrNull() ?: 0.0
+            val classRateAmount = perClassRate.toDoubleOrNull() ?: 0.0
+            val hourRateAmount = perHourRate.toDoubleOrNull() ?: 0.0
+            val selectedRate = when (salaryType) {
+                "per_class" -> classRateAmount
+                "per_hour" -> hourRateAmount
+                else -> monthlySalaryAmount
+            }
             val canSave = !isSaving && fullName.isNotBlank() &&
                 loginId.isNotBlank() &&
                 email.isNotBlank() &&
                 roleTitle.isNotBlank() &&
-                salary != null &&
-                salary >= 0 &&
+                (salaryType == "monthly" || selectedRate > 0) &&
+                (staffCategory != "teacher" || subjects.split(",").any { it.isNotBlank() }) &&
                 (isEdit || password.length >= 6)
 
             Box(
@@ -347,8 +414,8 @@ fun AddEditStaffScreen(
                 TextButton(
                     onClick = {
                         errorMessage = null
-                        if (salary == null) {
-                            errorMessage = "Enter a valid monthly salary."
+                        if (selectedRate < 0) {
+                            errorMessage = "Enter a valid salary amount."
                             return@TextButton
                         }
                         isSaving = true
@@ -375,7 +442,12 @@ fun AddEditStaffScreen(
                                         roleTitle = roleTitle,
                                         phone = phone,
                                         email = email,
-                                        monthlySalary = salary,
+                                        monthlySalary = monthlySalaryAmount,
+                                        staffCategory = staffCategory,
+                                        salaryType = salaryType,
+                                        perClassRate = classRateAmount,
+                                        perHourRate = hourRateAmount,
+                                        subjects = subjects,
                                         permissions = selectedPermissions,
                                         assignedBatchIds = selectedBatchIds,
                                         status = status,
@@ -399,7 +471,12 @@ fun AddEditStaffScreen(
                                         roleTitle = roleTitle,
                                         phone = phone,
                                         email = email,
-                                        monthlySalary = salary,
+                                        monthlySalary = monthlySalaryAmount,
+                                        staffCategory = staffCategory,
+                                        salaryType = salaryType,
+                                        perClassRate = classRateAmount,
+                                        perHourRate = hourRateAmount,
+                                        subjects = subjects,
                                         permissions = selectedPermissions,
                                         assignedBatchIds = selectedBatchIds,
                                         password = password,

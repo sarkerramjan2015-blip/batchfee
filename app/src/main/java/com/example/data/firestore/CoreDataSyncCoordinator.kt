@@ -56,7 +56,10 @@ object CoreDataSyncCoordinator {
             if (plan.syncEnquiries) EnquirySyncHelper.syncAllFromFirestore(db, instituteId)
             if (plan.syncExams) ExamSyncHelper.syncAllFromFirestore(db, instituteId)
             if (plan.syncExpenses) ExpenseSyncHelper.syncAllFromFirestore(db, instituteId)
-            if (plan.syncSalaries) SalarySyncHelper.syncAllFromFirestore(db, instituteId)
+            if (plan.syncSalaries) {
+                SalarySyncHelper.syncAllFromFirestore(db, instituteId)
+                TeachingSessionSyncHelper.syncAllFromFirestore(db, instituteId)
+            }
             if (plan.syncReminders) ReminderTemplateSyncHelper.syncAllFromFirestore(db, instituteId)
             if (plan.syncAuditLogs) AuditLogSyncHelper.syncAllFromFirestore(db, instituteId)
         } catch (error: CancellationException) {
@@ -99,8 +102,12 @@ object CoreDataSyncCoordinator {
                 InstituteRefreshScope.ENROLLMENTS ->
                     BatchStudentSyncHelper.syncAllFromFirestore(db, instituteId)
 
-                InstituteRefreshScope.STAFF ->
+                InstituteRefreshScope.STAFF -> {
                     StaffSyncHelper.syncAllFromFirestore(db, instituteId)
+                    if (plan.syncSalaries) {
+                        TeachingSessionSyncHelper.syncAllFromFirestore(db, instituteId)
+                    }
+                }
 
                 InstituteRefreshScope.FINANCE -> {
                     if (plan.replayFinanceOperations) {

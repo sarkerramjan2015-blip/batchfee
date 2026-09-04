@@ -42,7 +42,6 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.batchfee.edu.data.audit.StaffActivityLogger
 import com.batchfee.edu.data.database.AppDatabase
-import com.batchfee.edu.data.firestore.BatchStudentSyncHelper
 import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
 import com.batchfee.edu.data.firestore.StudentSyncHelper
 import com.batchfee.edu.data.media.FirebaseStorageImageUploadHelper
@@ -52,12 +51,14 @@ import com.batchfee.edu.data.models.FeeEntity
 import com.batchfee.edu.data.models.PaymentEntity
 import com.batchfee.edu.data.models.StudentEntity
 import com.batchfee.edu.data.repository.FeeCollectionRepository
+import com.batchfee.edu.data.repository.BatchEnrollmentRepository
 import com.batchfee.edu.data.repository.FinancialOperationPendingException
 import com.batchfee.edu.data.repository.StudentDeletionRepository
 import com.batchfee.edu.domain.appendInstituteSignature
 import com.batchfee.edu.domain.loadInstituteSignature
 import com.batchfee.edu.domain.MonthlyDueCalculator
 import com.batchfee.edu.domain.SessionManager
+import com.batchfee.edu.domain.isCourseBatch
 import com.batchfee.edu.ui.components.buildWhatsAppUrl
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -118,6 +119,8 @@ fun StudentProfileScreen(
 
     var student by remember { mutableStateOf<StudentEntity?>(null) }
     var instituteSignature by remember { mutableStateOf("") }
+    var instituteName by remember { mutableStateOf("") }
+    var instituteContact by remember { mutableStateOf("") }
     var showStudentMenu by remember { mutableStateOf(false) }
     var showMessageDialog by remember { mutableStateOf(false) }
     var directMessage by remember { mutableStateOf("") }
@@ -147,10 +150,15 @@ fun StudentProfileScreen(
 
     LaunchedEffect(instId) {
         instituteSignature = loadInstituteSignature(db, instId)
+        val institute = instId?.let { db.instituteDao().getInstitute(it) }
+        instituteName = institute?.name?.trim().orEmpty()
+        instituteContact = com.example.domain.MessageTemplateStore.loadInstituteContact(db, instId)
     }
 
     // ── Batch dialog state ──────────────────────────────────
     var showBatchDialog by remember { mutableStateOf(false) }
+    var pendingBatchUnassign by remember { mutableStateOf<BatchStudentEntity?>(null) }
+    var isUnassigningBatch by remember { mutableStateOf(false) }
 
     // ── Shift dialog state ───────────────────────────────────
     var showShiftDialog by remember { mutableStateOf(false) }
@@ -158,6 +166,7 @@ fun StudentProfileScreen(
     // ── Fee collection state ─────────────────────────────────
     var showFeeForm by remember { mutableStateOf(false) }
     val feeRepository = remember { FeeCollectionRepository(db) }
+    val batchEnrollmentRepository = remember(db) { BatchEnrollmentRepository(db) }
     val studentDeletionRepository = remember(db) { StudentDeletionRepository(db) }
     var selectedBatchId by remember { mutableStateOf<String?>(null) }
     var feePeriod by remember { mutableStateOf("") }
@@ -445,7 +454,7 @@ fun StudentProfileScreen(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Filled.Groups, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp))
-                            Text("Assign Batch", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                            Text("Manage Batches", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -1103,14 +1112,21 @@ fun StudentProfileScreen(
                 AlertDialog(
                     onDismissRequest = { showBatchDialog = false },
                     containerColor = CardBgAlt,
-                    title = { Text("Assign Batch", color = TextWhite, fontWeight = FontWeight.Bold) },
+                    title = { Text("Manage Batch Assignment", color = TextWhite, fontWeight = FontWeight.Bold) },
                     text = {
                         Column {
+                            Text(
+                                "Tap an assigned batch to remove only that batch. Unpaid fees from a mistaken assignment will be cleared; payment history stays safe.",
+                                color = TextMuted,
+                                fontSize = 12.sp
+                            )
+                            Spacer(Modifier.height(10.dp))
                             if (allBatches.isEmpty()) {
                                 Text("No batches available. Create a batch first.", color = TextMuted)
                             } else {
                                 allBatches.forEach { batch ->
-                                    val isEnrolled = batch.id in enrolledBatchIds
+                                    val activeEnrollment = activeEnrollments.firstOrNull { it.batchId == batch.id }
+                                    val isEnrolled = activeEnrollment != null
                                     Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
@@ -1120,29 +1136,23 @@ fun StudentProfileScreen(
                                                 if (isEnrolled) Modifier.border(1.dp, Cyan.copy(alpha = 0.3f), RoundedCornerShape(10.dp))
                                                 else Modifier.border(1.dp, BorderSub, RoundedCornerShape(10.dp))
                                             )
-                                            .clickable(enabled = !isEnrolled && batch.id !in assigningBatchIds) {
-                                                if (!isEnrolled && batch.id !in assigningBatchIds && instId != null) {
+                                            .clickable(
+                                                enabled = batch.id !in assigningBatchIds && !isUnassigningBatch
+                                            ) {
+                                                if (isEnrolled) {
+                                                    pendingBatchUnassign = activeEnrollment
+                                                } else if (batch.id !in assigningBatchIds && instId != null) {
                                                     assigningBatchIds = assigningBatchIds + batch.id
                                                     scope.launch {
                                                         try {
                                                             val enrollmentStart = s.admissionDateMs.takeIf { it > 0L }
                                                                 ?: System.currentTimeMillis()
-                                                            val enrollment = BatchStudentEntity(
-                                                                id = UUID.randomUUID().toString(),
+                                                            BatchEnrollmentRepository(db).enroll(
                                                                 instituteId = instId!!,
-                                                                batchId = batch.id,
                                                                 studentId = studentId,
-                                                                joinedAtMs = enrollmentStart,
-                                                                status = "active",
-                                                                leftAtMs = null,
-                                                                firstMonthFeePeriod = MonthlyDueCalculator.periodFor(enrollmentStart),
-                                                                firstMonthFeeAmount = MonthlyDueCalculator.calculateFirstMonthFee(
-                                                                    batch.monthlyFeeAmount,
-                                                                    enrollmentStart
-                                                                )
+                                                                batch = batch,
+                                                                enrollmentStartMs = enrollmentStart
                                                             )
-                                                            BatchStudentSyncHelper.upsertEnrollment(enrollment)
-                                                            db.batchStudentDao().enrollStudent(enrollment)
                                                             // Refresh enrolled set
                                                             enrolledBatchIds = enrolledBatchIds + batch.id
                                                             batches = batches + batch
@@ -1170,7 +1180,22 @@ fun StudentProfileScreen(
                                         Spacer(Modifier.width(10.dp))
                                         Column {
                                             Text(batch.name, color = if (isEnrolled) Cyan else TextWhite, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                                            Text("${batch.monthlyFeeAmount} BDT/mo", color = TextMuted, fontSize = 11.sp)
+                                            Text(
+                                                if (batch.isCourseBatch()) {
+                                                    "Course fee BDT ${batch.courseFeeAmount.toLong()}"
+                                                } else {
+                                                    "BDT ${batch.monthlyFeeAmount.toLong()}/mo"
+                                                },
+                                                color = TextMuted,
+                                                fontSize = 11.sp
+                                            )
+                                            if (isEnrolled) {
+                                                Text(
+                                                    "Assigned · tap to remove",
+                                                    color = DangerRed,
+                                                    fontSize = 10.sp
+                                                )
+                                            }
                                         }
                                     }
                                     if (batch != allBatches.last()) Spacer(Modifier.height(8.dp))
@@ -1187,8 +1212,94 @@ fun StudentProfileScreen(
             }
 
             // ── Shift Batch Dialog ────────────────────────────
+            pendingBatchUnassign?.let { enrollment ->
+                val batchName = batches.firstOrNull { it.id == enrollment.batchId }?.name ?: "this batch"
+                AlertDialog(
+                    onDismissRequest = {
+                        if (!isUnassigningBatch) pendingBatchUnassign = null
+                    },
+                    containerColor = CardBg,
+                    icon = {
+                        Icon(
+                            Icons.Filled.RemoveCircleOutline,
+                            contentDescription = null,
+                            tint = DangerRed,
+                            modifier = Modifier.size(36.dp)
+                        )
+                    },
+                    title = {
+                        Text("Remove from $batchName?", color = TextWhite, fontWeight = FontWeight.Bold)
+                    },
+                    text = {
+                        Text(
+                            "The student will no longer appear in this batch. Unpaid fees linked to this batch will be removed from due collection. Any payment or receipt history will remain safe.",
+                            color = TextMuted,
+                            fontSize = 13.sp
+                        )
+                    },
+                    confirmButton = {
+                        Button(
+                            onClick = {
+                                if (isUnassigningBatch) return@Button
+                                isUnassigningBatch = true
+                                scope.launch {
+                                    try {
+                                        val result = batchEnrollmentRepository.unassign(enrollment)
+                                        val summary = buildString {
+                                            append("Removed from ")
+                                            append(batchName)
+                                            append(".")
+                                            if (result.cancelledFeeIds.isNotEmpty()) {
+                                                append(" ${result.cancelledFeeIds.size} unpaid fee")
+                                                append(if (result.cancelledFeeIds.size == 1) " was" else "s were")
+                                                append(" cleared.")
+                                            }
+                                            if (result.retainedHistoryFeeCount > 0) {
+                                                append(" Payment history was kept safe.")
+                                            }
+                                        }
+                                        Toast.makeText(context, summary, Toast.LENGTH_LONG).show()
+                                        pendingBatchUnassign = null
+                                    } catch (error: Exception) {
+                                        Toast.makeText(
+                                            context,
+                                            error.message ?: "Could not remove this batch. Check your connection and try again.",
+                                            Toast.LENGTH_LONG
+                                        ).show()
+                                    } finally {
+                                        isUnassigningBatch = false
+                                    }
+                                }
+                            },
+                            enabled = !isUnassigningBatch,
+                            colors = ButtonDefaults.buttonColors(containerColor = DangerRed),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            if (isUnassigningBatch) {
+                                CircularProgressIndicator(
+                                    color = Color.White,
+                                    strokeWidth = 2.dp,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            } else {
+                                Text("Remove Batch", color = Color.White, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(
+                            onClick = { pendingBatchUnassign = null },
+                            enabled = !isUnassigningBatch
+                        ) {
+                            Text("Cancel", color = TextMuted)
+                        }
+                    }
+                )
+            }
+
             if (showShiftDialog) {
                 var allBatches by remember { mutableStateOf<List<BatchEntity>>(emptyList()) }
+                var selectedSourceEnrollmentId by remember { mutableStateOf<String?>(null) }
                 var selectedNewBatchId by remember { mutableStateOf<String?>(null) }
                 var isShifting by remember { mutableStateOf(false) }
                 LaunchedEffect(instId) {
@@ -1197,7 +1308,20 @@ fun StudentProfileScreen(
                         db.batchDao().getBatchesByInstitute(instId).collect { allBatches = it }
                     }
                 }
-                val availableBatches = allBatches.filter { !enrolledBatchIds.contains(it.id) }
+                LaunchedEffect(activeEnrollments) {
+                    if (selectedSourceEnrollmentId !in activeEnrollments.map { it.id }) {
+                        selectedSourceEnrollmentId = activeEnrollments.firstOrNull()?.id
+                    }
+                }
+                val sourceEnrollment = activeEnrollments.firstOrNull { it.id == selectedSourceEnrollmentId }
+                val sourceBatch = allBatches.firstOrNull { it.id == sourceEnrollment?.batchId }
+                    ?: batches.firstOrNull { it.id == sourceEnrollment?.batchId }
+                val availableBatches = allBatches.filter { batch ->
+                    batch.id != sourceEnrollment?.batchId &&
+                        !enrolledBatchIds.contains(batch.id) &&
+                        batch.status.equals("active", ignoreCase = true)
+                }
+                val selectedTargetBatch = availableBatches.firstOrNull { it.id == selectedNewBatchId }
 
                 AlertDialog(
                     onDismissRequest = { if (!isShifting) showShiftDialog = false },
@@ -1205,11 +1329,47 @@ fun StudentProfileScreen(
                     icon = { Icon(Icons.Filled.SwapHoriz, null, tint = AccentAmber, modifier = Modifier.size(40.dp)) },
                     title = { Text("Shift Student to Another Batch", color = TextWhite, fontSize = 17.sp, fontWeight = FontWeight.Bold) },
                     text = {
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 420.dp)
+                                .verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
                             Text(
-                                "Select a target batch below. The student will be removed from all currently enrolled batches and moved to the new batch. All existing fee records will follow the student.",
+                                "Move one selected batch assignment. Old paid receipts and completed fee history stay safely in the old batch.",
                                 color = TextMuted, fontSize = 12.sp
                             )
+                            if (activeEnrollments.size > 1) {
+                                Text("Move from", color = TextWhite, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                activeEnrollments.forEach { enrollment ->
+                                    val batch = allBatches.firstOrNull { it.id == enrollment.batchId }
+                                        ?: batches.firstOrNull { it.id == enrollment.batchId }
+                                    val isSelectedSource = enrollment.id == selectedSourceEnrollmentId
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(if (isSelectedSource) AccentAmber.copy(alpha = 0.1f) else CardBgAlt)
+                                            .border(1.dp, if (isSelectedSource) AccentAmber.copy(alpha = 0.5f) else BorderSub, RoundedCornerShape(10.dp))
+                                            .clickable(enabled = !isShifting) {
+                                                selectedSourceEnrollmentId = enrollment.id
+                                                selectedNewBatchId = null
+                                            }
+                                            .padding(10.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(batch?.name ?: "Previous batch", color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                            Text("Current assignment", color = TextMuted, fontSize = 11.sp)
+                                        }
+                                        if (isSelectedSource) Icon(Icons.Filled.CheckCircle, null, tint = AccentAmber, modifier = Modifier.size(19.dp))
+                                    }
+                                }
+                            } else if (sourceBatch != null) {
+                                Text("From: ${sourceBatch.name}", color = TextMuted, fontSize = 12.sp)
+                            }
+                            Text("Move to", color = TextWhite, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                             Spacer(Modifier.height(4.dp))
                             if (availableBatches.isEmpty()) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1233,7 +1393,11 @@ fun StudentProfileScreen(
                                         Column(modifier = Modifier.weight(1f)) {
                                             Text(batch.name, color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                                             Text(
-                                                "Monthly: BDT ${"%.0f".format(batch.monthlyFeeAmount)} · Status: ${batch.status}",
+                                                if (batch.isCourseBatch()) {
+                                                    "Course fee: BDT ${"%.0f".format(batch.courseFeeAmount)}"
+                                                } else {
+                                                    "Monthly fee: BDT ${"%.0f".format(batch.monthlyFeeAmount)}"
+                                                },
                                                 color = TextMuted, fontSize = 11.sp
                                             )
                                         }
@@ -1243,34 +1407,49 @@ fun StudentProfileScreen(
                                     }
                                 }
                             }
+                            selectedTargetBatch?.let { target ->
+                                val detail = if (target.isCourseBatch()) {
+                                    "Course fee BDT ${"%.0f".format(target.courseFeeAmount)} will be added once."
+                                } else {
+                                    "This month's fee will be calculated from today's shift date."
+                                }
+                                Text(detail, color = Cyan, fontSize = 11.sp)
+                            }
                         }
                     },
                     confirmButton = {
                         Button(
                             onClick = {
+                                val source = sourceEnrollment ?: return@Button
+                                val target = selectedTargetBatch ?: return@Button
                                 isShifting = true
-                                val targetId = selectedNewBatchId ?: return@Button
-                                val parentVM = StudentViewModel(db)
-                                val oldBatchId = batches.firstOrNull()?.id
-                                if (oldBatchId != null) {
-                                    parentVM.shiftStudentBatch(
-                                        studentId = studentId,
-                                        oldBatchId = oldBatchId,
-                                        newBatchId = targetId,
-                                        onSuccess = {
+                                scope.launch {
+                                    try {
+                                        batchEnrollmentRepository.shift(
+                                            sourceEnrollment = source,
+                                            targetBatch = target,
+                                            shiftDateMs = System.currentTimeMillis()
+                                        )
+                                        StaffActivityLogger.logCompletedAction(
+                                            db,
+                                            "student_batch_changed",
+                                            "batches",
+                                            "Moved ${s.fullName} from ${sourceBatch?.name ?: "a batch"} to ${target.name}"
+                                        )
+                                        Toast.makeText(context, "Student moved to ${target.name}.", Toast.LENGTH_SHORT).show()
+                                        showShiftDialog = false
+                                    } catch (error: Exception) {
+                                        Toast.makeText(
+                                            context,
+                                            error.message ?: "Could not shift the student. Please try again.",
+                                            Toast.LENGTH_LONG
+                                        ).show()
+                                    } finally {
                                             isShifting = false
-                                            showShiftDialog = false
-                                        },
-                                        onError = { msg ->
-                                            isShifting = false
-                                            showShiftDialog = false
-                                        }
-                                    )
-                                } else {
-                                    isShifting = false
+                                    }
                                 }
                             },
-                            enabled = !isShifting && selectedNewBatchId != null && availableBatches.isNotEmpty(),
+                            enabled = !isShifting && sourceEnrollment != null && selectedTargetBatch != null,
                             colors = ButtonDefaults.buttonColors(containerColor = AccentAmber),
                             shape = RoundedCornerShape(10.dp)
                         ) {
@@ -1567,7 +1746,7 @@ fun StudentProfileScreen(
                     message = directMessage,
                     onMessageChange = { directMessage = it },
                     onUseAdmissionWelcome = {
-                        directMessage = buildStudentAdmissionWelcomeMessage(s)
+                        directMessage = buildStudentAdmissionWelcomeMessage(s, instituteName, instituteContact)
                     },
                     onDismiss = { showMessageDialog = false },
                     onSendSms = {
@@ -3190,11 +3369,28 @@ private fun TwoColumnInfo(
     }
 }
 
-private fun buildStudentAdmissionWelcomeMessage(student: StudentEntity): String = buildString {
-    append("Congratulations, ${student.fullName}! Your admission has been completed successfully.")
-    append("\n\nStudent ID: ${student.studentCode.ifBlank { student.id }}")
-    student.className?.takeIf { it.isNotBlank() }?.let { append("\nClass: $it") }
-    append("\n\nWelcome to our learning community. We are happy to have you with us!")
+private fun buildStudentAdmissionWelcomeMessage(student: StudentEntity, instituteName: String = "", instituteContact: String = ""): String {
+    val template = com.example.domain.MessageTemplateStore.defaultFor(com.example.domain.MessageTemplateStore.TYPE_WELCOME)
+    return template?.let {
+        com.example.domain.MessageTemplateStore.apply(
+            it,
+            mapOf(
+                "guardianName" to "Guardian",
+                "studentName" to student.fullName,
+                "studentCode" to student.studentCode.ifBlank { student.id },
+                "className" to student.className.orEmpty(),
+                "instituteName" to instituteName,
+                "instituteContact" to instituteContact
+            )
+        )
+    } ?: buildString {
+        append("Dear Guardian,\n\nWelcome! ")
+        append(student.fullName)
+        append(" is now admitted to our institute.")
+        append("\n\nStudent ID: ${student.studentCode.ifBlank { student.id }}")
+        student.className?.takeIf { it.isNotBlank() }?.let { append("\nClass: $it") }
+        if (instituteContact.isNotBlank()) append("\nContact: $instituteContact")
+    }
 }
 
 @Composable

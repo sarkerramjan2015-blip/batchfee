@@ -17,6 +17,8 @@ import com.batchfee.edu.domain.loadInstituteSignature
 import com.batchfee.edu.domain.MonthlyDueCalculator
 import com.batchfee.edu.domain.ComputedMonthDue
 import com.batchfee.edu.domain.SessionManager
+import com.batchfee.edu.domain.isCourseBatch
+import com.example.domain.BulkMessageController
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -90,6 +92,12 @@ class FeeViewModel(private val db: AppDatabase) : ViewModel() {
 
     private val _monthWiseDues = MutableStateFlow<List<MonthWiseDue>>(emptyList())
     val monthWiseDues = _monthWiseDues.asStateFlow()
+
+    val bulkSender = BulkMessageController(
+        scope = viewModelScope,
+        db = db,
+        instituteId = SessionManager.currentInstituteId.value
+    )
 
     init {
         loadData()
@@ -200,7 +208,7 @@ class FeeViewModel(private val db: AppDatabase) : ViewModel() {
         allStudents.values.forEach { student ->
             enrollmentsByStudent[student.id].orEmpty().forEach { enrollment ->
                 val batch = allBatches[enrollment.batchId] ?: return@forEach
-                if (batch.monthlyFeeAmount <= 0.0) return@forEach
+                if (!batch.isCourseBatch() && batch.monthlyFeeAmount > 0.0) {
                 val billingStartMs = MonthlyDueCalculator.effectiveBillingStartMs(
                     student.admissionDateMs,
                     enrollment.joinedAtMs,
@@ -239,6 +247,7 @@ class FeeViewModel(private val db: AppDatabase) : ViewModel() {
                         studentStatus = student.status
                     )
                 }
+                }
 
                 val admissionAlreadyCreated = fees.any { fee ->
                     fee.studentId == student.id && fee.batchId == batch.id &&
@@ -254,6 +263,24 @@ class FeeViewModel(private val db: AppDatabase) : ViewModel() {
                         dueAmount = batch.admissionFeeAmount,
                         totalAmount = batch.admissionFeeAmount,
                         paidAmount = 0.0, dueDateMs = 0L,
+                        status = "unpaid", studentStatus = student.status
+                    )
+                }
+
+                val courseFeeAlreadyCreated = fees.any { fee ->
+                    fee.studentId == student.id && fee.batchId == batch.id &&
+                        fee.feeType.equals("course_fee", ignoreCase = true)
+                }
+                if (enrollment.status.equals("active", ignoreCase = true) &&
+                    batch.isCourseBatch() && batch.courseFeeAmount > 0.0 && !courseFeeAlreadyCreated) {
+                    total += batch.courseFeeAmount
+                    details += DueFeeDetail(
+                        feeId = "", studentId = student.id,
+                        studentName = student.fullName, studentPhone = student.phone,
+                        batchName = batch.name, feePeriod = "Course",
+                        dueAmount = batch.courseFeeAmount,
+                        totalAmount = batch.courseFeeAmount,
+                        paidAmount = 0.0, dueDateMs = batch.startDateMs ?: enrollment.joinedAtMs,
                         status = "unpaid", studentStatus = student.status
                     )
                 }
@@ -341,10 +368,23 @@ class FeeViewModel(private val db: AppDatabase) : ViewModel() {
         val instId = SessionManager.currentInstituteId.value ?: return
         val dateLabel = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date())
         viewModelScope.launch {
-            val instituteSignature = loadInstituteSignature(db, instId)
-            val msg = appendInstituteSignature(
-                "Dear Parent, $studentName has a pending fee of BDT ${"%.0f".format(dueAmount)} for $feePeriod as of $dateLabel. Please pay at your earliest convenience.",
-                instituteSignature
+            val institute = db.instituteDao().getInstitute(instId)
+            val instituteName = institute?.name?.trim().orEmpty().ifBlank { "BatchFee" }
+            val instituteContact = com.example.domain.MessageTemplateStore.loadInstituteContact(db, instId)
+            val template = com.example.domain.MessageTemplateStore.load(db, instId, com.example.domain.MessageTemplateStore.TYPE_DUE_FEE)
+                ?: com.example.domain.MessageTemplateStore.defaultFor(com.example.domain.MessageTemplateStore.TYPE_DUE_FEE)
+                ?: return@launch
+            val msg = com.example.domain.MessageTemplateStore.apply(
+                template,
+                mapOf(
+                    "guardianName" to "Guardian",
+                    "studentName" to studentName,
+                    "amount" to "%.0f".format(dueAmount),
+                    "period" to feePeriod,
+                    "date" to dateLabel,
+                    "instituteName" to instituteName,
+                    "instituteContact" to instituteContact
+                )
             )
             try {
             when (channel) {

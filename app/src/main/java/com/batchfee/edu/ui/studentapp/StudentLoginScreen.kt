@@ -27,6 +27,7 @@ import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -36,6 +37,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.batchfee.edu.domain.RememberedStudentIdStore
 import kotlinx.coroutines.flow.collectLatest
 
 // Premium dark palette — matching the main AuthScreen
@@ -59,7 +61,10 @@ fun StudentLoginScreen(
     onBack: () -> Unit,
     onLoginSuccess: () -> Unit
 ) {
-    val viewModel = remember { StudentLoginViewModel() }
+    val context = LocalContext.current
+    val viewModel = remember(context.applicationContext) {
+        StudentLoginViewModel(RememberedStudentIdStore(context.applicationContext))
+    }
     val uiState by viewModel.uiState.collectAsState()
     val focusManager = LocalFocusManager.current
     var contentVisible by remember { mutableStateOf(false) }
@@ -254,6 +259,36 @@ fun StudentLoginScreen(
                                 unfocusedLeadingIconColor = StuMuted
                             )
                         )
+
+                        if (uiState.hasRememberedStudentId) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    Icons.Filled.CheckCircle,
+                                    contentDescription = null,
+                                    tint = StuGreen,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    text = "Student ID saved on this phone",
+                                    color = StuMuted,
+                                    fontSize = 12.sp,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                TextButton(
+                                    onClick = viewModel::useDifferentStudentId,
+                                    enabled = !uiState.isLoading,
+                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
+                                ) {
+                                    Text("Change", color = StuCyan, fontSize = 12.sp)
+                                }
+                            }
+                        }
 
                         Spacer(Modifier.height(12.dp))
 

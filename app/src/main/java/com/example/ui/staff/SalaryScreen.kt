@@ -330,6 +330,7 @@ fun SalaryDashboardScreen(
 fun GenerateSalaryScreen(db: AppDatabase, onBack: () -> Unit) {
     val viewModel: SalaryViewModel = viewModel(factory = SalaryViewModelFactory(db))
     val activeStaff by viewModel.activeStaff.collectAsState()
+    val teacherPayPreview by viewModel.teacherPayPreview.collectAsState()
     val isAdmin = remember { SessionManager.isAdmin() }
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -340,7 +341,11 @@ fun GenerateSalaryScreen(db: AppDatabase, onBack: () -> Unit) {
     var deduction by remember { mutableStateOf("0") }
     var advance by remember { mutableStateOf("0") }
     var isGenerating by remember { mutableStateOf(false) }
-    val pendingSalaryId = remember(selectedStaffId, month) { UUID.randomUUID().toString() }
+    val selectedStaff = activeStaff.firstOrNull { it.id == selectedStaffId }
+
+    LaunchedEffect(selectedStaffId, month) {
+        viewModel.loadTeacherPayPreview(selectedStaffId, month)
+    }
 
     BackHandler(enabled = isGenerating) { }
 
@@ -379,7 +384,11 @@ fun GenerateSalaryScreen(db: AppDatabase, onBack: () -> Unit) {
                 items(activeStaff) { s ->
                     FilterChip(
                         selected = selectedStaffId == s.id,
-                        onClick = { selectedStaffId = s.id; basic = s.monthlySalary.toString(); bonus = "0"; deduction = "0"; advance = "0" },
+                        onClick = {
+                            selectedStaffId = s.id
+                            basic = if (s.salaryType == "monthly") s.monthlySalary.toString() else "0"
+                            bonus = "0"; deduction = "0"; advance = "0"
+                        },
                         label = { Text(s.fullName, fontSize = 12.sp) },
                         modifier = Modifier.padding(end = 6.dp),
                         colors = FilterChipDefaults.filterChipColors(
@@ -442,13 +451,47 @@ fun GenerateSalaryScreen(db: AppDatabase, onBack: () -> Unit) {
                 }
             }
             Spacer(Modifier.height(10.dp))
-            SectionLabel("Basic Salary")
-            OutlinedTextField(
-                value = basic, onValueChange = { basic = it },
-                modifier = Modifier.fillMaxWidth(), singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                colors = darkFieldColors(), shape = RoundedCornerShape(12.dp)
-            )
+            if (selectedStaff?.salaryType == "per_class" || selectedStaff?.salaryType == "per_hour") {
+                val rateLabel = if (selectedStaff?.salaryType == "per_class") "per-class" else "per-hour"
+                SectionLabel("Completed Class Salary")
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(CardBgAlt)
+                        .border(1.dp, BorderSub, RoundedCornerShape(12.dp))
+                        .padding(14.dp)
+                ) {
+                    Column {
+                        Text(
+                            "${teacherPayPreview.sessionCount} completed classes · $rateLabel rate",
+                            color = TextMuted,
+                            fontSize = 13.sp,
+                        )
+                        Text(
+                            "BDT ${teacherPayPreview.amount.toLong()}",
+                            color = Cyan,
+                            fontSize = 21.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            modifier = Modifier.padding(top = 4.dp),
+                        )
+                        Text(
+                            "Calculated automatically from un-paid completed classes.",
+                            color = TextMuted,
+                            fontSize = 11.sp,
+                            modifier = Modifier.padding(top = 3.dp),
+                        )
+                    }
+                }
+            } else {
+                SectionLabel("Basic Salary")
+                OutlinedTextField(
+                    value = basic, onValueChange = { basic = it },
+                    modifier = Modifier.fillMaxWidth(), singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    colors = darkFieldColors(), shape = RoundedCornerShape(12.dp)
+                )
+            }
             Spacer(Modifier.height(10.dp))
             SectionLabel("Bonus")
             OutlinedTextField(
@@ -475,12 +518,15 @@ fun GenerateSalaryScreen(db: AppDatabase, onBack: () -> Unit) {
             )
 
             Spacer(Modifier.height(14.dp))
-            val net = (basic.toDoubleOrNull() ?: 0.0) + (bonus.toDoubleOrNull() ?: 0.0) - (deduction.toDoubleOrNull() ?: 0.0) - (advance.toDoubleOrNull() ?: 0.0)
+            val baseForPreview = if (selectedStaff?.salaryType == "per_class" || selectedStaff?.salaryType == "per_hour") {
+                teacherPayPreview.amount
+            } else basic.toDoubleOrNull() ?: 0.0
+            val net = baseForPreview + (bonus.toDoubleOrNull() ?: 0.0) - (deduction.toDoubleOrNull() ?: 0.0) - (advance.toDoubleOrNull() ?: 0.0)
             Text("Net Salary: BDT ${net.toLong()}", color = Cyan, fontSize = 18.sp, fontWeight = FontWeight.Bold)
 
             Spacer(Modifier.height(16.dp))
             val scope = rememberCoroutineScope()
-            val canGenerate = selectedStaffId != null && month.isNotBlank() && net >= 0 && !isGenerating
+            val canGenerate = selectedStaffId != null && month.isNotBlank() && baseForPreview > 0 && net >= 0 && !isGenerating
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -499,7 +545,6 @@ fun GenerateSalaryScreen(db: AppDatabase, onBack: () -> Unit) {
                             viewModel.generateSalary(selectedStaffId!!, month,
                                 basic.toDoubleOrNull() ?: 0.0, bonus.toDoubleOrNull() ?: 0.0,
                                 deduction.toDoubleOrNull() ?: 0.0, advance.toDoubleOrNull() ?: 0.0,
-                                salaryId = pendingSalaryId,
                                 onSuccess = onBack,
                                 onError = { msg ->
                                     isGenerating = false

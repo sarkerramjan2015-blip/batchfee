@@ -29,6 +29,14 @@ data class StaffEntity(
     val permissions: String? = null, // comma-separated permission flags e.g. "view_batch,collect_fee"
     val createdAtMs: Long,
     val updatedAtMs: Long,
-    val archivedAtMs: Long?
+    val archivedAtMs: Long?,
+    /** `administration` keeps the familiar fixed-staff flow; `teacher` enables class-based pay. */
+    val staffCategory: String = "administration",
+    /** `monthly`, `per_class` or `per_hour`. Old staff remain monthly by default. */
+    val salaryType: String = "monthly",
+    val perClassRate: Double = 0.0,
+    val perHourRate: Double = 0.0,
+    /** Comma-separated subjects. It is intentionally optional for existing staff records. */
+    val subjects: String? = null
 )
 

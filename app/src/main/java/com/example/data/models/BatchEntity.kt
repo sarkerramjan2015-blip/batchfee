@@ -28,6 +28,10 @@ data class BatchEntity(
     val description: String?,
     val createdAtMs: Long,
     val updatedAtMs: Long,
-    val archivedAtMs: Long?
+    val archivedAtMs: Long?,
+    /** `monthly` for all legacy rows; `course` bills the course fee once. */
+    val billingMode: String = "monthly",
+    /** One-time fee for a course batch. Monthly batches keep this at zero. */
+    val courseFeeAmount: Double = 0.0
 )
 

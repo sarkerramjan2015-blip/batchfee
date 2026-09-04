@@ -56,6 +56,7 @@ import com.batchfee.edu.data.models.InstituteEntity
 import com.batchfee.edu.data.models.ReceiptEntity
 import com.batchfee.edu.data.models.StudentEntity
 import com.batchfee.edu.domain.SessionManager
+import com.batchfee.edu.domain.InstituteContactNumber
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
 import java.io.File
@@ -346,15 +347,20 @@ private fun buildReceiptMessage(
     feePeriod: String,
     collectedAmount: Double,
     dueAmount: Double,
-    paymentMethod: String
+    paymentMethod: String,
+    instituteName: String,
+    instituteContact: String
 ): String = buildString {
-    appendLine("BatchFee Receipt")
+    appendLine("$instituteName - Payment Receipt")
     appendLine("Receipt: $receiptNumber")
     appendLine("Student: $studentName")
     appendLine("Period: $feePeriod")
     appendLine("Collected: BDT ${"%.0f".format(collectedAmount)}")
     appendLine("Remaining Due: BDT ${"%.0f".format(dueAmount)}")
     appendLine("Payment Mode: ${paymentMethod.uppercase()}")
+    appendLine()
+    if (instituteContact.isNotBlank()) appendLine("Contact: $instituteContact")
+    appendLine("Thank you.")
 }
 
 // ── Reusable dropdown composable ─────────────────────────────────
@@ -734,7 +740,9 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
                         feePeriod = receiptPeriod,
                         collectedAmount = collectedNow,
                         dueAmount = remainingDue,
-                        paymentMethod = paymentMethod
+                        paymentMethod = paymentMethod,
+                        instituteName = institute?.name ?: "BatchFee",
+                        instituteContact = InstituteContactNumber.primary(institute?.phone, institute?.whatsappNumber).orEmpty()
                     )
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         OutlinedButton(

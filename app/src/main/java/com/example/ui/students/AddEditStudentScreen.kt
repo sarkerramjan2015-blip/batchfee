@@ -158,6 +158,7 @@ fun AddEditStudentScreen(
     var isSaving by remember { mutableStateOf(false) }
     var saveError by remember { mutableStateOf<String?>(null) }
     var instituteName by remember { mutableStateOf("") }
+    var instituteContact by remember { mutableStateOf("") }
     var welcomeMessage by remember { mutableStateOf<String?>(null) }
     var welcomeRecipient by remember { mutableStateOf("") }
     val saveScope = rememberCoroutineScope()
@@ -239,6 +240,7 @@ fun AddEditStudentScreen(
         instituteName = withContext(Dispatchers.IO) {
             db.instituteDao().getInstitute(instituteId)?.name.orEmpty()
         }
+        instituteContact = com.example.domain.MessageTemplateStore.loadInstituteContact(db, instituteId)
     }
 
     if (showDobPicker) {
@@ -714,7 +716,8 @@ fun AddEditStudentScreen(
                                                 studentName = fullName.trim(),
                                                 studentCode = savedStudentCode,
                                                 className = className.trim(),
-                                                temporaryPassword = accountPassword
+                                                temporaryPassword = accountPassword,
+                                                instituteContact = instituteContact
                                             )
                                         },
                                         onPartialSuccess = { message ->
@@ -879,18 +882,40 @@ private fun buildAdmissionWelcomeMessage(
     studentName: String,
     studentCode: String,
     className: String,
-    temporaryPassword: String?
-): String = buildString {
-    append("Congratulations, $studentName! Your admission to ")
-    append(instituteName.ifBlank { "our institute" })
-    append(" has been completed successfully.")
-    append("\n\nStudent ID: $studentCode")
-    temporaryPassword?.takeIf { it.isNotBlank() }?.let {
-        append("\nPassword: $it")
+    temporaryPassword: String?,
+    instituteContact: String = ""
+): String {
+    val template = com.example.domain.MessageTemplateStore.defaultFor(com.example.domain.MessageTemplateStore.TYPE_WELCOME)
+    if (template != null) {
+        var out = com.example.domain.MessageTemplateStore.apply(
+            template,
+            mapOf(
+                "guardianName" to "Guardian",
+                "studentName" to studentName,
+                "studentCode" to studentCode,
+                "className" to className,
+                "instituteName" to instituteName.ifBlank { "our institute" },
+                "instituteContact" to instituteContact
+            )
+        )
+        temporaryPassword?.takeIf { it.isNotBlank() }?.let {
+            out += "\n\nApp Password: $it\nPlease keep this private."
+        }
+        return out
     }
-    if (className.isNotBlank()) append("\nClass: $className")
-    if (!temporaryPassword.isNullOrBlank()) append("\n\nPlease keep these login details private.")
-    append("\n\nWelcome to our learning community. We are happy to have you with us!")
+    return buildString {
+        append("Dear Guardian,\n\nWelcome! ")
+        append(studentName)
+        append(" is now admitted to ")
+        append(instituteName.ifBlank { "our institute" })
+        append(".\n\nStudent ID: $studentCode")
+        temporaryPassword?.takeIf { it.isNotBlank() }?.let {
+            append("\nPassword: $it")
+        }
+        if (className.isNotBlank()) append("\nClass: $className")
+        if (instituteContact.isNotBlank()) append("\nContact: $instituteContact")
+        append("\n\nPlease keep these details private.")
+    }
 }
 
 @Composable

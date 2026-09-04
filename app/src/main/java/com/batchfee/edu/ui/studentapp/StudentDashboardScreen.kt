@@ -28,6 +28,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.batchfee.edu.data.media.FirebaseStorageImageUploadHelper
+import com.batchfee.edu.domain.StudentBillingBatch
+import com.batchfee.edu.domain.StudentBillingEnrollment
+import com.batchfee.edu.domain.StudentBillingFee
+import com.batchfee.edu.domain.StudentBillingSummaryCalculator
 import com.batchfee.edu.domain.StudentSessionManager
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreException
@@ -61,6 +65,10 @@ fun StudentDashboardScreen() {
     var totalFee by remember(studentId) { mutableStateOf(0.0) }
     var totalPaid by remember(studentId) { mutableStateOf(0.0) }
     var totalDue by remember(studentId) { mutableStateOf(0.0) }
+    var actualFees by remember(studentId, instituteId) { mutableStateOf<List<StudentBillingFee>>(emptyList()) }
+    var billingEnrollments by remember(studentId, instituteId) { mutableStateOf<List<StudentBillingEnrollment>>(emptyList()) }
+    var billingBatches by remember(studentId, instituteId) { mutableStateOf<Map<String, StudentBillingBatch>>(emptyMap()) }
+    var studentAdmissionDateMs by remember(studentId, instituteId) { mutableLongStateOf(0L) }
     var attendancePct by remember(studentId) { mutableStateOf(0.0) }
     var presentCount by remember(studentId) { mutableStateOf(0) }
     var totalAttCount by remember(studentId) { mutableStateOf(0) }
@@ -98,6 +106,7 @@ fun StudentDashboardScreen() {
                     displayName = it.getString("fullName") ?: displayName
                     photoUri = it.getString("photoUri")
                     className = it.getString("className") ?: ""
+                    studentAdmissionDateMs = (it.get("admissionDateMs") as? Number)?.toLong() ?: 0L
                 }
                 if (error == null) loading = false
             }
@@ -114,6 +123,20 @@ fun StudentDashboardScreen() {
                         ?.mapNotNull { it.getString("batchId") }
                         ?.toSet()
                         .orEmpty()
+                    billingEnrollments = snap?.documents?.mapNotNull { doc ->
+                        doc.getString("batchId")?.takeIf { it.isNotBlank() }?.let { batchId ->
+                            StudentBillingEnrollment(
+                                batchId = batchId,
+                                status = doc.getString("status") ?: "active",
+                                joinedAtMs = (doc.get("joinedAtMs") as? Number)?.toLong() ?: 0L,
+                                leftAtMs = (doc.get("leftAtMs") as? Number)?.toLong(),
+                                firstMonthFeePeriod = doc.getString("firstMonthFeePeriod"),
+                                firstMonthFeeAmount = (doc.get("firstMonthFeeAmount") as? Number)?.toDouble(),
+                                customMonthlyFeeAmount = (doc.get("customMonthlyFeeAmount") as? Number)?.toDouble(),
+                                customFeeEffectiveFromPeriod = doc.getString("customFeeEffectiveFromPeriod")
+                            )
+                        }
+                    }.orEmpty()
                 }
             }
 
@@ -127,25 +150,49 @@ fun StudentDashboardScreen() {
                 if (error == null) loading = false
             }
 
+        // Batch and enrollment terms are part of the owner-approved billing
+        // rules. Watching both makes the dashboard use the same totals as the
+        // detailed Fees screen after a batch change or custom fee update.
+        listeners += fs.collection("institutes").document(instituteId).collection("batches")
+            .addSnapshotListener { snap, error ->
+                reportListenerError(error)
+                if (error != null) return@addSnapshotListener
+                billingBatches = snap?.documents?.mapNotNull { doc ->
+                    val id = doc.id.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                    id to StudentBillingBatch(
+                        id = id,
+                        name = doc.getString("name") ?: "Batch",
+                        monthlyFeeAmount = doc.getDouble("monthlyFeeAmount") ?: 0.0,
+                        admissionFeeAmount = doc.getDouble("admissionFeeAmount") ?: 0.0,
+                        billingMode = doc.getString("billingMode") ?: "monthly",
+                        courseFeeAmount = doc.getDouble("courseFeeAmount") ?: 0.0
+                    )
+                }?.toMap().orEmpty()
+            }
+
         // Fees snapshot
         listeners += fs.collection("institutes").document(instituteId).collection("fees")
             .whereEqualTo("studentId", studentId)
             .addSnapshotListener { snap, error ->
                 reportListenerError(error)
                 if (error != null) return@addSnapshotListener
-                var tf = 0.0; var tp = 0.0; var td = 0.0
-                snap?.documents?.forEach { doc ->
+                actualFees = snap?.documents?.map { doc ->
                     val amount = doc.getDouble("totalAmount") ?: 0.0
                     val paid = doc.getDouble("paidAmount") ?: 0.0
-                    // dueAmount is the ledger's final value after discounts,
-                    // adjustments, cancellations and payments.
                     val due = doc.getDouble("dueAmount")
                         ?: if (doc.getString("status") == "cancelled") 0.0 else (amount - paid).coerceAtLeast(0.0)
-                    tf += amount
-                    tp += paid
-                    td += due.coerceAtLeast(0.0)
-                }
-                totalFee = tf; totalPaid = tp; totalDue = td
+                    StudentBillingFee(
+                        id = doc.id,
+                        batchId = doc.getString("batchId"),
+                        feePeriod = doc.getString("feePeriod") ?: doc.getString("monthYear").orEmpty(),
+                        feeType = doc.getString("feeType").orEmpty(),
+                        totalAmount = amount,
+                        paidAmount = paid,
+                        dueAmount = due.coerceAtLeast(0.0),
+                        status = doc.getString("status") ?: "pending",
+                        cancelledAtMs = (doc.get("cancelledAtMs") as? Number)?.toLong()
+                    )
+                }.orEmpty()
                 loading = false
             }
 
@@ -203,6 +250,18 @@ fun StudentDashboardScreen() {
 
         onDispose { listeners.forEach { it.remove() } }
         }
+    }
+
+    LaunchedEffect(actualFees, billingEnrollments, billingBatches, studentAdmissionDateMs) {
+        val summary = StudentBillingSummaryCalculator.calculate(
+            studentAdmissionDateMs = studentAdmissionDateMs,
+            fees = actualFees,
+            enrollments = billingEnrollments,
+            batches = billingBatches.values
+        )
+        totalFee = summary.totalAmount
+        totalPaid = summary.totalPaid
+        totalDue = summary.totalDue
     }
 
     val hwCount = homeworkBatchIds.count { it.isNullOrBlank() || it in activeBatchIds }

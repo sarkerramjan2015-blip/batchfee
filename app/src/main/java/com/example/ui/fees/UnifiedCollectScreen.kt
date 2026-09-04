@@ -120,6 +120,7 @@ import com.batchfee.edu.data.repository.FinancialOperationPendingException
 import com.batchfee.edu.data.repository.FinancialOperationRejectedException
 import com.batchfee.edu.domain.SessionManager
 import com.batchfee.edu.domain.MonthlyDueCalculator
+import com.batchfee.edu.domain.isCourseBatch
 import androidx.core.content.FileProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -389,7 +390,7 @@ fun UnifiedCollectScreen(
             }
             val monthlyDues = billingEnrollments.flatMap { enrollment ->
                 val batch = batchMap[enrollment.batchId] ?: return@flatMap emptyList<EnrichedDue>()
-                if (batch.monthlyFeeAmount <= 0.0) return@flatMap emptyList<EnrichedDue>()
+                if (batch.isCourseBatch() || batch.monthlyFeeAmount <= 0.0) return@flatMap emptyList<EnrichedDue>()
                 val billingStartMs = MonthlyDueCalculator.effectiveBillingStartMs(
                     student.admissionDateMs,
                     enrollment.joinedAtMs,
@@ -453,6 +454,31 @@ fun UnifiedCollectScreen(
                 }
             }
 
+            // A Course has one fixed fee, created when the student is enrolled.
+            // This virtual fallback only covers an interrupted sync; collecting it
+            // uses the same source key as the enrollment flow, so it cannot create
+            // a duplicate ledger charge.
+            val courseDues = batches.mapNotNull { batch ->
+                if (!batch.isCourseBatch() || batch.courseFeeAmount <= 0.0) return@mapNotNull null
+                val existing = allFees.firstOrNull {
+                    it.batchId == batch.id && it.studentId == student.id &&
+                        it.feeType.equals("course_fee", ignoreCase = true) && it.cancelledAtMs == null
+                }
+                if (existing == null) {
+                    EnrichedDue(
+                        FeeEntity(
+                            id = "", instituteId = instId, studentId = student.id,
+                            batchId = batch.id, feePeriod = "Course", feeType = "course_fee",
+                            dueDateMs = batch.startDateMs ?: System.currentTimeMillis(),
+                            baseAmount = batch.courseFeeAmount, discountAmount = 0.0,
+                            lateFeeAmount = 0.0, totalAmount = batch.courseFeeAmount,
+                            paidAmount = 0.0, dueAmount = batch.courseFeeAmount,
+                            status = "unpaid", note = null, createdAtMs = 0L, updatedAtMs = 0L, cancelledAtMs = null
+                        ), student.fullName, batch.name
+                    )
+                } else null
+            }
+
             // Server-created one-time fees (such as Exam Fee) must be shown
             // here too. They already have a real fee ID, so Collect Payment
             // updates the exact record and creates its normal receipt.
@@ -469,7 +495,7 @@ fun UnifiedCollectScreen(
                 )
             }
 
-            studentDues = (actualMonthlyDues + monthlyDues + admissionDues + generatedOneTimeDues)
+            studentDues = (actualMonthlyDues + monthlyDues + admissionDues + courseDues + generatedOneTimeDues)
                 .filter { it.fee.dueAmount > 0.0 }
                 .sortedBy { it.fee.feePeriod }
             paymentHistory = payments.filter { it.status == "completed" }.map { payment ->
@@ -997,6 +1023,9 @@ fun UnifiedCollectScreen(
                                                         batchId = dueFee.batchId,
                                                         feePeriod = dueFee.feePeriod,
                                                         feeType = dueFee.feeType.ifBlank { "admission_fee" },
+                                                        sourceId = if (dueFee.feeType.equals("course_fee", ignoreCase = true)) {
+                                                            "course:${dueFee.batchId.orEmpty()}"
+                                                        } else null,
                                                         dueDateMs = now,
                                                         baseAmount = dueFee.totalAmount,
                                                         discountAmount = discAmount,
@@ -2011,6 +2040,7 @@ private fun ExistingDueSelector(
 private fun String.toCollectionFeeLabel(): String = when (trim().lowercase(Locale.US)) {
     "exam_fee", "exam" -> "Exam fee"
     "admission_fee", "admission" -> "Admission fee"
+    "course_fee", "course" -> "Course fee"
     "advance_fee", "advance" -> "Advance fee"
     "monthly_fee", "monthly" -> "Monthly fee"
     else -> replace('_', ' ').replaceFirstChar { it.uppercase() }

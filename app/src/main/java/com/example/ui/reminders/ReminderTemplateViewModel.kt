@@ -35,11 +35,13 @@ class ReminderTemplateViewModel(private val db: AppDatabase) : ViewModel() {
         viewModelScope.launch {
             val instId = SessionManager.currentInstituteId.value ?: return@launch
             val now = System.currentTimeMillis()
+            // Keep one row per type so send flows and this editor stay on the same template.
+            val existing = db.reminderTemplateDao().getTemplateByTypeOnce(instId, type)
             val template = ReminderTemplateEntity(
-                id = UUID.randomUUID().toString(),
+                id = existing?.id ?: UUID.randomUUID().toString(),
                 instituteId = instId, title = title, type = type,
-                messageTemplate = message, isDefault = false,
-                createdAtMs = now, updatedAtMs = now
+                messageTemplate = message, isDefault = existing?.isDefault ?: false,
+                createdAtMs = existing?.createdAtMs ?: now, updatedAtMs = now
             )
             db.reminderTemplateDao().insertTemplate(template)
             try { ReminderTemplateSyncHelper.upsertTemplate(template) } catch (_: Exception) {}
