@@ -18,6 +18,7 @@ local.properties
 # Android signing secrets and private key material. Keep only the documented example in Git.
 debug.keystore
 /keystore.properties
+keystore-credentials.txt
 /keystore.properties.*
 !/keystore.properties.example
 *.jks
