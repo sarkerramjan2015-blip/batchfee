@@ -25,6 +25,13 @@ class BatchEnrollmentRepository(private val db: AppDatabase) {
         val retainedHistoryFeeCount: Int
     )
 
+    data class HardRemoveResult(
+        val removedFeeCount: Int,
+        val removedAttendanceCount: Int,
+        val removedPaymentCount: Int,
+        val removedReceiptCount: Int
+    )
+
     data class ShiftResult(
         val sourceEnrollmentId: String,
         val targetEnrollmentId: String,
@@ -189,6 +196,63 @@ class BatchEnrollmentRepository(private val db: AppDatabase) {
             firstMonthFeeAmount = firstMonthFeeAmount,
             courseFeeCreated = response["courseFeeCreated"] as? Boolean ?: false
         )
+    }
+
+    /**
+     * Permanent "Hard Remove": the trusted backend deletes the enrollment and
+     * every fee, payment, receipt, reversal, attendance and absent-message
+     * record scoped to this exact student+batch pair, writes an audit document,
+     * and only then is the local mirror cleaned up.
+     */
+    suspend fun hardRemove(
+        enrollment: BatchStudentEntity,
+        reason: String
+    ): HardRemoveResult {
+        require(enrollment.status.equals("active", ignoreCase = true)) {
+            "This batch is no longer assigned."
+        }
+        require(reason.trim().length >= 3) { "A removal reason is required." }
+        val response = callTrustedFunction(
+            functions,
+            "hardRemoveStudentFromBatch",
+            mapOf(
+                "instituteId" to enrollment.instituteId,
+                "studentId" to enrollment.studentId,
+                "batchId" to enrollment.batchId,
+                "reason" to reason.trim(),
+                "operationId" to UUID.randomUUID().toString()
+            )
+        ) as? Map<*, *> ?: error("Batch removal service returned an invalid response.")
+
+        val result = HardRemoveResult(
+            removedFeeCount = (response["removedFeeCount"] as? Number)?.toInt() ?: 0,
+            removedAttendanceCount = (response["removedAttendanceCount"] as? Number)?.toInt() ?: 0,
+            removedPaymentCount = (response["removedPaymentCount"] as? Number)?.toInt() ?: 0,
+            removedReceiptCount = (response["removedReceiptCount"] as? Number)?.toInt() ?: 0
+        )
+
+        db.withTransaction {
+            val sql = db.openHelper.writableDatabase
+            val feeLinkedArgs = arrayOf<Any?>(
+                enrollment.instituteId, enrollment.instituteId,
+                enrollment.studentId, enrollment.batchId
+            )
+            listOf(
+                "DELETE FROM payment_reversals WHERE instituteId = ? AND feeId IN (SELECT id FROM fees WHERE instituteId = ? AND studentId = ? AND batchId = ?)",
+                "DELETE FROM payments WHERE instituteId = ? AND feeId IN (SELECT id FROM fees WHERE instituteId = ? AND studentId = ? AND batchId = ?)",
+                "DELETE FROM receipts WHERE instituteId = ? AND feeId IN (SELECT id FROM fees WHERE instituteId = ? AND studentId = ? AND batchId = ?)"
+            ).forEach { sql.execSQL(it, feeLinkedArgs) }
+            val scopedArgs = arrayOf<Any?>(
+                enrollment.instituteId, enrollment.studentId, enrollment.batchId
+            )
+            listOf(
+                "DELETE FROM fees WHERE instituteId = ? AND studentId = ? AND batchId = ?",
+                "DELETE FROM attendance WHERE instituteId = ? AND studentId = ? AND batchId = ?",
+                "DELETE FROM absent_messages WHERE instituteId = ? AND studentId = ? AND batchId = ?",
+                "DELETE FROM batch_students WHERE instituteId = ? AND studentId = ? AND batchId = ?"
+            ).forEach { sql.execSQL(it, scopedArgs) }
+        }
+        return result
     }
 
     private suspend fun createCourseFeeIfNeeded(

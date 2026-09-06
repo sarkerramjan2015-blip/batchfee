@@ -132,10 +132,11 @@ object MonthlyDueCalculator {
     /**
      * Resolves the contractual start of one batch enrollment.
      *
-     * New and shifted enrollments freeze their own first billing period, which
-     * must win over the student-level admission date. Legacy enrollments have
-     * no frozen terms, so the admission date is their source of truth; their
-     * later local/cloud sync timestamp must not silently erase valid dues.
+     * A frozen first billing period (new/shifted enrollments) always wins.
+     * Otherwise the batch's Assign Date (`joinedAtMs`) is the billing start —
+     * this is the per-batch contract and must not fall back to the student's
+     * general admission date. The admission date is kept only as a fallback
+     * for legacy enrollments that never stored a joined date.
      */
     fun effectiveBillingStartMs(
         studentAdmissionDateMs: Long,
@@ -143,8 +144,8 @@ object MonthlyDueCalculator {
         firstMonthFeePeriod: String? = null
     ): Long {
         periodStartMs(firstMonthFeePeriod)?.let { return it }
-        return studentAdmissionDateMs.takeIf { it > 0L }
-            ?: enrollmentJoinedAtMs.takeIf { it > 0L }
+        return enrollmentJoinedAtMs.takeIf { it > 0L }
+            ?: studentAdmissionDateMs.takeIf { it > 0L }
             ?: 0L
     }
 

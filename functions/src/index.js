@@ -331,6 +331,100 @@ async function unassignStudentFromBatchHandler(request) {
   });
 }
 
+/**
+ * Permanently removes one student's assignment to one batch together with
+ * every fee, payment, receipt, reversal, attendance and absent-message record
+ * scoped to that exact student+batch pair. This is the owner-requested
+ * "Hard Remove (Delete Everything)" action and is deliberately irreversible.
+ * A `batch_removal_audit` document is written so the deletion stays auditable.
+ */
+async function hardRemoveStudentFromBatchHandler(request) {
+  const instituteId = requireString(request.data, "instituteId");
+  const studentId = requireString(request.data, "studentId", 128);
+  const batchId = requireString(request.data, "batchId", 128);
+  const reason = requireString(request.data, "reason", 500);
+  const operationId = optionalDocumentId(request.data, "operationId");
+  if (reason.length < 3) throw new HttpsError("invalid-argument", "A removal reason is required.");
+
+  const instituteSnap = await assertCanManageTenantResource(
+    request.auth, instituteId, "manage_batch",
+  );
+  const instituteRef = instituteSnap.ref;
+  const auditId = operationId
+    ? `hard_remove_${operationId}`
+    : `hard_remove_${instituteId}_${studentId}_${batchId}`;
+  const auditRef = instituteRef.collection("batch_removal_audit").doc(auditId);
+  const existingAudit = await auditRef.get();
+  if (existingAudit.exists) return existingAudit.get("result");
+
+  const enrollmentQuery = instituteRef.collection("batch_students")
+    .where("studentId", "==", studentId).where("batchId", "==", batchId);
+  const [enrollmentSnap, feeSnap, attendanceSnap, absentSnap] = await Promise.all([
+    enrollmentQuery.get(),
+    instituteRef.collection("fees")
+      .where("studentId", "==", studentId).where("batchId", "==", batchId).get(),
+    instituteRef.collection("attendance")
+      .where("studentId", "==", studentId).where("batchId", "==", batchId).get(),
+    instituteRef.collection("absent_messages")
+      .where("studentId", "==", studentId).where("batchId", "==", batchId).get(),
+  ]);
+  const feeIds = feeSnap.docs.map((doc) => doc.id);
+  if (enrollmentSnap.docs.length === 0 && feeIds.length === 0 && attendanceSnap.docs.length === 0) {
+    const replayed = {
+      studentId, batchId, replayed: true,
+      removedEnrollmentCount: 0, removedFeeCount: 0, removedAttendanceCount: 0,
+      removedAbsentMessageCount: 0, removedPaymentCount: 0, removedReceiptCount: 0,
+    };
+    await auditRef.set({
+      instituteId, studentId, batchId, reason, actorUid: request.auth.uid,
+      operationId: operationId || null, result: replayed, occurredAtMs: Date.now(),
+    });
+    return replayed;
+  }
+
+  const paymentDocs = [];
+  const receiptDocs = [];
+  const reversalDocs = [];
+  for (let index = 0; index < feeIds.length; index += 10) {
+    const chunk = feeIds.slice(index, index + 10);
+    const [paymentsSnap, receiptsSnap, reversalsSnap] = await Promise.all([
+      instituteRef.collection("payments").where("feeId", "in", chunk).get(),
+      instituteRef.collection("receipts").where("feeId", "in", chunk).get(),
+      instituteRef.collection("payment_reversals").where("feeId", "in", chunk).get(),
+    ]);
+    paymentDocs.push(...paymentsSnap.docs);
+    receiptDocs.push(...receiptsSnap.docs);
+    reversalDocs.push(...reversalsSnap.docs);
+  }
+
+  const allDocs = [
+    ...reversalDocs, ...paymentDocs, ...receiptDocs,
+    ...feeSnap.docs, ...attendanceSnap.docs, ...absentSnap.docs,
+    ...enrollmentSnap.docs,
+  ];
+  for (let index = 0; index < allDocs.length; index += 400) {
+    const batch = db.batch();
+    allDocs.slice(index, index + 400).forEach((doc) => batch.delete(doc.ref));
+    await batch.commit();
+  }
+
+  const result = {
+    studentId, batchId, replayed: false,
+    removedEnrollmentCount: enrollmentSnap.docs.length,
+    removedFeeCount: feeIds.length,
+    removedAttendanceCount: attendanceSnap.docs.length,
+    removedAbsentMessageCount: absentSnap.docs.length,
+    removedPaymentCount: paymentDocs.length,
+    removedReceiptCount: receiptDocs.length,
+    occurredAtMs: Date.now(),
+  };
+  await auditRef.set({
+    instituteId, studentId, batchId, reason, actorUid: request.auth.uid,
+    operationId: operationId || null, result, occurredAtMs: result.occurredAtMs,
+  });
+  return result;
+}
+
 function bangladeshMonthPeriod(timestampMs) {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: "Asia/Dhaka",
@@ -1553,6 +1647,16 @@ async function updateStudentProfileHandler(request) {
       transaction.get(legacyCodeQuery),
     ]);
     if (!studentSnap.exists) throw new HttpsError("not-found", "Student not found.");
+    // Archived records are owned by the audited safe-deletion flow. Profile edits
+    // and status flips must never bypass retention, seat restore or Auth reconciliation.
+    if (studentSnap.get("deletionState") === "retained" ||
+        studentSnap.get("archivedAtMs") != null ||
+        studentSnap.get("status") === "archived") {
+      throw new HttpsError(
+        "failed-precondition",
+        "Archived students cannot be edited. Restore the student first.",
+      );
+    }
     const previousStudentCode = typeof studentSnap.get("studentCode") === "string"
       ? normalizeStudentId(studentSnap.get("studentCode")) : "";
     if (!validModernStudentCode && previousStudentCode !== studentCode) {
@@ -2191,6 +2295,10 @@ exports.createEntitledBatch = onCall(
 exports.unassignStudentFromBatch = onCall(
   { ...callableOptions, timeoutSeconds: 60 },
   guarded(unassignStudentFromBatchHandler),
+);
+exports.hardRemoveStudentFromBatch = onCall(
+  { ...callableOptions, timeoutSeconds: 60 },
+  guarded(hardRemoveStudentFromBatchHandler),
 );
 exports.shiftStudentBetweenBatches = onCall(
   { ...callableOptions, timeoutSeconds: 60 },

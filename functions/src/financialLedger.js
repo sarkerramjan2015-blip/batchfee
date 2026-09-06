@@ -1227,6 +1227,7 @@ function createFinancialLedgerHandler({ db }) {
             dueAmount: updatedReceipt.dueAmount,
             paymentMethod: updatedReceipt.paymentMethod,
             receiptText: updatedReceipt.receiptText,
+            updatedAtMs: now,
             ledgerVersion: 1,
           });
         }

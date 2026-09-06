@@ -169,23 +169,27 @@ class StaffAttendanceViewModel(private val db: AppDatabase) : ViewModel() {
         val userId = SessionManager.currentUserId.value ?: return
         val selectedDate = _selectedDateMs.value
         viewModelScope.launch {
-            val existing = _records.value[staffId]
-            val now = System.currentTimeMillis()
-            val record = existing?.copy(entryTimeMs = timeMs, updatedAtMs = now)
-                ?: StaffAttendanceEntity(
-                    id = UUID.randomUUID().toString(),
-                    instituteId = instId,
-                    staffId = staffId,
-                    attendanceDateMs = selectedDate,
-                    status = "present",
-                    note = null,
-                    markedByUserId = userId,
-                    createdAtMs = now,
-                    updatedAtMs = now,
-                    entryTimeMs = timeMs
-                )
-            AttendanceSyncHelper.upsertStaffAttendance(record)
-            db.staffAttendanceDao().insertOrUpdateAttendance(record)
+            try {
+                val existing = _records.value[staffId]
+                val now = System.currentTimeMillis()
+                val record = existing?.copy(entryTimeMs = timeMs, updatedAtMs = now)
+                    ?: StaffAttendanceEntity(
+                        id = UUID.randomUUID().toString(),
+                        instituteId = instId,
+                        staffId = staffId,
+                        attendanceDateMs = selectedDate,
+                        status = "present",
+                        note = null,
+                        markedByUserId = userId,
+                        createdAtMs = now,
+                        updatedAtMs = now,
+                        entryTimeMs = timeMs
+                    )
+                AttendanceSyncHelper.upsertStaffAttendance(record)
+                db.staffAttendanceDao().insertOrUpdateAttendance(record)
+            } catch (_: Exception) {
+                // Cloud-first write: a failed entry-time save must never crash the screen.
+            }
         }
     }
 
@@ -194,23 +198,27 @@ class StaffAttendanceViewModel(private val db: AppDatabase) : ViewModel() {
         val userId = SessionManager.currentUserId.value ?: return
         val selectedDate = _selectedDateMs.value
         viewModelScope.launch {
-            val existing = _records.value[staffId]
-            val now = System.currentTimeMillis()
-            val record = existing?.copy(exitTimeMs = timeMs, updatedAtMs = now)
-                ?: StaffAttendanceEntity(
-                    id = UUID.randomUUID().toString(),
-                    instituteId = instId,
-                    staffId = staffId,
-                    attendanceDateMs = selectedDate,
-                    status = "present",
-                    note = null,
-                    markedByUserId = userId,
-                    createdAtMs = now,
-                    updatedAtMs = now,
-                    exitTimeMs = timeMs
-                )
-            AttendanceSyncHelper.upsertStaffAttendance(record)
-            db.staffAttendanceDao().insertOrUpdateAttendance(record)
+            try {
+                val existing = _records.value[staffId]
+                val now = System.currentTimeMillis()
+                val record = existing?.copy(exitTimeMs = timeMs, updatedAtMs = now)
+                    ?: StaffAttendanceEntity(
+                        id = UUID.randomUUID().toString(),
+                        instituteId = instId,
+                        staffId = staffId,
+                        attendanceDateMs = selectedDate,
+                        status = "present",
+                        note = null,
+                        markedByUserId = userId,
+                        createdAtMs = now,
+                        updatedAtMs = now,
+                        exitTimeMs = timeMs
+                    )
+                AttendanceSyncHelper.upsertStaffAttendance(record)
+                db.staffAttendanceDao().insertOrUpdateAttendance(record)
+            } catch (_: Exception) {
+                // Cloud-first write: a failed exit-time save must never crash the screen.
+            }
         }
     }
 
@@ -219,32 +227,44 @@ class StaffAttendanceViewModel(private val db: AppDatabase) : ViewModel() {
         val userId = SessionManager.currentUserId.value ?: return
         val selectedDate = _selectedDateMs.value
         viewModelScope.launch {
-            val existing = _records.value[staffId]
-            val now = System.currentTimeMillis()
-            val record = existing?.copy(status = status, updatedAtMs = now)
-                ?: StaffAttendanceEntity(
-                    id = UUID.randomUUID().toString(),
-                    instituteId = instId,
-                    staffId = staffId,
-                    attendanceDateMs = selectedDate,
-                    status = status,
-                    note = null,
-                    markedByUserId = userId,
-                    createdAtMs = now,
-                    updatedAtMs = now
+            try {
+                val existing = _records.value[staffId]
+                val now = System.currentTimeMillis()
+                val record = existing?.copy(status = status, updatedAtMs = now)
+                    ?: StaffAttendanceEntity(
+                        id = UUID.randomUUID().toString(),
+                        instituteId = instId,
+                        staffId = staffId,
+                        attendanceDateMs = selectedDate,
+                        status = status,
+                        note = null,
+                        markedByUserId = userId,
+                        createdAtMs = now,
+                        updatedAtMs = now
+                    )
+                AttendanceSyncHelper.upsertStaffAttendance(record)
+                db.staffAttendanceDao().insertOrUpdateAttendance(record)
+                StaffActivityLogger.logCompletedAction(
+                    db, "staff_attendance_marked", "staff", "Marked staff attendance as ${status.replaceFirstChar { it.uppercase() }}"
                 )
-            AttendanceSyncHelper.upsertStaffAttendance(record)
-            db.staffAttendanceDao().insertOrUpdateAttendance(record)
-            StaffActivityLogger.logCompletedAction(
-                db, "staff_attendance_marked", "staff", "Marked staff attendance as ${status.replaceFirstChar { it.uppercase() }}"
-            )
-            _lastOperation.value = staffId
+                _lastOperation.value = staffId
+            } catch (_: Exception) {
+                // Cloud-first write: a failed mark must never crash the screen.
+            }
         }
     }
 
     fun undo(staffId: String) {
         viewModelScope.launch {
             val existing = _records.value[staffId] ?: return@launch
+            try {
+                // Delete the cloud document first. A local-only delete was the
+                // stuck state: the next Firestore sync re-inserted the row and
+                // the undone mark came back.
+                AttendanceSyncHelper.deleteStaffAttendance(existing.instituteId, existing.id)
+            } catch (_: Exception) {
+                return@launch
+            }
             db.staffAttendanceDao().deleteAttendance(existing.id)
             StaffActivityLogger.logCompletedAction(
                 db, "staff_attendance_removed", "staff", "Removed a staff attendance mark"
@@ -917,6 +937,10 @@ private fun TeacherAttendanceContent(
                             )
                         scope.launch {
                             try {
+                                // Cloud first: the teacher's Present mark must reach
+                                // Firestore, otherwise other devices (and later syncs)
+                                // never see this staff member as present.
+                                AttendanceSyncHelper.upsertStaffAttendance(attendanceRecord)
                                 db.staffAttendanceDao().insertOrUpdateAttendance(attendanceRecord)
                                 StaffActivityLogger.logCompletedAction(
                                     db, "teacher_attendance_marked", "staff",

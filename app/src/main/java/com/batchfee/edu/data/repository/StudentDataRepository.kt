@@ -39,16 +39,23 @@ class StudentDataRepository {
     suspend fun fetchFees(instituteId: String, studentId: String): List<FeeInfo> {
         return withContext(Dispatchers.IO) {
             try {
+                // The main app writes feePeriod (not monthYear/description) and
+                // marks mistaken-enrollment fees cancelled. Mirroring those rows
+                // unfiltered previously surfaced cancelled charges to the student.
                 val snapshot = firestore.collection("institutes").document(instituteId)
-                    .collection("fees").whereEqualTo("studentId", studentId).get().await()
+                    .collection("fees")
+                    .whereEqualTo("studentId", studentId)
+                    .whereEqualTo("cancelledAtMs", null)
+                    .get().await()
                 snapshot.documents.map { doc ->
+                    val period = doc.getString("feePeriod") ?: doc.getString("monthYear")
                     FeeInfo(
                         id = doc.id,
-                        description = doc.getString("description") ?: doc.getString("monthYear") ?: "Fee",
+                        description = period ?: doc.getString("feeType") ?: "Fee",
                         totalAmount = doc.getDouble("totalAmount") ?: 0.0,
                         paidAmount = doc.getDouble("paidAmount") ?: 0.0,
                         status = doc.getString("status") ?: "pending",
-                        monthYear = doc.getString("monthYear")
+                        monthYear = period
                     )
                 }
             } catch (_: Exception) { emptyList() }
@@ -74,22 +81,39 @@ class StudentDataRepository {
     suspend fun fetchResults(instituteId: String, studentId: String): List<ResultInfo> {
         return withContext(Dispatchers.IO) {
             try {
+                // The main app writes marksObtained/position/published on the
+                // result document and stores exam names/totals on the exam
+                // document. Only published results may reach the student.
                 val snapshot = firestore.collection("institutes").document(instituteId)
-                    .collection("results").whereEqualTo("studentId", studentId).get().await()
+                    .collection("results")
+                    .whereEqualTo("studentId", studentId)
+                    .whereEqualTo("published", true)
+                    .get().await()
+                val examIds = snapshot.documents.mapNotNull { it.getString("examId") }.distinct()
+                val examDocs = examIds.mapNotNull { examId ->
+                    val exam = runCatching {
+                        firestore.collection("institutes").document(instituteId)
+                            .collection("exams").document(examId).get().await()
+                    }.getOrNull()
+                    if (exam != null && exam.exists()) examId to exam else null
+                }.toMap()
                 snapshot.documents.map { doc ->
-                    val obtained = doc.getDouble("obtainedMarks") ?: 0.0
-                    val total = doc.getDouble("totalMarks") ?: 100.0
+                    val exam = doc.getString("examId")?.let { examDocs[it] }
+                    val obtained = (doc.get("marksObtained") as? Number)?.toDouble() ?: 0.0
+                    val total = (exam?.get("totalMarks") as? Number)?.toDouble()
+                        ?: (doc.get("totalMarks") as? Number)?.toDouble()
+                        ?: 100.0
                     ResultInfo(
                         id = doc.id,
-                        examName = doc.getString("examName") ?: "Exam",
-                        examDateMs = doc.getLong("examDateMs"),
-                        subject = doc.getString("subject"),
+                        examName = exam?.getString("examName") ?: "Exam",
+                        examDateMs = (exam?.get("examDateMs") as? Number)?.toLong(),
+                        subject = exam?.getString("subject"),
                         obtainedMarks = obtained,
                         totalMarks = total,
                         grade = doc.getString("grade"),
                         percentage = if (total > 0) (obtained / total) * 100 else 0.0,
-                        rank = doc.getLong("rank")?.toInt(),
-                        totalStudents = doc.getLong("totalStudents")?.toInt()
+                        rank = (doc.get("position") as? Number)?.toInt(),
+                        totalStudents = null
                     )
                 }
             } catch (_: Exception) { emptyList() }

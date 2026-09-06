@@ -51,12 +51,16 @@ class StudentDashboardViewModel : ViewModel() {
                 val student = repo.fetchStudent(sid, iid)
                 val institute = repo.fetchInstitute(iid)
                 val fees = repo.fetchFees(iid, sid)
-                repo.fetchAttendance(iid, sid)
+                val attendance = repo.fetchAttendance(iid, sid)
                 val results = repo.fetchResults(iid, sid)
 
                 val totalFee = fees.sumOf { it.totalAmount }
                 val totalPaid = fees.sumOf { it.paidAmount }
                 val totalDue = totalFee - totalPaid
+
+                val presentCount = attendance.count { it.status.equals("present", ignoreCase = true) }
+                val attendancePercent =
+                    if (attendance.isNotEmpty()) presentCount * 100.0 / attendance.size else 0.0
 
                 val latestResult = results.maxByOrNull { it.examDateMs ?: 0L }
 
@@ -70,6 +74,7 @@ class StudentDashboardViewModel : ViewModel() {
                     totalFee = totalFee,
                     totalPaid = totalPaid,
                     totalDue = totalDue,
+                    attendancePercent = attendancePercent,
                     latestGrade = latestResult?.grade ?: "-",
                     latestPercentage = if (latestResult != null) "%.0f%%".format(latestResult.percentage) else "-",
                     isLoading = false

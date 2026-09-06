@@ -1,5 +1,8 @@
 package com.batchfee.edu.ui.dashboard
 
+import android.content.Intent
+import android.net.Uri
+import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -105,6 +108,69 @@ fun SettingsScreen(
                 }
             }
 
+            // Join Our Community card
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 16.dp)
+                    .shadow(2.dp, RoundedCornerShape(14.dp), spotColor = Cyan.copy(alpha = 0.15f)),
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = CardBg),
+                border = BorderStroke(1.dp, BorderSub)
+            ) {
+                var communityMenuOpen by remember { mutableStateOf(false) }
+                Box {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { communityMenuOpen = true }
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Filled.Groups, null, tint = Cyan, modifier = Modifier.size(22.dp))
+                        Spacer(Modifier.width(14.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Join Our Community", color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                            Text("Connect with other institutes", color = TextMuted, fontSize = 11.sp)
+                        }
+                        Icon(Icons.Filled.Add, contentDescription = "Open community options", tint = Cyan, modifier = Modifier.size(22.dp))
+                    }
+                    DropdownMenu(
+                        expanded = communityMenuOpen,
+                        onDismissRequest = { communityMenuOpen = false },
+                        containerColor = CardBg
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("WhatsApp Support Group", color = TextWhite, fontSize = 13.sp) },
+                            leadingIcon = { Icon(Icons.Filled.Chat, null, tint = Cyan, modifier = Modifier.size(20.dp)) },
+                            onClick = {
+                                communityMenuOpen = false
+                                openCommunityLink(
+                                    context,
+                                    "https://chat.whatsapp.com/HjQjkLDyEy57EGG4WU3HI7?s=sh&p=a&mlu=4&ilr=4"
+                                )
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Facebook Community Group", color = TextWhite, fontSize = 13.sp) },
+                            leadingIcon = { Icon(Icons.Filled.Groups, null, tint = ElectricBlue, modifier = Modifier.size(20.dp)) },
+                            onClick = {
+                                communityMenuOpen = false
+                                openCommunityLink(context, "https://www.facebook.com/share/g/19DDAe2dYv/")
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Facebook Page", color = TextWhite, fontSize = 13.sp) },
+                            leadingIcon = { Icon(Icons.Filled.Info, null, tint = Cyan, modifier = Modifier.size(20.dp)) },
+                            onClick = {
+                                communityMenuOpen = false
+                                openCommunityLink(context, "https://www.facebook.com/profile.php?id=61590829462013")
+                            }
+                        )
+                    }
+                }
+            }
+
             // Theme toggle card
             Card(
                 modifier = Modifier
@@ -206,6 +272,14 @@ fun SettingsScreen(
         }
     }
 
+}
+
+private fun openCommunityLink(context: android.content.Context, url: String) {
+    try {
+        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+    } catch (_: Exception) {
+        Toast.makeText(context, "No app found to open this link.", Toast.LENGTH_SHORT).show()
+    }
 }
 
 // polish: reusable settings row — clickable rows get a chevron and ripple

@@ -57,8 +57,10 @@ import com.batchfee.edu.data.models.ReceiptEntity
 import com.batchfee.edu.data.models.StudentEntity
 import com.batchfee.edu.domain.SessionManager
 import com.batchfee.edu.domain.InstituteContactNumber
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
 import java.util.Calendar
@@ -775,17 +777,21 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
                         }
                         OutlinedButton(
                             onClick = {
-                                val bmp = createReceiptBitmap(
-                                    context,
-                                    receiptNumber, student?.fullName ?: "",
-                                    selectedBatch?.name ?: "", receiptPeriod,
-                                    baseAmount, discountPercent, discountAmount.toDouble(),
-                                    payableAmount, collectedNow,
-                                    remainingDue, paymentMethod,
-                                    institute?.name ?: "BatchFee",
-                                    institute?.profilePhotoUri
-                                )
-                                shareReceiptImage(context, bmp, student?.phone)
+                                scope.launch {
+                                    val bmp = withContext(Dispatchers.IO) {
+                                        createReceiptBitmap(
+                                            context,
+                                            receiptNumber, student?.fullName ?: "",
+                                            selectedBatch?.name ?: "", receiptPeriod,
+                                            baseAmount, discountPercent, discountAmount.toDouble(),
+                                            payableAmount, collectedNow,
+                                            remainingDue, paymentMethod,
+                                            institute?.name ?: "BatchFee",
+                                            institute?.profilePhotoUri
+                                        )
+                                    }
+                                    shareReceiptImage(context, bmp, student?.phone)
+                                }
                             },
                             modifier = Modifier.weight(1f).height(48.dp),
                             shape = RoundedCornerShape(12.dp),
@@ -812,17 +818,21 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
                         }
                         Button(
                             onClick = {
-                                val bmp = createReceiptBitmap(
-                                    context,
-                                    receiptNumber, student?.fullName ?: "",
-                                    selectedBatch?.name ?: "", receiptPeriod,
-                                    baseAmount, discountPercent, discountAmount.toDouble(),
-                                    payableAmount, collectedNow,
-                                    remainingDue, paymentMethod,
-                                    institute?.name ?: "BatchFee",
-                                    institute?.profilePhotoUri
-                                )
-                                shareReceiptImageAny(context, bmp)
+                                scope.launch {
+                                    val bmp = withContext(Dispatchers.IO) {
+                                        createReceiptBitmap(
+                                            context,
+                                            receiptNumber, student?.fullName ?: "",
+                                            selectedBatch?.name ?: "", receiptPeriod,
+                                            baseAmount, discountPercent, discountAmount.toDouble(),
+                                            payableAmount, collectedNow,
+                                            remainingDue, paymentMethod,
+                                            institute?.name ?: "BatchFee",
+                                            institute?.profilePhotoUri
+                                        )
+                                    }
+                                    shareReceiptImageAny(context, bmp)
+                                }
                             },
                             modifier = Modifier.weight(1f).height(48.dp),
                             shape = RoundedCornerShape(12.dp),
@@ -1222,6 +1232,7 @@ private fun ReceiptRow(label: String, value: String) {
 fun ReceiptDetailScreen(db: AppDatabase, paymentId: String, onBack: () -> Unit) {
     val instId = SessionManager.currentInstituteId.collectAsState().value
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var receipt by remember { mutableStateOf<ReceiptEntity?>(null) }
     var institute by remember { mutableStateOf<InstituteEntity?>(null) }
     var studentName by remember { mutableStateOf("") }
@@ -1338,15 +1349,19 @@ fun ReceiptDetailScreen(db: AppDatabase, paymentId: String, onBack: () -> Unit) 
                     }
                     Button(
                         onClick = {
-                            val bmp = createReceiptBitmap(
-                                context,
-                                r.receiptNumber, studentName, batchName, feePeriod,
-                                baseAmount, discountPercent, discountAmount,
-                                r.totalAmount, r.paidAmount, r.dueAmount, r.paymentMethod,
-                                institute?.name ?: "BatchFee",
-                                institute?.profilePhotoUri
-                            )
-                            shareReceiptImage(context, bmp, studentPhone)
+                            scope.launch {
+                                val bmp = withContext(Dispatchers.IO) {
+                                    createReceiptBitmap(
+                                        context,
+                                        r.receiptNumber, studentName, batchName, feePeriod,
+                                        baseAmount, discountPercent, discountAmount,
+                                        r.totalAmount, r.paidAmount, r.dueAmount, r.paymentMethod,
+                                        institute?.name ?: "BatchFee",
+                                        institute?.profilePhotoUri
+                                    )
+                                }
+                                shareReceiptImage(context, bmp, studentPhone)
+                            }
                         },
                         modifier = Modifier.weight(1f).height(48.dp),
                         shape = RoundedCornerShape(12.dp),

@@ -28,16 +28,18 @@ interface FeeDao {
     suspend fun getActiveFeesBySource(instituteId: String, sourceId: String): List<FeeEntity>
 
     // ── Batch-wise fee queries ──────────────────────────────
-    @Query("SELECT f.* FROM fees f INNER JOIN batch_students bs ON f.studentId = bs.studentId WHERE bs.batchId = :batchId AND f.instituteId = :instituteId AND f.cancelledAtMs IS NULL AND bs.status = 'active' ORDER BY f.dueDateMs DESC")
+    // The join must match the fee's own batchId, otherwise a student enrolled
+    // in several batches leaks every other batch's fees into this batch's stats.
+    @Query("SELECT f.* FROM fees f INNER JOIN batch_students bs ON f.studentId = bs.studentId AND f.batchId = bs.batchId WHERE bs.batchId = :batchId AND f.instituteId = :instituteId AND f.cancelledAtMs IS NULL AND bs.status = 'active' ORDER BY f.dueDateMs DESC")
     fun getFeesByBatch(batchId: String, instituteId: String): Flow<List<FeeEntity>>
-
-    @Query("SELECT f.* FROM fees f INNER JOIN batch_students bs ON f.studentId = bs.studentId WHERE bs.batchId = :batchId AND f.instituteId = :instituteId AND f.cancelledAtMs IS NULL AND bs.status = 'active' ORDER BY f.dueDateMs DESC")
+ 
+    @Query("SELECT f.* FROM fees f INNER JOIN batch_students bs ON f.studentId = bs.studentId AND f.batchId = bs.batchId WHERE bs.batchId = :batchId AND f.instituteId = :instituteId AND f.cancelledAtMs IS NULL AND bs.status = 'active' ORDER BY f.dueDateMs DESC")
     suspend fun getFeesByBatchOnce(batchId: String, instituteId: String): List<FeeEntity>
-
-    @Query("SELECT SUM(f.paidAmount) FROM fees f INNER JOIN batch_students bs ON f.studentId = bs.studentId WHERE bs.batchId = :batchId AND f.instituteId = :instituteId AND f.cancelledAtMs IS NULL AND bs.status = 'active'")
+ 
+    @Query("SELECT SUM(f.paidAmount) FROM fees f INNER JOIN batch_students bs ON f.studentId = bs.studentId AND f.batchId = bs.batchId WHERE bs.batchId = :batchId AND f.instituteId = :instituteId AND f.cancelledAtMs IS NULL AND bs.status = 'active'")
     fun getTotalCollectedForBatch(batchId: String, instituteId: String): Flow<Double?>
-
-    @Query("SELECT SUM(f.totalAmount) FROM fees f INNER JOIN batch_students bs ON f.studentId = bs.studentId WHERE bs.batchId = :batchId AND f.instituteId = :instituteId AND f.cancelledAtMs IS NULL AND bs.status = 'active'")
+ 
+    @Query("SELECT SUM(f.totalAmount) FROM fees f INNER JOIN batch_students bs ON f.studentId = bs.studentId AND f.batchId = bs.batchId WHERE bs.batchId = :batchId AND f.instituteId = :instituteId AND f.cancelledAtMs IS NULL AND bs.status = 'active'")
     fun getTotalExpectedForBatch(batchId: String, instituteId: String): Flow<Double?>
 
     @Upsert

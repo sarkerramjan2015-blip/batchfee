@@ -484,6 +484,18 @@ object AttendanceSyncHelper {
         }
     }
 
+    suspend fun deleteStaffAttendance(
+        instituteId: String,
+        attendanceId: String
+    ) = withContext(Dispatchers.IO) {
+        try {
+            instituteCollection(instituteId, STAFF_ATTENDANCE).document(attendanceId).delete().await()
+        } catch (e: Exception) {
+            recordException(e)
+            rethrowUnlessAccessDenied(e)
+        }
+    }
+
     suspend fun upsertAbsentMessage(message: AbsentMessageEntity) = withContext(Dispatchers.IO) {
         try {
             instituteCollection(message.instituteId, ABSENT_MESSAGES).document(message.id).set(

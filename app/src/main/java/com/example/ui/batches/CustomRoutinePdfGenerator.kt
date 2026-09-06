@@ -194,9 +194,6 @@ private fun drawCustomRoutinePage(
     ).joinToString(" • ")
     canvas.drawText(ellipsizeCustom(routineMeta.ifBlank { "Weekly routine" }, bandMeta, 330f), width - 42f, 165f, bandMeta)
 
-    // Institute logo watermark behind the table
-    drawTableWatermark(canvas, logo)
-
     // ── Table header: DAYS + period columns (1st, 2nd, 3rd, …) ──
     fill.color = CustNavy
     canvas.drawRoundRect(RectF(TABLE_LEFT, TABLE_TOP, TABLE_RIGHT, TABLE_TOP + COL_HEADER_H), 7f, 7f, fill)
@@ -235,6 +232,10 @@ private fun drawCustomRoutinePage(
         canvas.drawLine(TABLE_LEFT, y + ROW_H, TABLE_RIGHT, y + ROW_H, line)
         y += ROW_H
     }
+
+    // Institute logo watermark behind the table — drawn after the opaque
+    // header and alternating row fills so the faded logo stays visible.
+    drawTableWatermark(canvas, logo)
 
     // Footer
     line.color = CustBorder

@@ -274,8 +274,16 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
             onError("No active institute session.")
             return
         }
-        val totalMarks = _selectedExam.value?.totalMarks ?: 100.0
-        val passingMarks = _selectedExam.value?.passingMarks ?: 40.0
+        if (marksList.isEmpty()) {
+            onError("Enter at least one student mark before saving.")
+            return
+        }
+        val exam = _selectedExam.value ?: run {
+            onError("Exam details not loaded yet.")
+            return
+        }
+        val totalMarks = exam.totalMarks
+        val passingMarks = exam.passingMarks
         val mutationKey = "$instId:$examId"
         if (!synchronized(resultMutationsInProgress) { resultMutationsInProgress.add(mutationKey) }) {
             onError("Results are already being saved for this exam.")
@@ -285,7 +293,11 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
         viewModelScope.launch {
             try {
                 val now = System.currentTimeMillis()
-                val sorted = marksList.sortedByDescending { it.second }
+                // Clamp every entered mark to the exam's valid range so a
+                // typo like 150/100 can never be persisted.
+                val sorted = marksList
+                    .map { (studentId, marks) -> studentId to marks.coerceIn(0.0, totalMarks) }
+                    .sortedByDescending { it.second }
                 val results = sorted.mapIndexed { idx, (studentId, marks) ->
                     val grade = calculateGrade(marks, totalMarks, passingMarks)
                     ResultEntity(
@@ -301,7 +313,7 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
                         ExamSyncHelper.upsertResult(it)
                         db.resultDao().insertOrUpdateResult(it)
                     }
-                    val completedExam = _selectedExam.value!!.copy(status = "completed", updatedAtMs = now)
+                    val completedExam = exam.copy(status = "completed", updatedAtMs = now)
                     ExamSyncHelper.upsertExam(completedExam)
                     db.examDao().updateExam(completedExam)
                 }

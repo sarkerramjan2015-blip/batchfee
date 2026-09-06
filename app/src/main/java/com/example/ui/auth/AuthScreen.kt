@@ -132,6 +132,7 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
         }
 
         viewModelScope.launch {
+            var createdUid: String? = null
             try {
                 val existing = db.userDao().getUserByEmail(email)
                 if (existing != null) {
@@ -147,6 +148,7 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
 
                 val uid = authResult.user?.uid
                     ?: throw IllegalStateException("Firebase Auth succeeded but returned null UID")
+                createdUid = uid
 
                 val now = System.currentTimeMillis()
                 val trialDurationMs = SubscriptionPolicy.FREE_TRIAL_DURATION_MS
@@ -271,6 +273,17 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                 onError(e.localizedMessage ?: "Cloud sync failed. Check your connection and try again.")
             } catch (e: Exception) {
                 FirebaseFailureReporter.report(e, "create institute")
+                // Auth and the Firestore profile may already be written even though
+                // local persistence failed. Remove them best-effort so a retry does
+                // not fail with "email already exists" while no local institute exists.
+                createdUid?.let { orphanUid ->
+                    try { FirebaseAuth.getInstance().currentUser?.delete() } catch (_: Exception) { }
+                    try {
+                        FirebaseFirestore.getInstance()
+                            .collection("institutes").document(orphanUid)
+                            .delete().await()
+                    } catch (_: Exception) { }
+                }
                 onError(e.localizedMessage ?: "Registration failed")
             }
         }
@@ -1371,10 +1384,15 @@ fun AuthScreen(
                                 }
                                 fieldError = emptyMap()
                                 viewModel.registerInstitute(
-                                    instituteName, ownerName, email, password, whatsappNumber,
+                                    instituteName.trim(),
+                                    ownerName.trim(),
+                                    email.trim(),
+                                    password.trim(),
+                                    whatsappNumber,
                                     onSuccess = {
                                         isLoading = false
-                                        BiometricAuthManager.refreshCurrentSession(context, email)
+                                        SessionManager.saveLastLoginId(context, email.trim())
+                                        BiometricAuthManager.refreshCurrentSession(context, email.trim())
                                         onNavigateDashboard()
                                     },
                                     onError = {

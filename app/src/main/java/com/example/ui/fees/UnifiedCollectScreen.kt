@@ -672,8 +672,8 @@ fun UnifiedCollectScreen(
                         item {
                             PaymentHistoryCard(
                                 history = paymentHistory,
-                                onPrint = { item -> printHistoryReceipt(context, instituteInfo, student, item) },
-                                onWhatsApp = { item -> sendHistoryReceiptWhatsApp(context, instituteInfo, student, student.phone, item) },
+                                onPrint = { item -> scope.launch { printHistoryReceipt(context, instituteInfo, student, item) } },
+                                onWhatsApp = { item -> scope.launch { sendHistoryReceiptWhatsApp(context, instituteInfo, student, student.phone, item) } },
                                 onMessage = { item -> sendHistoryReceiptMessage(context, student.phone, buildHistoryReceiptText(instituteInfo, student, item)) },
                                 onShare = { item -> shareHistoryReceipt(context, buildHistoryReceiptText(instituteInfo, student, item)) },
                                 onEdit = { item -> editingHistoryItem = item }
@@ -2829,9 +2829,9 @@ private fun sendHistoryReceiptMessage(context: Context, phone: String?, receiptT
     )
 }
 
-private fun sendHistoryReceiptWhatsApp(context: Context, institute: InstituteInfo, student: StudentEntity, phone: String?, item: StudentPaymentHistory) {
+private suspend fun sendHistoryReceiptWhatsApp(context: Context, institute: InstituteInfo, student: StudentEntity, phone: String?, item: StudentPaymentHistory) {
     try {
-        val file = generateReceiptPdf(context, institute, student, item)
+        val file = withContext(Dispatchers.IO) { generateReceiptPdf(context, institute, student, item) }
         val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
         val cleanPhone = phone.orEmpty().replace("+", "").replace(" ", "").replace("-", "")
         val intent = Intent(Intent.ACTION_SEND).apply {
@@ -2858,9 +2858,9 @@ private fun sendHistoryReceiptWhatsApp(context: Context, institute: InstituteInf
     }
 }
 
-private fun printHistoryReceipt(context: Context, institute: InstituteInfo, student: StudentEntity, item: StudentPaymentHistory) {
+private suspend fun printHistoryReceipt(context: Context, institute: InstituteInfo, student: StudentEntity, item: StudentPaymentHistory) {
     try {
-        val file = generateReceiptPdf(context, institute, student, item)
+        val file = withContext(Dispatchers.IO) { generateReceiptPdf(context, institute, student, item) }
         val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
         context.startActivity(
             Intent(Intent.ACTION_VIEW).apply {
@@ -2938,14 +2938,6 @@ private fun generateReceiptPdf(context: Context, institute: InstituteInfo, stude
         } catch (_: Exception) {
             null
         }
-    }
-
-    // ── Watermark (logo image or text, center, very faded) ──
-    if (logoBitmap != null) {
-        val wmSize = (totalHeight * 0.40f).toInt()
-        val wmScaled = Bitmap.createScaledBitmap(logoBitmap, wmSize, wmSize, true)
-        val wmPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { alpha = 12; isFilterBitmap = true }
-        canvas.drawBitmap(wmScaled, pageWidth / 2f - wmSize / 2f, (totalHeight - wmSize) / 2f, wmPaint)
     }
 
     // ── Page border ──
@@ -3069,6 +3061,17 @@ private fun generateReceiptPdf(context: Context, institute: InstituteInfo, stude
     text.textSize = 8.5f
     canvas.drawText("For any query contact: ${institute.phone}", pageWidth / 2f, footerY + 38f, text)
     text.textAlign = Paint.Align.LEFT
+
+    // ── Watermark (logo image, center, very faded) ──
+    // Drawn as the final layer: the opaque page background, header, cards and
+    // footer below must never cover it, so the institute logo watermark is
+    // actually visible on the finished PDF.
+    if (logoBitmap != null) {
+        val wmSize = (totalHeight * 0.40f).toInt()
+        val wmScaled = Bitmap.createScaledBitmap(logoBitmap, wmSize, wmSize, true)
+        val wmPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { alpha = 12; isFilterBitmap = true }
+        canvas.drawBitmap(wmScaled, pageWidth / 2f - wmSize / 2f, (totalHeight - wmSize) / 2f, wmPaint)
+    }
 
     document.finishPage(page)
     val file = File(context.cacheDir, "history_receipt_${item.payment.receiptNumber.replace("/", "_")}.pdf")

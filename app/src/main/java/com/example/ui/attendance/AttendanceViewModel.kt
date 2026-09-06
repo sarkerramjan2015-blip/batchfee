@@ -335,20 +335,25 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
         val currentUserId = SessionManager.currentUserId.value ?: return
         val startDay = startOfDay(dateMs)
         viewModelScope.launch {
-            val existing = _attendanceRecords.value[studentId]
-            val record = existing?.copy(status = status, updatedAtMs = System.currentTimeMillis())
-                ?: AttendanceEntity(
-                    id = UUID.randomUUID().toString(),
-                    instituteId = instId, batchId = batchId, studentId = studentId,
-                    attendanceDateMs = startDay, status = status, note = null,
-                    markedByUserId = currentUserId,
-                    createdAtMs = System.currentTimeMillis(), updatedAtMs = System.currentTimeMillis()
+            try {
+                val existing = _attendanceRecords.value[studentId]
+                val record = existing?.copy(status = status, updatedAtMs = System.currentTimeMillis())
+                    ?: AttendanceEntity(
+                        id = UUID.randomUUID().toString(),
+                        instituteId = instId, batchId = batchId, studentId = studentId,
+                        attendanceDateMs = startDay, status = status, note = null,
+                        markedByUserId = currentUserId,
+                        createdAtMs = System.currentTimeMillis(), updatedAtMs = System.currentTimeMillis()
+                    )
+                AttendanceSyncHelper.upsertAttendance(record)
+                db.attendanceDao().insertOrUpdateAttendance(record)
+                StaffActivityLogger.logCompletedAction(
+                    db, "student_attendance_marked", "attendance", "Marked one student ${status.replaceFirstChar { it.uppercase() }}"
                 )
-            AttendanceSyncHelper.upsertAttendance(record)
-            db.attendanceDao().insertOrUpdateAttendance(record)
-            StaffActivityLogger.logCompletedAction(
-                db, "student_attendance_marked", "attendance", "Marked one student ${status.replaceFirstChar { it.uppercase() }}"
-            )
+            } catch (_: Exception) {
+                // Cloud-first marking: a failed write must never crash the
+                // screen or leave a local-only mark other devices would lose.
+            }
         }
     }
 
@@ -357,25 +362,29 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
         val currentUserId = SessionManager.currentUserId.value ?: return
         val startDay = startOfDay(dateMs)
         viewModelScope.launch {
-            _students.value.forEach { student ->
-                val existing = _attendanceRecords.value[student.id]
-                val record = existing?.copy(status = status, updatedAtMs = System.currentTimeMillis())
-                    ?: AttendanceEntity(
-                        id = UUID.randomUUID().toString(),
-                        instituteId = instId, batchId = batchId, studentId = student.id,
-                        attendanceDateMs = startDay, status = status, note = null,
-                        markedByUserId = currentUserId,
-                        createdAtMs = System.currentTimeMillis(), updatedAtMs = System.currentTimeMillis()
-                    )
-                AttendanceSyncHelper.upsertAttendance(record)
-                db.attendanceDao().insertOrUpdateAttendance(record)
+            try {
+                _students.value.forEach { student ->
+                    val existing = _attendanceRecords.value[student.id]
+                    val record = existing?.copy(status = status, updatedAtMs = System.currentTimeMillis())
+                        ?: AttendanceEntity(
+                            id = UUID.randomUUID().toString(),
+                            instituteId = instId, batchId = batchId, studentId = student.id,
+                            attendanceDateMs = startDay, status = status, note = null,
+                            markedByUserId = currentUserId,
+                            createdAtMs = System.currentTimeMillis(), updatedAtMs = System.currentTimeMillis()
+                        )
+                    AttendanceSyncHelper.upsertAttendance(record)
+                    db.attendanceDao().insertOrUpdateAttendance(record)
+                }
+                StaffActivityLogger.logCompletedAction(
+                    db,
+                    "student_attendance_marked",
+                    "attendance",
+                    "Marked ${_students.value.size} students ${status.replaceFirstChar { it.uppercase() }}"
+                )
+            } catch (_: Exception) {
+                // Cloud-first marking: a failed write must never crash the screen.
             }
-            StaffActivityLogger.logCompletedAction(
-                db,
-                "student_attendance_marked",
-                "attendance",
-                "Marked ${_students.value.size} students ${status.replaceFirstChar { it.uppercase() }}"
-            )
         }
     }
 
@@ -384,37 +393,45 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
         val currentUserId = SessionManager.currentUserId.value ?: return
         val startDay = startOfDay(dateMs)
         viewModelScope.launch {
-            studentIds.forEach { sid ->
-                val existing = _attendanceRecords.value[sid]
-                val record = existing?.copy(status = status, updatedAtMs = System.currentTimeMillis())
-                    ?: AttendanceEntity(
-                        id = UUID.randomUUID().toString(),
-                        instituteId = instId, batchId = batchId, studentId = sid,
-                        attendanceDateMs = startDay, status = status, note = null,
-                        markedByUserId = currentUserId,
-                        createdAtMs = System.currentTimeMillis(), updatedAtMs = System.currentTimeMillis()
-                    )
-                AttendanceSyncHelper.upsertAttendance(record)
-                db.attendanceDao().insertOrUpdateAttendance(record)
+            try {
+                studentIds.forEach { sid ->
+                    val existing = _attendanceRecords.value[sid]
+                    val record = existing?.copy(status = status, updatedAtMs = System.currentTimeMillis())
+                        ?: AttendanceEntity(
+                            id = UUID.randomUUID().toString(),
+                            instituteId = instId, batchId = batchId, studentId = sid,
+                            attendanceDateMs = startDay, status = status, note = null,
+                            markedByUserId = currentUserId,
+                            createdAtMs = System.currentTimeMillis(), updatedAtMs = System.currentTimeMillis()
+                        )
+                    AttendanceSyncHelper.upsertAttendance(record)
+                    db.attendanceDao().insertOrUpdateAttendance(record)
+                }
+                StaffActivityLogger.logCompletedAction(
+                    db,
+                    "student_attendance_marked",
+                    "attendance",
+                    "Marked ${studentIds.size} students ${status.replaceFirstChar { it.uppercase() }}"
+                )
+            } catch (_: Exception) {
+                // Cloud-first marking: a failed write must never crash the screen.
             }
-            StaffActivityLogger.logCompletedAction(
-                db,
-                "student_attendance_marked",
-                "attendance",
-                "Marked ${studentIds.size} students ${status.replaceFirstChar { it.uppercase() }}"
-            )
         }
     }
 
     fun undoAttendance(studentId: String, dateMs: Long, batchId: String) {
         val instId = SessionManager.currentInstituteId.value ?: return
         viewModelScope.launch {
-            val day = startOfDay(dateMs)
-            AttendanceSyncHelper.deleteAttendance(instId, studentId, batchId, day)
-            db.attendanceDao().deleteAttendance(instId, studentId, batchId, day)
-            StaffActivityLogger.logCompletedAction(
-                db, "student_attendance_removed", "attendance", "Removed one student attendance mark"
-            )
+            try {
+                val day = startOfDay(dateMs)
+                AttendanceSyncHelper.deleteAttendance(instId, studentId, batchId, day)
+                db.attendanceDao().deleteAttendance(instId, studentId, batchId, day)
+                StaffActivityLogger.logCompletedAction(
+                    db, "student_attendance_removed", "attendance", "Removed one student attendance mark"
+                )
+            } catch (_: Exception) {
+                // Cloud-first removal: a failed delete must never crash the screen.
+            }
         }
     }
 

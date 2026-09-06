@@ -111,10 +111,18 @@ fun StudentProfileScreen(
     val studentViewModel: StudentViewModel = viewModel(factory = StudentViewModelFactory(db))
     val instId = SessionManager.currentInstituteId.collectAsState().value
     val currentUserRole = SessionManager.currentUserRole.collectAsState().value
-    val canArchiveStudent = currentUserRole in setOf("InstituteOwner", "SuperAdmin")
+    // Managed admins have the same archive/custom-fee authority in the trusted
+    // backend (assertAuthority / assertCanManageStudent), so the UI must expose
+    // the same controls for them.
+    val canArchiveStudent = currentUserRole in setOf(
+        "InstituteOwner", "owner", "instituteOwner",
+        "SuperAdmin", "superAdmin", "super_admin",
+        "InstituteAdmin", "admin", "instituteAdmin", "institute_admin"
+    )
     val canManageCustomMonthlyFee = currentUserRole in setOf(
         "InstituteOwner", "owner", "instituteOwner",
-        "SuperAdmin", "superAdmin", "super_admin"
+        "SuperAdmin", "superAdmin", "super_admin",
+        "InstituteAdmin", "admin", "instituteAdmin", "institute_admin"
     )
 
     var student by remember { mutableStateOf<StudentEntity?>(null) }
@@ -159,6 +167,13 @@ fun StudentProfileScreen(
     var showBatchDialog by remember { mutableStateOf(false) }
     var pendingBatchUnassign by remember { mutableStateOf<BatchStudentEntity?>(null) }
     var isUnassigningBatch by remember { mutableStateOf(false) }
+    // Assign Date flow: tapping an unassigned batch opens a confirmation
+    // dialog where the operator picks the Assign Date before enrollment.
+    var pendingAssignBatch by remember { mutableStateOf<BatchEntity?>(null) }
+    var assignDateMs by remember { mutableStateOf(System.currentTimeMillis()) }
+    var showAssignDatePicker by remember { mutableStateOf(false) }
+    var pendingHardRemove by remember { mutableStateOf<BatchStudentEntity?>(null) }
+    var isHardRemovingBatch by remember { mutableStateOf(false) }
 
     // ── Shift dialog state ───────────────────────────────────
     var showShiftDialog by remember { mutableStateOf(false) }
@@ -168,6 +183,36 @@ fun StudentProfileScreen(
     val feeRepository = remember { FeeCollectionRepository(db) }
     val batchEnrollmentRepository = remember(db) { BatchEnrollmentRepository(db) }
     val studentDeletionRepository = remember(db) { StudentDeletionRepository(db) }
+
+    // ── Batch assignment helper ─────────────────────────────
+    // Assign Date DB logic: the operator-selected assign date becomes the new
+    // enrollment's joinedAtMs, which drives per-batch fee billing, the first
+    // month prorating, and the "Assign Date" shown on the profile.
+    fun enrollStudentIntoBatch(batch: BatchEntity, enrollmentStartMs: Long) {
+        val instituteId = instId ?: return
+        if (batch.id in assigningBatchIds) return
+        assigningBatchIds = assigningBatchIds + batch.id
+        scope.launch {
+            try {
+                BatchEnrollmentRepository(db).enroll(
+                    instituteId = instituteId,
+                    studentId = studentId,
+                    batch = batch,
+                    enrollmentStartMs = enrollmentStartMs
+                )
+                enrolledBatchIds = enrolledBatchIds + batch.id
+                batches = batches + batch
+            } catch (error: Exception) {
+                Toast.makeText(
+                    context,
+                    error.message ?: "Could not assign this batch.",
+                    Toast.LENGTH_SHORT
+                ).show()
+            } finally {
+                assigningBatchIds = assigningBatchIds - batch.id
+            }
+        }
+    }
     var selectedBatchId by remember { mutableStateOf<String?>(null) }
     var feePeriod by remember { mutableStateOf("") }
     var feeAmount by remember { mutableStateOf("") }
@@ -1049,6 +1094,15 @@ fun StudentProfileScreen(
                                 Spacer(Modifier.width(4.dp))
                                 Text("(${b.monthlyFeeAmount} BDT/mo)", color = TextMuted, fontSize = 11.sp)
                             }
+                            val assignDateMs = activeEnrollments.firstOrNull { it.batchId == b.id }?.joinedAtMs
+                            if (assignDateMs != null && assignDateMs > 0L) {
+                                Text(
+                                    "Assign Date: ${SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(assignDateMs))}",
+                                    color = Cyan,
+                                    fontSize = 11.sp,
+                                    modifier = Modifier.padding(start = 20.dp, top = 1.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -1114,7 +1168,11 @@ fun StudentProfileScreen(
                     containerColor = CardBgAlt,
                     title = { Text("Manage Batch Assignment", color = TextWhite, fontWeight = FontWeight.Bold) },
                     text = {
-                        Column {
+                        Column(
+                            modifier = Modifier
+                                .heightIn(max = 360.dp)
+                                .verticalScroll(rememberScrollState())
+                        ) {
                             Text(
                                 "Tap an assigned batch to remove only that batch. Unpaid fees from a mistaken assignment will be cleared; payment history stays safe.",
                                 color = TextMuted,
@@ -1137,35 +1195,16 @@ fun StudentProfileScreen(
                                                 else Modifier.border(1.dp, BorderSub, RoundedCornerShape(10.dp))
                                             )
                                             .clickable(
-                                                enabled = batch.id !in assigningBatchIds && !isUnassigningBatch
+                                                enabled = batch.id !in assigningBatchIds && !isUnassigningBatch && !isHardRemovingBatch
                                             ) {
                                                 if (isEnrolled) {
                                                     pendingBatchUnassign = activeEnrollment
                                                 } else if (batch.id !in assigningBatchIds && instId != null) {
-                                                    assigningBatchIds = assigningBatchIds + batch.id
-                                                    scope.launch {
-                                                        try {
-                                                            val enrollmentStart = s.admissionDateMs.takeIf { it > 0L }
-                                                                ?: System.currentTimeMillis()
-                                                            BatchEnrollmentRepository(db).enroll(
-                                                                instituteId = instId!!,
-                                                                studentId = studentId,
-                                                                batch = batch,
-                                                                enrollmentStartMs = enrollmentStart
-                                                            )
-                                                            // Refresh enrolled set
-                                                            enrolledBatchIds = enrolledBatchIds + batch.id
-                                                            batches = batches + batch
-                                                        } catch (error: Exception) {
-                                                            Toast.makeText(
-                                                                context,
-                                                                error.message ?: "Could not assign this batch.",
-                                                                Toast.LENGTH_SHORT
-                                                            ).show()
-                                                        } finally {
-                                                            assigningBatchIds = assigningBatchIds - batch.id
-                                                        }
-                                                    }
+                                                    // Open the assign confirmation dialog so the operator
+                                                    // can pick the Assign Date before enrolling. A second
+                                                    // (or further) batch shows a warning in that dialog.
+                                                    assignDateMs = System.currentTimeMillis()
+                                                    pendingAssignBatch = batch
                                                 }
                                             }
                                             .padding(12.dp),
@@ -1178,7 +1217,7 @@ fun StudentProfileScreen(
                                             modifier = Modifier.size(20.dp)
                                         )
                                         Spacer(Modifier.width(10.dp))
-                                        Column {
+                                        Column(modifier = Modifier.weight(1f)) {
                                             Text(batch.name, color = if (isEnrolled) Cyan else TextWhite, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                                             Text(
                                                 if (batch.isCourseBatch()) {
@@ -1197,6 +1236,22 @@ fun StudentProfileScreen(
                                                 )
                                             }
                                         }
+                                        if (isEnrolled) {
+                                            // Explicit remove button — opens the two-choice
+                                            // removal dialog for this assigned batch.
+                                            IconButton(
+                                                onClick = { pendingBatchUnassign = activeEnrollment },
+                                                enabled = !isUnassigningBatch && !isHardRemovingBatch,
+                                                modifier = Modifier.size(32.dp)
+                                            ) {
+                                                Icon(
+                                                    Icons.Filled.DeleteOutline,
+                                                    contentDescription = "Remove batch",
+                                                    tint = DangerRed,
+                                                    modifier = Modifier.size(19.dp)
+                                                )
+                                            }
+                                        }
                                     }
                                     if (batch != allBatches.last()) Spacer(Modifier.height(8.dp))
                                 }
@@ -1209,16 +1264,124 @@ fun StudentProfileScreen(
                         }
                     }
                 )
+
+            }
+
+            // ── Batch assignment confirmation (with Assign Date) ─
+            pendingAssignBatch?.let { batch ->
+                val isMultiBatch = activeEnrollments.isNotEmpty()
+                val isAssigning = batch.id in assigningBatchIds
+                val dateLabel = remember(assignDateMs) {
+                    SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(assignDateMs))
+                }
+                AlertDialog(
+                    onDismissRequest = { if (!isAssigning) pendingAssignBatch = null },
+                    containerColor = CardBgAlt,
+                    icon = {
+                        Icon(
+                            Icons.Filled.Groups,
+                            contentDescription = null,
+                            tint = Cyan,
+                            modifier = Modifier.size(36.dp)
+                        )
+                    },
+                    title = { Text("Assign ${batch.name}?", color = TextWhite, fontWeight = FontWeight.Bold) },
+                    text = {
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Text(
+                                if (batch.isCourseBatch()) {
+                                    "Course fee BDT ${batch.courseFeeAmount.toLong()} will be added once."
+                                } else {
+                                    "Monthly fee BDT ${batch.monthlyFeeAmount.toLong()}/mo, billed from the assign date."
+                                },
+                                color = TextMuted,
+                                fontSize = 13.sp
+                            )
+                            if (isMultiBatch) {
+                                Text(
+                                    "This student is already in ${activeEnrollments.size} batch${if (activeEnrollments.size == 1) "" else "es"}. Assigning another batch is allowed and will add a separate billing.",
+                                    color = AccentAmber,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                            // Assign Date selector
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(CardBg)
+                                    .border(1.dp, BorderSub, RoundedCornerShape(12.dp))
+                                    .clickable(enabled = !isAssigning) { showAssignDatePicker = true }
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Assign Date", color = TextMuted, fontSize = 11.sp)
+                                    Text(dateLabel, color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                                }
+                                Icon(
+                                    Icons.Filled.CalendarMonth,
+                                    contentDescription = "Pick assign date",
+                                    tint = Cyan,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        Button(
+                            onClick = {
+                                val target = pendingAssignBatch ?: return@Button
+                                pendingAssignBatch = null
+                                enrollStudentIntoBatch(target, assignDateMs)
+                            },
+                            enabled = !isAssigning,
+                            colors = ButtonDefaults.buttonColors(containerColor = Cyan),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text("Assign", color = Color(0xFF0F172A), fontWeight = FontWeight.Bold)
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { pendingAssignBatch = null }, enabled = !isAssigning) {
+                            Text("Cancel", color = TextMuted)
+                        }
+                    }
+                )
+            }
+
+            // Assign Date picker dialog
+            if (showAssignDatePicker) {
+                val datePickerState = rememberDatePickerState(initialSelectedDateMillis = assignDateMs)
+                DatePickerDialog(
+                    onDismissRequest = { showAssignDatePicker = false },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            assignDateMs = datePickerState.selectedDateMillis ?: assignDateMs
+                            showAssignDatePicker = false
+                        }) { Text("OK", color = Cyan) }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showAssignDatePicker = false }) { Text("Cancel", color = TextMuted) }
+                    }
+                ) {
+                    DatePicker(state = datePickerState)
+                }
             }
 
             // ── Shift Batch Dialog ────────────────────────────
-            pendingBatchUnassign?.let { enrollment ->
+            val pendingUnassign = pendingBatchUnassign
+            if (pendingUnassign != null) {
+                val enrollment = pendingUnassign
                 val batchName = batches.firstOrNull { it.id == enrollment.batchId }?.name ?: "this batch"
                 AlertDialog(
                     onDismissRequest = {
-                        if (!isUnassigningBatch) pendingBatchUnassign = null
+                        if (!isUnassigningBatch && !isHardRemovingBatch) pendingBatchUnassign = null
                     },
                     containerColor = CardBg,
+                    // The two removal choices live in the dialog text below.
+                    confirmButton = {},
                     icon = {
                         Icon(
                             Icons.Filled.RemoveCircleOutline,
@@ -1231,8 +1394,104 @@ fun StudentProfileScreen(
                         Text("Remove from $batchName?", color = TextWhite, fontWeight = FontWeight.Bold)
                     },
                     text = {
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Text(
+                                "Choose how to remove this student from the batch.",
+                                color = TextMuted,
+                                fontSize = 13.sp
+                            )
+                            OutlinedButton(
+                                onClick = {
+                                    if (isUnassigningBatch || isHardRemovingBatch) return@OutlinedButton
+                                    isUnassigningBatch = true
+                                    scope.launch {
+                                        try {
+                                            val result = batchEnrollmentRepository.unassign(enrollment)
+                                            val summary = buildString {
+                                                append("Removed from ")
+                                                append(batchName)
+                                                append(".")
+                                                if (result.cancelledFeeIds.isNotEmpty()) {
+                                                    append(" ${result.cancelledFeeIds.size} unpaid fee")
+                                                    append(if (result.cancelledFeeIds.size == 1) " was" else "s were")
+                                                    append(" cleared.")
+                                                }
+                                                if (result.retainedHistoryFeeCount > 0) {
+                                                    append(" Payment history was kept safe.")
+                                                }
+                                            }
+                                            Toast.makeText(context, summary, Toast.LENGTH_LONG).show()
+                                            pendingBatchUnassign = null
+                                        } catch (error: Exception) {
+                                            Toast.makeText(
+                                                context,
+                                                error.message ?: "Could not remove this batch. Check your connection and try again.",
+                                                Toast.LENGTH_LONG
+                                            ).show()
+                                        } finally {
+                                            isUnassigningBatch = false
+                                        }
+                                    }
+                                },
+                                enabled = !isUnassigningBatch && !isHardRemovingBatch,
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentAmber),
+                                border = BorderStroke(1.dp, AccentAmber.copy(alpha = 0.7f))
+                            ) {
+                                if (isUnassigningBatch) {
+                                    CircularProgressIndicator(color = AccentAmber, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
+                                } else {
+                                    Text("Soft Remove (Keep Records)", fontSize = 13.sp)
+                                }
+                            }
+                            Button(
+                                onClick = {
+                                    if (isUnassigningBatch || isHardRemovingBatch) return@Button
+                                    pendingBatchUnassign = null
+                                    pendingHardRemove = enrollment
+                                },
+                                enabled = !isUnassigningBatch && !isHardRemovingBatch,
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = ButtonDefaults.buttonColors(containerColor = DangerRed),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Text("Hard Remove (Delete Everything)", color = Color.White, fontSize = 13.sp)
+                            }
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(
+                            onClick = { pendingBatchUnassign = null },
+                            enabled = !isUnassigningBatch && !isHardRemovingBatch
+                        ) {
+                            Text("Cancel", color = TextMuted)
+                        }
+                    }
+                )
+            }
+
+            // ── Hard Remove confirm ─────────────────────────────
+            val pendingHard = pendingHardRemove
+            if (pendingHard != null) {
+                val enrollment = pendingHard
+                val batchName = batches.firstOrNull { it.id == enrollment.batchId }?.name ?: "this batch"
+                AlertDialog(
+                    onDismissRequest = { if (!isHardRemovingBatch) pendingHardRemove = null },
+                    containerColor = CardBg,
+                    icon = {
+                        Icon(
+                            Icons.Filled.DeleteForever,
+                            contentDescription = null,
+                            tint = DangerRed,
+                            modifier = Modifier.size(36.dp)
+                        )
+                    },
+                    title = {
+                        Text("Permanently delete from $batchName?", color = DangerRed, fontWeight = FontWeight.Bold)
+                    },
+                    text = {
                         Text(
-                            "The student will no longer appear in this batch. Unpaid fees linked to this batch will be removed from due collection. Any payment or receipt history will remain safe.",
+                            "This permanently deletes the student from this batch together with ALL fee, payment, receipt and attendance records for this specific batch. This cannot be undone.",
                             color = TextMuted,
                             fontSize = 13.sp
                         )
@@ -1240,56 +1499,52 @@ fun StudentProfileScreen(
                     confirmButton = {
                         Button(
                             onClick = {
-                                if (isUnassigningBatch) return@Button
-                                isUnassigningBatch = true
+                                if (isHardRemovingBatch) return@Button
+                                isHardRemovingBatch = true
                                 scope.launch {
                                     try {
-                                        val result = batchEnrollmentRepository.unassign(enrollment)
-                                        val summary = buildString {
-                                            append("Removed from ")
-                                            append(batchName)
-                                            append(".")
-                                            if (result.cancelledFeeIds.isNotEmpty()) {
-                                                append(" ${result.cancelledFeeIds.size} unpaid fee")
-                                                append(if (result.cancelledFeeIds.size == 1) " was" else "s were")
-                                                append(" cleared.")
-                                            }
-                                            if (result.retainedHistoryFeeCount > 0) {
-                                                append(" Payment history was kept safe.")
-                                            }
-                                        }
-                                        Toast.makeText(context, summary, Toast.LENGTH_LONG).show()
-                                        pendingBatchUnassign = null
+                                        val result = batchEnrollmentRepository.hardRemove(
+                                            enrollment,
+                                            "Permanently removed from batch by owner"
+                                        )
+                                        Toast.makeText(
+                                            context,
+                                            "Batch deleted: ${result.removedFeeCount} fee(s), ${result.removedAttendanceCount} attendance record(s) and ${result.removedPaymentCount} payment(s) removed.",
+                                            Toast.LENGTH_LONG
+                                        ).show()
+                                        pendingHardRemove = null
+                                        enrolledBatchIds = enrolledBatchIds - enrollment.batchId
+                                        batches = batches.filter { it.id != enrollment.batchId }
                                     } catch (error: Exception) {
                                         Toast.makeText(
                                             context,
-                                            error.message ?: "Could not remove this batch. Check your connection and try again.",
+                                            error.message ?: "Could not delete this batch. Check your connection and try again.",
                                             Toast.LENGTH_LONG
                                         ).show()
                                     } finally {
-                                        isUnassigningBatch = false
+                                        isHardRemovingBatch = false
                                     }
                                 }
                             },
-                            enabled = !isUnassigningBatch,
+                            enabled = !isHardRemovingBatch,
                             colors = ButtonDefaults.buttonColors(containerColor = DangerRed),
                             shape = RoundedCornerShape(10.dp)
                         ) {
-                            if (isUnassigningBatch) {
+                            if (isHardRemovingBatch) {
                                 CircularProgressIndicator(
                                     color = Color.White,
                                     strokeWidth = 2.dp,
                                     modifier = Modifier.size(16.dp)
                                 )
                             } else {
-                                Text("Remove Batch", color = Color.White, fontWeight = FontWeight.Bold)
+                                Text("Delete Everything", color = Color.White, fontWeight = FontWeight.Bold)
                             }
                         }
                     },
                     dismissButton = {
                         TextButton(
-                            onClick = { pendingBatchUnassign = null },
-                            enabled = !isUnassigningBatch
+                            onClick = { pendingHardRemove = null },
+                            enabled = !isHardRemovingBatch
                         ) {
                             Text("Cancel", color = TextMuted)
                         }
@@ -1786,7 +2041,7 @@ fun StudentProfileScreen(
                                 StudentMenuConfirmAction.Activate ->
                                     "The student will return to active lists and attendance. Existing batches, fees and history will remain unchanged."
                                 StudentMenuConfirmAction.Close ->
-                                    "The student will be removed from active lists and attendance. Fees, receipts and complete history will remain safe."
+                                    "The student stays in the Students list with an Inactive status but leaves attendance and active student counts. Fees, receipts and complete history will remain safe."
                             },
                             color = TextMuted
                         )
