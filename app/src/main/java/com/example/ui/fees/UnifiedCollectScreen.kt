@@ -120,6 +120,7 @@ import com.batchfee.edu.data.repository.FinancialOperationPendingException
 import com.batchfee.edu.data.repository.FinancialOperationRejectedException
 import com.batchfee.edu.data.repository.FinancialSessionExpiredException
 import com.batchfee.edu.domain.SessionManager
+import com.batchfee.edu.domain.DueCollectionPolicy
 import com.batchfee.edu.domain.MonthlyDueCalculator
 import com.batchfee.edu.domain.isCourseBatch
 import androidx.core.content.FileProvider
@@ -148,7 +149,10 @@ private val AccentGreen = Color(0xFF22C55E)
 private val AccentRed = Color(0xFFEF4444)
 private val AccentAmber = Color(0xFFF59E0B)
 
-data class EnrichedDue(val fee: FeeEntity, val studentName: String, val batchName: String?)
+data class EnrichedDue(val fee: FeeEntity, val studentName: String, val batchName: String?) {
+    /** UI-only identity. Virtual dues never use an empty Firestore ID as a key. */
+    val selectionKey: String get() = DueCollectionPolicy.selectionKey(fee)
+}
 
 private data class StudentPaymentHistory(
     val payment: PaymentEntity,
@@ -208,7 +212,7 @@ fun UnifiedCollectScreen(
     var admissionFeeBatchId by remember { mutableStateOf<String?>(null) }
     var admissionFeeAmountVal by remember { mutableDoubleStateOf(0.0) }
     var admissionFeePaid by remember { mutableDoubleStateOf(0.0) }
-    var selectedDueId by remember { mutableStateOf<String?>(null) }
+    var selectedDueKey by remember { mutableStateOf<String?>(null) }
     var selectedBatchId by remember { mutableStateOf<String?>(null) }
     var feePeriod by remember { mutableStateOf(monthLabelForOffset(0)) }
     val monthOptions = remember { generateMonthOptions() }
@@ -231,7 +235,7 @@ fun UnifiedCollectScreen(
     var isPartialPayment by remember { mutableStateOf(false) }
 
     val selectedBatch = studentBatches.firstOrNull { it.id == selectedBatchId }
-    val selectedDue = studentDues.firstOrNull { it.fee.id == selectedDueId } ?: studentDues.firstOrNull()
+    val selectedDue = studentDues.firstOrNull { it.selectionKey == selectedDueKey }
 
     fun amountText(value: Double): String =
         if (value <= 0.0) "" else "%.0f".format(value)
@@ -287,7 +291,7 @@ fun UnifiedCollectScreen(
 
     fun resetFormForNewFee() {
         showDueSelector = false
-        selectedDueId = null
+        selectedDueKey = null
         isPartialPayment = false
         startMonthIdx = currentMonthIdx
         endMonthIdx = currentMonthIdx
@@ -302,12 +306,19 @@ fun UnifiedCollectScreen(
 
     fun applyDueFeeSelection(due: EnrichedDue) {
         showDueSelector = true
-        selectedDueId = due.fee.id
+        selectedDueKey = due.selectionKey
         feePeriod = due.fee.feePeriod
-        baseAmount = amountText(due.fee.totalAmount)
-        discountPercent = 0.0
-        collectAmount = amountText(due.fee.dueAmount)
-        collectError = null
+        baseAmount = amountText(due.fee.baseAmount)
+        discountPercent = DueCollectionPolicy.currentDiscountPercent(due.fee)
+        runCatching { DueCollectionPolicy.quote(due.fee, discountPercent) }
+            .onSuccess { quote ->
+                collectAmount = amountText(quote.outstandingAmount)
+                collectError = null
+            }
+            .onFailure { error ->
+                collectAmount = ""
+                collectError = error.message ?: "This fee cannot be collected safely."
+            }
     }
 
     fun onPeriodConfirmed(startIdx: Int, endIdx: Int) {
@@ -498,7 +509,14 @@ fun UnifiedCollectScreen(
 
             studentDues = (actualMonthlyDues + monthlyDues + admissionDues + courseDues + generatedOneTimeDues)
                 .filter { it.fee.dueAmount > 0.0 }
-                .sortedBy { it.fee.feePeriod }
+                // The same saved monthly fee can be discovered both through
+                // the canonical-fee list and through the virtual month model.
+                // Render it once, identified by a real fee ID or a stable
+                // virtual identity.
+                .distinctBy { it.selectionKey }
+                // Admission is explicitly first; months are calendar-ordered,
+                // never alphabetically ordered as Aug, Jul, Jun.
+                .sortedWith { first, second -> DueCollectionPolicy.compareForDisplay(first.fee, second.fee) }
             paymentHistory = payments.filter { it.status == "completed" }.map { payment ->
                 val fee = allFees.firstOrNull { it.id == payment.feeId }
                 StudentPaymentHistory(
@@ -514,8 +532,14 @@ fun UnifiedCollectScreen(
             }
 
             if (studentDues.isNotEmpty()) {
-                selectedDueId = studentDues.first().fee.id
-                applyDueFeeSelection(studentDues.first())
+                // Do not preselect a financial due. The owner must choose the
+                // exact item before Save is enabled.
+                showDueSelector = true
+                selectedDueKey = null
+                baseAmount = ""
+                discountPercent = 0.0
+                collectAmount = ""
+                collectError = null
             } else {
                 resetFormForNewFee()
             }
@@ -600,8 +624,13 @@ fun UnifiedCollectScreen(
                 val discountAmount = (base * discountPercent / 100.0).coerceAtLeast(0.0)
                 val payable = (base - discountAmount).coerceAtLeast(0.0)
                 val collecting = collectAmount.toDoubleOrNull() ?: 0.0
+                val selectedDueQuoteResult = selectedDue?.let { due ->
+                    runCatching { DueCollectionPolicy.quote(due.fee, discountPercent) }
+                }
+                val selectedDueQuote = selectedDueQuoteResult?.getOrNull()
                 val canSave = !loadingLedger && !isSaving && collecting > 0.0 && if (showDueSelector) {
-                    selectedDue != null
+                    selectedDue != null && selectedDueQuote != null &&
+                        collecting <= selectedDueQuote.outstandingAmount + 0.001
                 } else {
                     feePeriod.isNotBlank() && base > 0.0 && discountPercent in 0.0..100.0
                 }
@@ -688,8 +717,11 @@ fun UnifiedCollectScreen(
                                     OutlinedButton(
                                         onClick = {
                                             showDueSelector = true
-                                            val due = studentDues.first()
-                                            applyDueFeeSelection(due)
+                                            selectedDueKey = null
+                                            baseAmount = ""
+                                            discountPercent = 0.0
+                                            collectAmount = ""
+                                            collectError = null
                                         },
                                         modifier = Modifier.weight(1f).height(38.dp),
                                         shape = RoundedCornerShape(10.dp),
@@ -713,15 +745,14 @@ fun UnifiedCollectScreen(
                             item {
                                 ExistingDueSelector(
                                     dues = studentDues,
-                                    selectedDueId = selectedDue?.fee?.id,
+                                    selectedDueKey = selectedDue?.selectionKey,
                                     onSelect = { due -> applyDueFeeSelection(due) }
                                 )
                             }
                             // Discount for admission / one-time due fees
-                            if (selectedDue?.fee?.feeType == "admission_fee" || selectedDue?.fee?.feeType == "advance_fee") {
+                            if (selectedDue?.fee?.let(DueCollectionPolicy::supportsDiscountAdjustment) == true) {
                                 item {
                                     val dueFee = selectedDue!!.fee
-                                    val discPercent = discountPercent
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
                                         verticalAlignment = Alignment.CenterVertically,
@@ -738,8 +769,20 @@ fun UnifiedCollectScreen(
                                                 value = if (discountPercent == 0.0) "" else "%.0f".format(discountPercent),
                                                 onValueChange = { s ->
                                                     val dp = s.toDoubleOrNull()?.coerceIn(0.0, 100.0) ?: 0.0
-                                                    discountPercent = dp
-                                                    collectAmount = amountText((dueFee.totalAmount - (dueFee.totalAmount * dp / 100.0)).coerceAtLeast(0.0))
+                                                    runCatching { DueCollectionPolicy.quote(dueFee, dp) }
+                                                        .onSuccess { quote ->
+                                                            discountPercent = dp
+                                                            collectAmount = amountText(quote.outstandingAmount)
+                                                            collectError = null
+                                                        }
+                                                        .onFailure { error ->
+                                                            // Keep the invalid value visible so the owner can
+                                                            // correct it, but block Save and never send it.
+                                                            discountPercent = dp
+                                                            collectAmount = ""
+                                                            collectError = error.message
+                                                                ?: "This discount cannot be applied."
+                                                        }
                                                 },
                                                 modifier = Modifier.fillMaxWidth(),
                                                 singleLine = true,
@@ -867,10 +910,10 @@ fun UnifiedCollectScreen(
                                     onClick = {
                                         isPartialPayment = false
                                         if (showDueSelector) {
-                                            val due = selectedDue?.fee ?: studentDues.firstOrNull()?.fee
-                                            if (due != null) {
-                                                val remaining = due.dueAmount.coerceAtLeast(0.0)
-                                                collectAmount = amountText(remaining)
+                                            val quote = selectedDueQuote
+                                            if (quote != null) {
+                                                collectAmount = amountText(quote.outstandingAmount)
+                                                collectError = null
                                             }
                                         } else {
                                             val realStart = minOf(startMonthIdx, endMonthIdx)
@@ -911,6 +954,7 @@ fun UnifiedCollectScreen(
                             PaymentInputCard(
                                 isDuePayment = showDueSelector,
                                 selectedDue = selectedDue,
+                                selectedDueQuote = selectedDueQuote,
                                 payable = payable,
                                 discountAmount = discountAmount,
                                 collectAmount = collectAmount,
@@ -951,6 +995,18 @@ fun UnifiedCollectScreen(
                                     if (showDueSelector && selectedDue == null) {
                                         collectError = "Select a due fee first."
                                         return@Button
+                                    }
+                                    if (showDueSelector) {
+                                        val quote = selectedDueQuote
+                                        if (quote == null) {
+                                            collectError = selectedDueQuoteResult?.exceptionOrNull()?.message
+                                                ?: "This fee cannot be collected safely."
+                                            return@Button
+                                        }
+                                        if (collecting - quote.outstandingAmount > 0.001) {
+                                            collectError = "Payment exceeds the selected fee's discounted due."
+                                            return@Button
+                                        }
                                     }
                                     if (!showDueSelector) {
                                         if (base <= 0.0 || feePeriod.isBlank()) {
@@ -993,30 +1049,28 @@ fun UnifiedCollectScreen(
                                             // server-issued receipt number while retaining separate payments.
                                             val receiptGroupId = UUID.randomUUID().toString()
                                             val remainingDue = if (showDueSelector) {
-                                                ((selectedDue?.fee?.dueAmount ?: 0.0) - collecting).coerceAtLeast(0.0)
+                                                ((selectedDueQuote?.outstandingAmount ?: 0.0) - collecting).coerceAtLeast(0.0)
                                             } else {
                                                 (payable - collecting).coerceAtLeast(0.0)
                                             }
-                                            val receiptText = buildCollectionReceiptText(
+                                            val receiptText = if (showDueSelector) null else buildCollectionReceiptText(
                                                 instituteName = instituteInfo.name,
                                                 institutePhone = instituteInfo.phone,
                                                 student = student,
                                                 batchName = selectedBatch?.name,
                                                 period = if (showDueSelector) selectedDue?.fee?.feePeriod ?: feePeriod else feePeriod.trim(),
                                                 mode = autoFeeType,
-                                                payableAmount = if (showDueSelector) selectedDue?.fee?.totalAmount ?: 0.0 else payable,
-                                                discountAmount = if (showDueSelector) selectedDue?.fee?.discountAmount ?: 0.0 else discountAmount,
+                                                payableAmount = if (showDueSelector) selectedDueQuote?.totalAmount ?: 0.0 else payable,
+                                                discountAmount = if (showDueSelector) selectedDueQuote?.discountAmount ?: 0.0 else discountAmount,
                                                 collectedAmount = collecting,
                                                 remainingDue = remainingDue,
                                                 paymentMethod = paymentMethod
                                             )
                                             val receiptNumber = if (showDueSelector) {
                                                 val dueFee = selectedDue!!.fee
+                                                val dueQuote = checkNotNull(selectedDueQuote)
                                                 if (dueFee.id.isBlank()) {
                                                     // Virtual fee — create it first with discount support
-                                                    val discAmount = (
-                                                        kotlin.math.round(dueFee.totalAmount * discountPercent) / 100.0
-                                                    ).coerceAtLeast(0.0)
                                                     val createResult = feeRepository.createFeeWithInitialPayment(
                                                         instituteId = instId,
                                                         collectedByUserId = userId,
@@ -1028,18 +1082,33 @@ fun UnifiedCollectScreen(
                                                             "course:${dueFee.batchId.orEmpty()}"
                                                         } else null,
                                                         dueDateMs = now,
-                                                        baseAmount = dueFee.totalAmount,
-                                                        discountAmount = discAmount,
+                                                        baseAmount = dueQuote.baseAmount,
+                                                        discountAmount = dueQuote.discountAmount,
                                                         lateFeeAmount = 0.0,
                                                         collectedAmount = collecting,
                                                         paymentMethod = paymentMethod,
                                                         paymentDateMs = now,
                                                         note = note.ifBlank { null },
-                                                        receiptText = receiptText,
+                                                        receiptText = null,
                                                         receiptGroupId = receiptGroupId,
                                                         now = now
                                                     )
                                                     createResult.receiptNumber ?: "payment"
+                                                } else if (DueCollectionPolicy.requiresAdjustment(dueFee, dueQuote)) {
+                                                    // The trusted server updates fee, discount, payment and
+                                                    // receipt together after rechecking immutable payments.
+                                                    feeRepository.updateFeeAndCollectPayment(
+                                                        instituteId = instId,
+                                                        collectedByUserId = userId,
+                                                        feeId = dueFee.id,
+                                                        newBaseAmount = dueQuote.baseAmount,
+                                                        discountPercent = dueQuote.discountPercent,
+                                                        collectedAmount = collecting,
+                                                        paymentMethod = paymentMethod,
+                                                        feePeriod = dueFee.feePeriod,
+                                                        note = note.ifBlank { null },
+                                                        now = now
+                                                    ).receiptNumber
                                                 } else {
                                                     feeRepository.collectPayment(
                                                         instituteId = instId,
@@ -1048,7 +1117,9 @@ fun UnifiedCollectScreen(
                                                         amount = collecting,
                                                         paymentMethod = paymentMethod,
                                                         note = note.ifBlank { null },
-                                                        receiptText = receiptText,
+                                                        // Render later from the canonical fee/result instead of
+                                                        // preserving a pre-save due/discount calculation.
+                                                        receiptText = null,
                                                         receiptGroupId = receiptGroupId,
                                                         now = now
                                                     ).receiptNumber
@@ -1997,7 +2068,7 @@ private fun Double.ifZero(fallback: Double): Double = if (this == 0.0) fallback 
 @Composable
 private fun ExistingDueSelector(
     dues: List<EnrichedDue>,
-    selectedDueId: String?,
+    selectedDueKey: String?,
     onSelect: (EnrichedDue) -> Unit
 ) {
     Card(
@@ -2014,7 +2085,7 @@ private fun ExistingDueSelector(
                 Text("No pending due fee. Use Running month or Advance fee.", color = TextMuted, fontSize = 13.sp)
             } else {
                 dues.forEach { due ->
-                    val selected = due.fee.id == selectedDueId
+                    val selected = due.selectionKey == selectedDueKey
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -2186,6 +2257,7 @@ private fun NewFeeForm(
 private fun PaymentInputCard(
     isDuePayment: Boolean,
     selectedDue: EnrichedDue?,
+    selectedDueQuote: DueCollectionPolicy.Quote?,
     payable: Double,
     discountAmount: Double,
     collectAmount: String,
@@ -2195,7 +2267,7 @@ private fun PaymentInputCard(
     onMethodChange: (String) -> Unit,
     onNoteChange: (String) -> Unit
 ) {
-    val dueAmount = selectedDue?.fee?.dueAmount ?: 0.0
+    val dueAmount = selectedDueQuote?.outstandingAmount ?: selectedDue?.fee?.dueAmount ?: 0.0
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
@@ -2218,8 +2290,13 @@ private fun PaymentInputCard(
                     value = formatSmartAmount(if (isDuePayment) dueAmount else payable),
                     color = if (isDuePayment) AccentRed else TextWhite
                 )
-                if (!isDuePayment && discountAmount > 0.0) {
-                    SummaryLine("Discount", "-${formatSmartAmount(discountAmount)}", AccentGreen)
+                val effectiveDiscount = if (isDuePayment) {
+                    selectedDueQuote?.discountAmount ?: 0.0
+                } else {
+                    discountAmount
+                }
+                if (effectiveDiscount > 0.0) {
+                    SummaryLine("Discount", "-${formatSmartAmount(effectiveDiscount)}", AccentGreen)
                 }
             }
 
