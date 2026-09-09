@@ -39,13 +39,7 @@ object StudentSyncHelper {
     suspend fun upsertStudentOrThrow(student: StudentEntity) {
         withContext(Dispatchers.IO) {
             functions.getHttpsCallable("updateStudentProfile")
-                .call(
-                    mapOf(
-                        "instituteId" to student.instituteId,
-                        "studentId" to student.id,
-                        "student" to student.toProfilePayload()
-                    )
-                )
+                .call(student.profileUpdateCallPayload())
                 .await()
         }
     }
@@ -88,27 +82,6 @@ object StudentSyncHelper {
         }
     }
 
-    private fun StudentEntity.toProfilePayload(): Map<String, Any?> = mapOf(
-        "studentCode" to studentCode,
-        "fullName" to fullName,
-        "photoUri" to photoUri,
-        "gender" to gender,
-        "dateOfBirthMs" to dateOfBirthMs,
-        "phone" to phone,
-        "email" to email,
-        "address" to address,
-        "schoolName" to schoolName,
-        "className" to className,
-        "guardianName" to guardianName,
-        "guardianPhone" to guardianPhone,
-        "guardianEmail" to guardianEmail,
-        "emergencyContact" to emergencyContact,
-        "bloodGroup" to bloodGroup,
-        "admissionDateMs" to admissionDateMs,
-        "status" to status,
-        "notes" to notes
-    )
-
     private fun DocumentSnapshot.toStudentEntity(
         instituteId: String
     ): StudentEntity? {
@@ -145,4 +118,31 @@ object StudentSyncHelper {
     private fun com.google.firebase.firestore.DocumentSnapshot.getLongCompat(field: String): Long? =
         (get(field) as? Number)?.toLong()
 }
+
+private fun StudentEntity.toProfilePayload(): Map<String, Any?> = mapOf(
+    "studentCode" to studentCode,
+    "fullName" to fullName,
+    "photoUri" to photoUri,
+    "gender" to gender,
+    "dateOfBirthMs" to dateOfBirthMs,
+    "phone" to phone,
+    "email" to email,
+    "address" to address,
+    "schoolName" to schoolName,
+    "className" to className,
+    "guardianName" to guardianName,
+    "guardianPhone" to guardianPhone,
+    "guardianEmail" to guardianEmail,
+    "emergencyContact" to emergencyContact,
+    "bloodGroup" to bloodGroup,
+    "admissionDateMs" to admissionDateMs,
+    "status" to status,
+    "notes" to notes
+)
+
+internal fun StudentEntity.profileUpdateCallPayload(): Map<String, Any?> = mapOf(
+    "instituteId" to instituteId,
+    "studentId" to id,
+    "student" to toProfilePayload()
+)
 

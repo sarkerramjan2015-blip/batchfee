@@ -14,13 +14,27 @@ internal suspend fun callTrustedFunction(
     functions: FirebaseFunctions,
     functionName: String,
     payload: Map<String, Any?>
+): Any? = callTrustedFunctionOnce(
+    refreshToken = {
+        FirebaseAuth.getInstance().currentUser?.getIdToken(true)?.await() != null
+    },
+    invoke = { functions.getHttpsCallable(functionName).call(payload).await().data }
+)
+
+/**
+ * Exactly one forced token refresh followed by exactly one replay when the
+ * server answers UNAUTHENTICATED. Any other failure is rethrown unchanged and
+ * is never retried, so PERMISSION_DENIED cannot become a refresh loop.
+ */
+internal suspend fun callTrustedFunctionOnce(
+    refreshToken: suspend () -> Boolean,
+    invoke: suspend () -> Any?
 ): Any? {
-    suspend fun invoke() = functions.getHttpsCallable(functionName).call(payload).await().data
-    return try {
-        invoke()
+    try {
+        return invoke()
     } catch (error: FirebaseFunctionsException) {
         if (error.code != FirebaseFunctionsException.Code.UNAUTHENTICATED) throw error
-        FirebaseAuth.getInstance().currentUser?.getIdToken(true)?.await() ?: throw error
-        invoke()
+        if (!refreshToken()) throw error
+        return invoke()
     }
 }

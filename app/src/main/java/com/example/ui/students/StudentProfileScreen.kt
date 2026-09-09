@@ -43,7 +43,6 @@ import coil.request.ImageRequest
 import com.batchfee.edu.data.audit.StaffActivityLogger
 import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.data.firestore.InstituteCacheRefreshManager
-import com.batchfee.edu.data.firestore.StudentSyncHelper
 import com.batchfee.edu.data.media.FirebaseStorageImageUploadHelper
 import com.batchfee.edu.data.models.BatchEntity
 import com.batchfee.edu.data.models.BatchStudentEntity
@@ -54,6 +53,8 @@ import com.batchfee.edu.data.repository.FeeCollectionRepository
 import com.batchfee.edu.data.repository.BatchEnrollmentRepository
 import com.batchfee.edu.data.repository.FinancialOperationPendingException
 import com.batchfee.edu.data.repository.StudentDeletionRepository
+import com.batchfee.edu.data.repository.StudentStatusRepository
+import com.batchfee.edu.data.repository.studentStatusErrorMessage
 import com.batchfee.edu.domain.appendInstituteSignature
 import com.batchfee.edu.domain.loadInstituteSignature
 import com.batchfee.edu.domain.MonthlyDueCalculator
@@ -183,6 +184,7 @@ fun StudentProfileScreen(
     val feeRepository = remember { FeeCollectionRepository(db) }
     val batchEnrollmentRepository = remember(db) { BatchEnrollmentRepository(db) }
     val studentDeletionRepository = remember(db) { StudentDeletionRepository(db) }
+    val studentStatusRepository = remember(db) { StudentStatusRepository(db) }
 
     // ── Batch assignment helper ─────────────────────────────
     // Assign Date DB logic: the operator-selected assign date becomes the new
@@ -2070,19 +2072,16 @@ fun StudentProfileScreen(
                                         isUpdatingStudentStatus = true
                                         try {
                                             val becomingActive = action == StudentMenuConfirmAction.Activate
-                                            val updated = currentStudent.copy(
-                                                status = if (becomingActive) "active" else "inactive",
-                                                updatedAtMs = System.currentTimeMillis()
-                                            )
-                                            // Status is a cloud-first operational change. Do not let a
-                                            // failed request create a local-only inactive/active state.
-                                            StudentSyncHelper.upsertStudentOrThrow(updated)
-                                            db.studentDao().updateStudent(updated)
+                                            // Status is a cloud-first operational change. The trusted
+                                            // backend must confirm it before Room or the visible
+                                            // status moves; a failed request never creates a
+                                            // local-only inactive/active state.
+                                            studentStatusRepository.setStatus(currentStudent, becomingActive)
                                             StaffActivityLogger.logCompletedAction(
                                                 db,
                                                 if (becomingActive) "student_activated" else "student_inactivated",
                                                 "students",
-                                                if (becomingActive) "Activated student ${updated.fullName}" else "Marked student ${updated.fullName} inactive"
+                                                if (becomingActive) "Activated student ${currentStudent.fullName}" else "Marked student ${currentStudent.fullName} inactive"
                                             )
                                             Toast.makeText(
                                                 context,
@@ -2090,10 +2089,10 @@ fun StudentProfileScreen(
                                                 Toast.LENGTH_SHORT
                                             ).show()
                                             pendingConfirmAction = null
-                                        } catch (_: Exception) {
+                                        } catch (error: Exception) {
                                             Toast.makeText(
                                                 context,
-                                                "Student status could not be updated. Check your connection and try again.",
+                                                studentStatusErrorMessage(error),
                                                 Toast.LENGTH_LONG
                                             ).show()
                                         } finally {
