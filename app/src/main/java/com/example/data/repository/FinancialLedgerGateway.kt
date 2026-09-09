@@ -4,10 +4,10 @@ import com.batchfee.edu.data.models.FeeEntity
 import com.batchfee.edu.data.models.PaymentEntity
 import com.batchfee.edu.data.models.PaymentReversalEntity
 import com.batchfee.edu.data.models.ReceiptEntity
+import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.functions.FirebaseFunctions
 import com.google.firebase.functions.FirebaseFunctionsException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -34,39 +34,90 @@ class FinancialOperationPendingException(
     cause
 )
 
+/**
+ * Thrown when the Firebase identity behind a financial operation is missing or
+ * could not be restored after the single forced token refresh. The caller must
+ * keep payment, receipt, fee, Room and cloud data unchanged and ask the owner
+ * to sign in again instead of reporting a false success.
+ */
+class FinancialSessionExpiredException : Exception("Session expired. Please sign in again.")
+
 interface FinancialLedgerGateway {
+    /**
+     * Verifies that a Firebase identity exists before a destructive financial
+     * operation is placed in the durable outbox. Test gateways deliberately
+     * default to a no-op so repository tests remain independent of Firebase.
+     */
+    suspend fun requireAuthenticatedSession() = Unit
+
     suspend fun commit(request: Map<String, Any?>): FinancialOperationResult
 }
 
 class FirebaseFinancialLedgerGateway : FinancialLedgerGateway {
     private val functions = FirebaseFunctions.getInstance("asia-south1")
 
+    override suspend fun requireAuthenticatedSession() {
+        withContext(Dispatchers.IO) {
+            if (FirebaseAuth.getInstance().currentUser == null) {
+                throw FinancialSessionExpiredException()
+            }
+        }
+    }
+
     override suspend fun commit(request: Map<String, Any?>): FinancialOperationResult =
         withContext(Dispatchers.IO) {
+            // Recheck immediately before the callable in case the account was
+            // signed out after the repository's outbox preflight.
+            requireAuthenticatedSession()
             try {
-                val response = functions.getHttpsCallable("commitFinancialOperation")
-                    .call(request)
-                    .await()
+                val response = commitFinancialOperation(
+                    hasUser = { FirebaseAuth.getInstance().currentUser != null },
+                    invoke = { callTrustedFunction(functions, "commitFinancialOperation", request) }
+                )
                 @Suppress("UNCHECKED_CAST")
-                parseFinancialResult(response.data as? Map<String, Any?>
+                parseFinancialResult(response as? Map<String, Any?>
                     ?: error("Invalid financial operation response."))
             } catch (error: FirebaseFunctionsException) {
-                when (error.code) {
-                    FirebaseFunctionsException.Code.INVALID_ARGUMENT,
-                    FirebaseFunctionsException.Code.FAILED_PRECONDITION,
-                    FirebaseFunctionsException.Code.ALREADY_EXISTS,
-                    FirebaseFunctionsException.Code.NOT_FOUND,
-                    FirebaseFunctionsException.Code.PERMISSION_DENIED,
-                    FirebaseFunctionsException.Code.UNAUTHENTICATED ->
-                        throw FinancialOperationRejectedException(
-                            error.message ?: "Financial operation was rejected.",
-                            error
-                        )
-                    else -> throw error
-                }
+                throw mapFinancialFunctionsError(error)
             }
         }
 }
+
+/**
+ * Session gate for the trusted ledger. A missing Firebase user stops the
+ * destructive request before it is sent, and a persistent UNAUTHENTICATED
+ * (after callTrustedFunction's single forced refresh and single replay with
+ * the same payload/operationId) is reported as a session expiry. Every other
+ * failure is rethrown unchanged and is never retried.
+ */
+internal suspend fun commitFinancialOperation(
+    hasUser: () -> Boolean,
+    invoke: suspend () -> Any?
+): Any? {
+    if (!hasUser()) throw FinancialSessionExpiredException()
+    return try {
+        invoke()
+    } catch (error: FirebaseFunctionsException) {
+        if (error.code == FirebaseFunctionsException.Code.UNAUTHENTICATED) {
+            throw FinancialSessionExpiredException()
+        }
+        throw error
+    }
+}
+
+internal fun mapFinancialFunctionsError(error: FirebaseFunctionsException): Exception =
+    when (error.code) {
+        FirebaseFunctionsException.Code.INVALID_ARGUMENT,
+        FirebaseFunctionsException.Code.FAILED_PRECONDITION,
+        FirebaseFunctionsException.Code.ALREADY_EXISTS,
+        FirebaseFunctionsException.Code.NOT_FOUND,
+        FirebaseFunctionsException.Code.PERMISSION_DENIED ->
+            FinancialOperationRejectedException(
+                error.message ?: "Financial operation was rejected.",
+                error
+            )
+        else -> error
+    }
 
 internal object FinancialRequestCodec {
     fun encode(request: Map<String, Any?>): String = JSONObject(request).toString()

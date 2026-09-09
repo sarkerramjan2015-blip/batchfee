@@ -118,6 +118,7 @@ import com.batchfee.edu.data.models.StudentEntity
 import com.batchfee.edu.data.repository.FeeCollectionRepository
 import com.batchfee.edu.data.repository.FinancialOperationPendingException
 import com.batchfee.edu.data.repository.FinancialOperationRejectedException
+import com.batchfee.edu.data.repository.FinancialSessionExpiredException
 import com.batchfee.edu.domain.SessionManager
 import com.batchfee.edu.domain.MonthlyDueCalculator
 import com.batchfee.edu.domain.isCourseBatch
@@ -1270,6 +1271,10 @@ fun UnifiedCollectScreen(
                         editingHistoryItem = null
                         loadStudentLedger(student)
                         snackbarHostState.showSnackbar("Payment deleted. Due fees recalculated.")
+                    } catch (e: FinancialSessionExpiredException) {
+                        // Nothing was sent or changed. The dialog and the
+                        // payment stay exactly as they were.
+                        snackbarHostState.showSnackbar("Session expired. Please sign in again.")
                     } catch (e: FinancialOperationPendingException) {
                         snackbarHostState.showSnackbar("Deletion is pending. Do not submit it again.")
                     } catch (e: FinancialOperationRejectedException) {

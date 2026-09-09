@@ -28,4 +28,7 @@ interface FinancialLedgerDao {
 
     @Query("SELECT * FROM financial_outbox WHERE instituteId = :instituteId AND operationId = :operationId LIMIT 1")
     suspend fun getOperation(instituteId: String, operationId: String): FinancialOutboxEntity?
+
+    @Query("DELETE FROM financial_outbox WHERE instituteId = :instituteId AND operationId = :operationId")
+    suspend fun deleteOperation(instituteId: String, operationId: String)
 }

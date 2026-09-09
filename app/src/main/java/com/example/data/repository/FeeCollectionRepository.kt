@@ -314,6 +314,12 @@ class FeeCollectionRepository(
         val operationId = request["operationId"] as? String ?: error("Missing operation ID.")
         val instituteId = request["instituteId"] as? String ?: error("Missing institute ID.")
         val action = request["action"] as? String ?: error("Missing financial action.")
+
+        // Do not queue a create/edit/delete operation for a signed-out user.
+        // A later login must never silently perform a financial action that
+        // the owner only attempted while their session had expired.
+        ledgerGateway.requireAuthenticatedSession()
+
         val existing = db.financialLedgerDao().getOperation(instituteId, operationId)
         val pending = FinancialOutboxEntity(
             operationId = operationId,
@@ -386,6 +392,18 @@ class FeeCollectionRepository(
             result
         } catch (error: Exception) {
             val rejected = error is FinancialOperationRejectedException
+            val sessionExpired = error is FinancialSessionExpiredException
+            if (sessionExpired) {
+                // The callable could not authenticate, so it did not commit a
+                // financial mutation. Restore pre-existing retry state, or
+                // remove the transient outbox record created for this tap.
+                if (existing == null) {
+                    db.financialLedgerDao().deleteOperation(instituteId, operationId)
+                } else {
+                    db.financialLedgerDao().upsertOutbox(existing)
+                }
+                throw error
+            }
             db.financialLedgerDao().upsertOutbox(
                 pending.copy(
                     status = if (rejected) "failed" else "pending",

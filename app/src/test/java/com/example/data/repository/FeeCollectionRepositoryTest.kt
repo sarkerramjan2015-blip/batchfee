@@ -8,6 +8,7 @@ import com.batchfee.edu.data.models.FeeEntity
 import com.batchfee.edu.data.models.PaymentEntity
 import com.batchfee.edu.data.models.PaymentReversalEntity
 import com.batchfee.edu.data.models.ReceiptEntity
+import com.google.firebase.FirebaseNetworkException
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -244,6 +245,178 @@ class FeeCollectionRepositoryTest {
         assertEquals(1, gateway.requests.size)
     }
 
+    @Test
+    fun missingSessionDoesNotQueueDeleteAndKeepsPaymentReceiptAndFee() = runTest {
+        val postedFee = fee(id = "fee-session").copy(
+            paidAmount = 400.0,
+            dueAmount = 600.0,
+            status = "partially_paid"
+        )
+        val postedPayment = payment(id = "payment-session", feeId = postedFee.id)
+        val postedReceipt = receipt(id = "receipt-session", paymentId = postedPayment.id, feeId = postedFee.id)
+        db.feeDao().insertFee(postedFee)
+        db.paymentDao().insertPayment(postedPayment)
+        db.receiptDao().insertReceipt(postedReceipt)
+        gateway.sessionFailure = FinancialSessionExpiredException()
+
+        assertThrowsSuspend<FinancialSessionExpiredException> {
+            repository.ownerDeletePayment(
+                paymentId = postedPayment.id,
+                instituteId = INSTITUTE_ID,
+                reason = "Deleted by institute owner",
+                now = 4_000L,
+                operationId = OPERATION_ID
+            )
+        }
+
+        assertNotNull(db.paymentDao().getPaymentById(postedPayment.id, INSTITUTE_ID))
+        assertNotNull(db.receiptDao().getReceiptByPaymentIdOnce(INSTITUTE_ID, postedPayment.id))
+        val keptFee = db.feeDao().getFeeById(postedFee.id, INSTITUTE_ID)!!
+        assertEquals(400.0, keptFee.paidAmount, MONEY_DELTA)
+        assertEquals(600.0, keptFee.dueAmount, MONEY_DELTA)
+        assertEquals("partially_paid", keptFee.status)
+        assertNull(db.financialLedgerDao().getOperation(INSTITUTE_ID, OPERATION_ID))
+        assertTrue(gateway.requests.isEmpty())
+    }
+
+    @Test
+    fun sessionExpiryAfterPreflightRemovesTransientDeleteOperation() = runTest {
+        val postedFee = fee(id = "fee-expired-after-preflight").copy(
+            paidAmount = 400.0,
+            dueAmount = 600.0,
+            status = "partially_paid"
+        )
+        val postedPayment = payment(id = "payment-expired-after-preflight", feeId = postedFee.id)
+        val postedReceipt = receipt(
+            id = "receipt-expired-after-preflight",
+            paymentId = postedPayment.id,
+            feeId = postedFee.id
+        )
+        db.feeDao().insertFee(postedFee)
+        db.paymentDao().insertPayment(postedPayment)
+        db.receiptDao().insertReceipt(postedReceipt)
+        gateway.responder = { throw FinancialSessionExpiredException() }
+
+        assertThrowsSuspend<FinancialSessionExpiredException> {
+            repository.ownerDeletePayment(
+                paymentId = postedPayment.id,
+                instituteId = INSTITUTE_ID,
+                reason = "Deleted by institute owner",
+                now = 4_000L,
+                operationId = OPERATION_ID
+            )
+        }
+
+        assertEquals(1, gateway.requests.size)
+        assertNotNull(db.paymentDao().getPaymentById(postedPayment.id, INSTITUTE_ID))
+        assertNotNull(db.receiptDao().getReceiptByPaymentIdOnce(INSTITUTE_ID, postedPayment.id))
+        assertEquals(400.0, db.feeDao().getFeeById(postedFee.id, INSTITUTE_ID)?.paidAmount ?: -1.0, MONEY_DELTA)
+        assertEquals(600.0, db.feeDao().getFeeById(postedFee.id, INSTITUTE_ID)?.dueAmount ?: -1.0, MONEY_DELTA)
+        assertNull(db.financialLedgerDao().getOperation(INSTITUTE_ID, OPERATION_ID))
+    }
+
+    @Test
+    fun permissionDeniedDoesNotRetryAndKeepsPaymentReceiptAndFee() = runTest {
+        val postedFee = fee(id = "fee-denied").copy(paidAmount = 400.0, dueAmount = 600.0, status = "partially_paid")
+        val postedPayment = payment(id = "payment-denied", feeId = postedFee.id)
+        val postedReceipt = receipt(id = "receipt-denied", paymentId = postedPayment.id, feeId = postedFee.id)
+        db.feeDao().insertFee(postedFee)
+        db.paymentDao().insertPayment(postedPayment)
+        db.receiptDao().insertReceipt(postedReceipt)
+        gateway.responder = {
+            throw FinancialOperationRejectedException(
+                "Only the institute owner can perform this financial correction."
+            )
+        }
+
+        assertThrowsSuspend<FinancialOperationRejectedException> {
+            repository.ownerDeletePayment(
+                paymentId = postedPayment.id,
+                instituteId = INSTITUTE_ID,
+                reason = "Deleted by institute owner",
+                now = 4_000L,
+                operationId = OPERATION_ID
+            )
+        }
+
+        assertEquals(1, gateway.requests.size)
+        assertNotNull(db.paymentDao().getPaymentById(postedPayment.id, INSTITUTE_ID))
+        assertNotNull(db.receiptDao().getReceiptByPaymentIdOnce(INSTITUTE_ID, postedPayment.id))
+        val keptFee = db.feeDao().getFeeById(postedFee.id, INSTITUTE_ID)!!
+        assertEquals(400.0, keptFee.paidAmount, MONEY_DELTA)
+        assertEquals(600.0, keptFee.dueAmount, MONEY_DELTA)
+        assertEquals("failed", db.financialLedgerDao().getOperation(INSTITUTE_ID, OPERATION_ID)?.status)
+    }
+
+    @Test
+    fun offlineFailureKeepsPaymentReceiptAndFeeAndStaysPending() = runTest {
+        val postedFee = fee(id = "fee-offline").copy(paidAmount = 400.0, dueAmount = 600.0, status = "partially_paid")
+        val postedPayment = payment(id = "payment-offline", feeId = postedFee.id)
+        val postedReceipt = receipt(id = "receipt-offline", paymentId = postedPayment.id, feeId = postedFee.id)
+        db.feeDao().insertFee(postedFee)
+        db.paymentDao().insertPayment(postedPayment)
+        db.receiptDao().insertReceipt(postedReceipt)
+        gateway.responder = { throw FirebaseNetworkException("offline") }
+
+        assertThrowsSuspend<FinancialOperationPendingException> {
+            repository.ownerDeletePayment(
+                paymentId = postedPayment.id,
+                instituteId = INSTITUTE_ID,
+                reason = "Deleted by institute owner",
+                now = 4_000L,
+                operationId = OPERATION_ID
+            )
+        }
+
+        assertNotNull(db.paymentDao().getPaymentById(postedPayment.id, INSTITUTE_ID))
+        assertNotNull(db.receiptDao().getReceiptByPaymentIdOnce(INSTITUTE_ID, postedPayment.id))
+        val keptFee = db.feeDao().getFeeById(postedFee.id, INSTITUTE_ID)!!
+        assertEquals(400.0, keptFee.paidAmount, MONEY_DELTA)
+        assertEquals(600.0, keptFee.dueAmount, MONEY_DELTA)
+        assertEquals("pending", db.financialLedgerDao().getOperation(INSTITUTE_ID, OPERATION_ID)?.status)
+    }
+
+    @Test
+    fun responseLossReplayDeletesOnceWithoutDoubleAdjustingDue() = runTest {
+        val postedFee = fee(id = "fee-replay").copy(paidAmount = 400.0, dueAmount = 600.0, status = "partially_paid")
+        val postedPayment = payment(id = "payment-replay", feeId = postedFee.id)
+        val postedReceipt = receipt(id = "receipt-replay", paymentId = postedPayment.id, feeId = postedFee.id)
+        db.feeDao().insertFee(postedFee)
+        db.paymentDao().insertPayment(postedPayment)
+        db.receiptDao().insertReceipt(postedReceipt)
+        gateway.responder = { throw IllegalStateException("response lost") }
+
+        assertThrowsSuspend<FinancialOperationPendingException> {
+            repository.ownerDeletePayment(
+                paymentId = postedPayment.id,
+                instituteId = INSTITUTE_ID,
+                reason = "Deleted by institute owner",
+                now = 4_000L,
+                operationId = OPERATION_ID
+            )
+        }
+        assertNotNull(db.paymentDao().getPaymentById(postedPayment.id, INSTITUTE_ID))
+
+        gateway.responder = {
+            FinancialOperationResult(
+                operationId = OPERATION_ID,
+                action = "owner_delete_payment",
+                fees = listOf(postedFee.copy(paidAmount = 0.0, dueAmount = 1_000.0, status = "unpaid")),
+                deletedPaymentIds = listOf(postedPayment.id),
+                deletedReceiptIds = listOf(postedReceipt.id)
+            )
+        }
+        repository.replayPendingOperations(INSTITUTE_ID)
+
+        assertEquals(listOf(OPERATION_ID, OPERATION_ID), gateway.requests.map { it["operationId"] })
+        assertNull(db.paymentDao().getPaymentById(postedPayment.id, INSTITUTE_ID))
+        assertNull(db.receiptDao().getReceiptByPaymentIdOnce(INSTITUTE_ID, postedPayment.id))
+        val reopenedFee = db.feeDao().getFeeById(postedFee.id, INSTITUTE_ID)!!
+        assertEquals(0.0, reopenedFee.paidAmount, MONEY_DELTA)
+        assertEquals(1_000.0, reopenedFee.dueAmount, MONEY_DELTA)
+        assertEquals("completed", db.financialLedgerDao().getOperation(INSTITUTE_ID, OPERATION_ID)?.status)
+    }
+
     private fun fee(id: String, businessKey: String? = "business-key") = FeeEntity(
         id = id,
         instituteId = INSTITUTE_ID,
@@ -352,8 +525,13 @@ class FeeCollectionRepositoryTest {
 
 private class ScriptedLedgerGateway : FinancialLedgerGateway {
     val requests = mutableListOf<Map<String, Any?>>()
+    var sessionFailure: FinancialSessionExpiredException? = null
     var responder: suspend (Map<String, Any?>) -> FinancialOperationResult = {
         error("No ledger response configured")
+    }
+
+    override suspend fun requireAuthenticatedSession() {
+        sessionFailure?.let { throw it }
     }
 
     override suspend fun commit(request: Map<String, Any?>): FinancialOperationResult {
