@@ -811,7 +811,11 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
     }
 
     private fun loadInstituteDirectoryPage(targetIndex: Int) {
-        val cursor = directoryCursors.getOrNull(targetIndex) ?: return
+        // Page one intentionally has no cursor.  Returning when its value is
+        // null prevented the initial trusted directory call altogether,
+        // leaving the shared loading state stuck and the dashboard as "...".
+        if (targetIndex !in directoryCursors.indices) return
+        val cursor = directoryCursors[targetIndex]
         val requestGeneration = ++directoryRequestGeneration
         val isForwardPage = targetIndex > directoryPageIndex
         if (isForwardPage) _isLoadingMoreInstitutes.value = true else _isLoading.value = true
