@@ -11,6 +11,9 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface SalaryDao {
     @Query("SELECT * FROM salaries WHERE instituteId = :instituteId AND cancelledAtMs IS NULL ORDER BY createdAtMs DESC")
+    suspend fun getSalariesByInstituteOnce(instituteId: String): List<SalaryEntity>
+
+    @Query("SELECT * FROM salaries WHERE instituteId = :instituteId AND cancelledAtMs IS NULL ORDER BY createdAtMs DESC")
     fun getSalariesByInstitute(instituteId: String): Flow<List<SalaryEntity>>
 
     @Query("SELECT * FROM salaries WHERE id = :salaryId AND instituteId = :instituteId LIMIT 1")

@@ -70,6 +70,7 @@ fun SettingsScreen(
     val currentDark = isDark ?: true
     var biometricEnabled by remember { mutableStateOf(BiometricAuthManager.isEnabled(context)) }
     var showExportDialog by remember { mutableStateOf(false) }
+    var exportInProgress by remember { mutableStateOf(false) }
     Scaffold(
         containerColor = BgColor, // polish: navy background
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -463,17 +464,22 @@ fun SettingsScreen(
 
             if (showExportDialog) {
                 ExportDataDialog(
-                    onDismiss = { showExportDialog = false },
+                    exporting = exportInProgress,
+                    onDismiss = { if (!exportInProgress) showExportDialog = false },
                     onExport = { sections, format ->
-                        showExportDialog = false
                         scope.launch {
+                            exportInProgress = true
                             runCatching { DataExporter.exportData(context, db, sections, format) }
-                                .onSuccess { fileName ->
-                                    snackbarHostState.showSnackbar("Export ready: $fileName")
+                                .onSuccess { outcome ->
+                                    showExportDialog = false
+                                    snackbarHostState.showSnackbar(
+                                        "Export ready: ${outcome.recordCount} records in ${outcome.sectionCount} sections."
+                                    )
                                 }
                                 .onFailure { error ->
                                     snackbarHostState.showSnackbar(error.message ?: "Could not export data. Please try again.")
                                 }
+                            exportInProgress = false
                         }
                     }
                 )
@@ -968,31 +974,60 @@ private fun SmsReportRow(message: SmsMessageStatus) {
 
 @Composable
 private fun ExportDataDialog(
+    exporting: Boolean,
     onDismiss: () -> Unit,
     onExport: (Set<ExportSection>, ExportFormat) -> Unit
 ) {
     var selectedSections by remember { mutableStateOf(ExportSection.entries.toSet()) }
     var format by remember { mutableStateOf(ExportFormat.EXCEL) }
-    var exporting by remember { mutableStateOf(false) }
 
     AlertDialog(
         onDismissRequest = { if (!exporting) onDismiss() },
         containerColor = CardBg,
-        title = { Text("Export Data", color = TextWhite, fontWeight = FontWeight.Bold, fontSize = 17.sp) },
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Cyan.copy(alpha = 0.16f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Filled.FileDownload, null, tint = Cyan, modifier = Modifier.size(22.dp))
+                }
+                Spacer(Modifier.width(11.dp))
+                Column {
+                    Text("Export institute data", color = TextWhite, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                    Text("A read-only file you can save or share", color = TextMuted, fontSize = 10.sp)
+                }
+            }
+        },
         text = {
-            Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
-                Text("Choose what to export", color = TextMuted, fontSize = 11.sp)
-                Spacer(Modifier.height(6.dp))
+            Column(Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState())) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(ElectricBlue.copy(alpha = 0.10f))
+                        .padding(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Filled.Lock, null, tint = Cyan, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Only this institute's current local records are included. Export never changes your data.", color = TextMuted, fontSize = 10.sp)
+                }
+                Spacer(Modifier.height(14.dp))
+                Text("Choose data sections", color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(3.dp))
                 Row(
                     Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        if (selectedSections.size == ExportSection.entries.size) "All selected" else "${selectedSections.size} selected",
-                        color = TextWhite,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold
+                        if (selectedSections.size == ExportSection.entries.size) "All ${ExportSection.entries.size} sections selected" else "${selectedSections.size} sections selected",
+                        color = TextMuted,
+                        fontSize = 11.sp
                     )
                     TextButton(onClick = {
                         selectedSections = if (selectedSections.size == ExportSection.entries.size) emptySet() else ExportSection.entries.toSet()
@@ -1008,11 +1043,14 @@ private fun ExportDataDialog(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
+                            .padding(top = 4.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(if (section in selectedSections) Cyan.copy(alpha = 0.09f) else Color.Transparent)
+                            .border(1.dp, if (section in selectedSections) Cyan.copy(alpha = 0.35f) else BorderSub, RoundedCornerShape(10.dp))
                             .clickable {
                                 selectedSections = if (section in selectedSections) selectedSections - section else selectedSections + section
                             }
-                            .padding(horizontal = 4.dp, vertical = 4.dp),
+                            .padding(horizontal = 8.dp, vertical = 7.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Checkbox(
@@ -1022,20 +1060,26 @@ private fun ExportDataDialog(
                             },
                             colors = CheckboxDefaults.colors(checkedColor = Cyan, uncheckedColor = TextMuted)
                         )
-                        Spacer(Modifier.width(6.dp))
-                        Text(section.label, color = TextWhite, fontSize = 13.sp)
+                        Spacer(Modifier.width(5.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(section.label, color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                            Text(section.description, color = TextMuted, fontSize = 9.sp)
+                        }
                     }
                 }
-                Spacer(Modifier.height(10.dp))
-                Text("Choose format", color = TextMuted, fontSize = 11.sp)
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(15.dp))
+                Text("Choose file format", color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(5.dp))
                 ExportFormat.entries.forEach { option ->
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
+                            .padding(top = 4.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(if (format == option) ElectricBlue.copy(alpha = 0.13f) else Color.Transparent)
+                            .border(1.dp, if (format == option) ElectricBlue.copy(alpha = 0.52f) else BorderSub, RoundedCornerShape(10.dp))
                             .clickable { format = option }
-                            .padding(horizontal = 4.dp, vertical = 4.dp),
+                            .padding(horizontal = 8.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         RadioButton(
@@ -1043,8 +1087,11 @@ private fun ExportDataDialog(
                             onClick = { format = option },
                             colors = RadioButtonDefaults.colors(selectedColor = Cyan, unselectedColor = TextMuted.copy(alpha = 0.6f))
                         )
-                        Spacer(Modifier.width(6.dp))
-                        Text(option.label, color = TextWhite, fontSize = 13.sp)
+                        Spacer(Modifier.width(5.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(option.label, color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                            Text(option.description, color = TextMuted, fontSize = 9.sp)
+                        }
                     }
                 }
             }
@@ -1053,13 +1100,12 @@ private fun ExportDataDialog(
             Button(
                 onClick = {
                     if (selectedSections.isEmpty() || exporting) return@Button
-                    exporting = true
                     onExport(selectedSections, format)
                 },
                 enabled = selectedSections.isNotEmpty() && !exporting,
                 colors = ButtonDefaults.buttonColors(containerColor = Cyan)
             ) {
-                Text(if (exporting) "Exporting..." else "Export", color = BgColor, fontWeight = FontWeight.Bold)
+                Text(if (exporting) "Preparing export..." else "Create export", color = BgColor, fontWeight = FontWeight.Bold)
             }
         },
         dismissButton = {

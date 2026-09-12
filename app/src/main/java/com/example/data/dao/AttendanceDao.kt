@@ -6,6 +6,9 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface AttendanceDao {
+    @Query("SELECT * FROM attendance WHERE instituteId = :instituteId ORDER BY attendanceDateMs DESC, createdAtMs DESC")
+    suspend fun getAttendanceByInstituteOnce(instituteId: String): List<AttendanceEntity>
+
     @Query("SELECT * FROM attendance WHERE instituteId = :instituteId AND batchId = :batchId AND attendanceDateMs = :dateMs")
     fun getAttendanceForBatchByDate(instituteId: String, batchId: String, dateMs: Long): Flow<List<AttendanceEntity>>
 
