@@ -1299,7 +1299,15 @@ fun AuthScreen(
                         .navigationBarsPadding(),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                Spacer(Modifier.height(if (compactHeight) 8.dp else 14.dp))
+                Spacer(
+                    Modifier.height(
+                        when {
+                            compactHeight -> 8.dp
+                            isLoginMode -> 22.dp
+                            else -> 14.dp
+                        }
+                    )
+                )
 
                 if (isLoginMode) {
                     AnimatedLogo(modifier = Modifier.size(logoSize))
@@ -1906,7 +1914,9 @@ fun AuthScreen(
                 context = context,
                 onNavigatePrivacyPolicy = onNavigatePrivacyPolicy,
                 onNavigateTermsConditions = onNavigateTermsConditions,
-                modifier = Modifier.align(Alignment.BottomCenter)
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .then(if (compactHeight) Modifier else Modifier.offset(y = (-12).dp))
             )
         }
     }
