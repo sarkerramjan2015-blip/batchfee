@@ -4,6 +4,7 @@ import androidx.room.withTransaction
 import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.data.models.FeeEntity
 import com.batchfee.edu.data.models.FinancialOutboxEntity
+import com.batchfee.edu.data.models.PaymentEntity
 import java.util.UUID
 import kotlin.math.abs
 
@@ -17,6 +18,26 @@ data class FeeCreationResult(
     val fee: FeeEntity,
     val paymentId: String? = null,
     val receiptNumber: String? = null
+)
+
+/** One monthly allocation inside a single, atomic guardian-facing receipt. */
+data class GroupedMonthlyCollectionAllocation(
+    val feeId: String? = null,
+    val batchId: String? = null,
+    val feePeriod: String,
+    val feeType: String = "monthly_fee",
+    val sourceId: String? = null,
+    val dueDateMs: Long,
+    val baseAmount: Double = 0.0,
+    val discountAmount: Double = 0.0,
+    val lateFeeAmount: Double = 0.0,
+    val amount: Double
+)
+
+data class GroupedFeeCollectionResult(
+    val receiptNumber: String,
+    val fees: List<FeeEntity>,
+    val payments: List<PaymentEntity>
 )
 
 class FeeCollectionRepository(
@@ -168,6 +189,100 @@ class FeeCollectionRepository(
             queuedAtMs = now
         )
         return result.asCollectionResult()
+    }
+
+    /**
+     * Records a full one-time fee waiver without creating a misleading zero-
+     * value cash payment. The trusted ledger checks the immutable payment
+     * history, records the reason/audit entry, and returns the canonical fee.
+     */
+    suspend fun waiveFee(
+        instituteId: String,
+        feeId: String? = null,
+        studentId: String? = null,
+        batchId: String? = null,
+        feePeriod: String? = null,
+        feeType: String? = null,
+        sourceId: String? = null,
+        dueDateMs: Long? = null,
+        baseAmount: Double? = null,
+        reason: String,
+        now: Long = System.currentTimeMillis(),
+        operationId: String = UUID.randomUUID().toString()
+    ): FeeEntity {
+        require(reason.trim().length >= 3) { "A waiver reason is required." }
+        require(feeId != null || (
+            !studentId.isNullOrBlank() && !feePeriod.isNullOrBlank() &&
+                !feeType.isNullOrBlank() && dueDateMs != null && baseAmount != null
+            )) { "A canonical fee or complete virtual fee details are required." }
+        val result = execute(
+            request = baseRequest(operationId, instituteId, "waive_fee") + mapOf(
+                "feeId" to feeId,
+                "studentId" to studentId,
+                "batchId" to batchId,
+                "feePeriod" to feePeriod,
+                "feeType" to feeType,
+                "sourceId" to sourceId,
+                "dueDateMs" to dueDateMs,
+                "baseAmount" to baseAmount,
+                "reason" to reason.trim()
+            ),
+            queuedAtMs = now
+        )
+        return result.fees.singleOrNull() ?: error("Waived fee was not returned by the ledger service.")
+    }
+
+    /**
+     * Commits every monthly allocation, payment and one receipt header in one
+     * trusted Firestore transaction. Room is updated only from that canonical
+     * result, so a failed or replayed request cannot leave a partial group.
+     */
+    suspend fun collectGroupedMonthlyPayment(
+        instituteId: String,
+        collectedByUserId: String,
+        studentId: String,
+        allocations: List<GroupedMonthlyCollectionAllocation>,
+        paymentMethod: String,
+        paymentDateMs: Long = System.currentTimeMillis(),
+        note: String? = null,
+        receiptText: String? = null,
+        now: Long = System.currentTimeMillis(),
+        operationId: String = UUID.randomUUID().toString()
+    ): GroupedFeeCollectionResult {
+        require(collectedByUserId.isNotBlank()) { "A signed-in collector is required." }
+        require(allocations.isNotEmpty()) { "A grouped collection needs at least one monthly fee." }
+        require(allocations.all { it.amount > 0.0 }) { "Every grouped allocation must collect an amount." }
+        val result = execute(
+            request = baseRequest(operationId, instituteId, "collect_grouped_payment") + mapOf(
+                "studentId" to studentId,
+                "paymentMethod" to paymentMethod,
+                "paymentDateMs" to paymentDateMs,
+                "note" to note,
+                "receiptText" to receiptText,
+                "allocations" to allocations.map { allocation ->
+                    mapOf(
+                        "feeId" to allocation.feeId,
+                        "batchId" to allocation.batchId,
+                        "feePeriod" to allocation.feePeriod,
+                        "feeType" to allocation.feeType,
+                        "sourceId" to allocation.sourceId,
+                        "dueDateMs" to allocation.dueDateMs,
+                        "baseAmount" to allocation.baseAmount,
+                        "discountAmount" to allocation.discountAmount,
+                        "lateFeeAmount" to allocation.lateFeeAmount,
+                        "amount" to allocation.amount
+                    )
+                }
+            ),
+            queuedAtMs = now
+        )
+        val receipt = result.receipts.singleOrNull()
+            ?: error("Grouped receipt was not returned by the ledger service.")
+        return GroupedFeeCollectionResult(
+            receiptNumber = receipt.receiptNumber,
+            fees = result.fees,
+            payments = result.payments
+        )
     }
 
     /**
@@ -465,6 +580,21 @@ class FeeCollectionRepository(
             "collect_payment", "adjust_and_collect" -> {
                 check(result.payments.size == 1 && result.receipts.size == 1 && result.reversals.isEmpty())
             }
+            "waive_fee" -> {
+                check(result.fees.size == 1 && result.payments.isEmpty() && result.receipts.isEmpty())
+                check(result.reversals.isEmpty() && result.deletedPaymentIds.isEmpty() && result.deletedReceiptIds.isEmpty())
+                val fee = result.fees.single()
+                check(fee.totalAmount == 0.0 && fee.paidAmount == 0.0 && fee.dueAmount == 0.0)
+            }
+            "collect_grouped_payment" -> {
+                val allocations = request["allocations"] as? List<*> ?: emptyList<Any>()
+                check(allocations.isNotEmpty())
+                check(result.fees.size == allocations.size && result.payments.size == allocations.size)
+                check(result.receipts.size == 1 && result.reversals.isEmpty())
+                check(result.deletedPaymentIds.isEmpty() && result.deletedReceiptIds.isEmpty())
+                check(result.payments.map { it.feeId }.toSet().size == result.payments.size)
+                check(result.payments.map { it.receiptNumber }.toSet() == setOf(result.receipts.single().receiptNumber))
+            }
             "reverse_payment" -> {
                 check(result.payments.size == 1 && result.receipts.isEmpty() && result.reversals.size == 1)
                 check(result.payments.single().status == "reversed")
@@ -498,12 +628,15 @@ class FeeCollectionRepository(
             val paymentFee = feesById[payment.feeId]
                 ?: error("Ledger response payment references an unknown fee.")
             check(payment.studentId == paymentFee.studentId)
-            if (action !in setOf("reverse_payment", "owner_edit_payment")) {
+            if (action == "collect_grouped_payment") {
+                check(payment.operationId?.startsWith("$operationId:") == true && payment.status == "completed")
+            } else if (action !in setOf("reverse_payment", "owner_edit_payment")) {
                 check(payment.operationId == operationId && payment.status == "completed")
             }
         }
         result.receipts.forEach { receipt ->
-            val payment = result.payments.single()
+            val payment = result.payments.firstOrNull { it.id == receipt.paymentId }
+                ?: error("Ledger response receipt references an unknown payment.")
             val receiptFee = feesById[receipt.feeId]
                 ?: error("Ledger response receipt references an unknown fee.")
             check((action == "owner_edit_payment" || receipt.operationId == operationId) &&

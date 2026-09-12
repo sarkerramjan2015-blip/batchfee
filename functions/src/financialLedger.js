@@ -18,6 +18,8 @@ const ALLOWED_ACTIONS = new Set([
   "create_fee",
   "collect_payment",
   "adjust_and_collect",
+  "waive_fee",
+  "collect_grouped_payment",
   "set_custom_monthly_fee",
   "update_student_admission_date",
   "reconcile_invalid_monthly_fees",
@@ -30,6 +32,7 @@ const OWNER_ONLY_ACTIONS = new Set([
   "set_custom_monthly_fee",
   "update_student_admission_date",
   "reconcile_invalid_monthly_fees",
+  "waive_fee",
   "owner_edit_payment",
   "owner_delete_payment",
 ]);
@@ -60,6 +63,20 @@ function requiredTimestamp(data, field) {
 
 function money(data, field, options) {
   return validatedMoney(data && data[field], field, options);
+}
+
+function requiredArray(data, field, maxItems = 24) {
+  const value = data && data[field];
+  if (!Array.isArray(value) || value.length === 0 || value.length > maxItems) {
+    throw new HttpsError("invalid-argument", `Invalid ${field}.`);
+  }
+  return value;
+}
+
+function isWaivableFee(fee) {
+  const feeType = String(fee && fee.feeType || "").trim().toLowerCase();
+  return Number(fee && fee.lateFeeAmount || 0) <= MONEY_EPSILON &&
+    ["admission_fee", "admission", "advance_fee"].includes(feeType);
 }
 
 function validatedMoney(value, field, options) {
@@ -242,7 +259,15 @@ async function readEffectivePaid(transaction, instituteRef, feeId) {
   return Math.round(paidAmount * 100) / 100;
 }
 
-async function planReceipt(transaction, instituteRef, operationId, receiptGroupId, actorUid, studentId) {
+async function planReceipt(
+  transaction,
+  instituteRef,
+  operationId,
+  receiptGroupId,
+  actorUid,
+  studentId,
+  options = {},
+) {
   const safeGroupId = receiptGroupId || operationId;
   if (!/^[A-Za-z0-9_-]{16,128}$/.test(safeGroupId)) {
     throw new HttpsError("invalid-argument", "Invalid receipt group.");
@@ -256,7 +281,7 @@ async function planReceipt(transaction, instituteRef, operationId, receiptGroupI
     const existingNumber = groupSnap.get("receiptNumber");
     const createdAtMs = Number(groupSnap.get("createdAtMs"));
     if (!/^REC-[0-9]{10}$/.test(existingNumber) || !Number.isSafeInteger(createdAtMs) ||
-      Date.now() - createdAtMs > 10 * 60 * 1000) {
+      (!options.allowExistingGroup && Date.now() - createdAtMs > 10 * 60 * 1000)) {
       throw new HttpsError("failed-precondition", "Receipt group is no longer valid.");
     }
     return { number: existingNumber, groupRef, sequenceRef: null, sequence: null };
@@ -942,6 +967,398 @@ function createFinancialLedgerHandler({ db }) {
           receipts = [records.receipt];
         }
         result = publicResult(operationId, action, fee, payments, receipts);
+      } else if (action === "waive_fee") {
+        const feeId = optionalString(data, "feeId", 128);
+        const reason = requiredString(data, "reason", 500);
+        if (reason.length < 3) {
+          throw new HttpsError("invalid-argument", "A waiver reason is required.");
+        }
+
+        let feeRef;
+        let fee;
+        let creatingFee = false;
+        let keyRef = null;
+        if (feeId) {
+          feeRef = instituteRef.collection("fees").doc(feeId);
+          const feeSnap = await transaction.get(feeRef);
+          if (!feeSnap.exists || feeSnap.get("cancelledAtMs") != null) {
+            throw new HttpsError("failed-precondition", "Fee is unavailable.");
+          }
+          fee = { id: feeSnap.id, ...feeSnap.data() };
+        } else {
+          const studentId = requiredString(data, "studentId");
+          const batchId = optionalString(data, "batchId", 128);
+          const feePeriod = requiredString(data, "feePeriod", 80);
+          const feeType = requiredString(data, "feeType", 40).toLowerCase();
+          const sourceId = optionalString(data, "sourceId", 128);
+          const dueDateMs = requiredTimestamp(data, "dueDateMs");
+          const baseAmount = money(data, "baseAmount", { allowZero: false });
+          const businessKey = feeBusinessKey({ studentId, batchId, feePeriod, feeType, sourceId });
+          const deterministicFeeId = compactId("fee", `${instituteId}:${businessKey}`);
+          feeRef = instituteRef.collection("fees").doc(deterministicFeeId);
+          keyRef = instituteRef.collection("ledger_internal").doc(`fee_key_${businessKey}`);
+          const studentRef = instituteRef.collection("students").doc(studentId);
+          const legacyQuery = instituteRef.collection("fees").where("studentId", "==", studentId);
+          const [studentSnap, existingSnap, keySnap, legacySnap] = await Promise.all([
+            transaction.get(studentRef),
+            transaction.get(feeRef),
+            transaction.get(keyRef),
+            transaction.get(legacyQuery),
+          ]);
+          if (!studentSnap.exists || studentSnap.get("archivedAtMs") != null ||
+              ["archived", "inactive", "blocked"].includes(studentSnap.get("status"))) {
+            throw new HttpsError("failed-precondition", "Student is not available for a fee waiver.");
+          }
+          const duplicate = legacySnap.docs.some((doc) => doc.get("cancelledAtMs") == null &&
+            feeBusinessKey({
+              studentId: doc.get("studentId"),
+              batchId: doc.get("batchId"),
+              feePeriod: doc.get("feePeriod"),
+              feeType: doc.get("feeType"),
+              sourceId: doc.get("sourceId"),
+            }) === businessKey);
+          if (existingSnap.exists || keySnap.exists || duplicate) {
+            throw new HttpsError("already-exists", "This fee already exists.");
+          }
+          fee = {
+            id: deterministicFeeId,
+            instituteId,
+            studentId,
+            batchId,
+            feePeriod,
+            feeType,
+            sourceId,
+            dueDateMs,
+            baseAmount,
+            discountAmount: 0,
+            lateFeeAmount: 0,
+            totalAmount: baseAmount,
+            paidAmount: 0,
+            dueAmount: baseAmount,
+            status: "unpaid",
+            note: null,
+            createdAtMs: now,
+            updatedAtMs: now,
+            cancelledAtMs: null,
+            businessKey,
+            ledgerVersion: 1,
+          };
+          creatingFee = true;
+        }
+
+        if (!isWaivableFee(fee)) {
+          throw new HttpsError("failed-precondition", "This fee is not eligible for a full waiver.");
+        }
+        const immutablePaid = creatingFee ? 0 : await readEffectivePaid(transaction, instituteRef, fee.id);
+        if (immutablePaid > MONEY_EPSILON) {
+          throw new HttpsError(
+            "failed-precondition",
+            "A fee with an existing payment cannot be fully waived.",
+          );
+        }
+        if (Number(fee.dueAmount || 0) <= MONEY_EPSILON) {
+          throw new HttpsError("failed-precondition", "This fee is already settled.");
+        }
+
+        const waiverLedger = ledgerStatus(0, 0);
+        const waivedFee = {
+          ...fee,
+          discountAmount: fee.baseAmount,
+          lateFeeAmount: 0,
+          totalAmount: 0,
+          ...waiverLedger,
+          updatedAtMs: now,
+          ledgerVersion: 1,
+        };
+        if (creatingFee) {
+          transaction.create(feeRef, waivedFee);
+          transaction.create(keyRef, {
+            feeId: waivedFee.id,
+            businessKey: waivedFee.businessKey,
+            createdAtMs: now,
+          });
+        } else {
+          transaction.update(feeRef, {
+            discountAmount: waivedFee.discountAmount,
+            lateFeeAmount: 0,
+            totalAmount: 0,
+            ...waiverLedger,
+            updatedAtMs: now,
+            ledgerVersion: 1,
+          });
+        }
+        transaction.create(instituteRef.collection("fee_waivers").doc(compactId("waiver", operationId)), {
+          instituteId,
+          feeId: waivedFee.id,
+          studentId: waivedFee.studentId,
+          baseAmount: waivedFee.baseAmount,
+          discountAmount: waivedFee.discountAmount,
+          totalAmount: 0,
+          paidAmount: 0,
+          dueAmount: 0,
+          reason,
+          waivedByUserId: actorUid,
+          waivedAtMs: now,
+          operationId,
+          ledgerVersion: 1,
+        });
+        result = publicResult(operationId, action, waivedFee);
+      } else if (action === "collect_grouped_payment") {
+        const studentId = requiredString(data, "studentId");
+        const paymentMethod = requiredString(data, "paymentMethod", 40).toLowerCase();
+        const paymentDateMs = requiredTimestamp(data, "paymentDateMs");
+        const note = optionalString(data, "note");
+        const receiptText = optionalString(data, "receiptText", 4000);
+        const allocations = requiredArray(data, "allocations", 24).map((raw, index) => {
+          if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+            throw new HttpsError("invalid-argument", `Invalid allocation ${index + 1}.`);
+          }
+          const feeId = optionalString(raw, "feeId", 128);
+          const feePeriod = requiredString(raw, "feePeriod", 80);
+          const feeType = requiredString(raw, "feeType", 40).toLowerCase();
+          if (!isMonthlyFeeType(feeType) || monthPeriodKey(feePeriod) == null) {
+            throw new HttpsError("invalid-argument", "Grouped collection accepts monthly fee periods only.");
+          }
+          const allocation = {
+            index,
+            feeId,
+            feePeriod,
+            feeType,
+            amount: money(raw, "amount", { allowZero: false }),
+          };
+          if (!feeId) {
+            allocation.batchId = optionalString(raw, "batchId", 128);
+            allocation.sourceId = optionalString(raw, "sourceId", 128);
+            allocation.dueDateMs = requiredTimestamp(raw, "dueDateMs");
+            allocation.baseAmount = money(raw, "baseAmount", { allowZero: false });
+            allocation.discountAmount = money(raw, "discountAmount");
+            allocation.lateFeeAmount = money(raw, "lateFeeAmount");
+          }
+          return allocation;
+        });
+        const duplicateKeys = new Set();
+        allocations.forEach((allocation) => {
+          const key = allocation.feeId || feeBusinessKey({
+            studentId,
+            batchId: allocation.batchId,
+            feePeriod: allocation.feePeriod,
+            feeType: allocation.feeType,
+            sourceId: allocation.sourceId,
+          });
+          if (duplicateKeys.has(key)) {
+            throw new HttpsError("invalid-argument", "The same monthly fee was selected more than once.");
+          }
+          duplicateKeys.add(key);
+        });
+
+        const studentRef = instituteRef.collection("students").doc(studentId);
+        const existingRefs = allocations.filter((allocation) => allocation.feeId)
+          .map((allocation) => instituteRef.collection("fees").doc(allocation.feeId));
+        const virtualPlans = allocations.filter((allocation) => !allocation.feeId).map((allocation) => {
+          const businessKey = feeBusinessKey({
+            studentId,
+            batchId: allocation.batchId,
+            feePeriod: allocation.feePeriod,
+            feeType: allocation.feeType,
+            sourceId: allocation.sourceId,
+          });
+          return {
+            ...allocation,
+            businessKey,
+            feeId: compactId("fee", `${instituteId}:${businessKey}`),
+            feeRef: instituteRef.collection("fees").doc(compactId("fee", `${instituteId}:${businessKey}`)),
+            keyRef: instituteRef.collection("ledger_internal").doc(`fee_key_${businessKey}`),
+          };
+        });
+        const legacyQuery = instituteRef.collection("fees").where("studentId", "==", studentId);
+        const [studentSnap, legacySnap, existingSnaps, virtualFeeSnaps, virtualKeySnaps] = await Promise.all([
+          transaction.get(studentRef),
+          transaction.get(legacyQuery),
+          Promise.all(existingRefs.map((ref) => transaction.get(ref))),
+          Promise.all(virtualPlans.map((plan) => transaction.get(plan.feeRef))),
+          Promise.all(virtualPlans.map((plan) => transaction.get(plan.keyRef))),
+        ]);
+        if (!studentSnap.exists || studentSnap.get("archivedAtMs") != null ||
+            ["archived", "inactive", "blocked"].includes(studentSnap.get("status"))) {
+          throw new HttpsError("failed-precondition", "Student is not available for payment collection.");
+        }
+
+        const existingById = new Map(existingSnaps.map((snapshot) => [snapshot.id, snapshot]));
+        const plannedFees = [];
+        for (const allocation of allocations) {
+          if (allocation.feeId) {
+            const feeSnap = existingById.get(allocation.feeId);
+            if (!feeSnap || !feeSnap.exists || feeSnap.get("cancelledAtMs") != null) {
+              throw new HttpsError("failed-precondition", "A selected monthly fee is unavailable.");
+            }
+            const currentFee = { id: feeSnap.id, ...feeSnap.data() };
+            if (currentFee.studentId !== studentId || !isMonthlyFeeType(currentFee.feeType)) {
+              throw new HttpsError("permission-denied", "A selected fee does not belong to this student.");
+            }
+            const effectivePaid = await readEffectivePaid(transaction, instituteRef, currentFee.id);
+            const currentDue = Math.max(0, Number(currentFee.totalAmount || 0) - effectivePaid);
+            if (allocation.amount - currentDue > MONEY_EPSILON) {
+              throw new HttpsError("failed-precondition", "Payment exceeds a selected monthly due.");
+            }
+            const ledger = ledgerStatus(Number(currentFee.totalAmount || 0), effectivePaid + allocation.amount);
+            plannedFees.push({
+              feeRef: feeSnap.ref,
+              fee: { ...currentFee, ...ledger, updatedAtMs: now, ledgerVersion: 1 },
+              ledger,
+              amount: allocation.amount,
+              priorDue: currentDue,
+              create: false,
+            });
+          } else {
+            const virtualIndex = virtualPlans.findIndex((plan) => plan.index === allocation.index);
+            const virtual = virtualPlans[virtualIndex];
+            const existingSnap = virtualFeeSnaps[virtualIndex];
+            const keySnap = virtualKeySnaps[virtualIndex];
+            const duplicate = legacySnap.docs.some((doc) => doc.get("cancelledAtMs") == null &&
+              feeBusinessKey({
+                studentId: doc.get("studentId"),
+                batchId: doc.get("batchId"),
+                feePeriod: doc.get("feePeriod"),
+                feeType: doc.get("feeType"),
+                sourceId: doc.get("sourceId"),
+              }) === virtual.businessKey);
+            if (existingSnap.exists || keySnap.exists || duplicate) {
+              throw new HttpsError("already-exists", "A selected monthly fee already exists. Refresh and try again.");
+            }
+            const totalAmount = validatedMoney(
+              virtual.baseAmount - virtual.discountAmount + virtual.lateFeeAmount,
+              "totalAmount",
+            );
+            if (virtual.amount - totalAmount > MONEY_EPSILON) {
+              throw new HttpsError("failed-precondition", "Payment exceeds a selected monthly due.");
+            }
+            const ledger = ledgerStatus(totalAmount, virtual.amount);
+            plannedFees.push({
+              feeRef: virtual.feeRef,
+              keyRef: virtual.keyRef,
+              fee: {
+                id: virtual.feeId,
+                instituteId,
+                studentId,
+                batchId: virtual.batchId,
+                feePeriod: virtual.feePeriod,
+                feeType: virtual.feeType,
+                sourceId: virtual.sourceId,
+                dueDateMs: virtual.dueDateMs,
+                baseAmount: virtual.baseAmount,
+                discountAmount: virtual.discountAmount,
+                lateFeeAmount: virtual.lateFeeAmount,
+                totalAmount,
+                ...ledger,
+                note: null,
+                createdAtMs: now,
+                updatedAtMs: now,
+                cancelledAtMs: null,
+                businessKey: virtual.businessKey,
+                ledgerVersion: 1,
+              },
+              ledger,
+              amount: virtual.amount,
+              priorDue: totalAmount,
+              create: true,
+            });
+          }
+        }
+
+        const receiptPlan = await planReceipt(
+          transaction,
+          instituteRef,
+          operationId,
+          operationId,
+          actorUid,
+          studentId,
+          { allowExistingGroup: true },
+        );
+        const payments = plannedFees.map((plan, index) => ({
+          id: compactId("pay", `${instituteId}:${operationId}:${index}`),
+          instituteId,
+          feeId: plan.fee.id,
+          studentId,
+          amount: plan.amount,
+          paymentMethod,
+          transactionId: null,
+          receiptNumber: receiptPlan.number,
+          paymentDateMs,
+          collectedByUserId: actorUid,
+          status: "completed",
+          note,
+          createdAtMs: now,
+          updatedAtMs: now,
+          operationId: `${operationId}:${index}`,
+          ledgerVersion: 1,
+        }));
+        const totalAmount = validatedMoney(
+          plannedFees.reduce((sum, plan) => sum + plan.priorDue, 0),
+          "group total",
+        );
+        const paidAmount = validatedMoney(
+          payments.reduce((sum, payment) => sum + payment.amount, 0),
+          "group payment",
+          { allowZero: false },
+        );
+        const dueAmount = validatedMoney(
+          plannedFees.reduce((sum, plan) => sum + plan.fee.dueAmount, 0),
+          "group due",
+        );
+        const receipt = {
+          id: compactId("receipt_group", `${instituteId}:${operationId}`),
+          instituteId,
+          paymentId: payments[0].id,
+          feeId: plannedFees[0].fee.id,
+          studentId,
+          receiptNumber: receiptPlan.number,
+          receiptDateMs: paymentDateMs,
+          totalAmount,
+          paidAmount,
+          dueAmount,
+          paymentMethod,
+          receiptText: receiptText || `Grouped payment of ${paidAmount.toFixed(2)} received for ${payments.length} monthly fees.`,
+          status: "completed",
+          grouped: true,
+          paymentIds: payments.map((payment) => payment.id),
+          lineItems: plannedFees.map((plan) => ({
+            feeId: plan.fee.id,
+            batchId: plan.fee.batchId || null,
+            feePeriod: plan.fee.feePeriod,
+            feeType: plan.fee.feeType,
+            baseAmount: plan.fee.baseAmount,
+            discountAmount: plan.fee.discountAmount,
+            totalAmount: plan.fee.totalAmount,
+            collectedAmount: plan.amount,
+            dueAmount: plan.fee.dueAmount,
+          })),
+          createdAtMs: now,
+          operationId,
+          ledgerVersion: 1,
+        };
+        applyReceiptPlan(transaction, receiptPlan, actorUid, studentId, now);
+        plannedFees.forEach((plan) => {
+          if (plan.create) {
+            transaction.create(plan.feeRef, plan.fee);
+            transaction.create(plan.keyRef, {
+              feeId: plan.fee.id,
+              businessKey: plan.fee.businessKey,
+              createdAtMs: now,
+            });
+          } else {
+            transaction.update(plan.feeRef, {
+              ...plan.ledger,
+              updatedAtMs: now,
+              ledgerVersion: 1,
+            });
+          }
+        });
+        payments.forEach((payment) => transaction.create(
+          instituteRef.collection("payments").doc(payment.id),
+          payment,
+        ));
+        transaction.create(instituteRef.collection("receipts").doc(receipt.id), receipt);
+        result = publicResult(operationId, action, plannedFees.map((plan) => plan.fee), payments, [receipt]);
       } else if (action === "collect_payment" || action === "adjust_and_collect") {
         const feeId = requiredString(data, "feeId");
         const amount = money(data, "amount", { allowZero: false });
@@ -1079,12 +1496,21 @@ function createFinancialLedgerHandler({ db }) {
         const payment = { id: paymentSnap.id, ...paymentSnap.data() };
         const sourceFeeRef = instituteRef.collection("fees").doc(payment.feeId);
         const receiptQuery = instituteRef.collection("receipts").where("paymentId", "==", paymentId);
-        const [sourceFeeSnap, receiptSnap] = await Promise.all([
+        const receiptNumberQuery = instituteRef.collection("receipts")
+          .where("receiptNumber", "==", payment.receiptNumber);
+        const [sourceFeeSnap, receiptSnap, receiptNumberSnap] = await Promise.all([
           transaction.get(sourceFeeRef),
           transaction.get(receiptQuery),
+          transaction.get(receiptNumberQuery),
         ]);
         if (!sourceFeeSnap.exists || sourceFeeSnap.get("cancelledAtMs") != null) {
           throw new HttpsError("failed-precondition", "The original fee is unavailable.");
+        }
+        if (receiptNumberSnap.docs.some((doc) => doc.get("grouped") === true)) {
+          throw new HttpsError(
+            "failed-precondition",
+            "This payment belongs to a grouped receipt and cannot be edited individually.",
+          );
         }
         if (receiptSnap.size > 1) {
           throw new HttpsError("failed-precondition", "Payment has duplicate receipts and requires reconciliation.");
@@ -1276,16 +1702,25 @@ function createFinancialLedgerHandler({ db }) {
         const payment = { id: paymentSnap.id, ...paymentSnap.data() };
         const feeRef = instituteRef.collection("fees").doc(payment.feeId);
         const receiptQuery = instituteRef.collection("receipts").where("paymentId", "==", paymentId);
+        const receiptNumberQuery = instituteRef.collection("receipts")
+          .where("receiptNumber", "==", payment.receiptNumber);
         const referenceKey = paymentReferenceKey(payment.paymentMethod, payment.transactionId);
         const referenceRef = referenceKey
           ? instituteRef.collection("ledger_internal").doc(`payment_ref_${referenceKey}`)
           : null;
-        const [feeSnap, receiptsSnap, referenceSnap] = await Promise.all([
+        const [feeSnap, receiptsSnap, receiptNumberSnap, referenceSnap] = await Promise.all([
           transaction.get(feeRef),
           transaction.get(receiptQuery),
+          transaction.get(receiptNumberQuery),
           referenceRef ? transaction.get(referenceRef) : Promise.resolve(null),
         ]);
         if (!feeSnap.exists) throw new HttpsError("failed-precondition", "Fee record not found.");
+        if (receiptNumberSnap.docs.some((doc) => doc.get("grouped") === true)) {
+          throw new HttpsError(
+            "failed-precondition",
+            "This payment belongs to a grouped receipt and cannot be deleted individually.",
+          );
+        }
         const effectivePaid = await readEffectivePaid(transaction, instituteRef, payment.feeId);
         if (effectivePaid + MONEY_EPSILON < Number(payment.amount || 0)) {
           throw new HttpsError("failed-precondition", "Payment is not present in the effective ledger.");
@@ -1346,8 +1781,19 @@ function createFinancialLedgerHandler({ db }) {
         }
         const payment = { id: paymentSnap.id, ...paymentSnap.data() };
         const feeRef = instituteRef.collection("fees").doc(payment.feeId);
-        const feeSnap = await transaction.get(feeRef);
+        const receiptNumberQuery = instituteRef.collection("receipts")
+          .where("receiptNumber", "==", payment.receiptNumber);
+        const [feeSnap, receiptNumberSnap] = await Promise.all([
+          transaction.get(feeRef),
+          transaction.get(receiptNumberQuery),
+        ]);
         if (!feeSnap.exists) throw new HttpsError("failed-precondition", "Fee record not found.");
+        if (receiptNumberSnap.docs.some((doc) => doc.get("grouped") === true)) {
+          throw new HttpsError(
+            "failed-precondition",
+            "This payment belongs to a grouped receipt and cannot be reversed individually.",
+          );
+        }
         const effectivePaid = await readEffectivePaid(transaction, instituteRef, payment.feeId);
         if (effectivePaid + MONEY_EPSILON < Number(payment.amount || 0)) {
           throw new HttpsError("failed-precondition", "Payment is not present in the effective ledger.");

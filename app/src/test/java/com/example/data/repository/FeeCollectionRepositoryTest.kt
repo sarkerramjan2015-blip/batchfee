@@ -72,6 +72,97 @@ class FeeCollectionRepositoryTest {
     }
 
     @Test
+    fun fullWaiverPersistsOnlyCanonicalZeroFeeAndNoCashPayment() = runTest {
+        val waived = fee(id = "fee-waived", businessKey = "waived-key").copy(
+            feeType = "admission_fee",
+            discountAmount = 500.0,
+            totalAmount = 0.0,
+            paidAmount = 0.0,
+            dueAmount = 0.0,
+            status = "paid"
+        )
+        gateway.responder = { request ->
+            FinancialOperationResult(
+                operationId = request.getValue("operationId") as String,
+                action = "waive_fee",
+                fees = listOf(waived)
+            )
+        }
+
+        repository.waiveFee(
+            instituteId = INSTITUTE_ID,
+            feeId = waived.id,
+            reason = "Scholarship approved",
+            now = 1_000L,
+            operationId = OPERATION_ID
+        )
+
+        assertEquals(0.0, db.feeDao().getFeeById(waived.id, INSTITUTE_ID)?.dueAmount ?: -1.0, MONEY_DELTA)
+        assertEquals("waive_fee", gateway.requests.single()["action"])
+        assertNull(db.paymentDao().getPaymentById("waiver-payment", INSTITUTE_ID))
+        assertEquals("completed", db.financialLedgerDao().getOperation(INSTITUTE_ID, OPERATION_ID)?.status)
+    }
+
+    @Test
+    fun groupedCollectionPersistsAllPaymentsWithOneCanonicalReceipt() = runTest {
+        val june = fee(id = "fee-june", businessKey = "june-key").copy(
+            feePeriod = "Jun 2026", paidAmount = 1_000.0, dueAmount = 0.0, status = "paid"
+        )
+        val july = fee(id = "fee-july", businessKey = "july-key").copy(
+            feePeriod = "Jul 2026", paidAmount = 1_000.0, dueAmount = 0.0, status = "paid"
+        )
+        val junePayment = payment(
+            id = "payment-june",
+            feeId = june.id,
+            operationId = "$OPERATION_ID:0"
+        ).copy(amount = 1_000.0)
+        val julyPayment = payment(
+            id = "payment-july",
+            feeId = july.id,
+            operationId = "$OPERATION_ID:1"
+        ).copy(amount = 1_000.0)
+        val groupedReceipt = receipt(
+            id = "receipt-group",
+            paymentId = junePayment.id,
+            feeId = june.id,
+            operationId = OPERATION_ID
+        ).copy(totalAmount = 2_000.0, paidAmount = 2_000.0, dueAmount = 0.0)
+        gateway.responder = { request ->
+            FinancialOperationResult(
+                operationId = request.getValue("operationId") as String,
+                action = "collect_grouped_payment",
+                fees = listOf(june, july),
+                payments = listOf(junePayment, julyPayment),
+                receipts = listOf(groupedReceipt)
+            )
+        }
+
+        val result = repository.collectGroupedMonthlyPayment(
+            instituteId = INSTITUTE_ID,
+            collectedByUserId = USER_ID,
+            studentId = STUDENT_ID,
+            allocations = listOf(
+                GroupedMonthlyCollectionAllocation(
+                    feePeriod = "Jun 2026", dueDateMs = 1_000L, baseAmount = 1_000.0, amount = 1_000.0
+                ),
+                GroupedMonthlyCollectionAllocation(
+                    feePeriod = "Jul 2026", dueDateMs = 1_000L, baseAmount = 1_000.0, amount = 1_000.0
+                )
+            ),
+            paymentMethod = "cash",
+            now = 1_000L,
+            operationId = OPERATION_ID
+        )
+
+        assertEquals(groupedReceipt.receiptNumber, result.receiptNumber)
+        assertEquals(2, result.payments.size)
+        assertNotNull(db.paymentDao().getPaymentById(junePayment.id, INSTITUTE_ID))
+        assertNotNull(db.paymentDao().getPaymentById(julyPayment.id, INSTITUTE_ID))
+        assertNotNull(db.receiptDao().getReceiptByOperationId(INSTITUTE_ID, OPERATION_ID))
+        assertEquals("collect_grouped_payment", gateway.requests.single()["action"])
+    }
+
+    @Test
     fun transientCloudFailureLeavesNoLocalLedgerAndReplayUsesSameOperationId() = runTest {
         gateway.responder = { throw IllegalStateException("offline") }
 

@@ -119,6 +119,7 @@ import com.batchfee.edu.data.repository.FeeCollectionRepository
 import com.batchfee.edu.data.repository.FinancialOperationPendingException
 import com.batchfee.edu.data.repository.FinancialOperationRejectedException
 import com.batchfee.edu.data.repository.FinancialSessionExpiredException
+import com.batchfee.edu.data.repository.GroupedMonthlyCollectionAllocation
 import com.batchfee.edu.domain.SessionManager
 import com.batchfee.edu.domain.DueCollectionPolicy
 import com.batchfee.edu.domain.MonthlyDueCalculator
@@ -154,7 +155,18 @@ data class EnrichedDue(val fee: FeeEntity, val studentName: String, val batchNam
     val selectionKey: String get() = DueCollectionPolicy.selectionKey(fee)
 }
 
+private data class StudentPaymentHistoryLine(
+    val payment: PaymentEntity,
+    val feePeriod: String,
+    val batchName: String?,
+    val baseAmount: Double,
+    val discountAmount: Double,
+    val totalAmount: Double,
+    val remainingDue: Double
+)
+
 private data class StudentPaymentHistory(
+    /** First payment is retained only for legacy single-payment actions. */
     val payment: PaymentEntity,
     val feePeriod: String,
     val batchId: String?,
@@ -162,8 +174,27 @@ private data class StudentPaymentHistory(
     val baseAmount: Double,
     val discountAmount: Double,
     val totalAmount: Double,
-    val remainingDue: Double
-)
+    val remainingDue: Double,
+    val groupedLines: List<StudentPaymentHistoryLine> = emptyList()
+) {
+    val isGroupedReceipt: Boolean get() = groupedLines.size > 1
+    val collectedAmount: Double get() = groupedLines.sumOf { it.payment.amount }
+    val displayPeriod: String get() = when (groupedLines.size) {
+        0, 1 -> feePeriod
+        else -> groupedLines.joinToString(" • ") { it.feePeriod }
+    }
+}
+
+/** Keeps a grouped receipt's monthly lines readable even when Room returns rows in a different order. */
+private fun receiptPeriodSortKey(value: String): Int {
+    val match = Regex("^([A-Za-z]{3})\\s+(\\d{4})$").matchEntire(value.trim()) ?: return Int.MAX_VALUE
+    val month = listOf(
+        "jan", "feb", "mar", "apr", "may", "jun",
+        "jul", "aug", "sep", "oct", "nov", "dec"
+    ).indexOf(match.groupValues[1].lowercase())
+    val year = match.groupValues[2].toIntOrNull() ?: return Int.MAX_VALUE
+    return if (month >= 0) year * 12 + month else Int.MAX_VALUE
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -517,19 +548,38 @@ fun UnifiedCollectScreen(
                 // Admission is explicitly first; months are calendar-ordered,
                 // never alphabetically ordered as Aug, Jul, Jun.
                 .sortedWith { first, second -> DueCollectionPolicy.compareForDisplay(first.fee, second.fee) }
-            paymentHistory = payments.filter { it.status == "completed" }.map { payment ->
+            val paymentLines = payments.filter { it.status == "completed" }.map { payment ->
                 val fee = allFees.firstOrNull { it.id == payment.feeId }
-                StudentPaymentHistory(
+                StudentPaymentHistoryLine(
                     payment = payment,
                     feePeriod = fee?.feePeriod ?: "Fee payment",
-                    batchId = fee?.batchId,
                     batchName = fee?.batchId?.let { batchMap[it]?.name },
                     baseAmount = fee?.baseAmount ?: payment.amount,
                     discountAmount = fee?.discountAmount ?: 0.0,
                     totalAmount = fee?.totalAmount ?: payment.amount,
-                    remainingDue = receiptDueByPayment[payment.id] ?: 0.0
+                    remainingDue = receiptDueByPayment[payment.id] ?: fee?.dueAmount ?: 0.0
                 )
             }
+            paymentHistory = paymentLines.groupBy { it.payment.receiptNumber }
+                .values
+                .map { lines ->
+                    // Room does not guarantee a result order. Sort recognizable
+                    // monthly periods so one receipt stays easy to read.
+                    val orderedLines = lines.sortedBy { receiptPeriodSortKey(it.feePeriod) }
+                    val primary = orderedLines.first()
+                    StudentPaymentHistory(
+                        payment = primary.payment,
+                        feePeriod = primary.feePeriod,
+                        batchId = null,
+                        batchName = primary.batchName,
+                        baseAmount = orderedLines.sumOf { it.baseAmount },
+                        discountAmount = orderedLines.sumOf { it.discountAmount },
+                        totalAmount = orderedLines.sumOf { it.totalAmount },
+                        remainingDue = orderedLines.sumOf { it.remainingDue },
+                        groupedLines = orderedLines
+                    )
+                }
+                .sortedByDescending { it.payment.paymentDateMs }
 
             if (studentDues.isNotEmpty()) {
                 // Do not preselect a financial due. The owner must choose the
@@ -628,9 +678,14 @@ fun UnifiedCollectScreen(
                     runCatching { DueCollectionPolicy.quote(due.fee, discountPercent) }
                 }
                 val selectedDueQuote = selectedDueQuoteResult?.getOrNull()
-                val canSave = !loadingLedger && !isSaving && collecting > 0.0 && if (showDueSelector) {
+                val isFullWaiver = showDueSelector && selectedDue != null &&
+                    selectedDueQuote != null &&
+                    selectedDue.fee.let(DueCollectionPolicy::supportsDiscountAdjustment) &&
+                    discountPercent >= 100.0 && selectedDueQuote.outstandingAmount <= 0.001
+                val canSave = !loadingLedger && !isSaving && (collecting > 0.0 || isFullWaiver) && if (showDueSelector) {
                     selectedDue != null && selectedDueQuote != null &&
-                        collecting <= selectedDueQuote.outstandingAmount + 0.001
+                        (isFullWaiver || collecting <= selectedDueQuote.outstandingAmount + 0.001) &&
+                        (!isFullWaiver || note.trim().length >= 3)
                 } else {
                     feePeriod.isNotBlank() && base > 0.0 && discountPercent in 0.0..100.0
                 }
@@ -988,7 +1043,7 @@ fun UnifiedCollectScreen(
                                         collectError = "No active session."
                                         return@Button
                                     }
-                                    if (collecting <= 0.0) {
+                                    if (!isFullWaiver && collecting <= 0.0) {
                                         collectError = "Enter a valid payment amount."
                                         return@Button
                                     }
@@ -1003,7 +1058,11 @@ fun UnifiedCollectScreen(
                                                 ?: "This fee cannot be collected safely."
                                             return@Button
                                         }
-                                        if (collecting - quote.outstandingAmount > 0.001) {
+                                        if (isFullWaiver && note.trim().length < 3) {
+                                            collectError = "Enter a short reason for the full waiver."
+                                            return@Button
+                                        }
+                                        if (!isFullWaiver && collecting - quote.outstandingAmount > 0.001) {
                                             collectError = "Payment exceeds the selected fee's discounted due."
                                             return@Button
                                         }
@@ -1017,6 +1076,7 @@ fun UnifiedCollectScreen(
                                         val realEnd = maxOf(startMonthIdx, endMonthIdx)
                                         val months = numSelectedMonths()
                                         var totalOutstandingInRange = 0.0
+                                        var hasExistingMonthlyFee = false
                                         for (i in realStart..realEnd) {
                                             val monthLabel = monthOptions[i].label
                                             val existing = studentAllFees.firstOrNull { fee ->
@@ -1026,10 +1086,17 @@ fun UnifiedCollectScreen(
                                                     fee.cancelledAtMs == null
                                             }
                                             val paid = existing?.paidAmount ?: 0.0
+                                            if (existing != null && existing.dueAmount > 0.001) {
+                                                hasExistingMonthlyFee = true
+                                            }
                                             val required = existing?.totalAmount
                                                 ?: requiredMonthlyAmount(selectedBatch, monthLabel)
                                             val remaining = (required - paid).coerceAtLeast(0.0)
                                             totalOutstandingInRange += remaining
+                                        }
+                                        if (months > 1 && discountPercent > 0.0 && hasExistingMonthlyFee) {
+                                            collectError = "For a grouped receipt, apply discount only to new monthly fees. Collect existing dues separately."
+                                            return@Button
                                         }
                                         if (collecting - totalOutstandingInRange > 0.001) {
                                             collectError = "Payment rejected - amount exceeds total outstanding in range."
@@ -1048,10 +1115,35 @@ fun UnifiedCollectScreen(
                                             // All allocations from one Save action share one trusted,
                                             // server-issued receipt number while retaining separate payments.
                                             val receiptGroupId = UUID.randomUUID().toString()
+                                            val isMultiMonthCollection = !showDueSelector && numSelectedMonths() > 1
+                                            var groupBaseAmount = base
+                                            if (isMultiMonthCollection) {
+                                                groupBaseAmount = 0.0
+                                                val realStart = minOf(startMonthIdx, endMonthIdx)
+                                                val realEnd = maxOf(startMonthIdx, endMonthIdx)
+                                                for (i in realStart..realEnd) {
+                                                    val monthLabel = monthOptions[i].label
+                                                    val existing = studentAllFees.firstOrNull { fee ->
+                                                        fee.studentId == student.id && fee.batchId == selectedBatchId &&
+                                                            fee.feePeriod.equals(monthLabel, ignoreCase = true) &&
+                                                            fee.cancelledAtMs == null
+                                                    }
+                                                    val paid = existing?.paidAmount ?: 0.0
+                                                    val required = existing?.totalAmount
+                                                        ?: requiredMonthlyAmount(selectedBatch, monthLabel)
+                                                    groupBaseAmount += (required - paid).coerceAtLeast(0.0)
+                                                }
+                                            }
+                                            val groupDiscountAmount = if (isMultiMonthCollection) {
+                                                kotlin.math.round(groupBaseAmount * discountPercent) / 100.0
+                                            } else {
+                                                discountAmount
+                                            }
+                                            val groupPayableAmount = (groupBaseAmount - groupDiscountAmount).coerceAtLeast(0.0)
                                             val remainingDue = if (showDueSelector) {
                                                 ((selectedDueQuote?.outstandingAmount ?: 0.0) - collecting).coerceAtLeast(0.0)
                                             } else {
-                                                (payable - collecting).coerceAtLeast(0.0)
+                                                (groupPayableAmount - collecting).coerceAtLeast(0.0)
                                             }
                                             val receiptText = if (showDueSelector) null else buildCollectionReceiptText(
                                                 instituteName = instituteInfo.name,
@@ -1060,8 +1152,8 @@ fun UnifiedCollectScreen(
                                                 batchName = selectedBatch?.name,
                                                 period = if (showDueSelector) selectedDue?.fee?.feePeriod ?: feePeriod else feePeriod.trim(),
                                                 mode = autoFeeType,
-                                                payableAmount = if (showDueSelector) selectedDueQuote?.totalAmount ?: 0.0 else payable,
-                                                discountAmount = if (showDueSelector) selectedDueQuote?.discountAmount ?: 0.0 else discountAmount,
+                                                payableAmount = if (showDueSelector) selectedDueQuote?.totalAmount ?: 0.0 else groupPayableAmount,
+                                                discountAmount = if (showDueSelector) selectedDueQuote?.discountAmount ?: 0.0 else groupDiscountAmount,
                                                 collectedAmount = collecting,
                                                 remainingDue = remainingDue,
                                                 paymentMethod = paymentMethod
@@ -1069,7 +1161,24 @@ fun UnifiedCollectScreen(
                                             val receiptNumber = if (showDueSelector) {
                                                 val dueFee = selectedDue!!.fee
                                                 val dueQuote = checkNotNull(selectedDueQuote)
-                                                if (dueFee.id.isBlank()) {
+                                                if (isFullWaiver) {
+                                                    feeRepository.waiveFee(
+                                                        instituteId = instId,
+                                                        feeId = dueFee.id.ifBlank { null },
+                                                        studentId = if (dueFee.id.isBlank()) student.id else null,
+                                                        batchId = if (dueFee.id.isBlank()) dueFee.batchId else null,
+                                                        feePeriod = if (dueFee.id.isBlank()) dueFee.feePeriod else null,
+                                                        feeType = if (dueFee.id.isBlank()) dueFee.feeType.ifBlank { "admission_fee" } else null,
+                                                        sourceId = if (dueFee.id.isBlank() && dueFee.feeType.equals("course_fee", ignoreCase = true)) {
+                                                            "course:${dueFee.batchId.orEmpty()}"
+                                                        } else null,
+                                                        dueDateMs = if (dueFee.id.isBlank()) now else null,
+                                                        baseAmount = if (dueFee.id.isBlank()) dueQuote.baseAmount else null,
+                                                        reason = note.trim(),
+                                                        now = now
+                                                    )
+                                                    "waiver"
+                                                } else if (dueFee.id.isBlank()) {
                                                     // Virtual fee — create it first with discount support
                                                     val createResult = feeRepository.createFeeWithInitialPayment(
                                                         instituteId = instId,
@@ -1131,7 +1240,9 @@ fun UnifiedCollectScreen(
                                                 var receiptNumber: String? = null
                                                 if (months > 1) {
                                                     var remainingPayment = collecting
-                                                    // Distribute discount proportionally per month
+                                                    val allocations = mutableListOf<GroupedMonthlyCollectionAllocation>()
+                                                    // Build every allocation first. The server validates the
+                                                    // complete list before it writes any fee or payment.
                                                     for (i in realStart..realEnd) {
                                                         if (remainingPayment <= 0.0) break
                                                         val monthLabel = monthOptions[i].label
@@ -1151,23 +1262,15 @@ fun UnifiedCollectScreen(
                                                         val monthPayment = minOf(remainingPayment, remainingThisMonth)
                                                         if (monthPayment <= 0.0) continue
                                                         if (existingFee != null) {
-                                                            val result = feeRepository.collectPayment(
-                                                                instituteId = instId,
-                                                                collectedByUserId = userId,
+                                                            allocations += GroupedMonthlyCollectionAllocation(
                                                                 feeId = existingFee.id,
-                                                                amount = monthPayment,
-                                                                paymentMethod = paymentMethod,
-                                                                note = note.ifBlank { null },
-                                                                receiptText = receiptText,
-                                                                receiptGroupId = receiptGroupId,
-                                                                now = now
+                                                                feePeriod = existingFee.feePeriod,
+                                                                feeType = existingFee.feeType,
+                                                                dueDateMs = existingFee.dueDateMs,
+                                                                amount = monthPayment
                                                             )
-                                                            receiptNumber = receiptNumber ?: result.receiptNumber
                                                         } else {
-                                                            val result = feeRepository.createFeeWithInitialPayment(
-                                                                instituteId = instId,
-                                                                collectedByUserId = userId,
-                                                                studentId = student.id,
+                                                            allocations += GroupedMonthlyCollectionAllocation(
                                                                 batchId = selectedBatchId,
                                                                 feePeriod = monthLabel,
                                                                 feeType = "monthly_fee",
@@ -1175,18 +1278,27 @@ fun UnifiedCollectScreen(
                                                                 baseAmount = monthlyAmount,
                                                                 discountAmount = discountForMonth,
                                                                 lateFeeAmount = 0.0,
-                                                                collectedAmount = monthPayment,
-                                                                paymentMethod = paymentMethod,
-                                                                paymentDateMs = now,
-                                                                note = null,
-                                                                receiptText = null,
-                                                                receiptGroupId = receiptGroupId,
-                                                                now = now
+                                                                amount = monthPayment
                                                             )
-                                                            receiptNumber = receiptNumber ?: result.receiptNumber
                                                         }
                                                         remainingPayment -= monthPayment
                                                     }
+                                                    if (allocations.isEmpty() || remainingPayment > 0.001) {
+                                                        throw IllegalArgumentException(
+                                                            "Could not create a complete grouped collection. Refresh and try again."
+                                                        )
+                                                    }
+                                                    receiptNumber = feeRepository.collectGroupedMonthlyPayment(
+                                                        instituteId = instId,
+                                                        collectedByUserId = userId,
+                                                        studentId = student.id,
+                                                        allocations = allocations,
+                                                        paymentMethod = paymentMethod,
+                                                        paymentDateMs = now,
+                                                        note = note.ifBlank { null },
+                                                        receiptText = receiptText,
+                                                        now = now
+                                                    ).receiptNumber
                                                 } else {
                                                     // Single-month path — check for existing fee first
                                                     val existingFee = studentAllFees.firstOrNull { fee ->
@@ -1233,7 +1345,9 @@ fun UnifiedCollectScreen(
                                                 }
                                                 receiptNumber ?: "payment"
                                             }
-                                            snackbarHostState.showSnackbar("Payment saved: $receiptNumber")
+                                            snackbarHostState.showSnackbar(
+                                                if (isFullWaiver) "Fee waived successfully." else "Payment saved: $receiptNumber"
+                                            )
                                             note = ""
                                             loadStudentLedger(student)
                                         } catch (e: FinancialOperationPendingException) {
@@ -1530,7 +1644,7 @@ private fun PaymentHistoryCard(
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
                                 Text(
-                                    item.feePeriod,
+                                    item.displayPeriod,
                                     color = TextWhite,
                                     fontSize = 14.sp,
                                     fontWeight = FontWeight.SemiBold,
@@ -1547,7 +1661,7 @@ private fun PaymentHistoryCard(
                                 )
                             }
                             Column(horizontalAlignment = Alignment.End) {
-                                Text(formatSmartAmount(item.payment.amount), color = AccentGreen, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                Text(formatSmartAmount(item.collectedAmount), color = AccentGreen, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                                 Text(formatDate(item.payment.paymentDateMs), color = TextMuted, fontSize = 11.sp)
                             }
                         }
@@ -1565,7 +1679,7 @@ private fun PaymentHistoryCard(
                             item {
                                 HistoryActionButton("Share", Icons.Filled.Share, ElectricBlue) { onShare(item) }
                             }
-                            if (isFinancialOwner && item.payment.status == "completed") {
+                            if (isFinancialOwner && item.payment.status == "completed" && !item.isGroupedReceipt) {
                                 item {
                                     HistoryActionButton("Edit", Icons.Filled.Payments, Cyan) { onEdit(item) }
                                 }
@@ -2871,15 +2985,22 @@ private fun buildHistoryReceiptText(institute: InstituteInfo, student: StudentEn
         appendLine("Student : ${student.fullName}")
         appendLine("ID      : ${student.studentCode}")
         appendLine("Batch   : ${item.batchName ?: "Direct"}")
-        appendLine("Period  : ${item.feePeriod}")
+        appendLine("Period  : ${item.displayPeriod}")
         appendLine("Date    : ${formatDate(item.payment.paymentDateMs)}")
         appendLine("________________________________")
+        if (item.isGroupedReceipt) {
+            appendLine("GROUPED MONTHLY COLLECTION")
+            item.groupedLines.forEach { line ->
+                appendLine("• ${line.feePeriod}: BDT ${formatSmartAmount(line.payment.amount)}")
+            }
+            appendLine("________________________________")
+        }
         appendLine("Fee Amount  : BDT ${formatSmartAmount(item.baseAmount)}")
         if (item.discountAmount > 0.0) {
             appendLine("Discount    : ${formatDiscountPercent(item)}% - BDT ${formatSmartAmount(item.discountAmount)}")
         }
         appendLine("Payable     : BDT ${formatSmartAmount(item.totalAmount)}")
-        appendLine("Collected   : BDT ${formatSmartAmount(item.payment.amount)}")
+        appendLine("Collected   : BDT ${formatSmartAmount(item.collectedAmount)}")
         appendLine("Due         : BDT ${formatSmartAmount(item.remainingDue)}")
         appendLine("Method      : ${item.payment.paymentMethod.uppercase()}")
         item.payment.note?.takeIf { it.isNotBlank() }?.let { appendLine("Note        : $it") }
@@ -2958,6 +3079,9 @@ private suspend fun printHistoryReceipt(context: Context, institute: InstituteIn
 }
 
 private fun generateReceiptPdf(context: Context, institute: InstituteInfo, student: StudentEntity, item: StudentPaymentHistory): File {
+    if (item.isGroupedReceipt) {
+        return generateGroupedReceiptPdf(context, institute, student, item)
+    }
     val document = PdfDocument()
     val hasDiscount = item.discountAmount > 0.0
     val hasRemark = !item.payment.note.isNullOrBlank()
@@ -3157,6 +3281,64 @@ private fun generateReceiptPdf(context: Context, institute: InstituteInfo, stude
 
     document.finishPage(page)
     val file = File(context.cacheDir, "history_receipt_${item.payment.receiptNumber.replace("/", "_")}.pdf")
+    file.outputStream().use { document.writeTo(it) }
+    document.close()
+    return file
+}
+
+/** Compact one-page receipt for a trusted grouped collection. The detailed
+ * line list is reconstructed from canonical payments sharing its receipt
+ * number, not from a speculative UI calculation. */
+private fun generateGroupedReceiptPdf(
+    context: Context,
+    institute: InstituteInfo,
+    student: StudentEntity,
+    item: StudentPaymentHistory
+): File {
+    val document = PdfDocument()
+    val width = 440
+    val height = maxOf(620, 360 + item.groupedLines.size * 28)
+    val page = document.startPage(PdfDocument.PageInfo.Builder(width, height, 1).create())
+    val canvas = page.canvas
+    val title = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = AndroidColor.WHITE; textSize = 18f; typeface = android.graphics.Typeface.DEFAULT_BOLD }
+    val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = AndroidColor.WHITE; textSize = 11f }
+    val muted = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = AndroidColor.rgb(180, 190, 205); textSize = 10f }
+    val accent = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = AndroidColor.rgb(34, 211, 238); textSize = 11f; typeface = android.graphics.Typeface.DEFAULT_BOLD }
+    val green = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = AndroidColor.rgb(34, 197, 94); textSize = 11f; typeface = android.graphics.Typeface.DEFAULT_BOLD }
+    canvas.drawColor(AndroidColor.rgb(7, 17, 31))
+    canvas.drawText(institute.name.take(42), 28f, 38f, title)
+    canvas.drawText("GROUPED PAYMENT RECEIPT", 28f, 60f, accent)
+    canvas.drawText(item.payment.receiptNumber, width - 28f - text.measureText(item.payment.receiptNumber), 38f, text)
+    canvas.drawText(formatDate(item.payment.paymentDateMs), width - 28f - muted.measureText(formatDate(item.payment.paymentDateMs)), 58f, muted)
+    var y = 94f
+    canvas.drawText("Student: ${student.fullName.take(40)}", 28f, y, text)
+    y += 18f
+    canvas.drawText("ID: ${student.studentCode}", 28f, y, muted)
+    y += 18f
+    canvas.drawText("Method: ${item.payment.paymentMethod.uppercase()}", 28f, y, muted)
+    y += 28f
+    canvas.drawText("MONTHLY FEE DETAILS", 28f, y, accent)
+    y += 20f
+    item.groupedLines.forEach { line ->
+        canvas.drawText(line.feePeriod, 32f, y, text)
+        val amount = "BDT ${formatSmartAmount(line.payment.amount)}"
+        canvas.drawText(amount, width - 28f - green.measureText(amount), y, green)
+        y += 24f
+    }
+    y += 8f
+    canvas.drawLine(28f, y, width - 28f, y, muted)
+    y += 24f
+    val payable = "Payable: BDT ${formatSmartAmount(item.totalAmount)}"
+    val discount = "Discount: BDT ${formatSmartAmount(item.discountAmount)}"
+    val collected = "Collected: BDT ${formatSmartAmount(item.collectedAmount)}"
+    val due = "Due: BDT ${formatSmartAmount(item.remainingDue)}"
+    canvas.drawText(payable, 28f, y, text); y += 20f
+    if (item.discountAmount > 0.0) { canvas.drawText(discount, 28f, y, green); y += 20f }
+    canvas.drawText(collected, 28f, y, green); y += 20f
+    canvas.drawText(due, 28f, y, text); y += 30f
+    canvas.drawText("Contact: ${institute.phone}", 28f, y, muted)
+    document.finishPage(page)
+    val file = File(context.cacheDir, "grouped_receipt_${item.payment.receiptNumber.replace("/", "_")}.pdf")
     file.outputStream().use { document.writeTo(it) }
     document.close()
     return file
