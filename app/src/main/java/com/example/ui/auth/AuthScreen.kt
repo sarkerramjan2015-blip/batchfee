@@ -137,7 +137,7 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
             onError("Enter a valid Bangladesh institute contact number.")
             return
         }
-        val safeInstituteType = instituteType.trim().takeIf { it.isNotBlank() } ?: "Coaching"
+        val safeInstituteType = instituteType.trim().takeIf { it.isNotBlank() } ?: "Batch"
 
         viewModelScope.launch {
             var createdUid: String? = null
@@ -1031,6 +1031,7 @@ private data class InstituteTypeOption(
 )
 
 private val INSTITUTE_TYPES = listOf(
+    InstituteTypeOption("Batch", "Batch", "Private batch-based teaching", Icons.Filled.Groups),
     InstituteTypeOption("Coaching", "Coaching Centre", "Coaching, tuition and courses", Icons.Filled.Groups),
     InstituteTypeOption("School", "School", "Primary and secondary education", Icons.Filled.School),
     InstituteTypeOption("College", "College", "Higher secondary and college", Icons.Filled.AccountBalance),
@@ -1147,7 +1148,7 @@ fun AuthScreen(
     var instituteName by remember { mutableStateOf("") }
     var ownerName by remember { mutableStateOf("") }
     var whatsappNumber by remember { mutableStateOf("") }
-    var instituteType by remember { mutableStateOf("Coaching") }
+    var instituteType by remember { mutableStateOf("Batch") }
 
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var infoMessage by remember { mutableStateOf<String?>(null) }
