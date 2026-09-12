@@ -14,7 +14,10 @@ import com.batchfee.edu.data.models.ResultEntity
 import com.batchfee.edu.data.models.StudentEntity
 import com.batchfee.edu.data.repository.ExamFeeRepository
 import com.batchfee.edu.domain.SessionManager
+import com.batchfee.edu.domain.StaffPermissions
 import com.example.domain.BulkMessageController
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FirebaseFirestoreException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -186,7 +189,7 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
                 StaffActivityLogger.logCompletedAction(db, "exam_created", "exams", message)
                 onSuccess()
             } catch (e: Exception) {
-                onError(e.message ?: "Failed to create exam")
+                onError(examOperationErrorMessage(e, "Failed to create exam"))
             }
         }
     }
@@ -264,7 +267,7 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
                 )
                 onSuccess()
             } catch (e: Exception) {
-                onError(e.message ?: "Failed to delete exam")
+                onError(examOperationErrorMessage(e, "Failed to delete exam"))
             }
         }
     }
@@ -328,7 +331,7 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
                 )
                 onSuccess()
             } catch (e: Exception) {
-                onError(e.message ?: "Failed to save results")
+                onError(examOperationErrorMessage(e, "Failed to save results"))
             } finally {
                 synchronized(resultMutationsInProgress) { resultMutationsInProgress.remove(mutationKey) }
             }
@@ -358,7 +361,7 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
                 )
                 onSuccess()
             } catch (e: Exception) {
-                onError(e.message ?: "Failed to publish")
+                onError(examOperationErrorMessage(e, "Failed to publish"))
             } finally {
                 synchronized(resultMutationsInProgress) { resultMutationsInProgress.remove(mutationKey) }
             }
@@ -396,7 +399,7 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
                 )
                 onSuccess()
             } catch (e: Exception) {
-                onError(e.message ?: "Failed to update result")
+                onError(examOperationErrorMessage(e, "Failed to update result"))
             }
         }
     }
@@ -456,6 +459,21 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
         return _instituteName.value.takeIf { it.isNotBlank() } ?: "BatchFee"
     }
 
+    private fun examOperationErrorMessage(error: Exception, fallback: String): String {
+        val permissionDenied =
+            (error as? FirebaseFirestoreException)?.code == FirebaseFirestoreException.Code.PERMISSION_DENIED ||
+                error.message.orEmpty().contains("PERMISSION_DENIED", ignoreCase = true) ||
+                error.message.orEmpty().contains("insufficient permissions", ignoreCase = true)
+        return examOperationErrorMessage(
+            rawMessage = error.message,
+            permissionDenied = permissionDenied,
+            signedIn = FirebaseAuth.getInstance().currentUser != null,
+            staffSession = SessionManager.isStaff(),
+            canManageExams = SessionManager.hasPermission(StaffPermissions.MANAGE_EXAMS),
+            fallback = fallback
+        )
+    }
+
     private fun calculateGrade(marks: Double, total: Double, pass: Double): String {
         if (marks < pass) return "F"
         val pct = (marks / total) * 100
@@ -473,6 +491,23 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
         return if (value == value.toLong().toDouble()) value.toLong().toString()
         else "%.1f".format(value)
     }
+}
+
+internal fun examOperationErrorMessage(
+    rawMessage: String?,
+    permissionDenied: Boolean,
+    signedIn: Boolean,
+    staffSession: Boolean,
+    canManageExams: Boolean,
+    fallback: String
+): String = when {
+    !signedIn -> "Your session has expired. Please log in again."
+    permissionDenied && staffSession && !canManageExams ->
+        "Exam access is not enabled for this staff account. Ask the institute owner to enable Manage Exams."
+    permissionDenied ->
+        "Your exam access could not be verified. Please log out, log in again, and retry."
+    rawMessage.isNullOrBlank() -> fallback
+    else -> rawMessage
 }
 
 class ExamViewModelFactory(private val db: AppDatabase) : ViewModelProvider.Factory {

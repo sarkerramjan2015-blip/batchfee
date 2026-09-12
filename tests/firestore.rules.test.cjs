@@ -387,6 +387,28 @@ describe("Atomic bulk saves and durable audit replay", { concurrency: false }, (
     batch.update(tenantDoc(db, OWNER_A, "exams", "bulk-exam"), { status: "completed" });
     await assertSucceeds(batch.commit());
   });
+  test("active institute owner can atomically save results and complete the exam", async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(tenantDoc(context.firestore(), OWNER_A, "exams", "owner-exam"), {
+        instituteId: OWNER_A, batchId: "batch-a", status: "scheduled",
+      });
+    });
+    const db = authDb(OWNER_A);
+    const batch = writeBatch(db);
+    batch.set(tenantDoc(db, OWNER_A, "results", "owner-result"), {
+      instituteId: OWNER_A, studentId: "student-a", batchId: "batch-a",
+      examId: "owner-exam", marksObtained: 40,
+    });
+    batch.update(tenantDoc(db, OWNER_A, "exams", "owner-exam"), { status: "completed" });
+    await assertSucceeds(batch.commit());
+  });
+  test("staff without manage-exams permission cannot write exam results", async () => {
+    const db = authDb("staff-none-a");
+    await assertFails(setDoc(tenantDoc(db, OWNER_A, "results", "forbidden-result"), {
+      instituteId: OWNER_A, studentId: "student-a", batchId: "batch-a",
+      examId: "exam-a", marksObtained: 40,
+    }));
+  });
   test("audit replay permits exact owner-of-entry retry but no tampering", async () => {
     const db = authDb("staff-view-a");
     const fields = { instituteId: OWNER_A, userId: "staff-view-a", action: "saved", createdAtMs: 123 };

@@ -718,17 +718,21 @@ service cloud.firestore {
     match /institutes/{instituteId}/exams/{examId} {
       allow read: if (isStudentAuthRequest() && isStudentOf(instituteId))
         || (!isStudentAuthRequest()
-          && (hasStaffPermission(instituteId, 'manage_exams')
+          && (isActiveInstitutePrincipal(instituteId)
+            || hasStaffPermission(instituteId, 'manage_exams')
             || hasStaffPermission(instituteId, 'view_reports')));
-      allow write: if hasStaffPermission(instituteId, 'manage_exams');
+      allow write: if isActiveInstitutePrincipal(instituteId)
+        || hasStaffPermission(instituteId, 'manage_exams');
     }
 
     match /institutes/{instituteId}/results/{resultId} {
       allow read: if isStudentRecordOwner(instituteId, resource.data.studentId)
         || (!isStudentAuthRequest()
-          && (hasStaffPermission(instituteId, 'manage_exams')
+          && (isActiveInstitutePrincipal(instituteId)
+            || hasStaffPermission(instituteId, 'manage_exams')
             || hasStaffPermission(instituteId, 'view_reports')));
-      allow write: if hasStaffPermission(instituteId, 'manage_exams');
+      allow write: if isActiveInstitutePrincipal(instituteId)
+        || hasStaffPermission(instituteId, 'manage_exams');
     }
 
     match /institutes/{instituteId}/expenses/{expenseId} {
