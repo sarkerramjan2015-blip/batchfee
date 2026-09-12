@@ -816,7 +816,12 @@ private enum class UnifiedLoginRole(val label: String) {
 private fun String.hasBengaliCharacters(): Boolean = BengaliCharacters.containsMatchIn(this)
 
 @Composable
-private fun AuthContactFooter(context: Context, modifier: Modifier = Modifier) {
+private fun AuthContactFooter(
+    context: Context,
+    onNavigatePrivacyPolicy: () -> Unit,
+    onNavigateTermsConditions: () -> Unit,
+    modifier: Modifier = Modifier
+) {
     val encodedMessage = remember {
         java.net.URLEncoder.encode(
             "Hello Developer, I am contacting you regarding some queries about the BatchFee app.",
@@ -827,7 +832,7 @@ private fun AuthContactFooter(context: Context, modifier: Modifier = Modifier) {
         modifier = modifier
             .fillMaxWidth()
             .background(Brush.verticalGradient(listOf(Color.Transparent, AuthBg.copy(alpha = 0.96f))))
-            .padding(top = 16.dp, bottom = 8.dp)
+            .padding(top = 8.dp, bottom = 6.dp)
             .navigationBarsPadding(),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -857,7 +862,27 @@ private fun AuthContactFooter(context: Context, modifier: Modifier = Modifier) {
             Spacer(Modifier.width(6.dp))
             Text("Contact with Developer", fontSize = 11.sp, fontWeight = FontWeight.Bold)
         }
-        Spacer(Modifier.height(5.dp))
+        Spacer(Modifier.height(2.dp))
+        Row(
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            TextButton(
+                onClick = onNavigatePrivacyPolicy,
+                modifier = Modifier.height(30.dp),
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+            ) {
+                Text("Privacy Policy", color = AuthCyan, fontSize = 11.sp)
+            }
+            Text("·", color = AuthMuted.copy(alpha = 0.7f), fontSize = 11.sp)
+            TextButton(
+                onClick = onNavigateTermsConditions,
+                modifier = Modifier.height(30.dp),
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+            ) {
+                Text("Terms & Conditions", color = AuthCyan, fontSize = 11.sp)
+            }
+        }
         Text(
             text = "v${BuildConfig.VERSION_NAME} · BatchFee",
             style = MaterialTheme.typography.labelSmall,
@@ -1162,6 +1187,16 @@ fun AuthScreen(
     var forgotEmail by remember { mutableStateOf("") }
     var consentChecked by remember { mutableStateOf(false) }
     val registerScrollState = rememberScrollState()
+    val primaryActionInteraction = remember { MutableInteractionSource() }
+    val primaryActionPressed by primaryActionInteraction.collectIsPressedAsState()
+    val primaryActionScale by animateFloatAsState(
+        targetValue = if (primaryActionPressed) 0.98f else 1f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMedium
+        ),
+        label = "authPrimaryActionScale"
+    )
 
     LaunchedEffect(Unit) { contentVisible = true }
     LaunchedEffect(isLoginMode) {
@@ -1259,7 +1294,7 @@ fun AuthScreen(
                             start = contentHorizontalPadding,
                             end = contentHorizontalPadding,
                             top = contentVerticalPadding,
-                            bottom = if (isLoginMode) 116.dp else 20.dp
+                            bottom = if (isLoginMode) 128.dp else 20.dp
                         )
                         .navigationBarsPadding(),
                     horizontalAlignment = Alignment.CenterHorizontally
@@ -1680,7 +1715,9 @@ fun AuthScreen(
                         },
                         modifier = Modifier
                             .fillMaxWidth()
+                            .scale(primaryActionScale)
                             .height(52.dp),
+                        interactionSource = primaryActionInteraction,
                         shape = RoundedCornerShape(14.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent),
                         contentPadding = PaddingValues()
@@ -1693,19 +1730,28 @@ fun AuthScreen(
                                 .background(Brush.horizontalGradient(listOf(AuthBlue, AuthCyan))),
                             contentAlignment = Alignment.Center
                         ) {
-                            if ((isLoading || studentLoginState.isLoading) && loadingDemoAccount == null) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(22.dp),
-                                    color = Color.White,
-                                    strokeWidth = 2.dp
-                                )
-                            } else {
-                                Text(
-                                    text = if (isLoginMode) "Login" else "Create Institute & Start Trial",
-                                    color = Color.White,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 15.sp
-                                )
+                            AnimatedContent(
+                                targetState = (isLoading || studentLoginState.isLoading) && loadingDemoAccount == null,
+                                transitionSpec = {
+                                    fadeIn(tween(160)) + scaleIn(initialScale = 0.85f) togetherWith
+                                        fadeOut(tween(100)) + scaleOut(targetScale = 0.85f)
+                                },
+                                label = "authPrimaryActionContent"
+                            ) { loading ->
+                                if (loading) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(22.dp),
+                                        color = Color.White,
+                                        strokeWidth = 2.dp
+                                    )
+                                } else {
+                                    Text(
+                                        text = if (isLoginMode) "Login" else "Create Institute & Start Trial",
+                                        color = Color.White,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 15.sp
+                                    )
+                                }
                             }
                         }
                     }
@@ -1850,27 +1896,7 @@ fun AuthScreen(
                     }
                 }
 
-                Spacer(Modifier.height(10.dp))
-
-                if (isLoginMode) {
-                    Row(
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        TextButton(onClick = onNavigatePrivacyPolicy) {
-                            Text("Privacy Policy", color = AuthCyan, fontSize = 12.sp)
-                        }
-                        Text(
-                            text = "·",
-                            color = AuthMuted.copy(alpha = 0.75f),
-                            fontSize = 12.sp
-                        )
-                        TextButton(onClick = onNavigateTermsConditions) {
-                            Text("Terms & Conditions", color = AuthCyan, fontSize = 12.sp)
-                        }
-                    }
-                }
+                Spacer(Modifier.height(if (isLoginMode) 4.dp else 10.dp))
 
                 }
             }
@@ -1878,6 +1904,8 @@ fun AuthScreen(
         if (isLoginMode) {
             AuthContactFooter(
                 context = context,
+                onNavigatePrivacyPolicy = onNavigatePrivacyPolicy,
+                onNavigateTermsConditions = onNavigateTermsConditions,
                 modifier = Modifier.align(Alignment.BottomCenter)
             )
         }
