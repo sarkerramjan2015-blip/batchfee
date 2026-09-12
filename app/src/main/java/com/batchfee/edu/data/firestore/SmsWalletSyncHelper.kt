@@ -7,6 +7,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import java.util.UUID
+import kotlin.math.roundToInt
 
 /**
  * Multi-tenant SMS wallet state. Counters are server-authoritative: the client
@@ -113,6 +114,24 @@ object SmsWalletSyncHelper {
     private val firestore = FirebaseFirestore.getInstance()
     private val functions = FirebaseFunctions.getInstance("asia-south1")
 
+    /**
+     * Display-only fallback for builds installed before the SMS callable is
+     * deployed. Recharge submission is still server-quoted, so these values
+     * can never be used by a client to credit its own wallet.
+     */
+    private val bundledPackages = listOf(
+        bundledPackage("starter", "Small & Medium Batches", "Starter", 100.0, 275),
+        bundledPackage("basic", "Small & Medium Batches", "Basic", 200.0, 560),
+        bundledPackage("standard", "Small & Medium Batches", "Standard", 500.0, 1_450),
+        bundledPackage("pro", "Large Coaching Centers", "Pro", 1_000.0, 3_000),
+        bundledPackage("premium", "Large Coaching Centers", "Premium", 2_000.0, 6_250),
+        bundledPackage("advanced", "Mega Coaching & Schools", "Advanced", 5_000.0, 16_500),
+        bundledPackage("enterprise", "Mega Coaching & Schools", "Enterprise", 10_000.0, 35_000)
+    )
+
+    /** Immediate package display while the server refresh is loading. */
+    fun displayPackageCatalog(): List<SmsPackage> = bundledPackages
+
     /** Reads the wallet straight from the institute document with safe defaults. */
     suspend fun fetchWallet(instituteId: String): SmsWalletState = withContext(Dispatchers.IO) {
         val snapshot = firestore.collection("institutes").document(instituteId).get().await()
@@ -150,10 +169,15 @@ object SmsWalletSyncHelper {
 
     /** Returns the server-quoted recharge package list. */
     suspend fun listPackages(): List<SmsPackage> {
-        val payload = call("list_packages", instituteId = null, values = emptyMap())
-        @Suppress("UNCHECKED_CAST")
-        return (payload["packages"] as? List<*>).orEmpty()
-            .mapNotNull { (it as? Map<*, *>)?.toSmsPackage() }
+        return try {
+            val payload = call("list_packages", instituteId = null, values = emptyMap())
+            @Suppress("UNCHECKED_CAST")
+            val serverPackages = (payload["packages"] as? List<*>).orEmpty()
+                .mapNotNull { (it as? Map<*, *>)?.toSmsPackage() }
+            serverPackages.ifEmpty { bundledPackages }
+        } catch (_: Exception) {
+            bundledPackages
+        }
     }
 
     /** Owner-only recharge request with a manual Nagad/BKash payment. */
@@ -283,6 +307,27 @@ object SmsWalletSyncHelper {
         smsUsedToday = (payload["smsUsedToday"] as? Number)?.toInt() ?: 0,
         smsUsedThisMonth = (payload["smsUsedThisMonth"] as? Number)?.toInt() ?: 0,
         smsSendMethod = payload["smsSendMethod"] as? String ?: SmsWalletState.METHOD_CARRIER
+    )
+}
+
+private fun bundledPackage(
+    packageId: String,
+    layer: String,
+    name: String,
+    baseAmount: Double,
+    smsCount: Int
+): SmsPackage {
+    val chargePercent = 1.8
+    val chargeAmount = (baseAmount * chargePercent / 100.0).roundToInt().toDouble()
+    return SmsPackage(
+        packageId = packageId,
+        layer = layer,
+        name = name,
+        baseAmount = baseAmount,
+        chargePercent = chargePercent,
+        chargeAmount = chargeAmount,
+        payableAmount = baseAmount + chargeAmount,
+        smsCount = smsCount
     )
 }
 

@@ -269,7 +269,9 @@ fun SettingsScreen(
             val instituteId by SessionManager.currentInstituteId.collectAsState()
             var wallet by remember { mutableStateOf<SmsWalletState?>(null) }
             var rechargeRequests by remember { mutableStateOf<List<SmsRechargeRequest>>(emptyList()) }
-            var smsPackages by remember { mutableStateOf<List<SmsPackage>>(emptyList()) }
+            var smsPackages by remember {
+                mutableStateOf(SmsWalletSyncHelper.displayPackageCatalog())
+            }
             var showSmsPlans by remember { mutableStateOf(true) }
             var showRechargeDialog by remember { mutableStateOf(false) }
             var showSmsReport by remember { mutableStateOf(false) }
@@ -641,7 +643,9 @@ private fun SmsRechargeDialog(
     onSubmitted: (SmsRechargeRequest) -> Unit
 ) {
     val scope = rememberCoroutineScope()
-    var packages by remember { mutableStateOf<List<SmsPackage>?>(null) }
+    var packages by remember {
+        mutableStateOf<List<SmsPackage>?>(SmsWalletSyncHelper.displayPackageCatalog())
+    }
     var loadError by remember { mutableStateOf<String?>(null) }
     var selected by remember { mutableStateOf<SmsPackage?>(null) }
     var paymentMethod by remember { mutableStateOf("bkash") }
@@ -785,7 +789,10 @@ private fun SmsRechargeDialog(
                                     }
                                     .onFailure { error ->
                                         submitting = false
-                                        submitError = error.message ?: "Could not submit the recharge request."
+                                        submitError = friendlySmsError(
+                                            error,
+                                            "Could not submit the recharge request. Please try again."
+                                        )
                                     }
                             }
                         },
@@ -842,7 +849,10 @@ private fun SmsReportDialog(onDismiss: () -> Unit) {
     LaunchedEffect(reloadKey) {
         runCatching { SmsWalletSyncHelper.smsReport() }
             .onSuccess { report = it; loadError = null }
-            .onFailure { loadError = it.message ?: "Could not load the SMS report." }
+            .onFailure {
+                report = null
+                loadError = friendlySmsError(it, "Could not load the SMS report. Please try again.")
+            }
     }
 
     AlertDialog(
@@ -867,9 +877,9 @@ private fun SmsReportDialog(onDismiss: () -> Unit) {
                     Text(error, color = AccentRed, fontSize = 12.sp)
                 }
                 val data = report
-                if (data == null) {
+                if (data == null && loadError == null) {
                     Text("Loading SMS report...", color = TextMuted, fontSize = 12.sp)
-                } else {
+                } else if (data != null) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         SmsReportStat("Sent", data.sent, Color(0xFF3B82F6), Modifier.weight(1f))
                         SmsReportStat("Delivered", data.delivered, Color(0xFF22C55E), Modifier.weight(1f))
@@ -898,6 +908,19 @@ private fun SmsReportDialog(onDismiss: () -> Unit) {
             TextButton(onClick = onDismiss) { Text("Close", color = Cyan) }
         }
     )
+}
+
+private fun friendlySmsError(error: Throwable, fallback: String): String {
+    val message = error.message.orEmpty()
+    return if (
+        message.contains("NOT_FOUND", ignoreCase = true) ||
+        message.contains("not found", ignoreCase = true) ||
+        message.contains("404")
+    ) {
+        "SMS service activation is pending. Package prices are available, but recharge and reports will work after activation."
+    } else {
+        message.takeIf { it.isNotBlank() } ?: fallback
+    }
 }
 
 @Composable

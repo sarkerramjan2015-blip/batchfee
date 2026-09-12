@@ -323,8 +323,10 @@ fun BulkMessageDialog(
     var smsMethod by remember(instituteId) { mutableStateOf(SmsWalletState.METHOD_CARRIER) }
     var smsBalance by remember(instituteId) { mutableStateOf(0) }
     var methodLoading by remember(instituteId) { mutableStateOf(true) }
+    var methodBackendAvailable by remember(instituteId) { mutableStateOf(false) }
     var methodSaving by remember { mutableStateOf(false) }
     var methodError by remember { mutableStateOf<String?>(null) }
+    var methodWarning by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(instituteId, role) {
         val resolvedInstituteId = instituteId
@@ -334,9 +336,12 @@ fun BulkMessageDialog(
             return@LaunchedEffect
         }
         methodLoading = true
+        methodBackendAvailable = false
         methodError = null
+        methodWarning = null
         runCatching { SmsWalletSyncHelper.ensureWalletInitialized(resolvedInstituteId) }
             .onSuccess { wallet ->
+                methodBackendAvailable = true
                 smsBalance = wallet.smsBalance
                 // Owners choose for every send; the safer phone carrier flow
                 // is always the default. Staff use the owner's saved method.
@@ -346,8 +351,10 @@ fun BulkMessageDialog(
                     wallet.smsSendMethod
                 }
             }
-            .onFailure { error ->
-                methodError = error.message ?: "Could not load the SMS sending method."
+            .onFailure {
+                methodBackendAvailable = false
+                smsMethod = SmsWalletState.METHOD_CARRIER
+                methodWarning = "Automatic SMS is unavailable right now. Phone SMS will still work."
             }
         methodLoading = false
     }
@@ -446,14 +453,17 @@ fun BulkMessageDialog(
                         title = "BatchFee SMS · Automatic",
                         subtitle = "Sends in the background · Balance: $smsBalance credits",
                         selected = smsMethod == SmsWalletState.METHOD_SERVER,
-                        enabled = ownerCanChooseMethod && !methodLoading && !methodSaving,
+                        enabled = ownerCanChooseMethod && methodBackendAvailable && !methodLoading && !methodSaving,
                         onClick = { smsMethod = SmsWalletState.METHOD_SERVER; methodError = null }
                     )
-                    if (!ownerCanChooseMethod && !methodLoading && methodError == null) {
+                    if (!ownerCanChooseMethod && methodBackendAvailable && !methodLoading && methodError == null) {
                         Text("Delivery method is controlled by the institute owner.", color = TextMuted, fontSize = 10.sp)
                     }
                     methodError?.let { error ->
                         Text(error, color = SoftRed, fontSize = 11.sp, lineHeight = 15.sp)
+                    }
+                    methodWarning?.let { warning ->
+                        Text(warning, color = Amber, fontSize = 11.sp, lineHeight = 15.sp)
                     }
                 }
                 Row(
@@ -517,7 +527,7 @@ fun BulkMessageDialog(
                             methodError = "No active institute session. Please log in again."
                             return@Button
                         }
-                        if (!ownerCanChooseMethod) {
+                        if (!ownerCanChooseMethod || (!methodBackendAvailable && smsMethod == SmsWalletState.METHOD_CARRIER)) {
                             onStartSms(seconds * 1000L)
                             return@Button
                         }
