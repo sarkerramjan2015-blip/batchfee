@@ -455,16 +455,29 @@ async function hardRemoveStudentFromBatchHandler(request) {
     instituteId, studentId, batchId, reason, actorUid: request.auth.uid,
     operationId: operationId || null, result, occurredAtMs: result.occurredAtMs,
   });
-  await setTenantActivity(db, instituteId, {
-    action: "student_removed_from_batch",
-    actorUid: request.auth.uid,
-    actorRole: actor.actorRole,
-    actorName: actor.actorName,
-    targetType: "student",
-    targetId: studentId,
-    summary: `${activityActorLabel(actor)} hard-removed ${studentSnap.exists ? studentSnap.get("fullName") : studentId} from batch ${batchSnap.exists ? batchSnap.get("name") : batchId}`,
-    now: result.occurredAtMs,
-  });
+  try {
+    await setTenantActivity(db, instituteId, {
+      action: "student_removed_from_batch",
+      actorUid: request.auth.uid,
+      actorRole: actor.actorRole,
+      actorName: actor.actorName,
+      targetType: "student",
+      targetId: studentId,
+      summary: `${activityActorLabel(actor)} hard-removed ${studentSnap.exists ? studentSnap.get("fullName") : studentId} from batch ${batchSnap.exists ? batchSnap.get("name") : batchId}`,
+      now: result.occurredAtMs,
+    }, `activity_${auditId}`);
+  } catch (error) {
+    // The irreversible removal and its canonical audit record are already
+    // committed. A timeline outage must not turn that successful operation
+    // into a client-visible failure or encourage a destructive retry.
+    logger.warn("Hard-remove activity timeline could not be recorded", {
+      instituteId,
+      studentId,
+      batchId,
+      auditId,
+      error: error?.message || String(error),
+    });
+  }
   return result;
 }
 

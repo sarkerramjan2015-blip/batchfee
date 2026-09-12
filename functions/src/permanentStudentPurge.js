@@ -1,5 +1,6 @@
 "use strict";
 
+const { logger } = require("firebase-functions");
 const { HttpsError } = require("firebase-functions/v2/https");
 const { parseMediaReference } = require("./mediaSecurityCore");
 const { studentLoginDocumentId } = require("./studentAuthCore");
@@ -144,16 +145,26 @@ function createPermanentStudentPurgeHandler({ db, adminAuth, bucket }) {
       actorRole: superAdmin ? "root" : "owner",
       actorName: actor && typeof actor.name === "string" ? actor.name : "",
     };
-    await setTenantActivity(db, instituteId, {
-      action: "student_purged",
-      actorUid: request.auth.uid,
-      actorRole: purgeActor.actorRole,
-      actorName: purgeActor.actorName,
-      targetType: "student",
-      targetId: studentId,
-      summary: `${activityActorLabel(purgeActor)} permanently purged student ${typeof student.studentCode === "string" ? student.studentCode : studentId}`,
-      now: Date.now(),
-    });
+    try {
+      await setTenantActivity(db, instituteId, {
+        action: "student_purged",
+        actorUid: request.auth.uid,
+        actorRole: purgeActor.actorRole,
+        actorName: purgeActor.actorName,
+        targetType: "student",
+        targetId: studentId,
+        summary: `${activityActorLabel(purgeActor)} permanently purged student ${typeof student.studentCode === "string" ? student.studentCode : studentId}`,
+        now: Date.now(),
+      }, `student_purged_${studentId}_${student.archivedAtMs}`);
+    } catch (error) {
+      // The purge is already complete. Do not report a false failure to the
+      // client merely because the internal support timeline is unavailable.
+      logger.warn("Student purge activity timeline could not be recorded", {
+        instituteId,
+        studentId,
+        error: error?.message || String(error),
+      });
+    }
     return { studentId, permanentlyDeleted: true };
   };
 }
