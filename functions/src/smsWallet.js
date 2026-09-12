@@ -34,6 +34,10 @@ const WALLET_FIELDS = {
   sms_balance: 0,
   total_sms_purchased: 0,
   total_sms_used: 0,
+  sms_used_today: 0,
+  sms_usage_day_key: "",
+  sms_used_this_month: 0,
+  sms_usage_month_key: "",
   sms_send_method: "carrier",
 };
 
@@ -90,22 +94,45 @@ function safeMillis(value, fallback = 0) {
   return Number.isFinite(numeric) && numeric >= 0 ? Math.floor(numeric) : fallback;
 }
 
-function walletDefaults(data) {
+function dhakaUsageKeys(now = Date.now()) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Dhaka",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date(now));
+  const value = (type) => parts.find((part) => part.type === type)?.value || "";
+  const year = value("year");
+  const month = value("month");
+  const day = value("day");
+  return { dayKey: `${year}-${month}-${day}`, monthKey: `${year}-${month}` };
+}
+
+function walletDefaults(data, now = Date.now()) {
+  const usageKeys = dhakaUsageKeys(now);
   const out = {};
   out.sms_balance = Number.isInteger(data.sms_balance) && data.sms_balance >= 0 ? data.sms_balance : 0;
   out.total_sms_purchased =
     Number.isInteger(data.total_sms_purchased) && data.total_sms_purchased >= 0 ? data.total_sms_purchased : 0;
   out.total_sms_used = Number.isInteger(data.total_sms_used) && data.total_sms_used >= 0 ? data.total_sms_used : 0;
+  out.sms_usage_day_key = usageKeys.dayKey;
+  out.sms_used_today = data.sms_usage_day_key === usageKeys.dayKey && Number.isInteger(data.sms_used_today) && data.sms_used_today >= 0
+    ? data.sms_used_today : 0;
+  out.sms_usage_month_key = usageKeys.monthKey;
+  out.sms_used_this_month = data.sms_usage_month_key === usageKeys.monthKey && Number.isInteger(data.sms_used_this_month) && data.sms_used_this_month >= 0
+    ? data.sms_used_this_month : 0;
   out.sms_send_method = SMS_SEND_METHODS.has(data.sms_send_method) ? data.sms_send_method : "carrier";
   return out;
 }
 
-function walletDto(data) {
-  const wallet = walletDefaults(data);
+function walletDto(data, now = Date.now()) {
+  const wallet = walletDefaults(data, now);
   return {
     smsBalance: wallet.sms_balance,
     totalSmsPurchased: wallet.total_sms_purchased,
     totalSmsUsed: wallet.total_sms_used,
+    smsUsedToday: wallet.sms_used_today,
+    smsUsedThisMonth: wallet.sms_used_this_month,
     smsSendMethod: wallet.sms_send_method,
   };
 }
@@ -259,21 +286,22 @@ function smsPayloadHash(row) {
 }
 
 /** Initializes any missing wallet field with its server-side default and returns the canonical wallet. */
-async function getWallet({ db, request }) {
+async function getWallet({ db, request, now = Date.now() }) {
   const actor = await resolveTenantActor(db, request.auth);
   const ref = db.collection("institutes").doc(actor.instituteId);
   await db.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
     if (!snap.exists) throw new HttpsError("failed-precondition", "The institute account is not ready yet.");
     const data = snap.data() || {};
+    const canonical = walletDefaults(data, now);
     const patch = {};
-    for (const [field, fallback] of Object.entries(WALLET_FIELDS)) {
-      if (data[field] == null) patch[field] = fallback;
+    for (const field of Object.keys(WALLET_FIELDS)) {
+      if (data[field] !== canonical[field]) patch[field] = canonical[field];
     }
     if (Object.keys(patch).length > 0) tx.update(ref, patch);
   });
   const snap = await ref.get();
-  return walletDto(snap.data() || {});
+  return walletDto(snap.data() || {}, now);
 }
 
 /** Owner-only idempotent send-method change with an immutable audit entry. */
@@ -672,8 +700,10 @@ async function settleServerSms({ db, instituteId, ref, providerResult, providerE
 
     const instituteRef = db.collection("institutes").doc(instituteId);
     const instituteSnap = await tx.get(instituteRef);
-    const wallet = walletDefaults(instituteSnap.data() || {});
+    const wallet = walletDefaults(instituteSnap.data() || {}, now);
     const credits = Number.isInteger(current.credits) && current.credits > 0 ? current.credits : 1;
+    const messageUsageKeys = dhakaUsageKeys(safeMillis(current.createdAtMs, now));
+    const currentUsageKeys = dhakaUsageKeys(now);
     const patch = {
       status: "failed",
       providerStatus,
@@ -684,6 +714,12 @@ async function settleServerSms({ db, instituteId, ref, providerResult, providerE
     tx.update(instituteRef, {
       sms_balance: wallet.sms_balance + credits,
       total_sms_used: Math.max(0, wallet.total_sms_used - credits),
+      sms_used_today: messageUsageKeys.dayKey === currentUsageKeys.dayKey
+        ? Math.max(0, wallet.sms_used_today - credits) : wallet.sms_used_today,
+      sms_usage_day_key: currentUsageKeys.dayKey,
+      sms_used_this_month: messageUsageKeys.monthKey === currentUsageKeys.monthKey
+        ? Math.max(0, wallet.sms_used_this_month - credits) : wallet.sms_used_this_month,
+      sms_usage_month_key: currentUsageKeys.monthKey,
     });
     tx.update(ref, patch);
     const messageId = documentId(ref);
@@ -757,7 +793,7 @@ async function sendServerSmsBatch({ db, request, smsProvider, now = Date.now() }
     }
     if (existingCount > 0) throw new HttpsError("aborted", "The previous SMS batch is incomplete. Contact support before retrying.");
 
-    const wallet = walletDefaults(instituteSnap.data() || {});
+    const wallet = walletDefaults(instituteSnap.data() || {}, now);
     if (wallet.sms_send_method !== "server") {
       throw new HttpsError("failed-precondition", "Select BatchFee Server as the SMS sending method first.");
     }
@@ -767,6 +803,10 @@ async function sendServerSmsBatch({ db, request, smsProvider, now = Date.now() }
     tx.update(instituteRef, {
       sms_balance: wallet.sms_balance - totalCredits,
       total_sms_used: wallet.total_sms_used + totalCredits,
+      sms_used_today: wallet.sms_used_today + totalCredits,
+      sms_usage_day_key: wallet.sms_usage_day_key,
+      sms_used_this_month: wallet.sms_used_this_month + totalCredits,
+      sms_usage_month_key: wallet.sms_usage_month_key,
     });
     rows.forEach((row, index) => tx.create(refs[index], {
       instituteId: actor.instituteId,
@@ -884,7 +924,7 @@ function createSmsWalletHandler({ db }) {
       throw new HttpsError("invalid-argument", "Invalid SMS wallet operation.");
     }
     const now = Date.now();
-    if (action === "get_wallet") return getWallet({ db, request });
+    if (action === "get_wallet") return getWallet({ db, request, now });
     if (action === "set_send_method") return setSendMethod({ db, request, operationId, now });
     if (action === "list_packages") return listPackages({ db, request });
     if (action === "submit_recharge_request") return submitRechargeRequest({ db, request, operationId, now });
@@ -918,4 +958,5 @@ module.exports = {
   publicSmsMessage,
   sendServerSmsBatch,
   smsCreditCount,
+  dhakaUsageKeys,
 };

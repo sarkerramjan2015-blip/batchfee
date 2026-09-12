@@ -9,6 +9,7 @@ const {
   WALLET_FIELDS,
   createServerSmsHandler,
   createSmsWalletHandler,
+  dhakaUsageKeys,
   rechargeQuote,
   smsCreditCount,
   updateSmsMessageStatus,
@@ -166,19 +167,49 @@ function serverHandlerFor(db, smsProvider) {
 }
 
 test("sms wallet exposes only carrier and server methods with safe defaults", () => {
+  const now = Date.UTC(2026, 8, 12, 0, 0, 0);
+  const keys = dhakaUsageKeys(now);
   assert.deepEqual([...SMS_SEND_METHODS].sort(), ["carrier", "server"]);
-  assert.deepEqual(walletDefaults({}), {
+  assert.deepEqual(walletDefaults({}, now), {
     sms_balance: 0,
     total_sms_purchased: 0,
     total_sms_used: 0,
+    sms_used_today: 0,
+    sms_usage_day_key: keys.dayKey,
+    sms_used_this_month: 0,
+    sms_usage_month_key: keys.monthKey,
     sms_send_method: "carrier",
   });
   assert.deepEqual(WALLET_FIELDS, {
     sms_balance: 0,
     total_sms_purchased: 0,
     total_sms_used: 0,
+    sms_used_today: 0,
+    sms_usage_day_key: "",
+    sms_used_this_month: 0,
+    sms_usage_month_key: "",
     sms_send_method: "carrier",
   });
+});
+
+test("wallet usage rolls over on Dhaka day and month boundaries", () => {
+  const september = Date.UTC(2026, 8, 30, 17, 59, 0); // 30 Sep 23:59 in Dhaka
+  const october = Date.UTC(2026, 8, 30, 18, 1, 0); // 01 Oct 00:01 in Dhaka
+  const previous = dhakaUsageKeys(september);
+  const current = dhakaUsageKeys(october);
+  const wallet = walletDefaults({
+    sms_used_today: 7,
+    sms_usage_day_key: previous.dayKey,
+    sms_used_this_month: 31,
+    sms_usage_month_key: previous.monthKey,
+  }, october);
+
+  assert.notEqual(previous.dayKey, current.dayKey);
+  assert.notEqual(previous.monthKey, current.monthKey);
+  assert.equal(wallet.sms_used_today, 0);
+  assert.equal(wallet.sms_used_this_month, 0);
+  assert.equal(wallet.sms_usage_day_key, current.dayKey);
+  assert.equal(wallet.sms_usage_month_key, current.monthKey);
 });
 
 test("get_wallet initializes missing fields with defaults and preserves existing values", async () => {
@@ -186,7 +217,10 @@ test("get_wallet initializes missing fields with defaults and preserves existing
   const handler = handlerFor(db);
 
   const first = await handler({ auth: { uid: "owner" }, data: { action: "get_wallet", operationId: "wallet-get-00000001" } });
-  assert.deepEqual(first, { smsBalance: 0, totalSmsPurchased: 0, totalSmsUsed: 0, smsSendMethod: "carrier" });
+  assert.deepEqual(first, {
+    smsBalance: 0, totalSmsPurchased: 0, totalSmsUsed: 0,
+    smsUsedToday: 0, smsUsedThisMonth: 0, smsSendMethod: "carrier",
+  });
   assert.equal(db.documents.get("institutes/i").sms_balance, 0);
   assert.equal(db.documents.get("institutes/i").sms_send_method, "carrier");
 
@@ -194,7 +228,10 @@ test("get_wallet initializes missing fields with defaults and preserves existing
   db.documents.get("institutes/i").total_sms_purchased = 100;
   db.documents.get("institutes/i").total_sms_used = 58;
   const second = await handler({ auth: { uid: "owner" }, data: { action: "get_wallet", operationId: "wallet-get-00000002" } });
-  assert.deepEqual(second, { smsBalance: 42, totalSmsPurchased: 100, totalSmsUsed: 58, smsSendMethod: "carrier" });
+  assert.deepEqual(second, {
+    smsBalance: 42, totalSmsPurchased: 100, totalSmsUsed: 58,
+    smsUsedToday: 0, smsUsedThisMonth: 0, smsSendMethod: "carrier",
+  });
 });
 
 test("staff can read the wallet but cannot change the send method", async () => {
@@ -556,6 +593,8 @@ test("server SMS reserves wallet credits, sends once, and replays without duplic
   assert.equal(sent.results.every((item) => item.status === "sent"), true);
   assert.equal(sent.wallet.smsBalance, 3);
   assert.equal(sent.wallet.totalSmsUsed, 2);
+  assert.equal(sent.wallet.smsUsedToday, 2);
+  assert.equal(sent.wallet.smsUsedThisMonth, 2);
   assert.equal(providerCalls, 2);
 
   const replay = await handler(request);
@@ -581,6 +620,8 @@ test("definite provider rejection refunds reserved SMS credits", async () => {
   assert.equal(result.results[0].status, "failed");
   assert.equal(result.wallet.smsBalance, 2);
   assert.equal(result.wallet.totalSmsUsed, 0);
+  assert.equal(result.wallet.smsUsedToday, 0);
+  assert.equal(result.wallet.smsUsedThisMonth, 0);
   assert.ok(db.documents.get(`institutes/i/sms_wallet_audit/${result.results[0].messageId}-refund`));
 });
 

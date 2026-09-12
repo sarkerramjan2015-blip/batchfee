@@ -16,6 +16,8 @@ data class SmsWalletState(
     val smsBalance: Int = 0,
     val totalSmsPurchased: Int = 0,
     val totalSmsUsed: Int = 0,
+    val smsUsedToday: Int = 0,
+    val smsUsedThisMonth: Int = 0,
     val smsSendMethod: String = METHOD_CARRIER
 ) {
     companion object {
@@ -119,6 +121,8 @@ object SmsWalletSyncHelper {
             smsBalance = (data["sms_balance"] as? Number)?.toInt() ?: 0,
             totalSmsPurchased = (data["total_sms_purchased"] as? Number)?.toInt() ?: 0,
             totalSmsUsed = (data["total_sms_used"] as? Number)?.toInt() ?: 0,
+            smsUsedToday = (data["sms_used_today"] as? Number)?.toInt() ?: 0,
+            smsUsedThisMonth = (data["sms_used_this_month"] as? Number)?.toInt() ?: 0,
             smsSendMethod = data["sms_send_method"] as? String ?: SmsWalletState.METHOD_CARRIER
         )
     }
@@ -276,6 +280,8 @@ object SmsWalletSyncHelper {
         smsBalance = (payload["smsBalance"] as? Number)?.toInt() ?: 0,
         totalSmsPurchased = (payload["totalSmsPurchased"] as? Number)?.toInt() ?: 0,
         totalSmsUsed = (payload["totalSmsUsed"] as? Number)?.toInt() ?: 0,
+        smsUsedToday = (payload["smsUsedToday"] as? Number)?.toInt() ?: 0,
+        smsUsedThisMonth = (payload["smsUsedThisMonth"] as? Number)?.toInt() ?: 0,
         smsSendMethod = payload["smsSendMethod"] as? String ?: SmsWalletState.METHOD_CARRIER
     )
 }

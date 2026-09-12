@@ -264,18 +264,15 @@ fun SettingsScreen(
                 )
             }
 
-            Spacer(Modifier.weight(1f))
-
-            // Multi-tenant SMS wallet & sending method. Wallet counters are
+            // Multi-tenant SMS wallet and recharge. Wallet counters are
             // read-only here; the trusted callable is the only writer.
             val instituteId by SessionManager.currentInstituteId.collectAsState()
             var wallet by remember { mutableStateOf<SmsWalletState?>(null) }
             var rechargeRequests by remember { mutableStateOf<List<SmsRechargeRequest>>(emptyList()) }
             var smsPackages by remember { mutableStateOf<List<SmsPackage>>(emptyList()) }
-            var showSmsPlans by remember { mutableStateOf(false) }
+            var showSmsPlans by remember { mutableStateOf(true) }
             var showRechargeDialog by remember { mutableStateOf(false) }
             var showSmsReport by remember { mutableStateOf(false) }
-            var savingMethod by remember { mutableStateOf(false) }
             val isAdmin = SessionManager.isAdmin()
             LaunchedEffect(instituteId) {
                 val resolvedInstituteId = instituteId
@@ -304,24 +301,36 @@ fun SettingsScreen(
                             Icon(Icons.Filled.Sms, null, tint = Cyan, modifier = Modifier.size(22.dp))
                             Spacer(Modifier.width(14.dp))
                             Column(Modifier.weight(1f)) {
-                                Text("SMS Wallet & Sending", color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                                Text("Choose how BatchFee sends your SMS", color = TextMuted, fontSize = 11.sp)
+                                Text("SMS Wallet & Recharge", color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                                Text("Balance, usage, packages and top-up", color = TextMuted, fontSize = 11.sp)
                             }
                         }
                         Spacer(Modifier.height(10.dp))
                         val state = wallet ?: SmsWalletState()
-                        Row(
+                        Column(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(10.dp))
                                 .background(Color(0xFF0B1B2E))
-                                .padding(vertical = 8.dp),
-                            horizontalArrangement = Arrangement.SpaceEvenly
+                                .padding(horizontal = 8.dp, vertical = 10.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            WalletStat("Remaining", state.smsBalance.toString())
-                            WalletStat("Bought", state.totalSmsPurchased.toString())
-                            WalletStat("Sent", state.totalSmsUsed.toString())
+                            Row(Modifier.fillMaxWidth()) {
+                                WalletStat("Remaining", state.smsBalance.toString(), Modifier.weight(1f))
+                                WalletStat("Used today", state.smsUsedToday.toString(), Modifier.weight(1f))
+                            }
+                            HorizontalDivider(color = BorderSub.copy(alpha = 0.75f))
+                            Row(Modifier.fillMaxWidth()) {
+                                WalletStat("This month", state.smsUsedThisMonth.toString(), Modifier.weight(1f))
+                                WalletStat("Lifetime used", state.totalSmsUsed.toString(), Modifier.weight(1f))
+                            }
                         }
+                        Text(
+                            "Total purchased: ${state.totalSmsPurchased} SMS credits",
+                            color = TextMuted,
+                            fontSize = 10.sp,
+                            modifier = Modifier.padding(start = 4.dp, top = 6.dp)
+                        )
                         Spacer(Modifier.height(10.dp))
                         Row(
                             modifier = Modifier
@@ -334,7 +343,7 @@ fun SettingsScreen(
                             Icon(Icons.Filled.Storefront, null, tint = Color(0xFFF59E0B), modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(8.dp))
                             Text(
-                                "SMS Plans",
+                                "SMS packages & price list",
                                 color = TextWhite,
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold,
@@ -353,37 +362,55 @@ fun SettingsScreen(
                             )
                         }
                         if (showSmsPlans) {
+                            var currentLayer = ""
                             smsPackages.forEach { pkg ->
+                                if (pkg.layer != currentLayer) {
+                                    currentLayer = pkg.layer
+                                    Text(
+                                        currentLayer.uppercase(),
+                                        color = Cyan,
+                                        fontSize = 9.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.padding(top = 8.dp, bottom = 2.dp)
+                                    )
+                                }
+                                val ratePaisa = if (pkg.smsCount > 0) pkg.baseAmount * 100.0 / pkg.smsCount else 0.0
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(vertical = 3.dp),
+                                        .padding(vertical = 4.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text(
-                                        pkg.name,
-                                        color = TextWhite,
-                                        fontSize = 12.sp,
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    Text(
-                                        "${pkg.smsCount} SMS",
-                                        color = TextMuted,
-                                        fontSize = 10.sp
-                                    )
+                                    Column(Modifier.weight(1f)) {
+                                        Text(pkg.name, color = TextWhite, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                        Text(
+                                            "${pkg.smsCount} SMS · ≈ ${"%.1f".format(ratePaisa)} paisa/SMS",
+                                            color = TextMuted,
+                                            fontSize = 9.sp
+                                        )
+                                    }
                                     Spacer(Modifier.width(10.dp))
-                                    Text(
-                                        "BDT ${"%.0f".format(pkg.payableAmount)}",
-                                        color = Color(0xFFF59E0B),
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
+                                    Column(horizontalAlignment = Alignment.End) {
+                                        Text(
+                                            "BDT ${"%.0f".format(pkg.baseAmount)}",
+                                            color = Color(0xFFF59E0B),
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Text("Pay ${"%.0f".format(pkg.payableAmount)}", color = TextMuted, fontSize = 9.sp)
+                                    }
                                 }
                             }
                             Text(
-                                "Payable includes the ${if (smsPackages.isNotEmpty()) smsPackages.first().chargePercent else "1.8"}% charge.",
+                                "Recharge payable includes the ${if (smsPackages.isNotEmpty()) smsPackages.first().chargePercent else "1.8"}% processing charge.",
                                 color = TextMuted,
                                 fontSize = 9.sp
+                            )
+                            Text(
+                                "Usage counters show BatchFee automatic SMS credits; phone-carrier hand-offs remain in SMS Report.",
+                                color = TextMuted,
+                                fontSize = 9.sp,
+                                modifier = Modifier.padding(top = 3.dp)
                             )
                         }
                         Spacer(Modifier.height(6.dp))
@@ -394,7 +421,7 @@ fun SettingsScreen(
                                 border = BorderStroke(1.dp, Cyan),
                                 shape = RoundedCornerShape(10.dp)
                             ) {
-                                Text("Recharge SMS", color = Cyan, fontWeight = FontWeight.Bold)
+                                Text("Top Up SMS", color = Cyan, fontWeight = FontWeight.Bold)
                             }
                             OutlinedButton(
                                 onClick = { showSmsReport = true },
@@ -409,35 +436,6 @@ fun SettingsScreen(
                             Spacer(Modifier.height(8.dp))
                             RechargeStatusRow(request)
                         }
-                        Spacer(Modifier.height(6.dp))
-                        SmsMethodOption(
-                            title = "Send via Phone Carrier (Semi-Auto)",
-                            subtitle = "The app opens your phone's SMS app; each message is sent from your number.",
-                            selected = state.smsSendMethod == SmsWalletState.METHOD_CARRIER,
-                            enabled = !savingMethod,
-                            onSelect = {
-                                saveSmsMethod(
-                                    scope, snackbarHostState, resolvedInstituteId,
-                                    SmsWalletState.METHOD_CARRIER,
-                                    onSaving = { savingMethod = it },
-                                    onSaved = { wallet = it }
-                                )
-                            }
-                        )
-                        SmsMethodOption(
-                            title = "Send via BatchFee Server (Full-Auto)",
-                            subtitle = "BatchFee sends messages automatically and deducts your SMS balance.",
-                            selected = state.smsSendMethod == SmsWalletState.METHOD_SERVER,
-                            enabled = !savingMethod,
-                            onSelect = {
-                                saveSmsMethod(
-                                    scope, snackbarHostState, resolvedInstituteId,
-                                    SmsWalletState.METHOD_SERVER,
-                                    onSaving = { savingMethod = it },
-                                    onSaved = { wallet = it }
-                                )
-                            }
-                        )
                     }
                 }
             }
@@ -562,8 +560,8 @@ private fun SettingsSwitchRow(
 }
 
 @Composable
-private fun WalletStat(label: String, value: String) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+private fun WalletStat(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
         Text(value, color = TextWhite, fontSize = 15.sp, fontWeight = FontWeight.Bold)
         Text(label, color = TextMuted, fontSize = 10.sp)
     }
@@ -601,29 +599,6 @@ private fun SmsMethodOption(
             Text(title, color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.Medium)
             Text(subtitle, color = TextMuted, fontSize = 10.sp)
         }
-    }
-}
-
-private fun saveSmsMethod(
-    scope: kotlinx.coroutines.CoroutineScope,
-    snackbarHostState: SnackbarHostState,
-    instituteId: String,
-    method: String,
-    onSaving: (Boolean) -> Unit,
-    onSaved: (SmsWalletState) -> Unit
-) {
-    scope.launch {
-        onSaving(true)
-        runCatching { SmsWalletSyncHelper.setSmsSendMethod(instituteId, method) }
-            .onSuccess { state ->
-                onSaved(state)
-                val label = if (state.smsSendMethod == SmsWalletState.METHOD_SERVER) "BatchFee Server" else "Phone Carrier"
-                snackbarHostState.showSnackbar("SMS will now be sent via $label.")
-            }
-            .onFailure { error ->
-                snackbarHostState.showSnackbar(error.message ?: "Could not save the SMS sending method. Please try again.")
-            }
-        onSaving(false)
     }
 }
 

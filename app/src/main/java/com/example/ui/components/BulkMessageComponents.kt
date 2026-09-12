@@ -17,9 +17,12 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -32,7 +35,11 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.batchfee.edu.data.firestore.SmsWalletState
+import com.batchfee.edu.data.firestore.SmsWalletSyncHelper
+import com.batchfee.edu.domain.SessionManager
 import com.example.domain.BulkMessageController
+import kotlinx.coroutines.launch
 
 // Shared dark palette — mirrors the Students / Fees screens.
 private val BgColor      = Color(0xFF07111F)
@@ -306,8 +313,43 @@ fun BulkMessageDialog(
     onDismiss: () -> Unit,
     broadcastMode: Boolean = false
 ) {
+    val scope = rememberCoroutineScope()
+    val instituteId by SessionManager.currentInstituteId.collectAsState()
+    val role by SessionManager.currentUserRole.collectAsState()
+    val ownerCanChooseMethod = role == "InstituteOwner"
     var delayText by remember {
         mutableStateOf(initialDelaySeconds.toString())
+    }
+    var smsMethod by remember(instituteId) { mutableStateOf(SmsWalletState.METHOD_CARRIER) }
+    var smsBalance by remember(instituteId) { mutableStateOf(0) }
+    var methodLoading by remember(instituteId) { mutableStateOf(true) }
+    var methodSaving by remember { mutableStateOf(false) }
+    var methodError by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(instituteId, role) {
+        val resolvedInstituteId = instituteId
+        if (resolvedInstituteId.isNullOrBlank()) {
+            methodLoading = false
+            methodError = "No active institute session. Please log in again."
+            return@LaunchedEffect
+        }
+        methodLoading = true
+        methodError = null
+        runCatching { SmsWalletSyncHelper.ensureWalletInitialized(resolvedInstituteId) }
+            .onSuccess { wallet ->
+                smsBalance = wallet.smsBalance
+                // Owners choose for every send; the safer phone carrier flow
+                // is always the default. Staff use the owner's saved method.
+                smsMethod = if (ownerCanChooseMethod) {
+                    SmsWalletState.METHOD_CARRIER
+                } else {
+                    wallet.smsSendMethod
+                }
+            }
+            .onFailure { error ->
+                methodError = error.message ?: "Could not load the SMS sending method."
+            }
+        methodLoading = false
     }
 
     AlertDialog(
@@ -375,6 +417,45 @@ fun BulkMessageDialog(
                     ),
                     shape = RoundedCornerShape(16.dp)
                 )
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(CardBg)
+                        .border(1.dp, BorderSub, RoundedCornerShape(16.dp))
+                        .padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.Sms, contentDescription = null, tint = Cyan, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("SMS delivery", color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.weight(1f))
+                        if (methodLoading) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Cyan)
+                        }
+                    }
+                    SmsDeliveryOption(
+                        title = "Phone SMS · Semi-automatic",
+                        subtitle = "Recommended default. Review and send from your phone.",
+                        selected = smsMethod == SmsWalletState.METHOD_CARRIER,
+                        enabled = ownerCanChooseMethod && !methodLoading && !methodSaving,
+                        onClick = { smsMethod = SmsWalletState.METHOD_CARRIER; methodError = null }
+                    )
+                    SmsDeliveryOption(
+                        title = "BatchFee SMS · Automatic",
+                        subtitle = "Sends in the background · Balance: $smsBalance credits",
+                        selected = smsMethod == SmsWalletState.METHOD_SERVER,
+                        enabled = ownerCanChooseMethod && !methodLoading && !methodSaving,
+                        onClick = { smsMethod = SmsWalletState.METHOD_SERVER; methodError = null }
+                    )
+                    if (!ownerCanChooseMethod && !methodLoading && methodError == null) {
+                        Text("Delivery method is controlled by the institute owner.", color = TextMuted, fontSize = 10.sp)
+                    }
+                    methodError?.let { error ->
+                        Text(error, color = SoftRed, fontSize = 11.sp, lineHeight = 15.sp)
+                    }
+                }
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -431,14 +512,37 @@ fun BulkMessageDialog(
                 Button(
                     onClick = {
                         val seconds = (delayText.toIntOrNull() ?: initialDelaySeconds).coerceIn(0, 999)
-                        onStartSms(seconds * 1000L)
+                        val resolvedInstituteId = instituteId
+                        if (resolvedInstituteId.isNullOrBlank()) {
+                            methodError = "No active institute session. Please log in again."
+                            return@Button
+                        }
+                        if (!ownerCanChooseMethod) {
+                            onStartSms(seconds * 1000L)
+                            return@Button
+                        }
+                        methodSaving = true
+                        methodError = null
+                        scope.launch {
+                            runCatching {
+                                SmsWalletSyncHelper.setSmsSendMethod(resolvedInstituteId, smsMethod)
+                            }.onSuccess { wallet ->
+                                smsBalance = wallet.smsBalance
+                                methodSaving = false
+                                onStartSms(seconds * 1000L)
+                            }.onFailure { error ->
+                                methodSaving = false
+                                methodError = error.message ?: "Could not confirm the SMS delivery method."
+                            }
+                        }
                     },
-                    enabled = !broadcastMode || messageText.isNotBlank(),
+                    enabled = (!broadcastMode || messageText.isNotBlank()) &&
+                        !methodLoading && !methodSaving && methodError == null,
                     modifier = Modifier.weight(1f).height(52.dp),
                     shape = RoundedCornerShape(16.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = Cyan, contentColor = BgColor)
                 ) {
-                    Text("SMS", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    Text(if (methodSaving) "Preparing..." else "SMS", fontWeight = FontWeight.Bold, fontSize = 15.sp)
                 }
             }
         }
@@ -446,6 +550,41 @@ fun BulkMessageDialog(
 }
 
 // ── Selectable check badge shown on list cards in selection mode ──
+@Composable
+private fun SmsDeliveryOption(
+    title: String,
+    subtitle: String,
+    selected: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(enabled = enabled, onClick = onClick)
+            .background(if (selected) Cyan.copy(alpha = 0.08f) else Color.Transparent)
+            .padding(horizontal = 4.dp, vertical = 3.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        RadioButton(
+            selected = selected,
+            onClick = onClick,
+            enabled = enabled,
+            colors = RadioButtonDefaults.colors(
+                selectedColor = Cyan,
+                unselectedColor = TextMuted,
+                disabledSelectedColor = Cyan.copy(alpha = 0.65f),
+                disabledUnselectedColor = TextMuted.copy(alpha = 0.45f)
+            )
+        )
+        Column(Modifier.weight(1f)) {
+            Text(title, color = TextWhite, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            Text(subtitle, color = TextMuted, fontSize = 10.sp, lineHeight = 14.sp)
+        }
+    }
+}
+
 @Composable
 fun SelectionBadge(selected: Boolean) {
     Box(
