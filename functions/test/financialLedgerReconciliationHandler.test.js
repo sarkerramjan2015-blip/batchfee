@@ -48,9 +48,137 @@ class Db {
   }
 }
 
+test("course admission correction leaves its course contract unchanged", async () => {
+  const original = timestamp(2026, 8, 1);
+  const corrected = timestamp(2026, 7, 10);
+  const db = new Db({
+    "institutes/a": { isActive: true, currentPlanId: "plan_spark", subscriptionStatus: "active", currentPeriodEndMs: Date.now() + 86400000 },
+    "app_users/owner": { instituteId: "a", role: "InstituteOwner", status: "active" },
+    "institutes/a/students/s": { admissionDateMs: original },
+    "institutes/a/batches/course": { billingMode: "course", monthlyFeeAmount: 0, courseFeeAmount: 5000 },
+    "institutes/a/batch_students/e": { studentId: "s", batchId: "course", status: "active", joinedAtMs: original, firstMonthFeePeriod: null },
+  });
+  await createFinancialLedgerHandler({ db })({ auth: { uid: "owner" }, data: {
+    instituteId: "a", studentId: "s", action: "update_student_admission_date", admissionDateMs: corrected, operationId: "course-admission-0001",
+  } });
+  assert.equal(db.documents.get("institutes/a/students/s").admissionDateMs, corrected);
+  assert.equal(db.documents.get("institutes/a/batch_students/e").joinedAtMs, original);
+  assert.equal(db.documents.get("institutes/a/batch_students/e").firstMonthFeePeriod, null);
+});
+
+test("same-month independent assignment is preserved during admission correction", async () => {
+  const db = new Db({
+    "institutes/a": { isActive: true, currentPlanId: "plan_spark", subscriptionStatus: "active", currentPeriodEndMs: Date.now() + 86400000 },
+    "app_users/owner": { instituteId: "a", role: "InstituteOwner", status: "active" },
+    "institutes/a/students/s": { admissionDateMs: timestamp(2026, 8, 1) },
+    "institutes/a/batches/b": { billingMode: "monthly", monthlyFeeAmount: 1000 },
+    "institutes/a/batch_students/e": { studentId: "s", batchId: "b", status: "active", joinedAtMs: timestamp(2026, 8, 20), firstMonthFeePeriod: "Sep 2026", firstMonthFeeAmount: 367, admissionDateLinked: false },
+  });
+  await createFinancialLedgerHandler({ db })({ auth: { uid: "owner" }, data: {
+    instituteId: "a", studentId: "s", action: "update_student_admission_date", admissionDateMs: timestamp(2026, 7, 10), operationId: "independent-admission-0001",
+  } });
+  assert.equal(db.documents.get("institutes/a/batch_students/e").firstMonthFeePeriod, "Sep 2026");
+  assert.equal(db.documents.get("institutes/a/batch_students/e").firstMonthFeeAmount, 367);
+});
+
 function timestamp(year, monthIndex, day) {
   return Date.UTC(year, monthIndex, day, 6, 0, 0);
 }
+
+function billingPeriod(offset = 0) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Dhaka",
+    month: "short",
+    year: "numeric",
+  }).formatToParts(new Date());
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const month = months.indexOf(parts.find((part) => part.type === "month").value);
+  const year = Number(parts.find((part) => part.type === "year").value);
+  const key = year * 12 + month + offset;
+  return `${months[key % 12]} ${Math.floor(key / 12)}`;
+}
+
+function customFeeFixture(extra = {}) {
+  const current = billingPeriod();
+  return new Db({
+    "institutes/a": {
+      isActive: true, currentPlanId: "plan_spark", subscriptionStatus: "active",
+      currentPeriodEndMs: Date.now() + 86400000,
+    },
+    "app_users/owner": { instituteId: "a", role: "InstituteOwner", status: "active" },
+    "institutes/a/students/s": { admissionDateMs: Date.now() - 86400000 },
+    "institutes/a/batches/b": { billingMode: "monthly", monthlyFeeAmount: 1000 },
+    "institutes/a/batch_students/e": {
+      studentId: "s", batchId: "b", status: "active", joinedAtMs: Date.now() - 86400000,
+      firstMonthFeePeriod: current, firstMonthFeeAmount: 1000, admissionDateLinked: false,
+    },
+    ...extra,
+  });
+}
+
+test("custom fee returns the canonical future period and updates only unpaid fees", async () => {
+  const next = billingPeriod(1);
+  const db = customFeeFixture({
+    "institutes/a/fees/next": {
+      instituteId: "a", studentId: "s", batchId: "b", feePeriod: next,
+      feeType: "monthly_fee", baseAmount: 1000, discountAmount: 0, lateFeeAmount: 0,
+      totalAmount: 1000, paidAmount: 0, dueAmount: 1000, status: "unpaid",
+      createdAtMs: Date.now(), updatedAtMs: Date.now(), ledgerVersion: 1,
+    },
+  });
+  const result = await createFinancialLedgerHandler({ db })({ auth: { uid: "owner" }, data: {
+    instituteId: "a", enrollmentId: "e", studentId: "s", batchId: "b",
+    action: "set_custom_monthly_fee", customMonthlyFeeAmount: 700,
+    customFeeReason: "Scholarship", effectiveFromPeriod: next,
+    operationId: "custom-fee-future-0001",
+  } });
+  assert.equal(result.metadata.customFeePolicy.effectivePeriod, next);
+  assert.equal(result.metadata.customFeePolicy.customMonthlyFeeAmount, 700);
+  assert.equal(db.documents.get("institutes/a/fees/next").totalAmount, 700);
+  assert.match(db.documents.get("institutes/a/batch_students/e").customFeePolicyTimeline, /=700$/);
+});
+
+test("paid selected period rejects a custom fee without changing its receipt history", async () => {
+  const current = billingPeriod();
+  const originalFee = {
+    instituteId: "a", studentId: "s", batchId: "b", feePeriod: current,
+    feeType: "monthly_fee", baseAmount: 1000, discountAmount: 0, lateFeeAmount: 0,
+    totalAmount: 1000, paidAmount: 200, dueAmount: 800, status: "partially_paid",
+    createdAtMs: Date.now(), updatedAtMs: Date.now(), ledgerVersion: 1,
+  };
+  const db = customFeeFixture({
+    "institutes/a/fees/current": originalFee,
+    "institutes/a/payments/pay": { feeId: "current", amount: 200, status: "completed" },
+  });
+  await assert.rejects(createFinancialLedgerHandler({ db })({ auth: { uid: "owner" }, data: {
+    instituteId: "a", enrollmentId: "e", studentId: "s", batchId: "b",
+    action: "set_custom_monthly_fee", customMonthlyFeeAmount: 700,
+    customFeeReason: "Scholarship", effectiveFromPeriod: current,
+    operationId: "custom-fee-paid-00001",
+  } }), { code: "failed-precondition" });
+  assert.deepEqual(db.documents.get("institutes/a/fees/current"), originalFee);
+  assert.equal(db.documents.get("institutes/a/batch_students/e").customFeePolicyTimeline, undefined);
+});
+
+test("future batch-fee restore preserves the earlier custom policy in its timeline", async () => {
+  const current = billingPeriod();
+  const next = billingPeriod(1);
+  const db = customFeeFixture();
+  const handler = createFinancialLedgerHandler({ db });
+  await handler({ auth: { uid: "owner" }, data: {
+    instituteId: "a", enrollmentId: "e", studentId: "s", batchId: "b",
+    action: "set_custom_monthly_fee", customMonthlyFeeAmount: 700,
+    customFeeReason: "Scholarship", effectiveFromPeriod: current,
+    operationId: "custom-fee-start-00001",
+  } });
+  const result = await handler({ auth: { uid: "owner" }, data: {
+    instituteId: "a", enrollmentId: "e", studentId: "s", batchId: "b",
+    action: "set_custom_monthly_fee", customMonthlyFeeAmount: null,
+    customFeeReason: null, effectiveFromPeriod: next,
+    operationId: "custom-fee-reset-00001",
+  } });
+  assert.equal(result.metadata.customFeePolicy.customFeePolicyTimeline, `${current}=700|${next}=BATCH`);
+});
 
 test("reconciliation cancels only fully unpaid months before the contractual start", async () => {
   const now = Date.now();
@@ -108,6 +236,7 @@ test("admission date edit updates its linked enrollment but preserves a shifted 
     "institutes/institute-a/batch_students/enrollment-a": {
       studentId: "student-a", batchId: "batch-a", status: "active",
       joinedAtMs: originalJoined, firstMonthFeePeriod: "Jun 2026", firstMonthFeeAmount: 1000,
+      admissionDateLinked: true,
     },
     "institutes/institute-a/batch_students/enrollment-shifted": {
       studentId: "student-a", batchId: "batch-b", status: "active",

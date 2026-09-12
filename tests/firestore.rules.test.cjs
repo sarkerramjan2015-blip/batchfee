@@ -15,6 +15,7 @@ const {
   getDocs,
   setDoc,
   updateDoc,
+  writeBatch,
 } = require("firebase/firestore");
 
 const PROJECT_ID = "demo-batchfee-rules";
@@ -126,6 +127,20 @@ async function seedBaseData() {
       role: "SuperAdmin",
       status: "active",
       instituteId: ADMIN,
+    });
+    await setDoc(doc(db, "app_users", "platform-support"), {
+      role: "PlatformAdmin",
+      platformRole: "support",
+      status: "active",
+      name: "Support member",
+      email: "support@example.test",
+    });
+    await setDoc(doc(db, "app_users", "platform-suspended"), {
+      role: "PlatformAdmin",
+      platformRole: "billing",
+      status: "suspended",
+      name: "Suspended member",
+      email: "suspended@example.test",
     });
     await setDoc(doc(db, "app_users", "institute-admin-a"), {
       role: "InstituteAdmin",
@@ -339,6 +354,48 @@ beforeEach(async () => {
 
 after(async () => {
   await testEnv.cleanup();
+});
+
+describe("Atomic bulk saves and durable audit replay", { concurrency: false }, () => {
+  test("owner can commit 400 attendance marks in one batch", async () => {
+    const db = authDb(OWNER_A);
+    const batch = writeBatch(db);
+    for (let i = 0; i < 400; i++) batch.set(tenantDoc(db, OWNER_A, "attendance", `bulk-${i}`), {
+      instituteId: OWNER_A, studentId: `student-${i}`, batchId: "batch-a", status: "present",
+    });
+    await assertSucceeds(batch.commit());
+    assert.equal((await getDoc(tenantDoc(db, OWNER_A, "attendance", "bulk-399"))).data().status, "present");
+  });
+  test("one forbidden write rejects the entire batch without a partial mark", async () => {
+    const db = authDb(OWNER_A);
+    const batch = writeBatch(db);
+    batch.set(tenantDoc(db, OWNER_A, "attendance", "atomic-own"), { studentId: "student-a" });
+    batch.set(tenantDoc(db, OWNER_B, "attendance", "atomic-other"), { studentId: "student-b" });
+    await assertFails(batch.commit());
+    assert.equal((await getDoc(tenantDoc(db, OWNER_A, "attendance", "atomic-own"))).exists(), false);
+  });
+  test("staff can batch 399 results and exam completion with unchanged permission rules", async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await updateDoc(tenantDoc(context.firestore(), OWNER_A, "staffs", "staff-manage-a"), { permissions: "manage_exams" });
+      await setDoc(tenantDoc(context.firestore(), OWNER_A, "exams", "bulk-exam"), { status: "draft" });
+    });
+    const db = authDb("staff-manage-a");
+    const batch = writeBatch(db);
+    for (let i = 0; i < 399; i++) batch.set(tenantDoc(db, OWNER_A, "results", `bulk-${i}`), {
+      instituteId: OWNER_A, studentId: `student-${i}`, examId: "bulk-exam", marksObtained: 50,
+    });
+    batch.update(tenantDoc(db, OWNER_A, "exams", "bulk-exam"), { status: "completed" });
+    await assertSucceeds(batch.commit());
+  });
+  test("audit replay permits exact owner-of-entry retry but no tampering", async () => {
+    const db = authDb("staff-view-a");
+    const fields = { instituteId: OWNER_A, userId: "staff-view-a", action: "saved", createdAtMs: 123 };
+    const ref = tenantDoc(db, OWNER_A, "audit_logs", "retry-log");
+    await assertSucceeds(setDoc(ref, fields));
+    await assertSucceeds(setDoc(ref, fields));
+    await assertFails(setDoc(ref, { ...fields, action: "tampered" }));
+    await assertFails(setDoc(tenantDoc(authDb("staff-manage-a"), OWNER_A, "audit_logs", "retry-log"), fields));
+  });
 });
 
 describe("P0-01 tenant isolation", { concurrency: false }, () => {
@@ -614,6 +671,41 @@ describe("P0-02 owner and staff security boundary", { concurrency: false }, () =
     await assertFails(updateDoc(instituteRef(db, OWNER_A), { securityPin: "0000" }));
   });
 
+  test("SMS wallet counters and send method are server-authoritative", async () => {
+    const db = authDb(OWNER_A);
+    await assertSucceeds(getDoc(instituteRef(db, OWNER_A)));
+    await assertFails(updateDoc(instituteRef(db, OWNER_A), { sms_balance: 99999 }));
+    await assertFails(updateDoc(instituteRef(db, OWNER_A), { total_sms_purchased: 99999 }));
+    await assertFails(updateDoc(instituteRef(db, OWNER_A), { total_sms_used: 0 }));
+    await assertFails(updateDoc(instituteRef(db, OWNER_A), { sms_send_method: "server" }));
+    await assertFails(setDoc(tenantDoc(db, OWNER_A, "sms_wallet_audit", "forged-audit"), {
+      instituteId: OWNER_A, action: "set_send_method", before: "carrier", after: "server", actorUid: OWNER_A,
+    }));
+    await assertFails(getDoc(tenantDoc(db, OWNER_A, "sms_wallet_audit", "forged-audit")));
+  });
+
+  test("SMS recharge requests are callable-only with institute-scoped reads", async () => {
+    const db = authDb(OWNER_A);
+    const requestDoc = tenantDoc(db, OWNER_A, "sms_recharge_requests", "forged-request");
+    await assertFails(setDoc(requestDoc, {
+      instituteId: OWNER_A, status: "approved", packageId: "enterprise", smsCount: 35000,
+      payableAmount: 0, createdAtMs: Date.now(),
+    }));
+    await assertSucceeds(getDoc(tenantDoc(db, OWNER_A, "sms_recharge_requests", "any-missing-request")));
+    await assertFails(setDoc(tenantDoc(authDb(OWNER_B), OWNER_A, "sms_recharge_requests", "cross-tenant"), {
+      instituteId: OWNER_A, status: "pending",
+    }));
+  });
+
+  test("SMS message delivery records can never be forged by a client", async () => {
+    const db = authDb(OWNER_A);
+    await assertFails(setDoc(tenantDoc(db, OWNER_A, "sms_messages", "forged-message"), {
+      instituteId: OWNER_A, recipient: "01700000000", status: "delivered", channel: "carrier",
+    }));
+    await assertFails(updateDoc(tenantDoc(db, OWNER_A, "sms_messages", "forged-message"), { status: "failed" }));
+    await assertSucceeds(getDoc(tenantDoc(db, OWNER_A, "sms_messages", "any-missing-message")));
+  });
+
   test("subscription requests are server-authoritative and reject every raw client write", async () => {
     const db = authDb(OWNER_A);
     const valid = {
@@ -654,6 +746,21 @@ describe("P0-02 owner and staff security boundary", { concurrency: false }, () =
       currentPeriodEndMs: Date.now() + 31_536_000_000,
       studentLimit: 1500,
     }));
+  });
+
+  test("non-root platform members can read only their own account record", async () => {
+    const supportDb = authDb("platform-support");
+    await assertSucceeds(getDoc(doc(supportDb, "app_users", "platform-support")));
+    await assertFails(getDoc(doc(supportDb, "app_users", ADMIN)));
+    await assertFails(getDocs(collection(supportDb, "app_users")));
+    await assertFails(updateDoc(doc(supportDb, "app_users", "platform-support"), {
+      platformRole: "root",
+    }));
+    await assertFails(getDoc(instituteRef(supportDb, OWNER_A)));
+    await assertFails(getDocs(collection(supportDb, "institutes")));
+
+    const suspendedDb = authDb("platform-suspended");
+    await assertFails(getDoc(doc(suspendedDb, "app_users", "platform-suspended")));
   });
 
   test("platform reader can query all subscription receipts without exposing other tenants", async () => {
@@ -1070,6 +1177,74 @@ describe("P0-08 trusted operational summary boundary", { concurrency: false }, (
         status: "completed",
       }));
       await assertFails(deleteDoc(operation));
+    }
+  });
+});
+
+describe("P0-09 platform support timeline and client-note boundary", { concurrency: false }, () => {
+  test("activity events and internal client notes are callable-only for every client role", async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const db = context.firestore();
+      await setDoc(tenantDoc(db, OWNER_A, "platform_activity_events", "event-1"), {
+        action: "owner_recovery_requested",
+        actorUid: ADMIN,
+        actorRole: "root",
+        supportReason: "Owner requested a recovery link after identity verification.",
+        occurredAtMs: Date.now(),
+      });
+      await setDoc(tenantDoc(db, OWNER_A, "client_notes", "note-1"), {
+        title: "Follow-up",
+        body: "Owner asked for a callback.",
+        createdByName: "Support member",
+        createdAtMs: Date.now(),
+      });
+    });
+
+    for (const db of [authDb(OWNER_A), authDb("staff-manage-a"), authDb(ADMIN), authDb("platform-support")]) {
+      for (const collectionName of ["platform_activity_events", "client_notes"]) {
+        const reference = tenantDoc(db, OWNER_A, collectionName, "event-1");
+        await assertFails(getDoc(reference));
+        await assertFails(setDoc(reference, { forged: true }));
+      }
+    }
+  });
+});
+
+describe("P0-10 notice centre and product-feedback boundary", { concurrency: false }, () => {
+  test("notices, recipient markers, feedback and internal notes are callable-only", async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const db = context.firestore();
+      await setDoc(doc(db, "platform_notices", "notice-1"), {
+        title: "Maintenance", body: "A private notice", status: "published",
+        audience: { roles: ["owner"], instituteIds: [OWNER_A] },
+      });
+      await setDoc(doc(db, "platform_notice_states", `${OWNER_A}_notice-1`), {
+        userId: OWNER_A, noticeId: "notice-1", isRead: false,
+      });
+      await setDoc(doc(db, "platform_support_items", "feedback-1"), {
+        title: "Feedback", body: "A private owner report", status: "open", instituteId: OWNER_A,
+      });
+      await setDoc(doc(db, "platform_support_items", "feedback-1", "internal_notes", "note-1"), {
+        body: "Internal follow-up", status: "open",
+      });
+      await setDoc(doc(db, "platform_tutorials", "tutorial-1"), {
+        title: "Getting started", youtubeVideoId: "dQw4w9WgXcQ", status: "published",
+      });
+      await setDoc(doc(db, "notice_center_operations", "operation-1"), { actorUid: OWNER_A });
+    });
+
+    for (const db of [authDb(OWNER_A), authDb(OWNER_B), authDb("staff-manage-a"), authDb(ADMIN), authDb("platform-support")]) {
+      for (const reference of [
+        doc(db, "platform_notices", "notice-1"),
+        doc(db, "platform_notice_states", `${OWNER_A}_notice-1`),
+        doc(db, "platform_support_items", "feedback-1"),
+        doc(db, "platform_support_items", "feedback-1", "internal_notes", "note-1"),
+        doc(db, "platform_tutorials", "tutorial-1"),
+        doc(db, "notice_center_operations", "operation-1"),
+      ]) {
+        await assertFails(getDoc(reference));
+        await assertFails(setDoc(reference, { forged: true }));
+      }
     }
   });
 });

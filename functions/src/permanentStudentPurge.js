@@ -4,11 +4,12 @@ const { HttpsError } = require("firebase-functions/v2/https");
 const { parseMediaReference } = require("./mediaSecurityCore");
 const { studentLoginDocumentId } = require("./studentAuthCore");
 const { studentIdClaimDocumentId } = require("./studentIdCore");
+const { activityActorLabel, setTenantActivity } = require("./tenantActivity");
 
 const STUDENT_COLLECTIONS = [
   "batch_students", "attendance", "fees", "payments", "receipts", "results",
   "absent_messages", "homework_submissions", "assignment_submissions",
-  "student_activity",
+  "student_activity", "payment_reversals",
 ];
 
 function requireString(data, key, max = 256) {
@@ -44,10 +45,11 @@ async function removeDeletionMetadata(db, instituteRef, entityType, entityId) {
   for (const collection of ["deletion_operations", "deletion_audit"]) {
     const snapshot = await instituteRef.collection(collection).where("entityId", "==", entityId).get();
     const matches = snapshot.docs.filter((doc) => doc.get("entityType") === entityType);
-    if (matches.length === 0) continue;
-    const batch = db.batch();
-    matches.forEach((doc) => batch.delete(doc.ref));
-    await batch.commit();
+    for (let offset = 0; offset < matches.length; offset += 400) {
+      const batch = db.batch();
+      matches.slice(offset, offset + 400).forEach((doc) => batch.delete(doc.ref));
+      await batch.commit();
+    }
   }
 }
 
@@ -138,6 +140,20 @@ function createPermanentStudentPurgeHandler({ db, adminAuth, bucket }) {
     ]);
     await studentRef.delete();
     await removeDeletionMetadata(db, instituteRef, "student", studentId);
+    const purgeActor = {
+      actorRole: superAdmin ? "root" : "owner",
+      actorName: actor && typeof actor.name === "string" ? actor.name : "",
+    };
+    await setTenantActivity(db, instituteId, {
+      action: "student_purged",
+      actorUid: request.auth.uid,
+      actorRole: purgeActor.actorRole,
+      actorName: purgeActor.actorName,
+      targetType: "student",
+      targetId: studentId,
+      summary: `${activityActorLabel(purgeActor)} permanently purged student ${typeof student.studentCode === "string" ? student.studentCode : studentId}`,
+      now: Date.now(),
+    });
     return { studentId, permanentlyDeleted: true };
   };
 }

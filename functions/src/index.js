@@ -1,5 +1,7 @@
 "use strict";
 
+const { createBatchEnrollmentHandler } = require("./batchEnrollment");
+
 const { createHash, randomUUID } = require("node:crypto");
 const { initializeApp } = require("firebase-admin/app");
 const { getAuth } = require("firebase-admin/auth");
@@ -45,6 +47,15 @@ const { resolveApprovalReplay } = require("./registrationApprovalCore");
 const { buildRegistrationSlug, registrationFormUrl } = require("./registrationProfileCore");
 const { createSubscriptionBillingHandler } = require("./subscriptionBilling");
 const { createPlatformAdminHandler } = require("./platformAdmin");
+const { createNoticeCenterHandler } = require("./noticeCenter");
+const { createServerSmsHandler, createSmsWalletHandler } = require("./smsWallet");
+const { createBulkSmsDhakaProvider } = require("./bulkSmsDhakaProvider");
+const {
+  activityActorLabel,
+  resolveTenantActorInTransaction,
+  setTenantActivity,
+  transactionTenantActivity,
+} = require("./tenantActivity");
 const {
   createStudentActivityHandler,
   createStudentActivityFeedHandler,
@@ -99,6 +110,8 @@ const callableOptions = {
   enforceAppCheck: false,
 };
 const registrationRateLimitSecret = defineSecret("REGISTRATION_RATE_LIMIT_SECRET");
+const bulkSmsDhakaApiKey = defineSecret("BULK_SMS_DHAKA_API_KEY");
+const bulkSmsDhakaCallerId = defineSecret("BULK_SMS_DHAKA_CALLER_ID");
 
 const db = getFirestore();
 const adminAuth = getAuth();
@@ -250,6 +263,7 @@ async function unassignStudentFromBatchHandler(request) {
   );
   const instituteRef = instituteSnap.ref;
   const enrollmentRef = instituteRef.collection("batch_students").doc(enrollmentId);
+  const studentRef = instituteRef.collection("students").doc(studentId);
   const studentFeesQuery = instituteRef.collection("fees").where("studentId", "==", studentId);
   const studentPaymentsQuery = instituteRef.collection("payments").where("studentId", "==", studentId);
   const studentReceiptsQuery = instituteRef.collection("receipts").where("studentId", "==", studentId);
@@ -274,10 +288,14 @@ async function unassignStudentFromBatchHandler(request) {
       };
     }
 
-    const [feeSnap, paymentSnap, receiptSnap] = await Promise.all([
+    const batchRef = instituteRef.collection("batches").doc(enrollment.batchId);
+    const actor = await resolveTenantActorInTransaction(transaction, db, request.auth, instituteId);
+    const [feeSnap, paymentSnap, receiptSnap, studentSnap, batchSnap] = await Promise.all([
       transaction.get(studentFeesQuery),
       transaction.get(studentPaymentsQuery),
       transaction.get(studentReceiptsQuery),
+      transaction.get(studentRef),
+      transaction.get(batchRef),
     ]);
     const feeHistoryIds = new Set();
     paymentSnap.docs.forEach((doc) => {
@@ -320,6 +338,18 @@ async function unassignStudentFromBatchHandler(request) {
       removalReason: "owner_unassigned",
       updatedAtMs: now,
     });
+    const studentName = studentSnap.exists ? studentSnap.get("fullName") : null;
+    const batchName = batchSnap.exists ? batchSnap.get("name") : null;
+    transactionTenantActivity(transaction, db, instituteId, {
+      action: "student_unassigned_from_batch",
+      actorUid: request.auth.uid,
+      actorRole: actor.actorRole,
+      actorName: actor.actorName,
+      targetType: "student",
+      targetId: studentId,
+      summary: `${activityActorLabel(actor)} unassigned ${studentName || studentId} from batch ${batchName || enrollment.batchId}`,
+      now,
+    }, randomUUID());
     return {
       enrollmentId,
       batchId: enrollment.batchId,
@@ -349,6 +379,7 @@ async function hardRemoveStudentFromBatchHandler(request) {
   const instituteSnap = await assertCanManageTenantResource(
     request.auth, instituteId, "manage_batch",
   );
+  const actor = await resolveTenantActor(db, request.auth, instituteId);
   const instituteRef = instituteSnap.ref;
   const auditId = operationId
     ? `hard_remove_${operationId}`
@@ -359,7 +390,7 @@ async function hardRemoveStudentFromBatchHandler(request) {
 
   const enrollmentQuery = instituteRef.collection("batch_students")
     .where("studentId", "==", studentId).where("batchId", "==", batchId);
-  const [enrollmentSnap, feeSnap, attendanceSnap, absentSnap] = await Promise.all([
+  const [enrollmentSnap, feeSnap, attendanceSnap, absentSnap, studentSnap, batchSnap] = await Promise.all([
     enrollmentQuery.get(),
     instituteRef.collection("fees")
       .where("studentId", "==", studentId).where("batchId", "==", batchId).get(),
@@ -367,6 +398,8 @@ async function hardRemoveStudentFromBatchHandler(request) {
       .where("studentId", "==", studentId).where("batchId", "==", batchId).get(),
     instituteRef.collection("absent_messages")
       .where("studentId", "==", studentId).where("batchId", "==", batchId).get(),
+    instituteRef.collection("students").doc(studentId).get(),
+    instituteRef.collection("batches").doc(batchId).get(),
   ]);
   const feeIds = feeSnap.docs.map((doc) => doc.id);
   if (enrollmentSnap.docs.length === 0 && feeIds.length === 0 && attendanceSnap.docs.length === 0) {
@@ -421,6 +454,16 @@ async function hardRemoveStudentFromBatchHandler(request) {
   await auditRef.set({
     instituteId, studentId, batchId, reason, actorUid: request.auth.uid,
     operationId: operationId || null, result, occurredAtMs: result.occurredAtMs,
+  });
+  await setTenantActivity(db, instituteId, {
+    action: "student_removed_from_batch",
+    actorUid: request.auth.uid,
+    actorRole: actor.actorRole,
+    actorName: actor.actorName,
+    targetType: "student",
+    targetId: studentId,
+    summary: `${activityActorLabel(actor)} hard-removed ${studentSnap.exists ? studentSnap.get("fullName") : studentId} from batch ${batchSnap.exists ? batchSnap.get("name") : batchId}`,
+    now: result.occurredAtMs,
   });
   return result;
 }
@@ -480,6 +523,7 @@ async function shiftStudentBetweenBatchesHandler(request) {
   const instituteSnap = await assertCanManageTenantResource(
     request.auth, instituteId, "manage_batch",
   );
+  const actor = await resolveTenantActor(db, request.auth, instituteId);
   const instituteRef = instituteSnap.ref;
   const sourceEnrollmentRef = instituteRef.collection("batch_students").doc(sourceEnrollmentId);
   const targetEnrollmentRef = instituteRef.collection("batch_students").doc(targetEnrollmentId);
@@ -627,12 +671,14 @@ async function shiftStudentBetweenBatchesHandler(request) {
       }
     }
 
+    const sourceBatchSnap = await transaction.get(instituteRef.collection("batches").doc(source.batchId));
     const now = Date.now();
     const targetEnrollment = {
       instituteId,
       batchId: targetBatchId,
       studentId,
       joinedAtMs: shiftDateMs,
+      admissionDateLinked: false,
       status: "active",
       leftAtMs: null,
       firstMonthFeePeriod,
@@ -682,6 +728,17 @@ async function shiftStudentBetweenBatchesHandler(request) {
       createdAtMs: now,
       completedAtMs: now,
     });
+    const sourceBatchName = sourceBatchSnap.exists ? sourceBatchSnap.get("name") : null;
+    transactionTenantActivity(transaction, db, instituteId, {
+      action: "student_shifted_between_batches",
+      actorUid: request.auth.uid,
+      actorRole: actor.actorRole,
+      actorName: actor.actorName,
+      targetType: "student",
+      targetId: studentId,
+      summary: `${activityActorLabel(actor)} shifted ${studentSnap.get("fullName") || studentId} from ${sourceBatchName || source.batchId} to ${targetBatch.name || targetBatchId}`,
+      now,
+    }, randomUUID());
     return result;
   });
 }
@@ -852,6 +909,7 @@ async function createEntitledStudentHandler(request) {
   const registrationRequestId = optionalDocumentId(request.data, "registrationRequestId");
   const entity = requireEntity(request.data, "student");
   await assertCanManageTenantResource(request.auth, instituteId, "manage_student");
+  const actor = await resolveTenantActor(db, request.auth, instituteId);
   const instituteRef = db.collection("institutes").doc(instituteId);
   const students = instituteRef.collection("students");
   const studentRef = students.doc(studentId);
@@ -1050,6 +1108,16 @@ async function createEntitledStudentHandler(request) {
       status: "active", archivedAtMs: null, createdAtMs: now, updatedAtMs: now,
     });
     transaction.update(instituteRef, { studentCount: count + 1, updatedAtMs: now });
+    transactionTenantActivity(transaction, db, instituteId, {
+      action: "student_created",
+      actorUid: request.auth.uid,
+      actorRole: actor.actorRole,
+      actorName: actor.actorName,
+      targetType: "student",
+      targetId: studentId,
+      summary: `${activityActorLabel(actor)} created student ${fullName} (${studentCode})`,
+      now,
+    }, randomUUID());
     return {
       studentId,
       studentCode,
@@ -1081,6 +1149,7 @@ async function createEntitledBatchHandler(request) {
   const operationId = optionalDocumentId(request.data, "operationId");
   const entity = requireEntity(request.data, "batch");
   await assertCanManageTenantResource(request.auth, instituteId, "manage_batch");
+  const actor = await resolveTenantActor(db, request.auth, instituteId);
   const instituteRef = db.collection("institutes").doc(instituteId);
   const batches = instituteRef.collection("batches");
   const batchRef = batches.doc(batchId);
@@ -1106,8 +1175,12 @@ async function createEntitledBatchHandler(request) {
     if (courseFeeAmount <= 0) {
       throw new HttpsError("invalid-argument", "Course fee must be greater than zero.");
     }
-    const startDateMs = optionalNumber(entity.startDateMs, 0);
-    const endDateMs = optionalNumber(entity.endDateMs, 0);
+    // Course dates are Unix timestamps in milliseconds.  The default numeric
+    // validator is deliberately capped for ordinary amounts, but milliseconds
+    // are already ~1.7 trillion, so validate them against JavaScript's safe
+    // integer range instead.
+    const startDateMs = optionalNumber(entity.startDateMs, 0, Number.MAX_SAFE_INTEGER);
+    const endDateMs = optionalNumber(entity.endDateMs, 0, Number.MAX_SAFE_INTEGER);
     if (!startDateMs || !endDateMs || endDateMs < startDateMs) {
       throw new HttpsError("invalid-argument", "A valid course start and end date is required.");
     }
@@ -1151,6 +1224,16 @@ async function createEntitledBatchHandler(request) {
         completedAtMs: now,
       });
     }
+    transactionTenantActivity(transaction, db, instituteId, {
+      action: "batch_created",
+      actorUid: request.auth.uid,
+      actorRole: actor.actorRole,
+      actorName: actor.actorName,
+      targetType: "batch",
+      targetId: batchId,
+      summary: `${activityActorLabel(actor)} created batch ${name}`,
+      now,
+    }, randomUUID());
     return result;
   });
 }
@@ -1161,6 +1244,7 @@ async function createEntitledStaffHandler(request) {
   const operationId = optionalDocumentId(request.data, "operationId");
   const entity = requireEntity(request.data, "staff");
   await assertCanManageTenantResource(request.auth, instituteId, "manage_staff", false);
+  const actor = await resolveTenantActor(db, request.auth, instituteId);
   try {
     await adminAuth.getUser(staffId);
   } catch (error) {
@@ -1216,6 +1300,16 @@ async function createEntitledStaffHandler(request) {
         completedAtMs: now,
       });
     }
+    transactionTenantActivity(transaction, db, instituteId, {
+      action: "staff_created",
+      actorUid: request.auth.uid,
+      actorRole: actor.actorRole,
+      actorName: actor.actorName,
+      targetType: "staff",
+      targetId: staffId,
+      summary: `${activityActorLabel(actor)} created staff ${fullName} (${staffCode})`,
+      now,
+    }, randomUUID());
     return result;
   });
 }
@@ -1239,6 +1333,7 @@ async function provisionStaffAccountHandler(request) {
     throw new HttpsError("invalid-argument", "Password must contain 6 to 128 characters.");
   }
   await assertCanManageTenantResource(request.auth, instituteId, "manage_staff", false);
+  const actor = await resolveTenantActor(db, request.auth, instituteId);
 
   const allowed = ["staffCode", "fullName", "photoUri", "roleTitle", "phone", "email", "address", "joiningDateMs", "monthlySalary", "assignedBatchIds", "notes", "permissions", "staffCategory", "salaryType", "perClassRate", "perHourRate", "subjects"];
   const staffCode = requireString(entity, "staffCode", 64).toLocaleUpperCase("en-US");
@@ -1332,6 +1427,16 @@ async function provisionStaffAccountHandler(request) {
         actorUid: request.auth.uid, requestHash, status: "completed", result: completed,
         createdAtMs: now, completedAtMs: now,
       });
+      transactionTenantActivity(transaction, db, instituteId, {
+        action: "staff_account_provisioned",
+        actorUid: request.auth.uid,
+        actorRole: actor.actorRole,
+        actorName: actor.actorName,
+        targetType: "staff",
+        targetId: uid,
+        summary: `${activityActorLabel(actor)} provisioned staff account ${fullName} (${staffCode})`,
+        now,
+      }, randomUUID());
       return completed;
     });
     await adminAuth.setCustomUserClaims(uid, {
@@ -1356,6 +1461,7 @@ async function updateStaffAccountHandler(request) {
   }
   const password = typeof suppliedPassword === "string" && suppliedPassword ? suppliedPassword : null;
   await assertCanManageTenantResource(request.auth, instituteId, "manage_staff", false);
+  const actor = await resolveTenantActor(db, request.auth, instituteId);
 
   const allowed = ["staffCode", "fullName", "photoUri", "roleTitle", "phone", "email", "address", "joiningDateMs", "monthlySalary", "assignedBatchIds", "notes", "permissions", "staffCategory", "salaryType", "perClassRate", "perHourRate", "subjects"];
   const staffCode = requireString(entity, "staffCode", 64).toLocaleUpperCase("en-US");
@@ -1482,6 +1588,19 @@ async function updateStaffAccountHandler(request) {
       actorUid: request.auth.uid, requestHash, status: "pending_auth",
       result: { staffId, staffCode, email, authSyncState: "pending" }, createdAtMs: now,
     });
+    const permissionsChanged = typeof entity.permissions === "string" && entity.permissions.trim() !== "";
+    transactionTenantActivity(transaction, db, instituteId, {
+      action: permissionsChanged ? "staff_permissions_changed" : "staff_updated",
+      actorUid: request.auth.uid,
+      actorRole: actor.actorRole,
+      actorName: actor.actorName,
+      targetType: "staff",
+      targetId: staffId,
+      summary: permissionsChanged
+        ? `${activityActorLabel(actor)} changed permissions for staff ${fullName} (${staffCode})`
+        : `${activityActorLabel(actor)} updated staff ${fullName} (${staffCode})`,
+      now,
+    }, randomUUID());
   });
   return completeAuthSync();
 }
@@ -1592,6 +1711,7 @@ async function updateStudentProfileHandler(request) {
   const studentId = requireString(request.data, "studentId", 128);
   const entity = requireEntity(request.data, "student");
   await assertCanManageStudent(request.auth, instituteId);
+  const actor = await resolveTenantActor(db, request.auth, instituteId);
 
   const rawStudentCode = requireString(entity, "studentCode", 64);
   const studentCode = normalizeStudentId(rawStudentCode);
@@ -1703,6 +1823,19 @@ async function updateStudentProfileHandler(request) {
       phone,
       updatedAtMs: now,
     });
+    const statusChanged = normalizedStatus != null;
+    transactionTenantActivity(transaction, db, instituteId, {
+      action: statusChanged ? "student_status_changed" : "student_updated",
+      actorUid: request.auth.uid,
+      actorRole: actor.actorRole,
+      actorName: actor.actorName,
+      targetType: "student",
+      targetId: studentId,
+      summary: statusChanged
+        ? `${activityActorLabel(actor)} ${normalizedStatus === "active" ? "activated" : "deactivated"} student ${fullName} (${studentCode})`
+        : `${activityActorLabel(actor)} updated student ${fullName} (${studentCode})`,
+      now,
+    }, randomUUID());
   });
   return { studentId, studentCode };
 }
@@ -2296,6 +2429,10 @@ exports.unassignStudentFromBatch = onCall(
   { ...callableOptions, timeoutSeconds: 60 },
   guarded(unassignStudentFromBatchHandler),
 );
+exports.enrollStudentInBatch = onCall(
+  { ...callableOptions, timeoutSeconds: 60 },
+  guarded(createBatchEnrollmentHandler({ db, authorize: assertCanManageTenantResource, proratedMonthlyTerms })),
+);
 exports.hardRemoveStudentFromBatch = onCall(
   { ...callableOptions, timeoutSeconds: 60 },
   guarded(hardRemoveStudentFromBatchHandler),
@@ -2421,6 +2558,36 @@ exports.commitPlatformAdminOperation = onCall(
   { ...callableOptions, timeoutSeconds: 60 },
   guarded(createPlatformAdminHandler({ db, adminAuth })),
 );
+// Notice delivery and product feedback have their own narrow callable. It
+// grants a tenant account no platform-administration privileges.
+exports.commitNoticeCenterOperation = onCall(
+  { ...callableOptions, timeoutSeconds: 60 },
+  guarded(createNoticeCenterHandler({ db })),
+);
+// Multi-tenant SMS wallet reads and the owner-only send-method setting. Wallet
+// counters are server-authoritative and can never be forged by a client.
+exports.commitSmsWalletOperation = onCall(
+  { ...callableOptions, timeoutSeconds: 60 },
+  guarded(createSmsWalletHandler({ db })),
+);
+// Provider credentials exist only in Secret Manager and are exposed solely to
+// this isolated sending function. Existing wallet/settings calls remain free
+// of provider-secret dependencies.
+exports.sendBulkSms = onCall(
+  {
+    ...callableOptions,
+    timeoutSeconds: 300,
+    memory: "256MiB",
+    secrets: [bulkSmsDhakaApiKey, bulkSmsDhakaCallerId],
+  },
+  guarded(createServerSmsHandler({
+    db,
+    smsProvider: createBulkSmsDhakaProvider({
+      apiKey: () => bulkSmsDhakaApiKey.value(),
+      callerId: () => bulkSmsDhakaCallerId.value(),
+    }),
+  }), "server_sms_batch"),
+);
 exports.commitSafeDeletion = onCall(
   { ...callableOptions, timeoutSeconds: 60 },
   guarded(createSafeDeletionHandler({ db, adminAuth })),
@@ -2438,7 +2605,7 @@ exports.permanentlyPurgeBatch = onCall(
   guarded(createPermanentBatchPurgeHandler({ db, bucket: mediaStorageBucket })),
 );
 exports.permanentlyPurgeStaff = onCall(
-  { ...callableOptions, timeoutSeconds: 120, memory: "512MiB" },
+  { ...callableOptions, timeoutSeconds: 120, memory: "512MiB", invoker: "public" },
   guarded(createPermanentStaffPurgeHandler({ db, adminAuth, bucket: mediaStorageBucket })),
 );
 exports.permanentlyPurgeInstitute = onCall(

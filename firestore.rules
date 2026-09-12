@@ -419,10 +419,13 @@ service cloud.firestore {
 
     match /institutes/{instituteId} {
       allow get: if (isStudentAuthRequest() && isStudentOf(instituteId))
-        || isPlatformDataReader()
+        || isSuperAdmin()
         || isInstitutePrincipal(instituteId)
         || isActiveStaff(instituteId);
-      allow list: if isPlatformDataReader();
+      // Support/operations receive an allowlisted directory row only from the
+      // trusted platform callable. They must not read raw institute documents
+      // (which can contain tenant-only fields such as securityPin).
+      allow list: if isSuperAdmin();
 
       allow create: if isSuperAdmin() || validOwnerInstituteCreate(instituteId);
       allow update: if (isSuperAdmin() && superAdminClientUpdateAvoidsSubscriptionControls())
@@ -461,6 +464,11 @@ service cloud.firestore {
         && collection != 'subscription_receipts'
         && collection != 'subscription_audit'
         && collection != 'subscription_operations'
+        && collection != 'platform_activity_events'
+        && collection != 'client_notes'
+        && collection != 'sms_wallet_audit'
+        && collection != 'sms_recharge_requests'
+        && collection != 'sms_messages'
         && (isSuperAdmin() || isActiveInstitutePrincipal(instituteId));
     }
 
@@ -656,6 +664,18 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Cross-institute activity and client-support notes are returned only by
+    // the trusted platform callable after a role check. They may contain
+    // internal support context and must never be visible to a tenant account,
+    // even when that account owns the institute.
+    match /institutes/{instituteId}/platform_activity_events/{eventId} {
+      allow read, write: if false;
+    }
+
+    match /institutes/{instituteId}/client_notes/{noteId} {
+      allow read, write: if false;
+    }
+
     match /institutes/{instituteId}/attendance/{attendanceId} {
       allow read: if isStudentRecordOwner(instituteId, resource.data.studentId)
         || (!isStudentAuthRequest() && canReadAttendanceData(instituteId));
@@ -739,6 +759,34 @@ service cloud.firestore {
       allow create: if isActiveStaff(instituteId)
         && request.resource.data.instituteId == instituteId
         && request.resource.data.userId == request.auth.uid;
+      // Durable queue retry after a lost acknowledgement: only an identical replay,
+      // never an edit to an existing audit entry or another staff member's log.
+      allow update: if isActiveStaff(instituteId)
+        && resource.data.instituteId == instituteId
+        && resource.data.userId == request.auth.uid
+        && request.resource.data == resource.data;
+    }
+
+    // SMS wallet counters and the send-method audit trail are server-authoritative.
+    // The trusted commitSmsWalletOperation callable initializes defaults, records
+    // send-method changes, and future server-side SMS accounting updates the counters.
+    match /institutes/{instituteId}/sms_wallet_audit/{auditId} {
+      allow read: if false;
+      allow write: if false;
+    }
+
+    // Recharge requests are created and reviewed only by the trusted callable.
+    // Owners and staff may read their institute's own request history.
+    match /institutes/{instituteId}/sms_recharge_requests/{requestId} {
+      allow read: if isActiveInstitutePrincipal(instituteId) || isActiveStaff(instituteId);
+      allow write: if false;
+    }
+
+    // Per-message SMS delivery records are written only by the trusted callable
+    // (or a future gateway webhook); status can never be forged by a client.
+    match /institutes/{instituteId}/sms_messages/{messageId} {
+      allow read: if isActiveInstitutePrincipal(instituteId) || isActiveStaff(instituteId);
+      allow write: if false;
     }
 
     // Student app activity is written only by a trusted Callable Function after
@@ -863,7 +911,10 @@ service cloud.firestore {
     }
 
     match /app_users/{userId} {
-      allow read: if isPlatformDataReader()
+      // A non-root platform member may read only their own role document.
+      // Team-member directory data is returned by the Root-only trusted
+      // platform callable, never by a broad client-side app_users query.
+      allow read: if isSuperAdmin()
         || (isSignedIn()
           && request.auth.uid == userId
           && (!('status' in resource.data) || resource.data.status == 'active'));
@@ -899,6 +950,36 @@ service cloud.firestore {
     }
 
     match /platform_admin_operations/{operationId} {
+      allow read, write: if false;
+    }
+
+    // V1.8 notice centre and product-feedback data are callable-only. In
+    // particular, a tenant must never be able to enumerate notices meant for
+    // another institute, forge another user's read state, or read the Support
+    // team's internal follow-up notes.
+    match /platform_notices/{noticeId} {
+      allow read, write: if false;
+    }
+
+    match /platform_notice_states/{stateId} {
+      allow read, write: if false;
+    }
+
+    match /platform_support_items/{itemId} {
+      allow read, write: if false;
+      match /internal_notes/{noteId} {
+        allow read, write: if false;
+      }
+    }
+
+    // Published guide metadata is returned only after the callable verifies an
+    // active tenant session. The client must not be able to substitute an
+    // arbitrary embedded website or manage the Root tutorial library directly.
+    match /platform_tutorials/{tutorialId} {
+      allow read, write: if false;
+    }
+
+    match /notice_center_operations/{operationId} {
       allow read, write: if false;
     }
 

@@ -104,6 +104,14 @@ test("full waiver settles an eligible fee without creating a false cash payment"
   );
   assert.equal([...db.documents.keys()].filter((key) => key.includes("/payments/")).length, 0);
   assert.equal([...db.documents.keys()].filter((key) => key.includes("/fee_waivers/")).length, 1);
+  const activityEntries = [...db.documents.entries()].filter(([path]) => path.includes("/platform_activity_events/"));
+  assert.equal(activityEntries.length, 1);
+  const activity = activityEntries[0][1];
+  assert.equal(activity.action, "fee_waived");
+  assert.equal(activity.actorRole, "owner");
+  assert.equal(activity.targetType, "student");
+  assert.equal(activity.targetId, "s");
+  assert.equal(activity.outcome, "completed");
 });
 
 test("grouped monthly collection is atomic, has one receipt, and is idempotent", async () => {
@@ -136,12 +144,20 @@ test("grouped monthly collection is atomic, has one receipt, and is idempotent",
   assert.equal(new Set(first.payments.map((payment) => payment.receiptNumber)).size, 1);
   assert.equal(first.payments[0].receiptNumber, receipt.receiptNumber);
 
+  const activityEntries = [...db.documents.entries()].filter(([path]) => path.includes("/platform_activity_events/"));
+  assert.equal(activityEntries.length, 1, "replayed operations must not duplicate the activity event");
+  const activity = activityEntries[0][1];
+  assert.equal(activity.action, "fees_collected");
+  assert.equal(activity.summary.includes("BDT 2,000"), true);
+
   await assert.rejects(handler({ auth: { uid: "owner" }, data: {
     instituteId: "i", action: "owner_delete_payment", operationId: "grouped-delete-0001",
     paymentId: first.payments[1].id, reason: "Attempt to change one receipt line",
   } }));
   assert.equal([...db.documents.keys()].filter((key) => key.includes("/payments/")).length, 2);
   assert.equal([...db.documents.keys()].filter((key) => key.includes("/receipts/")).length, 1);
+  const activityAfterFailedDelete = [...db.documents.entries()].filter(([path]) => path.includes("/platform_activity_events/"));
+  assert.equal(activityAfterFailedDelete.length, 1, "a rejected operation must not write an activity event");
 });
 
 test("an invalid grouped allocation leaves every month untouched", async () => {

@@ -52,6 +52,7 @@ class Document {
   constructor(db, path) { this.db = db; this.path = path; }
   collection(name) { return new Collection(this.db, `${this.path}/${name}`); }
   async get() { return new Snapshot(this, this.db.documents.get(this.path)); }
+  async set(value) { this.db.documents.set(this.path, structuredClone(value)); }
   async delete() { this.db.documents.delete(this.path); }
 }
 
@@ -62,7 +63,10 @@ class FakeDb {
     const deleted = [];
     return {
       delete: (ref) => deleted.push(ref.path),
-      commit: async () => deleted.forEach((path) => this.documents.delete(path)),
+      commit: async () => {
+        assert.ok(deleted.length <= 400, "purge writes must be chunked");
+        deleted.forEach((path) => this.documents.delete(path));
+      },
     };
   }
 }
@@ -95,6 +99,54 @@ function request() {
     },
   };
 }
+
+test("purge removes only the target student's reversals and chunks deletion metadata", async () => {
+  const documents = {
+    "institutes/institute-a": liveInstitute(Date.now()),
+    "institutes/institute-a/students/student-a": archivedStudent(),
+    "institutes/institute-a/payment_reversals/target": { studentId: "student-a" },
+    "institutes/institute-a/payment_reversals/other": { studentId: "student-b" },
+    "institutes/institute-b/payment_reversals/other-tenant": { studentId: "student-a" },
+    "institutes/institute-a/deletion_audit/other-type": { entityType: "batch", entityId: "student-a" },
+  };
+  for (let i = 0; i < 805; i++) {
+    documents[`institutes/institute-a/deletion_audit/audit-${i}`] = {
+      entityType: "student", entityId: "student-a",
+    };
+  }
+  const db = new FakeDb(documents);
+  const handler = createPermanentStudentPurgeHandler({
+    db, adminAuth: { deleteUser: async () => {} },
+    bucket: { name: "bucket" },
+  });
+  await handler(request());
+  assert.equal(db.documents.has("institutes/institute-a/payment_reversals/target"), false);
+  assert.equal(db.documents.has("institutes/institute-a/payment_reversals/other"), true);
+  assert.equal(db.documents.has("institutes/institute-b/payment_reversals/other-tenant"), true);
+  assert.equal(db.documents.has("institutes/institute-a/deletion_audit/other-type"), true);
+  assert.equal([...db.documents.keys()].some((key) => key.includes("/audit-")), false);
+  const activityEntries = [...db.documents.entries()].filter(([path]) => path.includes("/platform_activity_events/"));
+  assert.equal(activityEntries.length, 1);
+  const activity = activityEntries[0][1];
+  assert.equal(activity.action, "student_purged");
+  assert.equal(activity.actorUid, "institute-a");
+  assert.equal(activity.targetId, "student-a");
+  assert.equal(activity.summary.includes("STU-100"), true);
+});
+
+test("purge refuses an active student without deleting linked data", async () => {
+  const db = new FakeDb({
+    "institutes/institute-a": liveInstitute(Date.now()),
+    "institutes/institute-a/students/student-a": { ...archivedStudent(), archivedAtMs: null },
+    "institutes/institute-a/payment_reversals/target": { studentId: "student-a" },
+  });
+  const handler = createPermanentStudentPurgeHandler({ db });
+  await assert.rejects(handler(request()), (error) => error.code === "failed-precondition");
+  assert.equal(db.documents.has("institutes/institute-a/payment_reversals/target"), true);
+  assert.equal(db.documents.has("institutes/institute-a/students/student-a"), true);
+  const activityCount = [...db.documents.keys()].filter((path) => path.includes("/platform_activity_events/")).length;
+  assert.equal(activityCount, 0, "a refused purge must not write an activity event");
+});
 
 test("permanent purge remains available after subscription expiry", async () => {
   const db = new FakeDb({
