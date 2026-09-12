@@ -1250,10 +1250,11 @@ fun AuthScreen(
                         .fillMaxSize()
                         .statusBarsPadding()
                         .then(
-                            // Registration remains reachable on small devices and with the
-                            // keyboard open, but has no distracting stretch/glow overscroll.
+                            // Keep this as one form. Scrolling is available only when a
+                            // small screen or the keyboard makes the content overflow.
                             if (isLoginMode) Modifier else Modifier.verticalScroll(registerScrollState)
                         )
+                        .then(if (isLoginMode) Modifier else Modifier.imePadding())
                         .padding(
                             start = contentHorizontalPadding,
                             end = contentHorizontalPadding,
@@ -1376,7 +1377,7 @@ fun AuthScreen(
                         errorMessage = null
                     }
                 },
-                label = "Institute Contact & WhatsApp *",
+                label = "Contact / WhatsApp *",
                 leadingIcon = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("+880 ", color = AuthMuted, fontSize = 14.sp, fontWeight = FontWeight.Medium)
@@ -1497,7 +1498,6 @@ fun AuthScreen(
                             Text("You must accept the terms to continue", color = Color(0xFFF87171), fontSize = 10.sp, modifier = Modifier.padding(start = 12.dp, top = 2.dp))
                         }
                     }
-
                     // Forgot Password link (login mode only)
                     if (isLoginMode && selectedRole == UnifiedLoginRole.ADMIN) {
                         Spacer(Modifier.height(4.dp))
@@ -1813,7 +1813,11 @@ fun AuthScreen(
                 Surface(
                     modifier = Modifier
                         .clip(RoundedCornerShape(14.dp))
-                        .clickable { isLoginMode = !isLoginMode; errorMessage = null },
+                        .clickable {
+                            isLoginMode = !isLoginMode
+                            errorMessage = null
+                            fieldError = emptyMap()
+                        },
                     shape = RoundedCornerShape(14.dp),
                     color = AuthAmber.copy(alpha = 0.12f),
                     border = BorderStroke(1.dp, AuthAmber.copy(alpha = 0.45f))
@@ -1848,21 +1852,23 @@ fun AuthScreen(
 
                 Spacer(Modifier.height(10.dp))
 
-                Row(
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    TextButton(onClick = onNavigatePrivacyPolicy) {
-                        Text("Privacy Policy", color = AuthCyan, fontSize = 12.sp)
-                    }
-                    Text(
-                        text = "·",
-                        color = AuthMuted.copy(alpha = 0.75f),
-                        fontSize = 12.sp
-                    )
-                    TextButton(onClick = onNavigateTermsConditions) {
-                        Text("Terms & Conditions", color = AuthCyan, fontSize = 12.sp)
+                if (isLoginMode) {
+                    Row(
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        TextButton(onClick = onNavigatePrivacyPolicy) {
+                            Text("Privacy Policy", color = AuthCyan, fontSize = 12.sp)
+                        }
+                        Text(
+                            text = "·",
+                            color = AuthMuted.copy(alpha = 0.75f),
+                            fontSize = 12.sp
+                        )
+                        TextButton(onClick = onNavigateTermsConditions) {
+                            Text("Terms & Conditions", color = AuthCyan, fontSize = 12.sp)
+                        }
                     }
                 }
 
