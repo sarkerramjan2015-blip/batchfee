@@ -2,21 +2,18 @@ package com.batchfee.edu.data.repository
 
 import androidx.room.withTransaction
 import com.batchfee.edu.data.database.AppDatabase
-import com.batchfee.edu.data.firestore.BatchStudentSyncHelper
 import com.batchfee.edu.data.models.BatchEntity
 import com.batchfee.edu.data.models.BatchStudentEntity
-import com.batchfee.edu.domain.MonthlyDueCalculator
-import com.batchfee.edu.domain.isCourseBatch
 import com.google.firebase.functions.FirebaseFunctions
 import java.util.UUID
 
 /**
  * The single enrollment path for a student assigned from either the student
- * profile or a batch. Monthly batches retain their admission-date prorating;
- * courses instead receive one immutable, one-time ledger fee.
+ * profile or a batch. Every monthly enrollment freezes its independently
+ * confirmed assignment-date proration; courses receive one immutable,
+ * one-time ledger fee.
  */
 class BatchEnrollmentRepository(private val db: AppDatabase) {
-    private val feeRepository = FeeCollectionRepository(db)
     private val functions = FirebaseFunctions.getInstance(StudentAccountRepository.FUNCTIONS_REGION)
 
     data class UnassignResult(
@@ -48,29 +45,43 @@ class BatchEnrollmentRepository(private val db: AppDatabase) {
         studentId: String,
         batch: BatchEntity,
         enrollmentStartMs: Long,
-        enrollmentId: String = UUID.randomUUID().toString()
+        enrollmentId: String = UUID.randomUUID().toString(),
+        admissionDateLinked: Boolean = false
     ): BatchStudentEntity {
+        require(batch.instituteId == instituteId) { "Batch does not belong to this institute." }
+        val response = callTrustedFunction(functions, "enrollStudentInBatch", mapOf(
+            "instituteId" to instituteId, "studentId" to studentId, "batchId" to batch.id,
+            "enrollmentId" to enrollmentId, "operationId" to enrollmentId,
+            "enrollmentStartMs" to enrollmentStartMs, "admissionDateLinked" to admissionDateLinked
+        )) as? Map<*, *> ?: error("Invalid enrollment response. Refresh before retrying.")
+        val saved = response["enrollment"] as? Map<*, *> ?: error("Enrollment was not returned.")
+        check(saved["instituteId"] == instituteId && saved["studentId"] == studentId && saved["batchId"] == batch.id) {
+            "Enrollment response does not match this student."
+        }
         val enrollment = BatchStudentEntity(
-            id = enrollmentId,
+            id = saved["id"] as? String ?: error("Missing enrollment ID."),
             instituteId = instituteId,
             batchId = batch.id,
             studentId = studentId,
-            joinedAtMs = enrollmentStartMs,
+            joinedAtMs = (saved["joinedAtMs"] as? Number)?.toLong() ?: error("Missing assignment date."),
             status = "active",
             leftAtMs = null,
-            firstMonthFeePeriod = if (batch.isCourseBatch()) null
-            else MonthlyDueCalculator.periodFor(enrollmentStartMs),
-            firstMonthFeeAmount = if (batch.isCourseBatch()) null
-            else MonthlyDueCalculator.calculateFirstMonthFee(batch.monthlyFeeAmount, enrollmentStartMs)
+            admissionDateLinked = saved["admissionDateLinked"] as? Boolean,
+            firstMonthFeePeriod = saved["firstMonthFeePeriod"] as? String,
+            firstMonthFeeAmount = (saved["firstMonthFeeAmount"] as? Number)?.toDouble(),
+            customMonthlyFeeAmount = (saved["customMonthlyFeeAmount"] as? Number)?.toDouble(),
+            customFeeReason = saved["customFeeReason"] as? String,
+            customFeeEffectiveFromPeriod = saved["customFeeEffectiveFromPeriod"] as? String,
+            customFeePolicyTimeline = saved["customFeePolicyTimeline"] as? String,
+            customFeePolicySyncedAtMs = (saved["customFeePolicySyncedAtMs"] as? Number)?.toLong()
         )
 
-        // Cloud is written first. If this fails there is no local enrollment
-        // that could later create an incorrect fee while offline.
-        BatchStudentSyncHelper.upsertEnrollment(enrollment)
-        db.withTransaction { db.batchStudentDao().enrollStudent(enrollment) }
-
-        if (batch.isCourseBatch()) {
-            createCourseFeeIfNeeded(instituteId, studentId, batch, enrollmentStartMs)
+        @Suppress("UNCHECKED_CAST")
+        val fee = (response["fee"] as? Map<String, Any?>)?.let(::parseFee)
+        check(fee == null || (fee.instituteId == instituteId && fee.studentId == studentId && fee.batchId == batch.id))
+        db.withTransaction {
+            db.batchStudentDao().enrollStudent(enrollment)
+            if (fee != null) db.feeDao().insertFee(fee)
         }
         return enrollment
     }
@@ -176,6 +187,7 @@ class BatchEnrollmentRepository(private val db: AppDatabase) {
             joinedAtMs = confirmedShiftDateMs,
             status = "active",
             leftAtMs = null,
+            admissionDateLinked = false,
             firstMonthFeePeriod = firstMonthFeePeriod,
             firstMonthFeeAmount = firstMonthFeeAmount
         )
@@ -255,30 +267,4 @@ class BatchEnrollmentRepository(private val db: AppDatabase) {
         return result
     }
 
-    private suspend fun createCourseFeeIfNeeded(
-        instituteId: String,
-        studentId: String,
-        batch: BatchEntity,
-        enrollmentStartMs: Long
-    ) {
-        try {
-            feeRepository.createFee(
-                instituteId = instituteId,
-                studentId = studentId,
-                batchId = batch.id,
-                feePeriod = "Course",
-                feeType = "course_fee",
-                sourceId = "course:${batch.id}",
-                dueDateMs = batch.startDateMs ?: enrollmentStartMs,
-                baseAmount = batch.courseFeeAmount,
-                discountAmount = 0.0,
-                lateFeeAmount = 0.0,
-                note = "Course fee · ${batch.name}"
-            )
-        } catch (error: Exception) {
-            // A retry after a slow response reaches the ledger's deterministic
-            // key and is therefore already complete, not a second charge.
-            if (!error.message.orEmpty().contains("already exists", ignoreCase = true)) throw error
-        }
-    }
 }

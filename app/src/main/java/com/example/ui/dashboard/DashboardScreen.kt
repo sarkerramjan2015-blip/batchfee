@@ -130,6 +130,29 @@ private data class AddMenuOption(
     val route: String
 )
 
+private data class StaffDashboardVisibility(
+    val canSeeStudents: Boolean,
+    val canSeeBatches: Boolean,
+    val canSeeStaff: Boolean,
+    val canSeeStudentAttendance: Boolean,
+    val canSeeStaffAttendance: Boolean,
+    val canSeeFinancial: Boolean,
+    val canSeeExpenses: Boolean,
+    val canSeeDueFees: Boolean,
+    val canSeeExams: Boolean,
+    val canSeeBirthdays: Boolean,
+    val canSeeHomework: Boolean,
+    val canSeeAssignments: Boolean,
+    val canSeeEnquiries: Boolean
+) {
+    val hasAnySection: Boolean
+        get() = canSeeStudents || canSeeBatches || canSeeStaff ||
+            canSeeStudentAttendance || canSeeStaffAttendance ||
+            canSeeFinancial || canSeeExpenses || canSeeDueFees ||
+            canSeeExams || canSeeBirthdays || canSeeHomework ||
+            canSeeAssignments || canSeeEnquiries
+}
+
 private data class MoreFeature(
     val title: String,
     val subtitle: String,
@@ -301,6 +324,7 @@ private fun calculateDashboardDue(input: DashboardDueInput): DashboardDueResult 
                 firstMonthFeeAmount = enrollment.firstMonthFeeAmount,
                 customMonthlyFeeAmount = enrollment.customMonthlyFeeAmount,
                 customFeeEffectiveFromPeriod = enrollment.customFeeEffectiveFromPeriod,
+                customFeePolicyTimeline = enrollment.customFeePolicyTimeline,
                 billingEndedAtMs = enrollment.leftAtMs
             )
             items.forEach { item ->
@@ -1015,6 +1039,28 @@ fun DashboardScreen(
             .any { AccessControl.canAccessRoute(it) }
     }
 
+    // Staff dashboard visibility — staff only see sections their permissions unlock.
+    val dashVisibility = remember(currentRole, currentStaffPermissions) {
+        StaffDashboardVisibility(
+            canSeeStudents = AccessControl.canAccessRoute("StudentsRoute"),
+            canSeeBatches = AccessControl.canAccessRoute("BatchesRoute"),
+            canSeeStaff = AccessControl.canAccessRoute("StaffRoute"),
+            canSeeStudentAttendance = AccessControl.canAccessRoute("AttendanceRoute") || AccessControl.canAccessRoute("AttendanceReportRoute"),
+            canSeeStaffAttendance = AccessControl.canAccessRoute("StaffAttendanceRoute") || AccessControl.canAccessRoute("StaffAttendanceReportRoute"),
+            canSeeFinancial = AccessControl.canAccessRoute("FeeDashboardRoute") || AccessControl.canAccessRoute("ReportsRoute"),
+            canSeeExpenses = AccessControl.canAccessRoute("ExpensesRoute") || AccessControl.canAccessRoute("ExpenseReportRoute"),
+            canSeeDueFees = AccessControl.canAccessRoute("DueFeesRoute"),
+            canSeeExams = AccessControl.canAccessRoute("ExamsRoute"),
+            canSeeBirthdays = AccessControl.canAccessRoute("BirthdayReminderRoute"),
+            canSeeHomework = AccessControl.canAccessRoute("HomeworkListRoute"),
+            canSeeAssignments = AccessControl.canAccessRoute("AssignmentListRoute"),
+            canSeeEnquiries = AccessControl.canAccessRoute("EnquiryListRoute")
+        )
+    }
+    val financialCardRoute: (String) -> String = { period ->
+        if (AccessControl.canAccessRoute("ReportsRoute")) "ReportsRoute?period=$period" else "FeeDashboardRoute"
+    }
+
     // ── Edit / Image / Switch state for profile popup ────────
     var showEditDialog by remember { mutableStateOf(false) }
     var showPhotoPicker by remember { mutableStateOf(false) }
@@ -1026,8 +1072,13 @@ fun DashboardScreen(
     var editProfilePhotoUri by remember { mutableStateOf<Uri?>(null) }
     var profileCropSourceUri by remember { mutableStateOf<Uri?>(null) }
     val context = LocalContext.current
+    // Prefer the durable on-device media copy when it is available.  The
+    // dashboard stays composed while the user moves between features, so
+    // resolving a private cloud reference again here could briefly fail and
+    // show the letter fallback even though the institute logo is still valid.
     val savedProfilePhotoUri = remember(institute?.profilePhotoUri) {
-        institute?.profilePhotoUri?.takeIf { it.isNotBlank() }?.let(Uri::parse)
+        FirebaseStorageImageUploadHelper.displaySource(context, institute?.profilePhotoUri)
+            ?.let(Uri::parse)
     }
     val openEditDialog: () -> Unit = {
         editOwnerName = currentUser?.name.orEmpty()
@@ -1085,6 +1136,8 @@ fun DashboardScreen(
             presentCount = attSummaries.sumOf { it.presentCount },
             absentCount = attSummaries.sumOf { it.absentCount },
             leaveCount = attSummaries.sumOf { it.leaveCount },
+            lateCount = attSummaries.sumOf { it.lateCount },
+            lateMinutesTotal = attSummaries.sumOf { it.lateMinutesTotal },
             holidayCount = attSummaries.sumOf { it.holidayCount },
             expectedStudentDays = attSummaries.sumOf { it.expectedStudentDays },
             attendanceDays = 1
@@ -1149,7 +1202,9 @@ fun DashboardScreen(
                     },
                     compactLayout = compactLayout,
                     onProfileClick = { showProfilePopup = true },
-                    onSettingsClick = { safeNavigate("SettingsRoute") }
+                    onNoticesClick = { safeNavigate("NoticeCenterRoute") },
+                    onSettingsClick = { safeNavigate("SettingsRoute") },
+                    showSettingsIcon = SessionManager.isAdmin()
                 )
 
                 SubscriptionWarningBanner(
@@ -1159,8 +1214,26 @@ fun DashboardScreen(
                 )
 
                 Column(modifier = Modifier.padding(horizontal = if (compactLayout) 12.dp else 16.dp, vertical = 14.dp)) {
-                GlobalNotificationCard()
-                // Overview Card
+
+                if (!SessionManager.isAdmin() && !dashVisibility.hasAnySection) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(containerColor = DashboardCard),
+                        border = borderStroke()
+                    ) {
+                        Text(
+                            "Your admin has not enabled any features for your account yet. Contact them to grant permissions.",
+                            color = TextSecondary,
+                            fontSize = 13.sp,
+                            modifier = Modifier.padding(18.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
+
+                // Overview Card — only shows rows the role can actually open.
+                if (dashVisibility.canSeeStudents || dashVisibility.canSeeBatches || dashVisibility.canSeeStaff) {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(16.dp),
@@ -1176,35 +1249,46 @@ fun DashboardScreen(
                         }
                         Spacer(Modifier.height(12.dp))
                         // Students row — navigates to Students list
-                        OverviewRow(
-                            icon = Icons.Filled.School,
-                            label = "Students",
-                            active = studentCount,
-                            inactive = 0,
-                            onClick = { safeNavigate("StudentsRoute") }
-                        )
-                        HorizontalDivider(color = DashboardStroke, modifier = Modifier.padding(vertical = 8.dp))
+                        if (dashVisibility.canSeeStudents) {
+                            OverviewRow(
+                                icon = Icons.Filled.School,
+                                label = "Students",
+                                active = studentCount,
+                                inactive = 0,
+                                onClick = { safeNavigate("StudentsRoute") }
+                            )
+                            if (dashVisibility.canSeeBatches || dashVisibility.canSeeStaff) {
+                                HorizontalDivider(color = DashboardStroke, modifier = Modifier.padding(vertical = 8.dp))
+                            }
+                        }
                         // Batches row — navigates to Batch list
-                        OverviewRow(
-                            icon = Icons.Filled.Class,
-                            label = "Batches",
-                            active = batchCount,
-                            inactive = 0,
-                            onClick = { safeNavigate("BatchesRoute") }
-                        )
-                        HorizontalDivider(color = DashboardStroke, modifier = Modifier.padding(vertical = 8.dp))
+                        if (dashVisibility.canSeeBatches) {
+                            OverviewRow(
+                                icon = Icons.Filled.Class,
+                                label = "Batches",
+                                active = batchCount,
+                                inactive = 0,
+                                onClick = { safeNavigate("BatchesRoute") }
+                            )
+                            if (dashVisibility.canSeeStaff) {
+                                HorizontalDivider(color = DashboardStroke, modifier = Modifier.padding(vertical = 8.dp))
+                            }
+                        }
                         // Staff row — navigates to Staff list
-                        OverviewRow(
-                            icon = Icons.Filled.Group,
-                            label = "Staff",
-                            active = staffCount,
-                            inactive = 0,
-                            onClick = { safeNavigate("StaffRoute") }
-                        )
+                        if (dashVisibility.canSeeStaff) {
+                            OverviewRow(
+                                icon = Icons.Filled.Group,
+                                label = "Staff",
+                                active = staffCount,
+                                inactive = 0,
+                                onClick = { safeNavigate("StaffRoute") }
+                            )
+                        }
                     }
                 }
 
                 Spacer(modifier = Modifier.height(12.dp))
+                }
 
                 // Owner-only quick actions. Staff attendance remains in its own screen.
                 if (SessionManager.isAdmin()) {
@@ -1232,6 +1316,7 @@ fun DashboardScreen(
                 // ── Live Attendance Summary ────────────────────
 
                 // ── Main attendance card ───────────────────────
+                if (dashVisibility.canSeeStudentAttendance || dashVisibility.canSeeStaffAttendance) {
                 Card(
                     modifier = Modifier.fillMaxWidth().shadow(3.dp, RoundedCornerShape(16.dp), spotColor = AccentCyan.copy(0.10f)),
                     shape = RoundedCornerShape(16.dp),
@@ -1252,10 +1337,14 @@ fun DashboardScreen(
                                 Spacer(Modifier.height(8.dp))
                                 Text("Loading...", color = TextSecondary, fontSize = 12.sp)
                             }
-                        } else if (studentOverall != null && studentOverall.markedCount > 0) {
-                            // ── Student segmented bar ──────────────
-                            PolishedAttendanceOverview(studentOverall, staffSum)
-                            // ── Staff segmented bar ────────────────
+                        } else if (
+                            (dashVisibility.canSeeStudentAttendance && studentOverall != null && studentOverall.markedCount > 0) ||
+                            (dashVisibility.canSeeStaffAttendance && staffSum.markedCount > 0)
+                        ) {
+                            PolishedAttendanceOverview(
+                                studentSummary = if (dashVisibility.canSeeStudentAttendance) studentOverall else null,
+                                staffSummary = if (dashVisibility.canSeeStaffAttendance) staffSum else null
+                            )
                         } else {
                             Row(
                                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 2.dp),
@@ -1273,17 +1362,23 @@ fun DashboardScreen(
 
                 // ── Mini Cards (Student + Staff marking) ────────
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    val sMarked = studentOverall?.markedCount ?: 0
-                    val sTotal = studentOverall?.totalStudents ?: 0
-                    AttendanceMiniCard("Student", Icons.Filled.School, sMarked, sTotal, "marked today", AccentGreen, { safeNavigate("AttendanceRoute") }, Modifier.weight(1f))
-                    val stMarked = staffSum.markedCount
-                    val stTotal = staffSum.totalStaff
-                    AttendanceMiniCard("Staff", Icons.Filled.Group, stMarked, stTotal, "marked today", AccentSky, { safeNavigate("StaffAttendanceRoute") }, Modifier.weight(1f))
+                    if (dashVisibility.canSeeStudentAttendance) {
+                        val sMarked = studentOverall?.markedCount ?: 0
+                        val sTotal = studentOverall?.totalStudents ?: 0
+                        AttendanceMiniCard("Student", Icons.Filled.School, sMarked, sTotal, "marked today", AccentGreen, { safeNavigate("AttendanceRoute") }, Modifier.weight(1f))
+                    }
+                    if (dashVisibility.canSeeStaffAttendance) {
+                        val stMarked = staffSum.markedCount
+                        val stTotal = staffSum.totalStaff
+                        AttendanceMiniCard("Staff", Icons.Filled.Group, stMarked, stTotal, "marked today", AccentSky, { safeNavigate("StaffAttendanceRoute") }, Modifier.weight(1f))
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
+                }
 
                 // ── Financial Collection Cards ────────────────
+                if (dashVisibility.canSeeFinancial) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1291,7 +1386,7 @@ fun DashboardScreen(
                     // Today Collection
                     Card(
                         modifier = Modifier.weight(1f).premiumClickable {
-                            safeNavigate("ReportsRoute?period=today")
+                            safeNavigate(financialCardRoute("today"))
                         },
                         shape = RoundedCornerShape(12.dp),
                         colors = CardDefaults.cardColors(containerColor = DashboardCard),
@@ -1307,7 +1402,7 @@ fun DashboardScreen(
                     // Monthly Collection
                     Card(
                         modifier = Modifier.weight(1f).premiumClickable {
-                            safeNavigate("ReportsRoute?period=month")
+                            safeNavigate(financialCardRoute("month"))
                         },
                         shape = RoundedCornerShape(12.dp),
                         colors = CardDefaults.cardColors(containerColor = DashboardCard),
@@ -1323,7 +1418,7 @@ fun DashboardScreen(
                     // Lifetime Collection
                     Card(
                         modifier = Modifier.weight(1f).premiumClickable {
-                            safeNavigate("ReportsRoute?period=lifetime")
+                            safeNavigate(financialCardRoute("lifetime"))
                         },
                         shape = RoundedCornerShape(12.dp),
                         colors = CardDefaults.cardColors(containerColor = DashboardCard),
@@ -1339,38 +1434,49 @@ fun DashboardScreen(
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
+                }
 
-                InstituteExpenseSummaryCard(
-                    monthExpense = financialSummary.monthExpense,
-                    todayExpense = financialSummary.todayExpense,
-                    onClick = { safeNavigate("ExpensesRoute") }
-                )
+                if (dashVisibility.canSeeExpenses) {
+                    InstituteExpenseSummaryCard(
+                        monthExpense = financialSummary.monthExpense,
+                        todayExpense = financialSummary.todayExpense,
+                        onClick = { safeNavigate("ExpensesRoute") }
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
 
-                Spacer(modifier = Modifier.height(16.dp))
-
-                CompactDueFeesCard(
-                    summary = dueFeeSummary,
-                    onClick = { safeNavigate("DueFeesRoute") }
-                )
-                Spacer(modifier = Modifier.height(16.dp))
-                SectionHeader(title = "Tools & reminders")
-                Spacer(modifier = Modifier.height(10.dp))
-                HomeEngagementSection(
-                    examCount = examCount,
-                    birthdaySummary = birthdaySummary,
-                    homeWorkCount = homeWorkCount,
-                    assignmentCount = assignmentCount,
-                    enquirySummary = enquirySummary,
-                    compactLayout = compactLayout,
-                    onOpenExams = { safeNavigate("ExamsRoute") },
-                    onOpenBirthdays = { safeNavigate("BirthdayReminderRoute") },
-                    onOpenHomeWorks = { safeNavigate("HomeworkListRoute") },
-                    onOpenAssignments = { safeNavigate("AssignmentListRoute") },
-                    onOpenEnquiry = { safeNavigate("EnquiryListRoute") },
-                    onComingSoon = showComingSoon
-                )
-
-                Spacer(modifier = Modifier.height(16.dp))
+                if (dashVisibility.canSeeDueFees) {
+                    CompactDueFeesCard(
+                        summary = dueFeeSummary,
+                        onClick = { safeNavigate("DueFeesRoute") }
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
+                if (dashVisibility.canSeeExams || dashVisibility.canSeeBirthdays || dashVisibility.canSeeHomework ||
+                    dashVisibility.canSeeAssignments || dashVisibility.canSeeEnquiries) {
+                    SectionHeader(title = "Tools & reminders")
+                    Spacer(modifier = Modifier.height(10.dp))
+                    HomeEngagementSection(
+                        examCount = examCount,
+                        birthdaySummary = birthdaySummary,
+                        homeWorkCount = homeWorkCount,
+                        assignmentCount = assignmentCount,
+                        enquirySummary = enquirySummary,
+                        compactLayout = compactLayout,
+                        onOpenExams = { safeNavigate("ExamsRoute") },
+                        onOpenBirthdays = { safeNavigate("BirthdayReminderRoute") },
+                        onOpenHomeWorks = { safeNavigate("HomeworkListRoute") },
+                        onOpenAssignments = { safeNavigate("AssignmentListRoute") },
+                        onOpenEnquiry = { safeNavigate("EnquiryListRoute") },
+                        onComingSoon = showComingSoon,
+                        canSeeExams = dashVisibility.canSeeExams,
+                        canSeeBirthdays = dashVisibility.canSeeBirthdays,
+                        canSeeHomework = dashVisibility.canSeeHomework,
+                        canSeeAssignments = dashVisibility.canSeeAssignments,
+                        canSeeEnquiries = dashVisibility.canSeeEnquiries
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
             }
         }
 
@@ -1398,7 +1504,7 @@ fun DashboardScreen(
                                 dialogStat("Present", "${"%.0f".format(sum.presentPct)}%", AccentGreen, sum.presentCount)
                                 dialogStat("Absent", "${"%.0f".format(sum.absentPct)}%", AccentRed, sum.absentCount)
                                 dialogStat("Leave", "${"%.0f".format(sum.leavePct)}%", AccentSky, sum.leaveCount)
-                                dialogStat("Holiday", "${"%.0f".format(sum.holidayPct)}%", AccentGray, sum.holidayCount)
+                                dialogStat("Late", "${"%.0f".format(sum.latePct)}%", AccentAmber, sum.lateCount)
                             }
                             Spacer(Modifier.height(12.dp))
                             OutlinedButton(
@@ -1524,17 +1630,19 @@ fun DashboardScreen(
                         }
 
                         Row(modifier = Modifier.align(Alignment.TopEnd).padding(16.dp)) {
-                            // Edit button: opens edit profile dialog for institute name + photo
-                            androidx.compose.material3.OutlinedButton(
-                                onClick = openEditDialog,
-                                border = androidx.compose.foundation.BorderStroke(1.dp, AccentCyan),
-                                shape = RoundedCornerShape(10.dp),
-                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-                                modifier = Modifier.height(32.dp)
-                            ) {
-                                Icon(Icons.Filled.Edit, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(14.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text("Edit", color = AccentCyan, fontSize = 11.sp)
+                            // Edit button: opens edit profile dialog for institute name + photo — admin only
+                            if (SessionManager.isAdmin()) {
+                                androidx.compose.material3.OutlinedButton(
+                                    onClick = openEditDialog,
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, AccentCyan),
+                                    shape = RoundedCornerShape(10.dp),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                                    modifier = Modifier.height(32.dp)
+                                ) {
+                                    Icon(Icons.Filled.Edit, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(14.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Edit", color = AccentCyan, fontSize = 11.sp)
+                                }
                             }
                             if (AccessControl.canAccessRoute("PricingRoute")) {
                                 Spacer(Modifier.width(6.dp))
@@ -1646,8 +1754,9 @@ fun DashboardScreen(
                             )
                         }
                         
-                        Spacer(Modifier.height(14.dp))
-                        Text("Current Subscription", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                        if (SessionManager.isAdmin()) {
+                            Spacer(Modifier.height(14.dp))
+                            Text("Current Subscription", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                         Spacer(Modifier.height(8.dp))
                         
                         // Subscription Card (compact)
@@ -1818,6 +1927,7 @@ fun DashboardScreen(
                                 Spacer(Modifier.width(10.dp))
                                 Text("View Subscription Plan", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
                             }
+                        }
                         }
                         
                         Spacer(Modifier.height(24.dp))
@@ -2107,32 +2217,16 @@ fun DashboardScreen(
                                 )
                                 val logoChanged = profilePhotoUri != inst.profilePhotoUri
 
-                                if (logoChanged) {
-                                    syncInstituteLogoBeforeLocalSuccess(updated)
-                                }
-
-                                // Save locally FIRST — Firestore sync is best-effort after
-                                db.instituteDao().updateInstitute(updated)
-                                db.userDao().updateUser(owner.copy(name = editOwnerName.trim()))
-                                if (logoChanged) {
-                                    deleteLocalInstituteProfilePhoto(inst.profilePhotoUri)
-                                }
-
-                                // Firestore sync in background — don't block UI
-                                if (!logoChanged) {
-                                    try {
-                                        withContext(Dispatchers.IO) {
-                                            com.batchfee.edu.data.firestore.InstituteSyncHelper.syncInstituteToFirestore(updated)
-                                        }
-                                    } catch (_: Exception) {
-                                    // Local is already saved — Firestore will sync on next refresh
-                                }
-
-                                }
+                                com.batchfee.edu.data.firestore.BackgroundSyncQueue.profile(
+                                    db, updated, owner.copy(name = editOwnerName.trim())
+                                )
+                                // The upload has finished; the profile reference is durably queued.
+                                // Keep previous media until cloud delivery is confirmed.
+                                isSavingProfile = false
 
                                 showEditDialog = false
                                 snackbarHostState.showSnackbar(
-                                    if (logoChanged) "Institute logo updated." else "Institute information updated."
+                                    "Saved on this device. Cloud sync queued."
                                 )
                             } catch (e: Exception) {
                                 snackbarHostState.showSnackbar(e.message ?: "Failed to update institute information.")
@@ -2507,7 +2601,9 @@ private fun DashboardHeader(
     planLabel: String,
     compactLayout: Boolean,
     onProfileClick: () -> Unit,
-    onSettingsClick: () -> Unit
+    onNoticesClick: () -> Unit,
+    onSettingsClick: () -> Unit,
+    showSettingsIcon: Boolean = true
 ) {
     Column(
         modifier = Modifier
@@ -2572,15 +2668,19 @@ private fun DashboardHeader(
                     Icon(Icons.Filled.ArrowDropDown, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(16.dp))
                 }
             }
-            IconButton(
-                onClick = onSettingsClick,
-                modifier = Modifier
-                    .size(if (compactLayout) 42.dp else 44.dp)
-                    .clip(RoundedCornerShape(if (compactLayout) 12.dp else 14.dp))
-                    .background(DashboardCardAlt)
-                    .border(1.dp, DashboardStroke, RoundedCornerShape(if (compactLayout) 12.dp else 14.dp))
-            ) {
-                Icon(Icons.Filled.Settings, contentDescription = "Settings", tint = TextPrimary, modifier = Modifier.size(if (compactLayout) 20.dp else 22.dp))
+            NoticeBellButton(onOpen = onNoticesClick, compact = compactLayout)
+            if (showSettingsIcon) {
+                Spacer(Modifier.width(6.dp))
+                IconButton(
+                    onClick = onSettingsClick,
+                    modifier = Modifier
+                        .size(if (compactLayout) 42.dp else 44.dp)
+                        .clip(RoundedCornerShape(if (compactLayout) 12.dp else 14.dp))
+                        .background(DashboardCardAlt)
+                        .border(1.dp, DashboardStroke, RoundedCornerShape(if (compactLayout) 12.dp else 14.dp))
+                ) {
+                    Icon(Icons.Filled.Settings, contentDescription = "Settings", tint = TextPrimary, modifier = Modifier.size(if (compactLayout) 20.dp else 22.dp))
+                }
             }
         }
         Spacer(Modifier.height(12.dp))
@@ -2817,90 +2917,119 @@ private fun HomeEngagementSection(
     onOpenHomeWorks: () -> Unit,
     onOpenAssignments: () -> Unit,
     onOpenEnquiry: () -> Unit,
-    onComingSoon: (String) -> Unit
+    onComingSoon: (String) -> Unit,
+    canSeeExams: Boolean = true,
+    canSeeBirthdays: Boolean = true,
+    canSeeHomework: Boolean = true,
+    canSeeAssignments: Boolean = true,
+    canSeeEnquiries: Boolean = true
 ) {
     if (compactLayout) {
         Column(
             modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            HomeFeatureTile(
-                title = "Exams",
-                count = examCount,
-                icon = Icons.Filled.Assignment,
-                modifier = Modifier.fillMaxWidth(),
-                onClick = onOpenExams
-            )
-            BirthdayHomeFeatureTile(
-                summary = birthdaySummary,
-                modifier = Modifier.fillMaxWidth(),
-                onClick = onOpenBirthdays
-            )
-            HomeFeatureTile(
-                title = "Homework",
-                count = homeWorkCount,
-                icon = Icons.Filled.ListAlt,
-                modifier = Modifier.fillMaxWidth(),
-                onClick = onOpenHomeWorks
-            )
-            HomeFeatureTile(
-                title = "Assignments",
-                count = assignmentCount,
-                icon = Icons.Filled.ListAlt,
-                modifier = Modifier.fillMaxWidth(),
-                onClick = onOpenAssignments
-            )
-            EnquirySummaryCard(
-                summary = enquirySummary,
-                onClick = onOpenEnquiry
-            )
+            if (canSeeExams) {
+                HomeFeatureTile(
+                    title = "Exams",
+                    count = examCount,
+                    icon = Icons.Filled.Assignment,
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = onOpenExams
+                )
+            }
+            if (canSeeBirthdays) {
+                BirthdayHomeFeatureTile(
+                    summary = birthdaySummary,
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = onOpenBirthdays
+                )
+            }
+            if (canSeeHomework) {
+                HomeFeatureTile(
+                    title = "Homework",
+                    count = homeWorkCount,
+                    icon = Icons.Filled.ListAlt,
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = onOpenHomeWorks
+                )
+            }
+            if (canSeeAssignments) {
+                HomeFeatureTile(
+                    title = "Assignments",
+                    count = assignmentCount,
+                    icon = Icons.Filled.ListAlt,
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = onOpenAssignments
+                )
+            }
+            if (canSeeEnquiries) {
+                EnquirySummaryCard(
+                    summary = enquirySummary,
+                    onClick = onOpenEnquiry
+                )
+            }
         }
     } else {
         Column(
             modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                HomeFeatureTile(
-                    title = "Exams",
-                    count = examCount,
-                    icon = Icons.Filled.Assignment,
-                    modifier = Modifier.weight(1f),
-                    onClick = onOpenExams
-                )
-                BirthdayHomeFeatureTile(
-                    summary = birthdaySummary,
-                    modifier = Modifier.weight(1f),
-                    onClick = onOpenBirthdays
-                )
+            if (canSeeExams || canSeeBirthdays) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    if (canSeeExams) {
+                        HomeFeatureTile(
+                            title = "Exams",
+                            count = examCount,
+                            icon = Icons.Filled.Assignment,
+                            modifier = Modifier.weight(1f),
+                            onClick = onOpenExams
+                        )
+                    }
+                    if (canSeeBirthdays) {
+                        BirthdayHomeFeatureTile(
+                            summary = birthdaySummary,
+                            modifier = Modifier.weight(1f),
+                            onClick = onOpenBirthdays
+                        )
+                    }
+                }
             }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                HomeFeatureTile(
-                    title = "Homework",
-                    count = homeWorkCount,
-                    icon = Icons.Filled.ListAlt,
-                    modifier = Modifier.weight(1f),
-                    onClick = onOpenHomeWorks
-                )
-                HomeFeatureTile(
-                    title = "Assignments",
-                    count = assignmentCount,
-                    icon = Icons.Filled.ListAlt,
-                    modifier = Modifier.weight(1f),
-                    onClick = onOpenAssignments
+            if (canSeeHomework || canSeeAssignments) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    if (canSeeHomework) {
+                        HomeFeatureTile(
+                            title = "Homework",
+                            count = homeWorkCount,
+                            icon = Icons.Filled.ListAlt,
+                            modifier = Modifier.weight(1f),
+                            onClick = onOpenHomeWorks
+                        )
+                    }
+                    if (canSeeAssignments) {
+                        HomeFeatureTile(
+                            title = "Assignments",
+                            count = assignmentCount,
+                            icon = Icons.Filled.ListAlt,
+                            modifier = Modifier.weight(1f),
+                            onClick = onOpenAssignments
+                        )
+                    }
+                }
+            }
+            if (canSeeEnquiries) {
+                EnquirySummaryCard(
+                    summary = enquirySummary,
+                    onClick = onOpenEnquiry
                 )
             }
-            EnquirySummaryCard(
-                summary = enquirySummary,
-                onClick = onOpenEnquiry
-            )
         }
     }
 }
@@ -3908,29 +4037,35 @@ private fun MiniCard(title: String, subtitle: String, progress: Float, textProgr
 
 @Composable
 private fun PolishedAttendanceOverview(
-    studentSummary: BatchAttendanceSummary,
-    staffSummary: StaffAttendanceSummary
+    studentSummary: BatchAttendanceSummary?,
+    staffSummary: StaffAttendanceSummary?
 ) {
     Column(modifier = Modifier.fillMaxWidth().padding(top = 9.dp)) {
-        CompactDetailedAttendanceRow(
-            label = "Students",
-            marked = studentSummary.markedCount,
-            total = studentSummary.totalStudents,
-            present = studentSummary.presentCount,
-            absent = studentSummary.absentCount,
-            leave = studentSummary.leaveCount,
-            holiday = studentSummary.holidayCount
-        )
-        Spacer(Modifier.height(9.dp))
-        CompactDetailedAttendanceRow(
-            label = "Staff",
-            marked = staffSummary.markedCount,
-            total = staffSummary.totalStaff,
-            present = staffSummary.presentCount,
-            absent = staffSummary.absentCount,
-            leave = staffSummary.leaveCount,
-            holiday = staffSummary.holidayCount
-        )
+        studentSummary?.let { sum ->
+            CompactDetailedAttendanceRow(
+                label = "Students",
+                marked = sum.markedCount,
+                total = sum.totalStudents,
+                present = sum.presentCount,
+                absent = sum.absentCount,
+                leave = sum.leaveCount,
+                late = sum.lateCount,
+                holiday = sum.holidayCount
+            )
+            if (staffSummary != null) Spacer(Modifier.height(9.dp))
+        }
+        staffSummary?.let { sum ->
+            CompactDetailedAttendanceRow(
+                label = "Staff",
+                marked = sum.markedCount,
+                total = sum.totalStaff,
+                present = sum.presentCount,
+                absent = sum.absentCount,
+                leave = sum.leaveCount,
+                late = 0,
+                holiday = sum.holidayCount
+            )
+        }
     }
 }
 
@@ -3942,15 +4077,17 @@ private fun CompactDetailedAttendanceRow(
     present: Int,
     absent: Int,
     leave: Int,
+    late: Int,
     holiday: Int
 ) {
-    val statusTotal = present + absent + leave + holiday
+    val statusTotal = present + absent + leave + late + holiday
     val chartTotal = maxOf(total, statusTotal).coerceAtLeast(1)
     val pending = (chartTotal - statusTotal).coerceAtLeast(0)
-    val values = listOf(present, absent, leave, holiday)
-    val colors = listOf(AccentGreen, AccentRed, AccentSky, AccentGray)
-    val captions = if (label == "Students") listOf("Present", "Absent", "Leave", "Holiday") else listOf("P", "A", "L", "H")
-    val fractions = (values + pending).map { count -> count.toFloat() / chartTotal }
+    val values = if (label == "Students") listOf(present, absent, leave, late) else listOf(present, absent, leave, holiday)
+    val colors = if (label == "Students") listOf(AccentGreen, AccentRed, AccentSky, AccentAmber) else listOf(AccentGreen, AccentRed, AccentSky, AccentGray)
+    val captions = if (label == "Students") listOf("Present", "Absent", "Leave", "Late") else listOf("P", "A", "L", "H")
+    val hiddenLegacyHoliday = if (label == "Students") holiday else 0
+    val fractions = (values + hiddenLegacyHoliday + pending).map { count -> count.toFloat() / chartTotal }
     val animatedFractions = fractions.mapIndexed { index, fraction ->
         animateFloatAsState(
             targetValue = fraction,
@@ -3972,7 +4109,7 @@ private fun CompactDetailedAttendanceRow(
         Canvas(modifier = Modifier.fillMaxWidth().height(9.dp).clip(RoundedCornerShape(5.dp))) {
             drawRect(DashboardCardAlt)
             var x = 0f
-            (animatedFractions.zip(colors + AccentGray.copy(alpha = 0.72f))).forEach { (fraction, color) ->
+            (animatedFractions.zip(colors + AccentGray + AccentGray.copy(alpha = 0.72f))).forEach { (fraction, color) ->
                 if (fraction > 0f) {
                     val width = size.width * fraction
                     drawRect(color, Offset(x, 0f), Size(width, size.height))
@@ -3986,6 +4123,20 @@ private fun CompactDetailedAttendanceRow(
                 val percent = value * 100 / chartTotal
                 Text("● ${captions[index]} $percent%", color = colors[index], fontSize = 10.sp)
             }
+        }
+        if (label == "Students" && hiddenLegacyHoliday > 0) {
+            Text("$hiddenLegacyHoliday legacy holiday record(s)", color = AccentGray, fontSize = 9.sp)
+        }
+        if (label == "Students") {
+            val attendanceDenominator = present + late + absent
+            val attended = present + late
+            val attendanceRate = if (attendanceDenominator > 0) attended * 100 / attendanceDenominator else 0
+            val punctualityRate = if (attended > 0) present * 100 / attended else 0
+            Text(
+                "Attendance $attendanceRate% · Punctuality $punctualityRate%",
+                color = TextSecondary,
+                fontSize = 9.sp
+            )
         }
     }
 }
@@ -4008,7 +4159,7 @@ private fun AttendanceSegmentedBar(sum: BatchAttendanceSummary, label: String) {
         Spacer(Modifier.height(6.dp))
         val total = sum.chartTotal.toFloat().coerceAtLeast(1f)
         val pW = sum.presentCount / total; val aW = sum.absentCount / total
-        val lW = sum.leaveCount / total; val hW = sum.holidayCount / total
+        val lW = sum.leaveCount / total; val ltW = sum.lateCount / total; val hW = sum.holidayCount / total
         Canvas(modifier = Modifier.fillMaxWidth().height(10.dp)) {
             val w = size.width; val barH = size.height; val r = barH / 2
             drawRoundRect(DashboardCardAlt, Offset.Zero, Size(w, barH), androidx.compose.ui.geometry.CornerRadius(r, r))
@@ -4019,6 +4170,8 @@ private fun AttendanceSegmentedBar(sum: BatchAttendanceSummary, label: String) {
             x += w * aW
             drawRect(AccentSky, Offset(x, 0f), Size(w * lW, barH))
             x += w * lW
+            drawRect(AccentAmber, Offset(x, 0f), Size(w * ltW, barH))
+            x += w * ltW
             drawRoundRect(AccentGray, Offset(x, 0f), Size(w * hW, barH), androidx.compose.ui.geometry.CornerRadius(r, r))
         }
         Spacer(Modifier.height(8.dp))
@@ -4026,7 +4179,7 @@ private fun AttendanceSegmentedBar(sum: BatchAttendanceSummary, label: String) {
             LegendItem(AccentGreen, "Present", "${"%.0f".format(sum.presentPct)}%")
             LegendItem(AccentRed, "Absent", "${"%.0f".format(sum.absentPct)}%")
             LegendItem(AccentSky, "Leave", "${"%.0f".format(sum.leavePct)}%")
-            LegendItem(AccentGray, "Holiday", "${"%.0f".format(sum.holidayPct)}%")
+            LegendItem(AccentAmber, "Late", "${"%.0f".format(sum.latePct)}%")
         }
     }
 }
@@ -4214,6 +4367,20 @@ fun MoreScreen(
                 AccentSky,
                 "ReminderTemplatesRoute",
             ),
+            MoreFeature(
+                "Product feedback",
+                "Share a suggestion or report an app problem",
+                Icons.Filled.ChatBubbleOutline,
+                AccentAmber,
+                "ProductFeedbackRoute",
+            ),
+            MoreFeature(
+                "App guide & tutorials",
+                "Watch BatchFee setup and usage guides",
+                Icons.Filled.PlayCircle,
+                AccentCyan,
+                "TutorialGuideRoute",
+            ),
         ).filter { AccessControl.canAccessRoute(it.route) }
     }
 
@@ -4225,16 +4392,7 @@ fun MoreScreen(
             .padding(horizontal = 16.dp, vertical = 14.dp),
     ) {
         MorePremiumHero(availableCount = moreItems.size)
-        Spacer(Modifier.height(20.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text("Advanced tools", color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-            Text("${moreItems.size} available", color = AccentCyan, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-        }
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(18.dp))
 
         if (moreItems.isEmpty()) {
             Card(
@@ -4251,23 +4409,21 @@ fun MoreScreen(
                 )
             }
         } else {
-            moreItems.forEachIndexed { index, item ->
-                var visible by remember(item.route) { mutableStateOf(false) }
-                LaunchedEffect(item.route) {
-                    delay(index * 70L)
-                    visible = true
+            val sections = listOf(
+                "Operations" to setOf("StudentActivityRoute", "SalaryRoute", "ProfitLossRoute"),
+                "Management" to setOf("SettingsRoute", "ReminderTemplatesRoute", "AllArchivesRoute"),
+                "Help & feedback" to setOf("TutorialGuideRoute", "ProductFeedbackRoute"),
+            )
+            sections.forEach { (title, routes) ->
+                val items = moreItems.filter { it.route in routes }
+                if (items.isNotEmpty()) {
+                    MoreMenuSection(
+                        title = title,
+                        items = items,
+                        onOpen = onNavigate,
+                    )
+                    Spacer(Modifier.height(16.dp))
                 }
-                androidx.compose.animation.AnimatedVisibility(
-                    visible = visible,
-                    enter = androidx.compose.animation.fadeIn(animationSpec = tween(230)) +
-                        androidx.compose.animation.slideInVertically(
-                            initialOffsetY = { it / 5 },
-                            animationSpec = tween(280, easing = FastOutSlowInEasing),
-                        ),
-                ) {
-                    MorePremiumFeatureCard(feature = item, onClick = { onNavigate(item.route) })
-                }
-                Spacer(Modifier.height(10.dp))
             }
         }
 
@@ -4311,175 +4467,77 @@ fun MoreScreen(
 
 @Composable
 private fun MorePremiumHero(availableCount: Int) {
-    val transition = rememberInfiniteTransition(label = "morePremiumHero")
-    val glowPosition by transition.animateFloat(
-        initialValue = -160f,
-        targetValue = 520f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(5200, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart,
-        ),
-        label = "moreHeroGlowPosition",
-    )
-    val orbitAlpha by transition.animateFloat(
-        initialValue = 0.22f,
-        targetValue = 0.52f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(2100, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "moreHeroOrbitAlpha",
-    )
-
-    Box(
+    Card(
         modifier = Modifier
             .fillMaxWidth()
-            .height(142.dp)
-            .clip(RoundedCornerShape(22.dp))
-            .background(
-                Brush.linearGradient(
-                    listOf(Color(0xFF10264A), Color(0xFF111C38), Color(0xFF0E1830)),
-                ),
-            )
-            .border(1.dp, AccentCyan.copy(alpha = 0.34f), RoundedCornerShape(22.dp)),
+            .height(108.dp),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = DashboardCard),
+        border = BorderStroke(1.dp, DashboardStroke),
     ) {
-        Canvas(Modifier.matchParentSize()) {
-            val largeRadius = size.minDimension * 0.54f
-            drawCircle(
-                color = AccentBlue.copy(alpha = orbitAlpha * 0.36f),
-                radius = largeRadius,
-                center = Offset(size.width * 0.96f, size.height * 0.05f),
-            )
-            drawCircle(
-                color = AccentCyan.copy(alpha = orbitAlpha * 0.24f),
-                radius = largeRadius * 0.46f,
-                center = Offset(size.width * 0.86f, size.height * 0.28f),
-            )
-        }
-        Box(
-            modifier = Modifier
-                .matchParentSize()
-                .background(
-                    Brush.linearGradient(
-                        colors = listOf(
-                            Color.Transparent,
-                            Color.White.copy(alpha = 0.035f),
-                            AccentCyan.copy(alpha = 0.10f),
-                            Color.White.copy(alpha = 0.035f),
-                            Color.Transparent,
-                        ),
-                        start = Offset(glowPosition - 75f, 0f),
-                        end = Offset(glowPosition + 75f, 142f),
-                    ),
-                ),
-        )
-        Column(
-            modifier = Modifier.fillMaxSize().padding(18.dp),
-            verticalArrangement = Arrangement.SpaceBetween,
+        Row(
+            modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier.size(42.dp).clip(RoundedCornerShape(14.dp))
-                        .background(AccentCyan.copy(alpha = 0.16f))
-                        .border(1.dp, AccentCyan.copy(alpha = 0.46f), RoundedCornerShape(14.dp)),
-                    contentAlignment = Alignment.Center,
-                ) { Icon(Icons.Filled.AutoAwesome, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(22.dp)) }
-                Spacer(Modifier.width(11.dp))
-                Column {
-                    Text("More", color = TextPrimary, fontSize = 23.sp, fontWeight = FontWeight.ExtraBold)
-                    Text("Your institute command centre", color = TextSecondary, fontSize = 12.sp)
-                }
+            Box(
+                modifier = Modifier.size(48.dp).clip(RoundedCornerShape(14.dp))
+                    .background(AccentCyan.copy(alpha = 0.13f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.Filled.Tune, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(24.dp))
             }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier.clip(RoundedCornerShape(9.dp)).background(AccentCyan.copy(alpha = 0.14f))
-                        .padding(horizontal = 10.dp, vertical = 5.dp),
-                ) {
-                    Text("$availableCount premium tools", color = AccentCyan, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                }
-                Spacer(Modifier.width(9.dp))
-                Text("Tap any card to continue", color = TextSecondary, fontSize = 11.sp)
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Tools & settings", color = TextPrimary, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(3.dp))
+                Text("Manage your institute from one place", color = TextSecondary, fontSize = 12.sp)
+                Spacer(Modifier.height(9.dp))
+                Text("$availableCount tools available", color = AccentCyan, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
             }
         }
     }
 }
 
 @Composable
-private fun MorePremiumFeatureCard(feature: MoreFeature, onClick: () -> Unit) {
-    val transition = rememberInfiniteTransition(label = "moreFeatureShine_${feature.route}")
-    val shineOffset by transition.animateFloat(
-        initialValue = -220f,
-        targetValue = 640f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(5800, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart,
-        ),
-        label = "moreFeatureShineOffset",
-    )
-    val iconPulse by transition.animateFloat(
-        initialValue = 0.72f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1800, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "moreFeatureIconPulse",
-    )
-
+private fun MoreMenuSection(
+    title: String,
+    items: List<MoreFeature>,
+    onOpen: (String) -> Unit,
+) {
+    Text(title, color = TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+    Spacer(Modifier.height(8.dp))
     Card(
-        modifier = Modifier.fillMaxWidth().height(86.dp).premiumClickable(onClick),
-        shape = RoundedCornerShape(17.dp),
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = DashboardCard),
-        border = BorderStroke(1.dp, feature.accent.copy(alpha = 0.32f)),
+        border = BorderStroke(1.dp, DashboardStroke),
     ) {
-        Box(Modifier.fillMaxSize()) {
-            Canvas(Modifier.matchParentSize()) {
-                drawCircle(
-                    color = feature.accent.copy(alpha = 0.085f),
-                    radius = size.height * 0.9f,
-                    center = Offset(size.width * 0.98f, size.height * 0.1f),
-                )
-            }
-            Box(
-                modifier = Modifier
-                    .matchParentSize()
-                    .background(
-                        Brush.linearGradient(
-                            colors = listOf(
-                                Color.Transparent,
-                                feature.accent.copy(alpha = 0.025f),
-                                feature.accent.copy(alpha = 0.12f),
-                                feature.accent.copy(alpha = 0.025f),
-                                Color.Transparent,
-                            ),
-                            start = Offset(shineOffset - 60f, 0f),
-                            end = Offset(shineOffset + 60f, 86f),
-                        ),
-                    ),
-            )
-            Row(
-                modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
+        Column {
+            items.forEachIndexed { index, feature ->
+                Row(
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 72.dp)
+                        .clickable { onOpen(feature.route) }
+                        .padding(horizontal = 14.dp, vertical = 11.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                 Box(
                     modifier = Modifier
-                        .size(46.dp)
-                        .graphicsLayer { scaleX = iconPulse; scaleY = iconPulse }
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(feature.accent.copy(alpha = 0.15f))
-                        .border(1.dp, feature.accent.copy(alpha = 0.42f), RoundedCornerShape(14.dp)),
+                        .size(42.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(feature.accent.copy(alpha = 0.13f)),
                     contentAlignment = Alignment.Center,
-                ) { Icon(feature.icon, contentDescription = null, tint = feature.accent, modifier = Modifier.size(23.dp)) }
-                Spacer(Modifier.width(13.dp))
+                ) { Icon(feature.icon, contentDescription = null, tint = feature.accent, modifier = Modifier.size(21.dp)) }
+                Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
-                    Text(feature.title, color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                    Spacer(Modifier.height(3.dp))
+                    Text(feature.title, color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(2.dp))
                     Text(feature.subtitle, color = TextSecondary, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
-                Box(
-                    modifier = Modifier.size(32.dp).clip(CircleShape).background(feature.accent.copy(alpha = 0.13f)),
-                    contentAlignment = Alignment.Center,
-                ) { Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Open ${feature.title}", tint = feature.accent, modifier = Modifier.size(18.dp)) }
+                Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Open ${feature.title}", tint = TextMuted, modifier = Modifier.size(18.dp))
+            }
+                if (index < items.lastIndex) {
+                    HorizontalDivider(color = DashboardStroke, thickness = 1.dp, modifier = Modifier.padding(start = 68.dp))
+                }
             }
         }
     }

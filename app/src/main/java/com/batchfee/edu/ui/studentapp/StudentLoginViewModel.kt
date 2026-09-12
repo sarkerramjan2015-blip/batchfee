@@ -64,6 +64,7 @@ class StudentLoginViewModel(
 
     fun login() {
         val state = _uiState.value
+        if (state.isLoading) return
         val id = state.studentId.trim()
         val pw = state.password
 
@@ -90,6 +91,7 @@ class StudentLoginViewModel(
                     _uiState.value = _uiState.value.copy(
                         studentId = result.studentCode.ifBlank { id },
                         hasRememberedStudentId = true,
+                        password = "",
                         isLoading = false
                     )
                 } else {

@@ -90,6 +90,12 @@ private val DangerRed     = Color(0xFFEF4444)
 private fun isInactiveStudentStatus(status: String?): Boolean =
     status.orEmpty().trim().lowercase() in setOf("inactive", "close", "closed")
 
+private fun billingDateOrdinal(timestampMs: Long): Int? = timestampMs.takeIf { it > 0L }?.let {
+    SimpleDateFormat("yyyyMMdd", Locale.US).apply {
+        timeZone = TimeZone.getTimeZone("Asia/Dhaka")
+    }.format(Date(it)).toIntOrNull()
+}
+
 private data class StudentPdfExport(
     val file: File,
     val title: String,
@@ -156,12 +162,16 @@ fun StudentProfileScreen(
     var feeHistory by remember { mutableStateOf<List<FeeEntity>>(emptyList()) }
     var paymentHistory by remember { mutableStateOf<List<PaymentEntity>>(emptyList()) }
     var monthAttendance by remember { mutableStateOf<List<com.batchfee.edu.data.models.AttendanceEntity>>(emptyList()) }
+    var welcomeTemplate by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(instId) {
         instituteSignature = loadInstituteSignature(db, instId)
         val institute = instId?.let { db.instituteDao().getInstitute(it) }
         instituteName = institute?.name?.trim().orEmpty()
         instituteContact = com.example.domain.MessageTemplateStore.loadInstituteContact(db, instId)
+        welcomeTemplate = com.example.domain.MessageTemplateStore.load(
+            db, instId, com.example.domain.MessageTemplateStore.TYPE_WELCOME
+        )
     }
 
     // ── Batch dialog state ──────────────────────────────────
@@ -196,14 +206,25 @@ fun StudentProfileScreen(
         assigningBatchIds = assigningBatchIds + batch.id
         scope.launch {
             try {
-                BatchEnrollmentRepository(db).enroll(
+                val confirmed = BatchEnrollmentRepository(db).enroll(
                     instituteId = instituteId,
                     studentId = studentId,
                     batch = batch,
-                    enrollmentStartMs = enrollmentStartMs
+                    enrollmentStartMs = enrollmentStartMs,
+                    admissionDateLinked = false
                 )
                 enrolledBatchIds = enrolledBatchIds + batch.id
                 batches = batches + batch
+                val successMessage = if (batch.isCourseBatch()) {
+                    "${batch.name} assigned. Course fee BDT ${batch.courseFeeAmount.toLong()} added once."
+                } else {
+                    val firstPeriod = confirmed.firstMonthFeePeriod ?: MonthlyDueCalculator.periodFor(enrollmentStartMs)
+                    val firstAmount = confirmed.firstMonthFeeAmount
+                        ?: MonthlyDueCalculator.calculateFirstMonthFee(batch.monthlyFeeAmount, enrollmentStartMs)
+                    val nextPeriod = MonthlyDueCalculator.periodAfter(firstPeriod).orEmpty()
+                    "${batch.name} assigned. $firstPeriod fee BDT ${firstAmount.toLong()}; from $nextPeriod BDT ${batch.monthlyFeeAmount.toLong()}/month."
+                }
+                Toast.makeText(context, successMessage, Toast.LENGTH_LONG).show()
             } catch (error: Exception) {
                 Toast.makeText(
                     context,
@@ -302,7 +323,7 @@ fun StudentProfileScreen(
             .forEach { enrollment ->
                 try {
                     withContext(Dispatchers.IO) {
-                        feeRepository.setCustomMonthlyFee(
+                        val confirmed = feeRepository.setCustomMonthlyFee(
                             instituteId = instituteId,
                             enrollmentId = enrollment.id,
                             studentId = enrollment.studentId,
@@ -313,7 +334,14 @@ fun StudentProfileScreen(
                                 ?: "Custom monthly fee"
                         )
                         db.batchStudentDao().enrollStudent(
-                            enrollment.copy(customFeePolicySyncedAtMs = System.currentTimeMillis())
+                            enrollment.copy(
+                                customMonthlyFeeAmount = confirmed.customMonthlyFeeAmount,
+                                customFeeReason = confirmed.customFeeReason,
+                                customFeeEffectiveFromPeriod = confirmed.effectivePeriod
+                                    .takeIf { confirmed.customMonthlyFeeAmount != null },
+                                customFeePolicyTimeline = confirmed.customFeePolicyTimeline,
+                                customFeePolicySyncedAtMs = confirmed.syncedAtMs
+                            )
                         )
                     }
                 } catch (_: Exception) {
@@ -396,6 +424,7 @@ fun StudentProfileScreen(
                             firstMonthFeeAmount = enrollment.firstMonthFeeAmount,
                             customMonthlyFeeAmount = enrollment.customMonthlyFeeAmount,
                             customFeeEffectiveFromPeriod = enrollment.customFeeEffectiveFromPeriod,
+                            customFeePolicyTimeline = enrollment.customFeePolicyTimeline,
                             billingEndedAtMs = enrollment.leftAtMs
                         )
                         computed += items.sumOf { it.outstanding }
@@ -1205,6 +1234,8 @@ fun StudentProfileScreen(
                                                     // Open the assign confirmation dialog so the operator
                                                     // can pick the Assign Date before enrolling. A second
                                                     // (or further) batch shows a warning in that dialog.
+                                                    // Admission date is profile history. Every batch owns
+                                                    // its separately confirmed assignment/billing date.
                                                     assignDateMs = System.currentTimeMillis()
                                                     pendingAssignBatch = batch
                                                 }
@@ -1273,6 +1304,23 @@ fun StudentProfileScreen(
             pendingAssignBatch?.let { batch ->
                 val isMultiBatch = activeEnrollments.isNotEmpty()
                 val isAssigning = batch.id in assigningBatchIds
+                val assignmentPeriod = MonthlyDueCalculator.periodFor(assignDateMs)
+                val billableDays = MonthlyDueCalculator.firstMonthBillableDays(assignDateMs)
+                val firstMonthAmount = MonthlyDueCalculator.calculateFirstMonthFee(
+                    batch.monthlyFeeAmount,
+                    assignDateMs
+                )
+                val nextPeriod = MonthlyDueCalculator.periodAfter(assignmentPeriod).orEmpty()
+                val assignmentDay = billingDateOrdinal(assignDateMs)
+                val admissionDay = billingDateOrdinal(s.admissionDateMs)
+                val today = billingDateOrdinal(System.currentTimeMillis())
+                val dateError = when {
+                    assignmentDay == null -> "Select a valid assign date."
+                    today != null && assignmentDay > today -> "Assign date cannot be in the future."
+                    admissionDay != null && assignmentDay < admissionDay ->
+                        "Assign date cannot be before the student's admission date."
+                    else -> null
+                }
                 val dateLabel = remember(assignDateMs) {
                     SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(assignDateMs))
                 }
@@ -1290,11 +1338,12 @@ fun StudentProfileScreen(
                     title = { Text("Assign ${batch.name}?", color = TextWhite, fontWeight = FontWeight.Bold) },
                     text = {
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Text("Student: ${s.fullName}", color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                             Text(
                                 if (batch.isCourseBatch()) {
-                                    "Course fee BDT ${batch.courseFeeAmount.toLong()} will be added once."
+                                    "Course fee: BDT ${batch.courseFeeAmount.toLong()} (one-time)"
                                 } else {
-                                    "Monthly fee BDT ${batch.monthlyFeeAmount.toLong()}/mo, billed from the assign date."
+                                    "Batch fee: BDT ${batch.monthlyFeeAmount.toLong()}/month"
                                 },
                                 color = TextMuted,
                                 fontSize = 13.sp
@@ -1329,6 +1378,29 @@ fun StudentProfileScreen(
                                     modifier = Modifier.size(20.dp)
                                 )
                             }
+                            if (!batch.isCourseBatch()) {
+                                HorizontalDivider(color = BorderSub)
+                                Text("Billing period: $assignmentPeriod", color = TextMuted, fontSize = 12.sp)
+                                Text("Billable days: $billableDays/30", color = TextMuted, fontSize = 12.sp)
+                                Text(
+                                    "First-month fee: BDT ${firstMonthAmount.toLong()}",
+                                    color = AccentAmber,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    "From $nextPeriod: BDT ${batch.monthlyFeeAmount.toLong()}/month",
+                                    color = Cyan,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                            Text(
+                                "The admission date and previous payment history will remain unchanged.",
+                                color = TextMuted,
+                                fontSize = 11.sp
+                            )
+                            dateError?.let { Text(it, color = DangerRed, fontSize = 12.sp) }
                         }
                     },
                     confirmButton = {
@@ -1338,11 +1410,11 @@ fun StudentProfileScreen(
                                 pendingAssignBatch = null
                                 enrollStudentIntoBatch(target, assignDateMs)
                             },
-                            enabled = !isAssigning,
+                            enabled = !isAssigning && dateError == null,
                             colors = ButtonDefaults.buttonColors(containerColor = Cyan),
                             shape = RoundedCornerShape(10.dp)
                         ) {
-                            Text("Assign", color = Color(0xFF0F172A), fontWeight = FontWeight.Bold)
+                            Text("Confirm Assignment", color = Color(0xFF0F172A), fontWeight = FontWeight.Bold)
                         }
                     },
                     dismissButton = {
@@ -1742,7 +1814,7 @@ fun StudentProfileScreen(
             }
 
             if (showCustomMonthlyFeeDialog) {
-                CustomMonthlyFeeDialog(
+                CustomMonthlyFeeDialogV18(
                     enrollments = activeEnrollments,
                     batches = batches,
                     onDismiss = { showCustomMonthlyFeeDialog = false },
@@ -1753,19 +1825,34 @@ fun StudentProfileScreen(
                                     // The trusted ledger updates the fee policy and any untouched
                                     // running/future fee records in one server transaction. Room is
                                     // updated only after that confirmed cloud change.
-                                    feeRepository.setCustomMonthlyFee(
+                                    val confirmed = feeRepository.setCustomMonthlyFee(
                                         instituteId = updatedEnrollment.instituteId,
                                         enrollmentId = updatedEnrollment.id,
                                         studentId = updatedEnrollment.studentId,
                                         batchId = updatedEnrollment.batchId,
                                         customMonthlyFeeAmount = updatedEnrollment.customMonthlyFeeAmount,
-                                        customFeeReason = updatedEnrollment.customFeeReason
+                                        customFeeReason = updatedEnrollment.customFeeReason,
+                                        effectiveFromPeriod = updatedEnrollment.customFeeEffectiveFromPeriod
                                     )
                                     db.batchStudentDao().enrollStudent(
                                         updatedEnrollment.copy(
-                                            customFeePolicySyncedAtMs = System.currentTimeMillis()
+                                            customMonthlyFeeAmount = confirmed.customMonthlyFeeAmount,
+                                            customFeeReason = confirmed.customFeeReason,
+                                            customFeeEffectiveFromPeriod = confirmed.effectivePeriod
+                                                .takeIf { confirmed.customMonthlyFeeAmount != null },
+                                            customFeePolicyTimeline = confirmed.customFeePolicyTimeline,
+                                            customFeePolicySyncedAtMs = confirmed.syncedAtMs
                                         )
                                     )
+                                    val amountLabel = confirmed.customMonthlyFeeAmount?.let { "BDT ${it.toLong()}" }
+                                        ?: "the batch fee"
+                                    withContext(Dispatchers.Main) {
+                                        Toast.makeText(
+                                            context,
+                                            "Confirmed: $amountLabel applies from ${confirmed.effectivePeriod}.",
+                                            Toast.LENGTH_LONG
+                                        ).show()
+                                    }
                                 }
                                 StaffActivityLogger.logCompletedAction(
                                     db,
@@ -2003,7 +2090,7 @@ fun StudentProfileScreen(
                     message = directMessage,
                     onMessageChange = { directMessage = it },
                     onUseAdmissionWelcome = {
-                        directMessage = buildStudentAdmissionWelcomeMessage(s, instituteName, instituteContact)
+                        directMessage = buildStudentAdmissionWelcomeMessage(s, instituteName, instituteContact, welcomeTemplate)
                     },
                     onDismiss = { showMessageDialog = false },
                     onSendSms = {
@@ -2893,8 +2980,15 @@ private fun StudentDashboardContent(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                    val displayMonthlyFee = primaryEnrollment?.customMonthlyFeeAmount
-                        ?: primaryBatch?.monthlyFeeAmount
+                    val currentPeriod = MonthlyDueCalculator.periodFor(System.currentTimeMillis())
+                    val displayMonthlyFee = if (primaryEnrollment != null && primaryBatch != null) {
+                        MonthlyDueCalculator.customMonthlyFeeForPeriod(
+                            period = currentPeriod,
+                            customMonthlyFeeAmount = primaryEnrollment.customMonthlyFeeAmount,
+                            customFeeEffectiveFromPeriod = primaryEnrollment.customFeeEffectiveFromPeriod,
+                            customFeePolicyTimeline = primaryEnrollment.customFeePolicyTimeline
+                        ) ?: primaryBatch.monthlyFeeAmount
+                    } else primaryBatch?.monthlyFeeAmount
                     Text(
                         if (displayMonthlyFee != null) "Monthly fee · BDT ${displayMonthlyFee.toLong()}" else "Assign a batch to see fee details",
                         color = TextMuted,
@@ -2925,7 +3019,18 @@ private fun StudentDashboardContent(
             }
             if (primaryBatch != null && onSetCustomMonthlyFee != null) {
                 Spacer(Modifier.height(10.dp))
-                val customAmount = primaryEnrollment?.customMonthlyFeeAmount
+                val currentPeriod = MonthlyDueCalculator.periodFor(System.currentTimeMillis())
+                val customAmount = primaryEnrollment?.let { enrollment ->
+                    MonthlyDueCalculator.customMonthlyFeeForPeriod(
+                        period = currentPeriod,
+                        customMonthlyFeeAmount = enrollment.customMonthlyFeeAmount,
+                        customFeeEffectiveFromPeriod = enrollment.customFeeEffectiveFromPeriod,
+                        customFeePolicyTimeline = enrollment.customFeePolicyTimeline
+                    )
+                }
+                val latestTransition = MonthlyDueCalculator.latestCustomFeePolicyTransition(
+                    primaryEnrollment?.customFeePolicyTimeline
+                )
                 val shownAmount = customAmount ?: primaryBatch.monthlyFeeAmount
                 Row(
                     modifier = Modifier
@@ -2942,7 +3047,14 @@ private fun StudentDashboardContent(
                     Column(modifier = Modifier.weight(1f)) {
                         Text("Monthly fee", color = TextWhite, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                         Text(
-                            if (customAmount != null) "Custom · ${primaryEnrollment.customFeeReason ?: "Adjusted fee"}" else "Batch standard fee",
+                            when {
+                                latestTransition?.customMonthlyFeeAmount != null ->
+                                    "Custom fee: BDT ${latestTransition.customMonthlyFeeAmount.toLong()} · From ${latestTransition.effectivePeriod}"
+                                latestTransition != null -> "Batch fee resumes · From ${latestTransition.effectivePeriod}"
+                                customAmount != null ->
+                                    "Custom · ${primaryEnrollment?.customFeeReason ?: "Adjusted fee"}"
+                                else -> "Batch standard fee"
+                            },
                             color = TextMuted,
                             fontSize = 10.sp,
                             maxLines = 1,
@@ -3117,6 +3229,257 @@ private fun StudentDashboardContent(
     }
 
     Spacer(Modifier.height(24.dp))
+}
+
+@Composable
+private fun CustomMonthlyFeeDialogV18(
+    enrollments: List<BatchStudentEntity>,
+    batches: List<BatchEntity>,
+    onDismiss: () -> Unit,
+    onSave: (BatchStudentEntity, () -> Unit, (String) -> Unit) -> Unit
+) {
+    data class Confirmation(
+        val enrollment: BatchStudentEntity,
+        val batch: BatchEntity,
+        val amount: Double?,
+        val reason: String?,
+        val effectivePeriod: String
+    )
+
+    val monthlyEnrollments = remember(enrollments, batches) {
+        enrollments.filter { enrollment ->
+            batches.firstOrNull { it.id == enrollment.batchId }?.isCourseBatch() == false
+        }
+    }
+    var selectedEnrollmentId by remember(monthlyEnrollments) {
+        mutableStateOf(monthlyEnrollments.firstOrNull()?.id)
+    }
+    val selectedEnrollment = monthlyEnrollments.firstOrNull { it.id == selectedEnrollmentId }
+    val selectedBatch = batches.firstOrNull { it.id == selectedEnrollment?.batchId }
+    val currentPeriod = remember { MonthlyDueCalculator.periodFor(System.currentTimeMillis()) }
+    val nextPeriod = remember(currentPeriod) { MonthlyDueCalculator.periodAfter(currentPeriod).orEmpty() }
+    val futurePeriods = remember(currentPeriod) {
+        (2..24).mapNotNull { offset -> MonthlyDueCalculator.periodAfter(currentPeriod, offset) }
+    }
+    var effectiveChoice by remember { mutableStateOf("NEXT") }
+    var futurePeriod by remember(futurePeriods) { mutableStateOf(futurePeriods.firstOrNull().orEmpty()) }
+    var futureExpanded by remember { mutableStateOf(false) }
+    val selectedEffectivePeriod = when (effectiveChoice) {
+        "CURRENT" -> currentPeriod
+        "FUTURE" -> futurePeriod
+        else -> nextPeriod
+    }
+    var amountText by remember { mutableStateOf("") }
+    var reasonText by remember { mutableStateOf("") }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+    var isSaving by remember { mutableStateOf(false) }
+    var confirmation by remember { mutableStateOf<Confirmation?>(null) }
+    val templates = remember {
+        listOf("Sibling discount", "Financial hardship", "Merit scholarship", "Staff family", "Special offer", "Other adjustment")
+    }
+
+    LaunchedEffect(selectedEnrollment?.id) {
+        amountText = selectedEnrollment?.customMonthlyFeeAmount?.let { amount ->
+            if (amount % 1.0 == 0.0) amount.toLong().toString() else amount.toString()
+        }.orEmpty()
+        reasonText = selectedEnrollment?.customFeeReason.orEmpty()
+        effectiveChoice = "NEXT"
+        errorMessage = null
+        confirmation = null
+    }
+
+    confirmation?.let { pending ->
+        val previousAmount = MonthlyDueCalculator.customMonthlyFeeForPeriod(
+            period = currentPeriod,
+            customMonthlyFeeAmount = pending.enrollment.customMonthlyFeeAmount,
+            customFeeEffectiveFromPeriod = pending.enrollment.customFeeEffectiveFromPeriod,
+            customFeePolicyTimeline = pending.enrollment.customFeePolicyTimeline
+        ) ?: pending.batch.monthlyFeeAmount
+        val targetLabel = pending.amount?.let { "BDT ${it.toLong()}" } ?: "the batch fee (BDT ${pending.batch.monthlyFeeAmount.toLong()})"
+        AlertDialog(
+            onDismissRequest = { if (!isSaving) confirmation = null },
+            containerColor = CardBg,
+            icon = { Icon(Icons.Filled.Verified, contentDescription = null, tint = Cyan) },
+            title = { Text("Confirm fee change", color = TextWhite, fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                    Text("Batch: ${pending.batch.name}", color = TextWhite, fontWeight = FontWeight.SemiBold)
+                    Text("Current applicable fee: BDT ${previousAmount.toLong()}", color = TextMuted)
+                    Text("New fee: $targetLabel", color = AccentAmber, fontWeight = FontWeight.Bold)
+                    Text("Effective from: ${pending.effectivePeriod}", color = Cyan, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "Previous months, completed payments and receipts will remain unchanged.",
+                        color = TextMuted,
+                        fontSize = 12.sp
+                    )
+                    pending.reason?.let { Text("Reason: $it", color = TextMuted, fontSize = 12.sp) }
+                    errorMessage?.let { Text(it, color = DangerRed, fontSize = 12.sp) }
+                }
+            },
+            confirmButton = {
+                Button(
+                    enabled = !isSaving,
+                    onClick = {
+                        isSaving = true
+                        errorMessage = null
+                        onSave(
+                            pending.enrollment.copy(
+                                customMonthlyFeeAmount = pending.amount,
+                                customFeeReason = pending.reason,
+                                // This is the requested period. Room is later
+                                // replaced with the backend-confirmed period.
+                                customFeeEffectiveFromPeriod = pending.effectivePeriod
+                            ),
+                            { isSaving = false; confirmation = null; onDismiss() },
+                            { message -> isSaving = false; errorMessage = message }
+                        )
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = ElectricBlue)
+                ) {
+                    if (isSaving) CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
+                    else Text("Confirm & Save", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmation = null }, enabled = !isSaving) {
+                    Text("Back", color = TextMuted)
+                }
+            }
+        )
+        return
+    }
+
+    AlertDialog(
+        onDismissRequest = { if (!isSaving) onDismiss() },
+        containerColor = CardBg,
+        icon = { Icon(Icons.Filled.Payments, contentDescription = null, tint = Cyan, modifier = Modifier.size(28.dp)) },
+        title = { Text("Set Monthly Fee", color = TextWhite, fontWeight = FontWeight.Bold) },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth().heightIn(max = 520.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                if (monthlyEnrollments.size > 1) {
+                    Text("Select batch", color = TextMuted, fontSize = 12.sp)
+                    monthlyEnrollments.forEach { enrollment ->
+                        val batch = batches.firstOrNull { it.id == enrollment.batchId }
+                        FilterChip(
+                            selected = enrollment.id == selectedEnrollmentId,
+                            onClick = { selectedEnrollmentId = enrollment.id },
+                            label = { Text(batch?.name ?: "Batch", maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                        )
+                    }
+                }
+                if (selectedEnrollment == null || selectedBatch == null) {
+                    Text("No active monthly batch is available for this student.", color = DangerRed)
+                } else {
+                    Text("${selectedBatch.name} · Batch fee BDT ${selectedBatch.monthlyFeeAmount.toLong()}", color = TextMuted, fontSize = 12.sp)
+                    OutlinedTextField(
+                        value = amountText,
+                        onValueChange = { amountText = it; errorMessage = null },
+                        label = { Text("Custom monthly fee (BDT)") },
+                        placeholder = { Text("e.g. 700") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = darkFieldColors()
+                    )
+                    Text("Effective from", color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    listOf(
+                        "CURRENT" to "Current month — $currentPeriod",
+                        "NEXT" to "Next month — $nextPeriod",
+                        "FUTURE" to "Choose future month"
+                    ).forEach { (choice, label) ->
+                        FilterChip(
+                            selected = effectiveChoice == choice,
+                            onClick = { effectiveChoice = choice; errorMessage = null },
+                            label = { Text(label) },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                    if (effectiveChoice == "FUTURE") {
+                        Box(Modifier.fillMaxWidth()) {
+                            OutlinedButton(onClick = { futureExpanded = true }, modifier = Modifier.fillMaxWidth()) {
+                                Text(futurePeriod.ifBlank { "Select month" })
+                            }
+                            DropdownMenu(expanded = futureExpanded, onDismissRequest = { futureExpanded = false }) {
+                                futurePeriods.forEach { period ->
+                                    DropdownMenuItem(
+                                        text = { Text(period) },
+                                        onClick = { futurePeriod = period; futureExpanded = false; errorMessage = null }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    Text("Reason", color = TextMuted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    templates.chunked(2).forEach { row ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                            row.forEach { template ->
+                                FilterChip(
+                                    selected = reasonText.equals(template, ignoreCase = true),
+                                    onClick = { reasonText = template; errorMessage = null },
+                                    label = { Text(template, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 11.sp) },
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                        }
+                    }
+                    OutlinedTextField(
+                        value = reasonText,
+                        onValueChange = { reasonText = it.take(120); errorMessage = null },
+                        label = { Text("Reason details") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = darkFieldColors()
+                    )
+                    Text(
+                        "Past months cannot be changed. A paid or partially paid selected month will be rejected safely.",
+                        color = TextMuted,
+                        fontSize = 11.sp
+                    )
+                }
+                errorMessage?.let { Text(it, color = DangerRed, fontSize = 12.sp) }
+            }
+        },
+        confirmButton = {
+            Button(
+                enabled = selectedEnrollment != null && selectedBatch != null,
+                onClick = {
+                    val enrollment = selectedEnrollment ?: return@Button
+                    val batch = selectedBatch ?: return@Button
+                    val amount = amountText.trim().toDoubleOrNull()
+                    when {
+                        amount == null || amount <= 0.0 -> errorMessage = "Enter a valid monthly fee."
+                        amount >= batch.monthlyFeeAmount -> errorMessage = "Enter a reduced fee, or choose Use batch fee."
+                        reasonText.trim().length < 3 -> errorMessage = "Choose or write a reason for the reduced fee."
+                        selectedEffectivePeriod.isBlank() -> errorMessage = "Select when the fee should start."
+                        else -> confirmation = Confirmation(enrollment, batch, amount, reasonText.trim(), selectedEffectivePeriod)
+                    }
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = ElectricBlue)
+            ) { Text("Review change", fontWeight = FontWeight.Bold) }
+        },
+        dismissButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                val hasPolicy = selectedEnrollment?.customMonthlyFeeAmount != null ||
+                    !selectedEnrollment?.customFeePolicyTimeline.isNullOrBlank()
+                val restorableEnrollment = selectedEnrollment.takeIf { hasPolicy }
+                if (restorableEnrollment != null && selectedBatch != null) {
+                    TextButton(onClick = {
+                        confirmation = Confirmation(
+                            restorableEnrollment,
+                            selectedBatch,
+                            null,
+                            null,
+                            selectedEffectivePeriod
+                        )
+                    }) { Text("Use batch fee", color = AccentAmber) }
+                }
+                TextButton(onClick = onDismiss) { Text("Cancel", color = TextMuted) }
+            }
+        }
+    )
 }
 
 @Composable
@@ -3307,9 +3670,19 @@ private fun StudentInsightsPanel(
     val present = monthAttendance.count { it.status.equals("present", ignoreCase = true) }
     val absent = monthAttendance.count { it.status.equals("absent", ignoreCase = true) }
     val leave = monthAttendance.count { it.status.equals("leave", ignoreCase = true) }
+    val late = monthAttendance.count { it.status.equals("late", ignoreCase = true) }
+    val lateMinutesTotal = monthAttendance.filter { it.status.equals("late", ignoreCase = true) }
+        .sumOf { it.lateByMinutes ?: 0 }
     val holiday = monthAttendance.count { it.status.equals("holiday", ignoreCase = true) }
-    val marked = monthAttendance.size.coerceAtLeast(1)
-    val attendanceText = buildMonthlyAttendanceReportText(student, monthLabel, present, absent, leave, holiday, monthAttendance.size, instituteSignature)
+    val attendanceDenominator = (present + late + absent).coerceAtLeast(1)
+    val attended = present + late
+    val attendanceRate = attended * 100f / attendanceDenominator
+    val punctualityRate = if (attended > 0) present * 100f / attended else 0f
+    val averageLateMinutes = if (late > 0) lateMinutesTotal.toFloat() / late else 0f
+    val attendanceText = buildMonthlyAttendanceReportText(
+        student, monthLabel, present, absent, leave, late, averageLateMinutes,
+        attendanceRate, punctualityRate, holiday, monthAttendance.size, instituteSignature
+    )
     val feeText = buildDetailedFeeReportText(student, paymentHistory, totalPaid, totalDue, instituteSignature)
 
     Card(
@@ -3326,15 +3699,25 @@ private fun StudentInsightsPanel(
                 InsightStat("Present", present, WAGreen, Modifier.weight(1f))
                 InsightStat("Absent", absent, Color(0xFFEF4444), Modifier.weight(1f))
                 InsightStat("Leave", leave, SkyBlue, Modifier.weight(1f))
-                InsightStat("Holiday", holiday, TextMuted, Modifier.weight(1f))
+                InsightStat("Late", late, Color(0xFFF59E0B), Modifier.weight(1f))
             }
             Spacer(Modifier.height(12.dp))
             LinearProgressIndicator(
-                progress = { present.toFloat() / marked.toFloat() },
+                progress = { (attendanceRate / 100f).coerceIn(0f, 1f) },
                 modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(20.dp)),
                 color = WAGreen,
                 trackColor = BorderSub
             )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Attendance ${"%.0f".format(attendanceRate)}% · Punctuality ${"%.0f".format(punctualityRate)}%" +
+                    if (late > 0) " · Avg late ${"%.0f".format(averageLateMinutes)} min" else "",
+                color = TextMuted,
+                fontSize = 11.sp
+            )
+            if (holiday > 0) {
+                Text("$holiday legacy holiday record(s) retained", color = TextMuted, fontSize = 10.sp)
+            }
             Spacer(Modifier.height(12.dp))
             ReportActionRow(
                 context = context,
@@ -3493,6 +3876,10 @@ private fun buildMonthlyAttendanceReportText(
     present: Int,
     absent: Int,
     leave: Int,
+    late: Int,
+    averageLateMinutes: Float,
+    attendanceRate: Float,
+    punctualityRate: Float,
     holiday: Int,
     totalMarked: Int,
     instituteSignature: String
@@ -3505,7 +3892,11 @@ private fun buildMonthlyAttendanceReportText(
         appendLine("Present: $present")
         appendLine("Absent: $absent")
         appendLine("Leave: $leave")
-        appendLine("Holiday: $holiday")
+        appendLine("Late: $late")
+        if (late > 0) appendLine("Average late: ${"%.0f".format(averageLateMinutes)} minutes")
+        appendLine("Attendance rate: ${"%.0f".format(attendanceRate)}%")
+        appendLine("Punctuality rate: ${"%.0f".format(punctualityRate)}%")
+        if (holiday > 0) appendLine("Legacy holiday records: $holiday")
         appendLine("Total marked days: $totalMarked")
         if (instituteSignature.isNotBlank()) appendLine(instituteSignature)
     }
@@ -3623,9 +4014,9 @@ private fun TwoColumnInfo(
     }
 }
 
-private fun buildStudentAdmissionWelcomeMessage(student: StudentEntity, instituteName: String = "", instituteContact: String = ""): String {
-    val template = com.example.domain.MessageTemplateStore.defaultFor(com.example.domain.MessageTemplateStore.TYPE_WELCOME)
-    return template?.let {
+private fun buildStudentAdmissionWelcomeMessage(student: StudentEntity, instituteName: String = "", instituteContact: String = "", template: String? = null): String {
+    val resolvedTemplate = template ?: com.example.domain.MessageTemplateStore.defaultFor(com.example.domain.MessageTemplateStore.TYPE_WELCOME)
+    return resolvedTemplate?.let {
         com.example.domain.MessageTemplateStore.apply(
             it,
             mapOf(

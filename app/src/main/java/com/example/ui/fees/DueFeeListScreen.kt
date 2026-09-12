@@ -147,12 +147,16 @@ fun DueFeeListScreen(db: AppDatabase, onBack: () -> Unit) {
     var instituteSignature by remember { mutableStateOf("") }
     var instituteName by remember { mutableStateOf("") }
     var instituteContact by remember { mutableStateOf("") }
+    var dueFeeTemplate by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(instId) {
         instituteSignature = loadInstituteSignature(db, instId)
         val institute = instId?.let { db.instituteDao().getInstitute(it) }
         instituteName = institute?.name?.trim().orEmpty().ifBlank { "BatchFee" }
         instituteContact = com.example.domain.MessageTemplateStore.loadInstituteContact(db, instId)
+        dueFeeTemplate = com.example.domain.MessageTemplateStore.load(
+            db, instId, com.example.domain.MessageTemplateStore.TYPE_DUE_FEE
+        )
     }
 
     var searchVisible by remember { mutableStateOf(true) }
@@ -312,7 +316,7 @@ fun DueFeeListScreen(db: AppDatabase, onBack: () -> Unit) {
                     .replace("{name}", target.name)
                     .replace("{amount}", formatAmount(due))
                     .replace("{period}", periods)
-                val template = com.example.domain.MessageTemplateStore.defaultFor(com.example.domain.MessageTemplateStore.TYPE_DUE_FEE)
+                val template = dueFeeTemplate
                 val base = template?.let {
                     com.example.domain.MessageTemplateStore.apply(
                         it,

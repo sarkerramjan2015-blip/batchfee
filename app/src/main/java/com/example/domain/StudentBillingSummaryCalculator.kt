@@ -30,7 +30,8 @@ data class StudentBillingEnrollment(
     val firstMonthFeePeriod: String?,
     val firstMonthFeeAmount: Double?,
     val customMonthlyFeeAmount: Double?,
-    val customFeeEffectiveFromPeriod: String?
+    val customFeeEffectiveFromPeriod: String?,
+    val customFeePolicyTimeline: String? = null
 )
 
 data class StudentBillingBatch(
@@ -115,6 +116,7 @@ object StudentBillingSummaryCalculator {
                     firstMonthFeeAmount = enrollment.firstMonthFeeAmount,
                     customMonthlyFeeAmount = enrollment.customMonthlyFeeAmount,
                     customFeeEffectiveFromPeriod = enrollment.customFeeEffectiveFromPeriod,
+                    customFeePolicyTimeline = enrollment.customFeePolicyTimeline,
                     billingEndedAtMs = enrollment.leftAtMs,
                     asOfMs = asOfMs
                 ).forEach { item ->

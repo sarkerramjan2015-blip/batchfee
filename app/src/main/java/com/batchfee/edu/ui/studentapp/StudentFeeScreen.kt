@@ -141,6 +141,7 @@ fun StudentFeeScreen(onBack: () -> Unit, onOpenDocuments: () -> Unit) {
                 firstMonthFeeAmount = enrollment.firstMonthFeeAmount,
                 customMonthlyFeeAmount = enrollment.customMonthlyFeeAmount,
                 customFeeEffectiveFromPeriod = enrollment.customFeeEffectiveFromPeriod,
+                customFeePolicyTimeline = enrollment.customFeePolicyTimeline,
                 billingEndedAtMs = enrollment.leftAtMs
             ).mapNotNull { item ->
                 val key = "${batch.id}|${item.period}"
@@ -220,7 +221,8 @@ fun StudentFeeScreen(onBack: () -> Unit, onOpenDocuments: () -> Unit) {
                             firstMonthFeePeriod = doc.getString("firstMonthFeePeriod"),
                             firstMonthFeeAmount = (doc.get("firstMonthFeeAmount") as? Number)?.toDouble(),
                             customMonthlyFeeAmount = (doc.get("customMonthlyFeeAmount") as? Number)?.toDouble(),
-                            customFeeEffectiveFromPeriod = doc.getString("customFeeEffectiveFromPeriod")
+                            customFeeEffectiveFromPeriod = doc.getString("customFeeEffectiveFromPeriod"),
+                            customFeePolicyTimeline = doc.getString("customFeePolicyTimeline")
                         )
                     }
                 }.orEmpty()

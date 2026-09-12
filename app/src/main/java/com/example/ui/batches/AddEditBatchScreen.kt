@@ -103,8 +103,8 @@ fun AddEditBatchScreen(db: AppDatabase, batchId: String? = null, onBack: () -> U
     var editingBatch by remember(batchId) { mutableStateOf<BatchEntity?>(null) }
     var loadedBatchId by remember(batchId) { mutableStateOf<String?>(null) }
     var isSaving by remember { mutableStateOf(false) }
-    val pendingBatchId = remember { UUID.randomUUID().toString() }
-    val pendingBatchCode = remember { "BAT-${UUID.randomUUID().toString().take(8)}" }
+    val pendingBatchId = androidx.compose.runtime.saveable.rememberSaveable { UUID.randomUUID().toString() }
+    val pendingBatchCode = androidx.compose.runtime.saveable.rememberSaveable { "BAT-${UUID.randomUUID().toString().take(8)}" }
 
     BackHandler(enabled = isSaving) { }
 

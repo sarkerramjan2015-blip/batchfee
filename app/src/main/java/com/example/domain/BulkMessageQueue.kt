@@ -12,6 +12,9 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.UUID
 import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.firestore.ServerSmsOutbound
+import com.batchfee.edu.data.firestore.SmsWalletState
+import com.batchfee.edu.data.firestore.SmsWalletSyncHelper
 
 /**
  * Drives a queued, one-by-one bulk SMS/WhatsApp send flow.
@@ -27,7 +30,7 @@ class BulkMessageController(
 ) {
     data class BulkTarget(val key: String, val name: String, val phone: String?)
 
-    enum class Status { PENDING, SENT, FAILED, DUPLICATE, NO_PHONE, CANCELLED }
+    enum class Status { PENDING, SENT, QUEUED, FAILED, DUPLICATE, NO_PHONE, CANCELLED }
     enum class Phase { IDLE, RUNNING, AWAITING_RESUME, COMPLETED }
 
     data class BulkQueueItem(
@@ -38,9 +41,11 @@ class BulkMessageController(
 
     data class BulkQueueState(
         val items: List<BulkQueueItem> = emptyList(),
-        val phase: Phase = Phase.IDLE
+        val phase: Phase = Phase.IDLE,
+        val serverManaged: Boolean = false
     ) {
         val sentCount: Int get() = items.count { it.status == Status.SENT }
+        val queuedCount: Int get() = items.count { it.status == Status.QUEUED }
         val totalCount: Int get() = items.size
         val failedCount: Int get() = items.count { it.status == Status.FAILED }
         val processedCount: Int get() = items.count { it.status != Status.PENDING }
@@ -58,6 +63,7 @@ class BulkMessageController(
     private var channel = ""
     private var messageBuilder: (BulkTarget) -> String = { "" }
     private var launcher: (BulkTarget, String) -> Boolean = { _, _ -> false }
+    private var serverOperationId = UUID.randomUUID().toString()
 
     val isRunning: Boolean get() = queueJob?.isActive == true
 
@@ -73,6 +79,7 @@ class BulkMessageController(
         this.delayMs = delayMs.coerceAtLeast(0L)
         this.messageBuilder = messageBuilder
         this.launcher = launcher
+        this.serverOperationId = UUID.randomUUID().toString()
         this.pausedSinceLaunch = false
         val items = targets.map { BulkQueueItem(it) }
         _state.value = BulkQueueState(items = items, phase = Phase.RUNNING)
@@ -81,6 +88,14 @@ class BulkMessageController(
     }
 
     private suspend fun process(items: List<BulkQueueItem>) {
+        val useServerSms = channel == "sms" && runCatching {
+            val instId = instituteId.orEmpty()
+            instId.isNotBlank() && SmsWalletSyncHelper.ensureWalletInitialized(instId).smsSendMethod == SmsWalletState.METHOD_SERVER
+        }.getOrDefault(false)
+        if (useServerSms) {
+            processServer(items)
+            return
+        }
         var i = 0
         while (i < items.size) {
             currentCoroutineContext().ensureActive()
@@ -89,14 +104,14 @@ class BulkMessageController(
 
             val digits = item.target.phone?.filter(Char::isDigit).orEmpty()
             if (digits.isBlank()) {
-                update(items, i, Status.NO_PHONE, "No phone number")
+                update(i, Status.NO_PHONE, "No phone number")
                 i++
                 continue
             }
 
             val message = messageBuilder(item.target)
             if (message.isBlank()) {
-                update(items, i, Status.FAILED, "Message is empty")
+                update(i, Status.FAILED, "Message is empty")
                 i++
                 continue
             }
@@ -107,7 +122,7 @@ class BulkMessageController(
                     .hasSent(instId, item.target.key, channel, message) > 0
             } catch (_: Exception) { false }
             if (alreadySent) {
-                update(items, i, Status.DUPLICATE, "Already sent")
+                update(i, Status.DUPLICATE, "Already sent")
                 i++
                 continue
             }
@@ -121,7 +136,7 @@ class BulkMessageController(
             } catch (_: Exception) { false }
 
             if (!launched) {
-                update(items, i, Status.FAILED, "No app found to send this message")
+                update(i, Status.FAILED, "No app found to send this message")
                 log(item.target.key, message, "failed")
                 _state.update { it.copy(phase = Phase.RUNNING) }
                 i++
@@ -130,12 +145,86 @@ class BulkMessageController(
 
             awaitResume()
 
-            update(items, i, Status.SENT)
+            update(i, Status.SENT)
             log(item.target.key, message, "sent")
             _state.update { it.copy(phase = Phase.RUNNING) }
 
             if (i < items.size - 1 && delayMs > 0) delay(delayMs)
             i++
+        }
+        _state.update { it.copy(phase = Phase.COMPLETED) }
+    }
+
+    private suspend fun processServer(items: List<BulkQueueItem>) {
+        data class Prepared(val index: Int, val target: BulkTarget, val body: String)
+        _state.update { it.copy(phase = Phase.RUNNING, serverManaged = true) }
+        val prepared = mutableListOf<Prepared>()
+        items.forEachIndexed { index, item ->
+            if (item.status != Status.PENDING) return@forEachIndexed
+            val digits = item.target.phone?.filter(Char::isDigit).orEmpty()
+            if (digits.isBlank()) {
+                update(index, Status.NO_PHONE, "No phone number")
+                return@forEachIndexed
+            }
+            val body = messageBuilder(item.target).trim()
+            if (body.isBlank()) {
+                update(index, Status.FAILED, "Message is empty")
+                return@forEachIndexed
+            }
+            if (body.length > 480) {
+                update(index, Status.FAILED, "SMS is too long (maximum 480 characters)")
+                return@forEachIndexed
+            }
+            val alreadySent = try {
+                db.bulkMessageLogDao().hasSent(instituteId.orEmpty(), item.target.key, channel, body) > 0
+            } catch (_: Exception) { false }
+            if (alreadySent) {
+                update(index, Status.DUPLICATE, "Already sent")
+                return@forEachIndexed
+            }
+            prepared += Prepared(index, item.target, body)
+        }
+
+        prepared.chunked(100).forEachIndexed { chunkIndex, chunk ->
+            val operationId = "$serverOperationId-${chunkIndex + 1}"
+            val batchResult = runCatching {
+                SmsWalletSyncHelper.sendServerSmsBatch(
+                    messages = chunk.map {
+                        ServerSmsOutbound(
+                            targetKey = it.target.key,
+                            recipient = it.target.phone.orEmpty(),
+                            message = it.body,
+                            purpose = "bulk_message"
+                        )
+                    },
+                    operationId = operationId
+                )
+            }.getOrElse { error ->
+                val message = error.message?.takeIf { it.isNotBlank() } ?: "Server SMS could not be sent"
+                chunk.forEach { update(it.index, Status.FAILED, message) }
+                return@forEachIndexed
+            }
+            val results = batchResult.results.associateBy { it.targetKey }
+            chunk.forEach { preparedItem ->
+                val result = results[preparedItem.target.key]
+                when (result?.status) {
+                    "sent", "delivered" -> {
+                        update(preparedItem.index, Status.SENT)
+                        log(preparedItem.target.key, preparedItem.body, "sent")
+                    }
+                    "pending" -> {
+                        update(preparedItem.index, Status.QUEUED, "Accepted by SMS server; delivery confirmation pending")
+                        // Treat an accepted/ambiguous provider hand-off as sent
+                        // locally so a new screen session cannot duplicate it.
+                        log(preparedItem.target.key, preparedItem.body, "sent")
+                    }
+                    else -> update(
+                        preparedItem.index,
+                        Status.FAILED,
+                        result?.failureReason?.takeIf { it.isNotBlank() } ?: "SMS provider rejected the message"
+                    )
+                }
+            }
         }
         _state.update { it.copy(phase = Phase.COMPLETED) }
     }
@@ -163,6 +252,7 @@ class BulkMessageController(
 
     /** Stops the queue; remaining pending items become CANCELLED. */
     fun cancel() {
+        if (_state.value.serverManaged && isRunning) return
         queueJob?.cancel()
         queueJob = null
         val current = _state.value
@@ -183,6 +273,7 @@ class BulkMessageController(
         }
         if (items.none { it.status == Status.PENDING }) return false
         pausedSinceLaunch = false
+        serverOperationId = UUID.randomUUID().toString()
         _state.value = BulkQueueState(items = items, phase = Phase.RUNNING)
         queueJob = scope.launch { process(items) }
         return true
@@ -195,8 +286,9 @@ class BulkMessageController(
         queueJob = null
     }
 
-    private fun update(items: List<BulkQueueItem>, index: Int, status: Status, error: String? = null) {
-        val next = items.toMutableList()
+    private fun update(index: Int, status: Status, error: String? = null) {
+        val next = _state.value.items.toMutableList()
+        if (index !in next.indices) return
         next[index] = next[index].copy(status = status, lastError = error)
         _state.update { it.copy(items = next) }
     }

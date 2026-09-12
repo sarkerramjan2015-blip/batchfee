@@ -26,6 +26,7 @@ import com.batchfee.edu.data.repository.PermanentStudentPurgeRepository
 import com.batchfee.edu.data.repository.StudentDeletionRepository
 import com.batchfee.edu.domain.SessionManager
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
@@ -88,9 +89,22 @@ fun ArchivedStudentsScreen(db: AppDatabase, onBack: () -> Unit) {
             text = { Text("The student profile and retained history will return to the active list.", color = ArchiveMuted) },
             confirmButton = { TextButton(enabled = !isWorking, onClick = {
                 val inst = instituteId ?: return@TextButton
-                scope.launch { isWorking = true; runCatching { StudentDeletionRepository(db).restore(inst, student.id) }
-                    .onSuccess { restoreTarget = null; snackbar.showSnackbar("Student restored") }
-                    .onFailure { snackbar.showSnackbar(it.message ?: "Could not restore student") }; isWorking = false }
+                if (isWorking) return@TextButton
+                isWorking = true
+                scope.launch {
+                    val message = try {
+                        StudentDeletionRepository(db).restore(inst, student.id)
+                        restoreTarget = null
+                        "Student restored"
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (error: Exception) {
+                        error.message ?: "Could not restore student"
+                    } finally {
+                        isWorking = false
+                    }
+                    snackbar.showSnackbar(message)
+                }
             }) { Text(if (isWorking) "Restoring…" else "Restore", color = ArchiveCyan) } },
             dismissButton = { TextButton(enabled = !isWorking, onClick = { restoreTarget = null }) { Text("Cancel", color = ArchiveMuted) } }
         )
@@ -98,9 +112,22 @@ fun ArchivedStudentsScreen(db: AppDatabase, onBack: () -> Unit) {
     purgeTarget?.let { student ->
         PermanentDeleteDialog(student = student, isWorking = isWorking, onDismiss = { if (!isWorking) purgeTarget = null }) {
             val inst = instituteId ?: return@PermanentDeleteDialog
-            scope.launch { isWorking = true; runCatching { PermanentStudentPurgeRepository(db).purge(inst, student.id) }
-                .onSuccess { purgeTarget = null; snackbar.showSnackbar("Student and all linked data permanently deleted") }
-                .onFailure { snackbar.showSnackbar(it.message ?: "Permanent deletion failed") }; isWorking = false }
+            if (isWorking) return@PermanentDeleteDialog
+            isWorking = true
+            scope.launch {
+                val message = try {
+                    PermanentStudentPurgeRepository(db).purge(inst, student.id)
+                    purgeTarget = null
+                    "Student permanently deleted"
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    error.message ?: "Permanent deletion failed"
+                } finally {
+                    isWorking = false
+                }
+                snackbar.showSnackbar(message)
+            }
         }
     }
 }

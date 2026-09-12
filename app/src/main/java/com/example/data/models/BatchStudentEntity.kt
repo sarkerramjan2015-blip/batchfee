@@ -28,7 +28,16 @@ data class BatchStudentEntity(
     val customFeeReason: String? = null,
     /** The first billing period to which the custom monthly amount applies. */
     val customFeeEffectiveFromPeriod: String? = null,
+    /**
+     * Canonical, ordered fee-policy transitions encoded as
+     * `MMM yyyy=amount|MMM yyyy=BATCH`. This preserves future changes and
+     * restores without rewriting earlier billing periods. Legacy custom fields
+     * remain as a backward-compatible mirror.
+     */
+    val customFeePolicyTimeline: String? = null,
     /** Marks that the trusted ledger has reconciled this custom-fee policy. */
-    val customFeePolicySyncedAtMs: Long? = null
+    val customFeePolicySyncedAtMs: Long? = null,
+    /** Null preserves legacy inference; false protects independently assigned batches. */
+    val admissionDateLinked: Boolean? = null
 )
 

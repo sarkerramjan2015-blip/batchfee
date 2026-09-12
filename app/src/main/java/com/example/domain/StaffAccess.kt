@@ -59,7 +59,7 @@ object StaffPermissions {
 }
 
 object AccessControl {
-    private val alwaysAllowedRoutes = setOf("DashboardRoute", "More")
+    private val alwaysAllowedRoutes = setOf("DashboardRoute", "More", "NoticeCenterRoute", "TutorialGuideRoute")
 
     private val adminOnlyRoutes = setOf(
         "SettingsRoute",
@@ -71,7 +71,8 @@ object AccessControl {
         "RoutineRoute",
         "CreateCustomRoutineRoute",
         "EditCustomRoutineRoute",
-        "AllArchivesRoute"
+        "AllArchivesRoute",
+        "ProductFeedbackRoute"
     )
 
     private val routePermissions = mapOf(

@@ -13,6 +13,7 @@ import android.net.Uri
 import android.widget.Toast
 import androidx.compose.animation.core.*
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -21,6 +22,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
@@ -36,6 +38,7 @@ import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -62,9 +65,21 @@ import com.batchfee.edu.data.models.SubscriptionPlanEntity
 import com.batchfee.edu.data.models.SubscriptionRequest
 import com.batchfee.edu.data.repository.SafeDeletionRepository
 import com.batchfee.edu.data.repository.PermanentArchivePurgeRepository
+import com.batchfee.edu.data.repository.SmsRechargeAccounting
+import com.batchfee.edu.data.repository.SmsRechargeReviewRequest
 import com.batchfee.edu.data.repository.SubscriptionRepository
 import com.batchfee.edu.data.repository.PlatformAdminRepository
+import com.batchfee.edu.data.repository.InstituteDirectoryFilter
+import com.batchfee.edu.data.repository.InstituteDirectoryRow
+import com.batchfee.edu.data.repository.InstituteActivityEvent
+import com.batchfee.edu.data.repository.InstituteActivityPage
+import com.batchfee.edu.data.repository.ClientNote
+import com.batchfee.edu.data.repository.ClientNotesPage
+import com.batchfee.edu.data.repository.StudentSupportDetails
+import com.batchfee.edu.data.repository.StudentSupportResult
+import com.batchfee.edu.data.repository.StudentSupportPage
 import com.batchfee.edu.data.repository.PlatformInstituteDraft
+import com.batchfee.edu.data.repository.PlatformTeamMember
 import com.batchfee.edu.data.repository.InstituteOwnerLoginActivity
 import com.batchfee.edu.data.repository.InstituteOwnerLoginActivityRepository
 import com.batchfee.edu.domain.SessionManager
@@ -77,6 +92,7 @@ import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.Query
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
@@ -102,6 +118,17 @@ private val AccentRed = Color(0xFFF87171)
 private val AccentViolet = Color(0xFFA855F7)
 private val AccentPink = Color(0xFFF472B6)
 private val ElectricBlue = Color(0xFF3B82F6)
+
+@Composable
+private fun directoryFieldColors() = OutlinedTextFieldDefaults.colors(
+    focusedContainerColor = CardBg,
+    unfocusedContainerColor = CardBg,
+    focusedBorderColor = AccentCyan,
+    unfocusedBorderColor = BorderSub,
+    focusedTextColor = TextWhite,
+    unfocusedTextColor = TextWhite,
+    cursorColor = AccentCyan
+)
 
 private const val STANDARD_MONTHLY_FEE = 500.0
 private const val DEFAULT_TRIAL_PLAN_ID = "plan_free_trial"
@@ -183,6 +210,29 @@ data class InstituteCardData(
     val batchCount: Int = 0
 )
 
+/** Converts the allowlisted callable result into the existing card UI model. */
+private fun InstituteDirectoryRow.toInstituteCardData() = InstituteCardData(
+    entity = InstituteEntity(
+        id = instituteId,
+        name = instituteName.ifBlank { "Institute" },
+        currentPlanId = currentPlanId.ifBlank { DEFAULT_TRIAL_PLAN_ID },
+        subscriptionStatus = subscriptionStatus,
+        trialStartDateMs = createdAtMs,
+        trialEndDateMs = currentPeriodEndMs,
+        currentPeriodEndMs = currentPeriodEndMs,
+        createdAtMs = createdAtMs,
+        phone = phone,
+        whatsappNumber = phone,
+        ownerName = ownerName.ifBlank { null },
+        email = ownerEmail.ifBlank { null },
+        instituteCode = instituteCode.ifBlank { null },
+        securityPin = null
+    ),
+    studentCount = studentCount,
+    staffCount = staffCount,
+    batchCount = batchCount
+)
+
 data class InstituteStaffSummary(
     val id: String,
     val fullName: String,
@@ -211,7 +261,18 @@ data class ManagedUserSummary(
     val role: String,
     val instituteId: String? = null,
     val createdAtMs: Long,
-    val status: String = "active"
+    val status: String = "active",
+    val platformRole: String? = null
+)
+
+private fun PlatformTeamMember.toManagedUserSummary() = ManagedUserSummary(
+    id = userId,
+    name = name,
+    email = email,
+    role = "PlatformAdmin",
+    createdAtMs = createdAtMs,
+    status = status,
+    platformRole = platformRole
 )
 
 data class SubscriptionReceiptData(
@@ -268,6 +329,16 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
     private val _isLoadingMoreInstitutes = MutableStateFlow(false)
     val isLoadingMoreInstitutes = _isLoadingMoreInstitutes.asStateFlow()
 
+    /** Directory pages come only from the trusted backend cursor query. */
+    private val _directoryPage = MutableStateFlow(1)
+    val directoryPage = _directoryPage.asStateFlow()
+
+    private val _directoryPageSize = MutableStateFlow(50)
+    val directoryPageSize = _directoryPageSize.asStateFlow()
+
+    private val _directoryScannedDocuments = MutableStateFlow(0)
+    val directoryScannedDocuments = _directoryScannedDocuments.asStateFlow()
+
     private val _operationMsg = MutableStateFlow<String?>(null)
     val operationMsg = _operationMsg.asStateFlow()
 
@@ -283,8 +354,23 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
     private val _approvingRequestIds = MutableStateFlow<Set<String>>(emptySet())
     val approvingRequestIds = _approvingRequestIds.asStateFlow()
 
+    private val _smsRechargeRequests = MutableStateFlow<List<SmsRechargeReviewRequest>>(emptyList())
+    val smsRechargeRequests = _smsRechargeRequests.asStateFlow()
+
+    private val _smsAccounting = MutableStateFlow<SmsRechargeAccounting?>(null)
+    val smsAccounting = _smsAccounting.asStateFlow()
+
+    private val _reviewingSmsRequestIds = MutableStateFlow<Set<String>>(emptySet())
+    val reviewingSmsRequestIds = _reviewingSmsRequestIds.asStateFlow()
+
+    private val platformAdminRepository = PlatformAdminRepository()
+
     private val _managedUsers = MutableStateFlow<List<ManagedUserSummary>>(emptyList())
     val managedUsers = _managedUsers.asStateFlow()
+
+    /** UI affordances are restrictive; the callable backend remains authoritative. */
+    private val _platformRole = MutableStateFlow("loading")
+    val platformRole = _platformRole.asStateFlow()
 
     private val _allReceipts = MutableStateFlow<List<SubscriptionReceiptData>>(emptyList())
     val allReceipts = _allReceipts.asStateFlow()
@@ -316,6 +402,11 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
     private var instituteFirstPageListener: ListenerRegistration? = null
     private val lifecycleListeners = mutableListOf<ListenerRegistration>()
     private var resetInstituteListOnNextSnapshot = false
+    private var directoryFilters = InstituteDirectoryFilter()
+    private var directoryInitialized = false
+    private var directoryPageIndex = 0
+    private var directoryRequestGeneration = 0L
+    private val directoryCursors = mutableListOf<String?>(null)
 
     private companion object {
         const val INSTITUTE_PAGE_SIZE = 40L
@@ -327,23 +418,55 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
         get() = _stats.value.projectedRevenue
 
     init {
-        loadSubscriptionPlans()
-        loadInstitutesRealtime()
-        loadInstituteTotalCount()
-        loadPendingRequestsRealtime()
-        cleanupInvalidPendingRequests()
-        loadManagedUsersRealtime()
-        loadTrashedInstitutes()
-        viewModelScope.launch { safeDeletionRepository.replayAllPending() }
-        // Lifetime receipt/revenue totals come from the trusted dashboard.
-        // Do not open an unbounded collection-group listener at login.
-        loadAllAnnouncements()
-        refreshPlatformDashboard()
-        loadPlatformAudit()
+        viewModelScope.launch {
+            val role = resolveCurrentPlatformRole()
+            _platformRole.value = role
+            initializeForPlatformRole(role)
+        }
     }
 
     fun clearOperationMsg() { _operationMsg.value = null }
     fun clearRecoveryLink() { _lastRecoveryLink.value = null }
+
+    private suspend fun resolveCurrentPlatformRole(): String {
+        val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return "read_only"
+        return try {
+            val record = firestore.collection("app_users").document(uid).get().await()
+            val data = record.data ?: return "read_only"
+            if (data["status"] == "suspended") return "read_only"
+            when {
+                data["role"] in setOf("SuperAdmin", "superAdmin", "super_admin") -> "root"
+                data["role"] == "PlatformAdmin" && data["platformRole"] in setOf(
+                    "billing", "support", "operations", "read_only"
+                ) -> data["platformRole"] as String
+                else -> "read_only"
+            }
+        } catch (error: Exception) {
+            FirebaseFailureReporter.recordException(error)
+            "read_only"
+        }
+    }
+
+    private fun initializeForPlatformRole(role: String) {
+        loadSubscriptionPlans()
+        refreshPlatformDashboard()
+        when (role) {
+            "root" -> {
+                refreshInstituteDirectory()
+                loadPendingRequestsRealtime()
+                cleanupInvalidPendingRequests()
+                loadPlatformMembers()
+                loadTrashedInstitutes()
+                viewModelScope.launch { safeDeletionRepository.replayAllPending() }
+                loadAllAnnouncements()
+                loadPlatformAudit()
+            }
+            "billing" -> loadPendingRequestsRealtime()
+            "support", "operations" -> refreshInstituteDirectory()
+            // Read-only gets only the server dashboard. Additional reports can
+            // be deliberately added later without exposing client mutations.
+        }
+    }
 
     private fun loadSubscriptionPlans() {
         viewModelScope.launch {
@@ -584,6 +707,154 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
         }
     }
 
+    /** Root/Billing SMS recharge queue plus the Root-only accounting summary. */
+    fun loadSmsRecharge() {
+        viewModelScope.launch {
+            try {
+                _smsRechargeRequests.value = platformAdminRepository.listSmsRechargeRequests()
+                _smsAccounting.value = runCatching { platformAdminRepository.smsAccounting() }.getOrNull()
+            } catch (e: Exception) {
+                _operationMsg.value = "SMS recharge list unavailable: ${e.message}"
+                FirebaseFailureReporter.recordException(e)
+            }
+        }
+    }
+
+    fun refreshSmsRecharge() = loadSmsRecharge()
+
+    fun approveSmsRecharge(request: SmsRechargeReviewRequest) {
+        if (request.requestId in _reviewingSmsRequestIds.value) return
+        _reviewingSmsRequestIds.value = _reviewingSmsRequestIds.value + request.requestId
+        viewModelScope.launch {
+            try {
+                platformAdminRepository.reviewSmsRechargeRequest(
+                    instituteId = request.instituteId,
+                    requestId = request.requestId,
+                    decision = "approve"
+                )
+                _smsRechargeRequests.value = _smsRechargeRequests.value.map {
+                    if (it.requestId == request.requestId) it.copy(status = "approved") else it
+                }
+                _operationMsg.value = "Approved ${request.packageName} recharge (${request.smsCount} SMS) for ${request.instituteId}"
+                loadSmsRecharge()
+            } catch (e: Exception) {
+                _operationMsg.value = "SMS approve failed: ${e.message}"
+                FirebaseFailureReporter.recordException(e)
+            } finally {
+                _reviewingSmsRequestIds.value = _reviewingSmsRequestIds.value - request.requestId
+            }
+        }
+    }
+
+    fun rejectSmsRecharge(request: SmsRechargeReviewRequest, note: String? = null) {
+        if (request.requestId in _reviewingSmsRequestIds.value) return
+        _reviewingSmsRequestIds.value = _reviewingSmsRequestIds.value + request.requestId
+        viewModelScope.launch {
+            try {
+                platformAdminRepository.reviewSmsRechargeRequest(
+                    instituteId = request.instituteId,
+                    requestId = request.requestId,
+                    decision = "reject",
+                    note = note
+                )
+                _smsRechargeRequests.value = _smsRechargeRequests.value.map {
+                    if (it.requestId == request.requestId) it.copy(status = "rejected", reviewerNote = note.orEmpty()) else it
+                }
+                _operationMsg.value = "Rejected ${request.packageName} recharge for ${request.instituteId}"
+                loadSmsRecharge()
+            } catch (e: Exception) {
+                _operationMsg.value = "SMS reject failed: ${e.message}"
+                FirebaseFailureReporter.recordException(e)
+            } finally {
+                _reviewingSmsRequestIds.value = _reviewingSmsRequestIds.value - request.requestId
+            }
+        }
+    }
+
+    /**
+     * Starts a fresh, server-filtered directory sequence.  A filter change may
+     * never reuse a cursor from another search because that can skip or repeat
+     * institutes.
+     */
+    fun applyInstituteDirectoryFilters(filters: InstituteDirectoryFilter, pageSize: Int) {
+        if (pageSize !in setOf(25, 50, 100)) return
+        if (directoryInitialized && directoryFilters == filters && _directoryPageSize.value == pageSize) return
+        directoryInitialized = true
+        directoryFilters = filters
+        _directoryPageSize.value = pageSize
+        directoryPageIndex = 0
+        directoryCursors.clear()
+        directoryCursors += null
+        loadInstituteDirectoryPage(0)
+    }
+
+    /** Explicit refresh returns to page one so the result set is never stale. */
+    fun refreshInstituteDirectory() {
+        directoryInitialized = true
+        directoryPageIndex = 0
+        directoryCursors.clear()
+        directoryCursors += null
+        loadInstituteDirectoryPage(0)
+    }
+
+    fun nextInstituteDirectoryPage() {
+        val nextIndex = directoryPageIndex + 1
+        if (_isLoading.value || _isLoadingMoreInstitutes.value ||
+            !_hasMoreInstitutes.value || directoryCursors.getOrNull(nextIndex) == null
+        ) return
+        loadInstituteDirectoryPage(nextIndex)
+    }
+
+    fun previousInstituteDirectoryPage() {
+        if (_isLoading.value || _isLoadingMoreInstitutes.value || directoryPageIndex == 0) return
+        loadInstituteDirectoryPage(directoryPageIndex - 1)
+    }
+
+    private fun loadInstituteDirectoryPage(targetIndex: Int) {
+        val cursor = directoryCursors.getOrNull(targetIndex) ?: return
+        val requestGeneration = ++directoryRequestGeneration
+        val isForwardPage = targetIndex > directoryPageIndex
+        if (isForwardPage) _isLoadingMoreInstitutes.value = true else _isLoading.value = true
+        viewModelScope.launch {
+            try {
+                val page = PlatformAdminRepository().queryInstituteDirectory(
+                    filters = directoryFilters,
+                    pageSize = _directoryPageSize.value,
+                    cursor = cursor
+                )
+                if (requestGeneration != directoryRequestGeneration) return@launch
+
+                // A reload can change downstream cursors. Keep only the current
+                // path and add the cursor returned for its immediate next page.
+                while (directoryCursors.size > targetIndex + 1) directoryCursors.removeAt(directoryCursors.lastIndex)
+                page.nextCursor.takeIf { it.isNotBlank() }?.let(directoryCursors::add)
+                directoryPageIndex = targetIndex
+                _directoryPage.value = targetIndex + 1
+                _directoryScannedDocuments.value = page.scannedDocuments
+                _hasMoreInstitutes.value = page.hasMore && page.nextCursor.isNotBlank()
+                _institutes.value = page.results.map(InstituteDirectoryRow::toInstituteCardData)
+                _lastActiveMap.value = page.results
+                    .filter { it.lastActiveAtMs > 0L }
+                    .associate { it.instituteId to it.lastActiveAtMs }
+                recalculateStats(_institutes.value)
+                rebuildReceiptHistory()
+            } catch (error: Exception) {
+                if (requestGeneration != directoryRequestGeneration) return@launch
+                FirebaseFailureReporter.report(
+                    error,
+                    "query institute directory",
+                    permissionDeniedIsExpected = true
+                )
+                _operationMsg.value = "Directory search failed: ${error.message ?: "Try Refresh."}"
+            } finally {
+                if (requestGeneration == directoryRequestGeneration) {
+                    _isLoading.value = false
+                    _isLoadingMoreInstitutes.value = false
+                }
+            }
+        }
+    }
+
     private fun loadInstitutesRealtime() {
         instituteFirstPageListener?.remove()
         resetInstituteListOnNextSnapshot = true
@@ -744,26 +1015,23 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
         )
     }
 
-    private fun loadManagedUsersRealtime() {
-        lifecycleListeners += firestore.collection("app_users")
-            .whereIn("role", listOf("SuperAdmin", "superAdmin", "super_admin", "PlatformAdmin"))
-            .limit(ADMIN_LIST_WINDOW)
-            .addSnapshotListener { snapshot, error ->
-                if (error != null || snapshot == null) return@addSnapshotListener
-                _managedUsers.value = snapshot.documents.mapNotNull { doc ->
-                    val email = doc.getString("email") ?: return@mapNotNull null
-                    val role = doc.getString("role") ?: return@mapNotNull null
-                    ManagedUserSummary(
-                        id = doc.id,
-                        name = doc.getString("name") ?: email.substringBefore("@"),
-                        email = email,
-                        role = role,
-                        instituteId = doc.getString("instituteId"),
-                        createdAtMs = (doc.get("createdAtMs") as? Number)?.toLong() ?: System.currentTimeMillis(),
-                        status = doc.getString("status") ?: "active"
-                    )
-                }.sortedWith(compareBy<ManagedUserSummary> { it.role }.thenBy { it.name.lowercase(Locale.getDefault()) })
+    private fun loadPlatformMembers() {
+        viewModelScope.launch {
+            try {
+                _managedUsers.value = PlatformAdminRepository().listPlatformMembers()
+                    .map(PlatformTeamMember::toManagedUserSummary)
+            } catch (error: Exception) {
+                // Do not fall back to an unrestricted app_users query. A Root can
+                // retry safely; other platform roles must never receive this list.
+                FirebaseFailureReporter.report(
+                    error,
+                    "load platform members",
+                    permissionDeniedIsExpected = true
+                )
+                _managedUsers.value = emptyList()
+                _operationMsg.value = "Team Members could not be loaded: ${error.message}"
             }
+        }
     }
 
     fun createManagedUser(
@@ -1347,6 +1615,116 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
         }
     }
 
+    fun loadInstituteTimelinePage(
+        instituteId: String,
+        cursor: String?,
+        onResult: (InstituteActivityPage, String?) -> Unit
+    ) {
+        viewModelScope.launch {
+            try {
+                val page = PlatformAdminRepository().queryInstituteTimeline(instituteId, cursor = cursor)
+                onResult(page, null)
+            } catch (error: Exception) {
+                FirebaseFailureReporter.report(error, "load institute timeline page", permissionDeniedIsExpected = true)
+                onResult(InstituteActivityPage(emptyList(), hasMore = false, nextCursor = ""), "More activity could not be loaded right now.")
+            }
+        }
+    }
+
+    fun loadClientNotes(instituteId: String, onResult: (List<ClientNote>, String?) -> Unit) {
+        viewModelScope.launch {
+            try {
+                onResult(PlatformAdminRepository().listClientNotes(instituteId).notes, null)
+            } catch (error: Exception) {
+                FirebaseFailureReporter.report(error, "load client notes", permissionDeniedIsExpected = true)
+                onResult(emptyList(), "Client notes could not be loaded right now.")
+            }
+        }
+    }
+
+    fun loadClientNotesPage(
+        instituteId: String,
+        cursor: String?,
+        onResult: (ClientNotesPage, String?) -> Unit
+    ) {
+        viewModelScope.launch {
+            try {
+                val page = PlatformAdminRepository().listClientNotes(instituteId, cursor = cursor)
+                onResult(page, null)
+            } catch (error: Exception) {
+                FirebaseFailureReporter.report(error, "load client notes page", permissionDeniedIsExpected = true)
+                onResult(ClientNotesPage(emptyList(), hasMore = false, nextCursor = ""), "More notes could not be loaded right now.")
+            }
+        }
+    }
+
+    fun createClientNote(
+        instituteId: String,
+        title: String,
+        body: String,
+        status: String,
+        followUpAtMs: Long,
+        onResult: (ClientNote?, String?) -> Unit
+    ) {
+        viewModelScope.launch {
+            try {
+                val note = PlatformAdminRepository().createClientNote(
+                    instituteId = instituteId,
+                    title = title,
+                    body = body,
+                    status = status,
+                    followUpAtMs = followUpAtMs
+                )
+                _operationMsg.value = "Client note saved."
+                onResult(note, null)
+            } catch (error: Exception) {
+                FirebaseFailureReporter.report(error, "create client note", permissionDeniedIsExpected = true)
+                onResult(null, error.message ?: "Client note could not be saved.")
+            }
+        }
+    }
+
+    fun searchStudentsForSupportPage(
+        query: String,
+        instituteId: String?,
+        cursor: String?,
+        onResult: (StudentSupportPage, String?) -> Unit
+    ) {
+        viewModelScope.launch {
+            try {
+                val page = PlatformAdminRepository().searchStudentsForSupport(
+                    query = query,
+                    instituteId = instituteId,
+                    cursor = cursor
+                )
+                onResult(page, null)
+            } catch (error: Exception) {
+                FirebaseFailureReporter.report(error, "student support search page", permissionDeniedIsExpected = true)
+                onResult(StudentSupportPage(emptyList(), hasMore = false, nextCursor = "", scannedDocuments = 0), error.message ?: "Student search could not be completed.")
+            }
+        }
+    }
+
+    fun openStudentSupportDetails(
+        result: StudentSupportResult,
+        reason: String,
+        onResult: (StudentSupportDetails?, String?) -> Unit
+    ) {
+        viewModelScope.launch {
+            try {
+                val details = PlatformAdminRepository().getStudentSupportDetails(
+                    instituteId = result.instituteId,
+                    studentId = result.studentId,
+                    reason = reason
+                )
+                onResult(details, null)
+            } catch (error: Exception) {
+                FirebaseFailureReporter.report(error, "student support detail", permissionDeniedIsExpected = true)
+                onResult(null, error.message ?: "Student details could not be loaded.")
+            }
+        }
+    }
+
     fun transferOwner(instituteId: String, ownerName: String, ownerEmail: String, reason: String) {
         if (ownerName.isBlank() || ownerEmail.isBlank() || reason.trim().length < 3) {
             _operationMsg.value = "Owner name, email, and transfer reason are required."
@@ -1405,7 +1783,29 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                 val result = PlatformAdminRepository().provisionPlatformAdmin(name, email, role)
                 _lastRecoveryLink.value = result.recoveryLink.takeIf { it.isNotBlank() }
                 _operationMsg.value = "${role.replace('_', ' ')} access provisioned and audited."
+                loadPlatformMembers()
             } catch (error: Exception) { _operationMsg.value = "Platform role update failed: ${error.message}" }
+        }
+    }
+
+    fun updatePlatformMember(member: ManagedUserSummary, role: String, status: String, reason: String) {
+        if (reason.trim().length < 3) {
+            _operationMsg.value = "Enter a reason before changing platform access."
+            return
+        }
+        viewModelScope.launch {
+            try {
+                PlatformAdminRepository().updatePlatformMember(
+                    targetUserId = member.id,
+                    platformRole = role,
+                    status = status,
+                    reason = reason
+                )
+                _operationMsg.value = "${member.name}'s platform access was updated and audited."
+                loadPlatformMembers()
+            } catch (error: Exception) {
+                _operationMsg.value = "Platform access update failed: ${error.message}"
+            }
         }
     }
 
@@ -1481,16 +1881,23 @@ class SuperAdminViewModelFactory(private val db: AppDatabase) : ViewModelProvide
 @Composable
 fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
     val viewModel: SuperAdminViewModel = viewModel(factory = SuperAdminViewModelFactory(db))
+    val platformRole by viewModel.platformRole.collectAsState()
     val institutes by viewModel.institutes.collectAsState()
     val trashedInstitutes by viewModel.trashedInstitutes.collectAsState()
     val subscriptionPlans by viewModel.subscriptionPlans.collectAsState()
     val stats by viewModel.stats.collectAsState()
     val pendingRequests by viewModel.pendingRequests.collectAsState()
     val approvingRequestIds by viewModel.approvingRequestIds.collectAsState()
+    val smsRechargeRequests by viewModel.smsRechargeRequests.collectAsState()
+    val smsAccounting by viewModel.smsAccounting.collectAsState()
+    val reviewingSmsRequestIds by viewModel.reviewingSmsRequestIds.collectAsState()
     val managedUsers by viewModel.managedUsers.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val hasMoreInstitutes by viewModel.hasMoreInstitutes.collectAsState()
     val isLoadingMoreInstitutes by viewModel.isLoadingMoreInstitutes.collectAsState()
+    val directoryPage by viewModel.directoryPage.collectAsState()
+    val directoryPageSize by viewModel.directoryPageSize.collectAsState()
+    val directoryScannedDocuments by viewModel.directoryScannedDocuments.collectAsState()
     val operationMsg by viewModel.operationMsg.collectAsState()
     val receiptData by viewModel.receiptData.collectAsState()
     val lastActiveMap by viewModel.lastActiveMap.collectAsState()
@@ -1498,10 +1905,36 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
     val recoveryLink by viewModel.lastRecoveryLink.collectAsState()
     val importReport by viewModel.bulkImportReport.collectAsState()
     val purgingInstituteIds by viewModel.purgingInstituteIds.collectAsState()
+    val announcements by viewModel.announcements.collectAsState()
 
     val snackbarHostState = remember { SnackbarHostState() }
     LaunchedEffect(operationMsg) {
         operationMsg?.let { snackbarHostState.showSnackbar(it); viewModel.clearOperationMsg() }
+    }
+
+    if (platformRole == "loading") {
+        PlatformAccessLoadingScreen(onLogout)
+        return
+    }
+    if (platformRole != "root") {
+        PlatformMemberConsole(
+            role = platformRole,
+            stats = stats,
+            isLoading = isLoading,
+            institutes = institutes,
+            subscriptionPlans = subscriptionPlans,
+            pendingRequests = pendingRequests,
+            approvingRequestIds = approvingRequestIds,
+            recoveryLink = recoveryLink,
+            importReport = importReport,
+            viewModel = viewModel,
+            onLogout = onLogout,
+            snackbarHostState = snackbarHostState,
+            smsRechargeRequests = smsRechargeRequests,
+            reviewingSmsRequestIds = reviewingSmsRequestIds,
+            onSmsLoaded = { viewModel.loadSmsRecharge() }
+        )
+        return
     }
 
     var announceText by remember { mutableStateOf("") }
@@ -1509,10 +1942,12 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
     var statusFilter by remember { mutableStateOf("all") }
     var lastActivityFilter by remember { mutableStateOf("all") }
     var lastActivityMenuOpen by remember { mutableStateOf(false) }
-    // Kept for future advanced search. The normal dashboard intentionally uses
-    // only the two controls above.
     var planFilter by remember { mutableStateOf("all") }
     var expiryFilter by remember { mutableStateOf("all") }
+    var minStudentCount by remember { mutableStateOf("") }
+    var maxStudentCount by remember { mutableStateOf("") }
+    var planFilterMenuOpen by remember { mutableStateOf(false) }
+    var pageSizeMenuOpen by remember { mutableStateOf(false) }
     var directoryLayout by remember { mutableStateOf("grid") }
     var directorySort by remember { mutableStateOf("newest") }
     var showCreateInstitute by remember { mutableStateOf(false) }
@@ -1529,6 +1964,7 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
     var showReceiptDialog by remember { mutableStateOf(false) }
     var permanentDeleteTarget by remember { mutableStateOf<InstituteCardData?>(null) }
     var recoveryVaultExpanded by remember { mutableStateOf(false) }
+    var selectedTab by rememberSaveable { mutableStateOf(0) }
 
     // Open receipt actions only after server approval returned the saved receipt.
     LaunchedEffect(receiptData) {
@@ -1536,29 +1972,20 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
     }
 
     val planNameById = remember(subscriptionPlans) { subscriptionPlans.associate { it.id to it.name } }
-
-    val filteredInstitutes = remember(institutes, searchQuery, statusFilter, lastActivityFilter, lastActiveMap) {
-        val now = System.currentTimeMillis()
-        institutes.filter { card ->
-            val inst = card.entity
-            val matchesSearch = searchQuery.isBlank() ||
-                inst.name.contains(searchQuery, ignoreCase = true) ||
-                (inst.instituteCode?.contains(searchQuery, ignoreCase = true) ?: false) ||
-                (inst.ownerName?.contains(searchQuery, ignoreCase = true) ?: false) ||
-                (inst.phone?.contains(searchQuery) ?: false) ||
-                (inst.email?.contains(searchQuery, ignoreCase = true) ?: false)
-            val matchesFilter = statusFilter == "all" || inst.subscriptionStatus == statusFilter
-            val lastActiveAt = lastActiveMap[inst.id]
-            val matchesActivity = when (lastActivityFilter) {
-                "today" -> lastActiveAt?.let { now - it in 0..MILLIS_PER_DAY } == true
-                "7days" -> lastActiveAt?.let { now - it in 0..(7 * MILLIS_PER_DAY) } == true
-                "30days" -> lastActiveAt?.let { now - it in 0..(30 * MILLIS_PER_DAY) } == true
-                "inactive30" -> lastActiveAt == null || now - lastActiveAt > 30 * MILLIS_PER_DAY
-                "never" -> lastActiveAt == null
-                else -> true
-            }
-            matchesSearch && matchesFilter && matchesActivity
-        }
+    val directoryFilters = InstituteDirectoryFilter(
+        query = searchQuery,
+        planId = planFilter.takeUnless { it == "all" }.orEmpty(),
+        status = statusFilter,
+        renewalWindow = expiryFilter,
+        activityWindow = lastActivityFilter,
+        minStudentCount = minStudentCount.toIntOrNull(),
+        maxStudentCount = maxStudentCount.toIntOrNull()
+    )
+    // Typing does not fan out a Firestore query per character. The trusted
+    // callable receives one debounced, complete filter set and resets to page 1.
+    LaunchedEffect(directoryFilters, directoryPageSize) {
+        delay(350)
+        viewModel.applyInstituteDirectoryFilters(directoryFilters, directoryPageSize)
     }
     val instituteNameMap = remember(institutes) { institutes.associate { it.entity.id to it.entity.name } }
     val filteredUsers = remember(managedUsers, userSearchQuery, userRoleFilter, instituteNameMap) {
@@ -1599,13 +2026,22 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
             )
         }
     ) { padding ->
-        LazyColumn(
-            Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            item { Spacer(Modifier.height(4.dp)) }
+        Column(Modifier.fillMaxSize().padding(padding)) {
+            SuperAdminTabBar(
+                selectedTab = selectedTab,
+                onSelect = { selectedTab = it },
+                pendingCount = pendingRequests.size,
+                instituteCount = stats.totalInstitutes
+            )
+            LazyColumn(
+                Modifier.fillMaxSize().padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                item { Spacer(Modifier.height(12.dp)) }
 
+            // ── TAB 0 · OVERVIEW ──────────────────────────────
             // ── Platform Overview ──
+            if (selectedTab == 0) {
             item {
                 Text("Platform Overview", color = TextMuted, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(6.dp))
@@ -1624,8 +2060,53 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
                     }
                 }
             }
+            }
 
+            // ── TAB 2 · PLATFORM ─────────────────────────────
+            if (selectedTab == 2) {
             // ── Revenue Section ──
+            item {
+                Card(
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(containerColor = CardBg),
+                    border = BorderStroke(1.dp, AccentCyan.copy(alpha = 0.28f))
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Filled.AdminPanelSettings, null, tint = AccentCyan)
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Team Members", color = TextWhite, fontWeight = FontWeight.Bold)
+                            Text("Invite, change role, suspend or reactivate non-root platform accounts.", color = TextMuted, fontSize = 11.sp)
+                        }
+                        TextButton(onClick = { showPlatformRoles = true }) { Text("Manage", color = AccentCyan) }
+                    }
+                }
+            }
+
+            // ── Platform Audit ──
+            item {
+                Card(
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(containerColor = CardBg)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Filled.History, null, tint = AccentViolet)
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Platform Audit", color = TextWhite, fontWeight = FontWeight.Bold)
+                            Text("Review every platform-level administration action, newest first.", color = TextMuted, fontSize = 11.sp)
+                        }
+                        TextButton(onClick = { showAuditHistory = true }) { Text("Open", color = AccentViolet) }
+                    }
+                }
+            }
+
             if (trashedInstitutes.isNotEmpty()) {
                 item {
                     RecoveryVaultSection(
@@ -1654,8 +2135,25 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
                     onDelete = viewModel::deleteSubscriptionPlan
                 )
             }
+            }
+            if (selectedTab == 2) {
+                item {
+                    BroadcastSection(
+                        announceText = announceText,
+                        onAnnounceTextChange = { announceText = it },
+                        activeInstituteCount = stats.activeSubscriptions,
+                        onSend = viewModel::broadcastAnnouncement,
+                        announcements = announcements,
+                        onEdit = { announcement, message, days -> viewModel.editAnnouncement(announcement.id, message, days) },
+                        onArchive = { announcement -> viewModel.archiveAnnouncement(announcement.id) },
+                        onRestore = { announcement -> viewModel.restoreAnnouncement(announcement.id) },
+                        onDelete = { announcement -> viewModel.deleteAnnouncement(announcement.id) }
+                    )
+                }
+            }
 
-
+            // ── TAB 0 · OVERVIEW (continued) ──────────────────
+            if (selectedTab == 0) {
             item {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Box(Modifier.weight(1f)) { RevenueCard("Lifetime revenue", if (isLoading) "..." else "BDT ${NumberFormat.getNumberInstance(Locale.getDefault()).apply { maximumFractionDigits = 0 }.format(stats.lifetimeRevenue)}", AccentCyan, Icons.Filled.TrendingUp) }
@@ -1693,20 +2191,28 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
             }
 
             item {
-                BroadcastSection(
-                    announceText = announceText,
-                    onAnnounceTextChange = { announceText = it },
-                    activeInstituteCount = stats.activeSubscriptions,
-                    onSend = { msg, days ->
-                        viewModel.broadcastAnnouncement(msg, days)
-                        announceText = ""
-                    },
-                    announcements = viewModel.announcements.collectAsState().value,
-                    onEdit = { a, msg, days -> viewModel.editAnnouncement(a.id, msg, days) },
-                    onArchive = { viewModel.archiveAnnouncement(it.id) },
-                    onRestore = { viewModel.restoreAnnouncement(it.id) },
-                    onDelete = { viewModel.deleteAnnouncement(it.id) }
+                SmsRechargeReviewSection(
+                    requests = smsRechargeRequests,
+                    accounting = smsAccounting,
+                    reviewingRequestIds = reviewingSmsRequestIds,
+                    onLoaded = { viewModel.loadSmsRecharge() },
+                    onRefresh = { viewModel.refreshSmsRecharge() },
+                    onApprove = viewModel::approveSmsRecharge,
+                    onReject = { request, note -> viewModel.rejectSmsRecharge(request, note) }
                 )
+            }
+
+            item {
+                V18NoticeAdministrationSection()
+            }
+
+            item {
+                V18SupportFeedbackInboxSection()
+            }
+
+            item {
+                V18TutorialAdministrationSection()
+            }
             }
 
             // ── Pending Requests ──
@@ -1835,16 +2341,60 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
                 }
             }
 
+            // ── TAB 1 · INSTITUTES ────────────────────────────
+            if (selectedTab == 1) {
+                item {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = { showCreateInstitute = true },
+                            modifier = Modifier.weight(1f).height(44.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = AccentCyan)
+                        ) {
+                            Icon(Icons.Filled.AddBusiness, null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Create Institute", color = BgColor, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        }
+                        OutlinedButton(
+                            onClick = { showCsvImport = true },
+                            modifier = Modifier.weight(1f).height(44.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, AccentViolet),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentViolet)
+                        ) {
+                            Icon(Icons.Filled.UploadFile, null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Import CSV", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+
             // ── Institute list ──
             item {
                 Spacer(Modifier.height(4.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Text("All Institutes · ${filteredInstitutes.size}", color = TextMuted, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    Column {
+                        Text("Institute Directory · Page $directoryPage", color = TextMuted, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        Text("${institutes.size} result(s) on this page · ${directoryPageSize} per page", color = TextMuted.copy(alpha = .75f), fontSize = 10.sp)
+                    }
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (searchQuery.isNotBlank() || statusFilter != "all" || lastActivityFilter != "all") {
-                            TextButton(onClick = { searchQuery = ""; statusFilter = "all"; lastActivityFilter = "all" }) {
+                        if (searchQuery.isNotBlank() || statusFilter != "all" || lastActivityFilter != "all" ||
+                            planFilter != "all" || expiryFilter != "all" || minStudentCount.isNotBlank() || maxStudentCount.isNotBlank()
+                        ) {
+                            TextButton(onClick = {
+                                searchQuery = ""
+                                statusFilter = "all"
+                                lastActivityFilter = "all"
+                                planFilter = "all"
+                                expiryFilter = "all"
+                                minStudentCount = ""
+                                maxStudentCount = ""
+                            }) {
                                 Text("Clear", color = AccentCyan, fontSize = 11.sp)
                             }
+                        }
+                        IconButton(onClick = viewModel::refreshInstituteDirectory, modifier = Modifier.size(36.dp)) {
+                            Icon(Icons.Filled.Refresh, "Refresh directory", tint = AccentCyan, modifier = Modifier.size(19.dp))
                         }
                         Box {
                             IconButton(onClick = { lastActivityMenuOpen = true }, modifier = Modifier.size(36.dp)) {
@@ -2005,6 +2555,121 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
                 }
             }
 
+            // These controls are part of the trusted directory request, not a
+            // filter over the visible page.
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = CardBg),
+                    border = BorderStroke(1.dp, BorderSub)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Box(Modifier.weight(1f)) {
+                                OutlinedButton(
+                                    onClick = { planFilterMenuOpen = true },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentCyan)
+                                ) {
+                                    Icon(Icons.Filled.Tune, null, modifier = Modifier.size(15.dp))
+                                    Spacer(Modifier.width(5.dp))
+                                    Text(
+                                        if (planFilter == "all") "All plans" else planDisplayName(planFilter, subscriptionPlans),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        fontSize = 11.sp
+                                    )
+                                }
+                                DropdownMenu(
+                                    expanded = planFilterMenuOpen,
+                                    onDismissRequest = { planFilterMenuOpen = false },
+                                    containerColor = CardBg
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text("All plans", color = if (planFilter == "all") AccentCyan else TextWhite) },
+                                        onClick = { planFilter = "all"; planFilterMenuOpen = false }
+                                    )
+                                    subscriptionPlans.forEach { plan ->
+                                        DropdownMenuItem(
+                                            text = { Text(plan.name, color = if (planFilter == plan.id) AccentCyan else TextWhite) },
+                                            onClick = { planFilter = plan.id; planFilterMenuOpen = false }
+                                        )
+                                    }
+                                }
+                            }
+                            Box(Modifier.weight(1f)) {
+                                OutlinedButton(
+                                    onClick = { pageSizeMenuOpen = true },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentCyan)
+                                ) {
+                                    Text("$directoryPageSize per page", fontSize = 11.sp)
+                                    Icon(Icons.Filled.ExpandMore, null, modifier = Modifier.size(15.dp))
+                                }
+                                DropdownMenu(
+                                    expanded = pageSizeMenuOpen,
+                                    onDismissRequest = { pageSizeMenuOpen = false },
+                                    containerColor = CardBg
+                                ) {
+                                    listOf(25, 50, 100).forEach { size ->
+                                        DropdownMenuItem(
+                                            text = { Text("$size per page", color = if (size == directoryPageSize) AccentCyan else TextWhite) },
+                                            onClick = {
+                                                viewModel.applyInstituteDirectoryFilters(directoryFilters, size)
+                                                pageSizeMenuOpen = false
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            listOf(
+                                "all" to "Any renewal",
+                                "7days" to "≤ 7 days",
+                                "30days" to "≤ 30 days",
+                                "expired" to "Expired"
+                            ).forEach { (value, label) ->
+                                FilterChip(
+                                    selected = expiryFilter == value,
+                                    onClick = { expiryFilter = value },
+                                    label = { Text(label, fontSize = 9.sp) },
+                                    modifier = Modifier.weight(1f),
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        containerColor = CardBg,
+                                        selectedContainerColor = AccentCyan.copy(alpha = .15f)
+                                    )
+                                )
+                            }
+                        }
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedTextField(
+                                value = minStudentCount,
+                                onValueChange = { value -> minStudentCount = value.filter(Char::isDigit).take(7) },
+                                label = { Text("Min students") },
+                                modifier = Modifier.weight(1f),
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                colors = directoryFieldColors()
+                            )
+                            OutlinedTextField(
+                                value = maxStudentCount,
+                                onValueChange = { value -> maxStudentCount = value.filter(Char::isDigit).take(7) },
+                                label = { Text("Max students") },
+                                modifier = Modifier.weight(1f),
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                colors = directoryFieldColors()
+                            )
+                        }
+                    }
+                }
+            }
+
             // Advanced filtering stays available in the code path, but is intentionally
             // not part of the everyday dashboard flow.
             if (false) {
@@ -2086,43 +2751,77 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
             }
             }
 
-            if (filteredInstitutes.isEmpty()) {
+            if (institutes.isEmpty() && !isLoading) {
                 item {
                     Box(Modifier.fillMaxWidth().padding(vertical = 24.dp), contentAlignment = Alignment.Center) {
-                        Text(if (searchQuery.isNotBlank() || statusFilter != "all" || lastActivityFilter != "all") "No institutes match your filters." else "No institutes registered yet.",
-                            color = TextMuted, fontSize = 14.sp)
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                if (hasMoreInstitutes) "No match in this scan window yet." else if (
+                                    searchQuery.isNotBlank() || statusFilter != "all" || lastActivityFilter != "all" ||
+                                    planFilter != "all" || expiryFilter != "all" || minStudentCount.isNotBlank() || maxStudentCount.isNotBlank()
+                                ) "No institutes match these server filters." else "No institutes registered yet.",
+                                color = TextMuted,
+                                fontSize = 14.sp
+                            )
+                            if (hasMoreInstitutes) {
+                                Spacer(Modifier.height(6.dp))
+                                Text("Continue to the next page to scan more directory records.", color = TextMuted, fontSize = 11.sp)
+                            }
+                        }
                     }
                 }
             } else {
-                items(filteredInstitutes, key = { it.entity.id }) { card ->
+                items(institutes, key = { it.entity.id }) { card ->
                     InstituteCard(card, viewModel, subscriptionPlans)
                 }
             }
 
-            if (hasMoreInstitutes) {
-                item {
-                    OutlinedButton(
-                        onClick = viewModel::loadMoreInstitutes,
-                        enabled = !isLoadingMoreInstitutes,
-                        modifier = Modifier.fillMaxWidth().height(46.dp),
-                        shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentCyan)
-                    ) {
-                        if (isLoadingMoreInstitutes) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(18.dp),
-                                strokeWidth = 2.dp,
-                                color = AccentCyan
-                            )
-                            Spacer(Modifier.width(8.dp))
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = CardBg),
+                    border = BorderStroke(1.dp, BorderSub)
+                ) {
+                    Column(Modifier.padding(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("Page $directoryPage", color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            if (directoryScannedDocuments > 0) "Server scanned $directoryScannedDocuments record(s) for this page" else "Server-side directory query",
+                            color = TextMuted,
+                            fontSize = 10.sp
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(
+                                onClick = viewModel::previousInstituteDirectoryPage,
+                                enabled = directoryPage > 1 && !isLoading && !isLoadingMoreInstitutes,
+                                modifier = Modifier.weight(1f),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentCyan)
+                            ) { Text("Previous", fontSize = 11.sp) }
+                            Button(
+                                onClick = viewModel::nextInstituteDirectoryPage,
+                                enabled = hasMoreInstitutes && !isLoading && !isLoadingMoreInstitutes,
+                                modifier = Modifier.weight(1f),
+                                colors = ButtonDefaults.buttonColors(containerColor = AccentCyan)
+                            ) {
+                                if (isLoadingMoreInstitutes) {
+                                    CircularProgressIndicator(Modifier.size(15.dp), strokeWidth = 2.dp, color = BgColor)
+                                    Spacer(Modifier.width(6.dp))
+                                }
+                                Text(if (isLoadingMoreInstitutes) "Loading…" else "Next page", color = BgColor, fontSize = 11.sp)
+                            }
                         }
-                        Text(if (isLoadingMoreInstitutes) "Loading institutes…" else "Load more institutes")
+                        if (!hasMoreInstitutes) {
+                            Spacer(Modifier.height(5.dp))
+                            Text("End of this server-filtered directory result.", color = TextMuted, fontSize = 10.sp)
+                        }
                     }
                 }
             }
-
+            }
 
             item { Spacer(Modifier.height(80.dp)) }
+        }
         }
     }
 
@@ -2366,7 +3065,8 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
         PlatformRolesDialog(
             managedUsers = managedUsers,
             onDismiss = { showPlatformRoles = false },
-            onProvision = viewModel::provisionPlatformRole
+            onProvision = viewModel::provisionPlatformRole,
+            onUpdate = viewModel::updatePlatformMember
         )
     }
     if (showAuditHistory) {
@@ -2461,6 +3161,307 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
             },
             containerColor = CardBg,
             shape = RoundedCornerShape(16.dp)
+        )
+    }
+}
+
+@Composable
+private fun SuperAdminTabBar(
+    selectedTab: Int,
+    onSelect: (Int) -> Unit,
+    pendingCount: Int,
+    instituteCount: Int
+) {
+    val tabs = listOf(
+        Triple("Overview", Icons.Filled.Dashboard, pendingCount),
+        Triple("Institutes", Icons.Filled.Business, instituteCount),
+        Triple("Platform", Icons.Filled.AdminPanelSettings, 0)
+    )
+    Column(Modifier.fillMaxWidth().background(BgColor)) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 8.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(CardBg)
+                .border(1.dp, BorderSub, RoundedCornerShape(16.dp))
+                .padding(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            tabs.forEachIndexed { index, (label, icon, badge) ->
+                val selected = index == selectedTab
+                val contentColor by animateColorAsState(
+                    targetValue = if (selected) Color.White else TextMuted,
+                    label = "tabContent$index"
+                )
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(40.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(
+                            if (selected) Brush.horizontalGradient(listOf(ElectricBlue, AccentCyan))
+                            else Brush.linearGradient(listOf(Color.Transparent, Color.Transparent))
+                        )
+                        .clickable { onSelect(index) },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+                        Icon(icon, contentDescription = null, tint = contentColor, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(5.dp))
+                        Text(
+                            label,
+                            color = contentColor,
+                            fontSize = 12.sp,
+                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                            maxLines = 1
+                        )
+                        if (badge > 0) {
+                            Spacer(Modifier.width(5.dp))
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(if (selected) Color.White.copy(alpha = 0.24f) else AccentAmber.copy(alpha = 0.16f))
+                                    .padding(horizontal = 5.dp, vertical = 1.dp)
+                            ) {
+                                Text(
+                                    if (badge > 99) "99+" else badge.toString(),
+                                    color = if (selected) Color.White else AccentAmber,
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(
+                    Brush.horizontalGradient(
+                        listOf(Color.Transparent, AccentCyan.copy(alpha = 0.28f), Color.Transparent)
+                    )
+                )
+        )
+    }
+}
+
+@Composable
+private fun SmsRechargeReviewSection(
+    requests: List<SmsRechargeReviewRequest>,
+    accounting: SmsRechargeAccounting?,
+    reviewingRequestIds: Set<String>,
+    onLoaded: () -> Unit,
+    onRefresh: () -> Unit,
+    onApprove: (SmsRechargeReviewRequest) -> Unit,
+    onReject: (SmsRechargeReviewRequest, String?) -> Unit
+) {
+    var rejectTarget by remember { mutableStateOf<SmsRechargeReviewRequest?>(null) }
+    var rejectNote by remember { mutableStateOf("") }
+    LaunchedEffect(Unit) { onLoaded() }
+
+    Column {
+        Spacer(Modifier.height(12.dp))
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier.size(30.dp).clip(RoundedCornerShape(9.dp))
+                        .background(AccentCyan.copy(alpha = 0.14f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Filled.Sms, null, tint = AccentCyan, modifier = Modifier.size(17.dp))
+                }
+                Spacer(Modifier.width(10.dp))
+                Column {
+                    Text("SMS Recharge", color = TextWhite, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Text(
+                        if (accounting == null) "Review institute SMS recharge requests" else "Recharge requests and SMS accounting",
+                        color = TextMuted,
+                        fontSize = 10.sp
+                    )
+                }
+            }
+            TextButton(onClick = onRefresh) {
+                Text("Refresh", color = AccentCyan, fontSize = 12.sp)
+            }
+        }
+
+        accounting?.let { summary ->
+            Spacer(Modifier.height(8.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Box(Modifier.weight(1f)) {
+                    CompactStat(
+                        "Collected",
+                        "BDT ${"%.0f".format(summary.totalCollectedTaka)}",
+                        AccentGreen,
+                        Icons.Filled.Payments,
+                        Modifier.fillMaxWidth()
+                    )
+                }
+                Box(Modifier.weight(1f)) {
+                    CompactStat(
+                        "Profit",
+                        "BDT ${"%.0f".format(summary.profitTaka)}",
+                        AccentCyan,
+                        Icons.Filled.TrendingUp,
+                        Modifier.fillMaxWidth()
+                    )
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Box(Modifier.weight(1f)) {
+                    CompactStat(
+                        "SMS credited",
+                        summary.totalCreditedSms.toString(),
+                        AccentCyan,
+                        Icons.Filled.MarkEmailRead,
+                        Modifier.fillMaxWidth()
+                    )
+                }
+                Box(Modifier.weight(1f)) {
+                    CompactStat(
+                        "SMS used",
+                        summary.totalUsedSms.toString(),
+                        AccentAmber,
+                        Icons.Filled.Outbox,
+                        Modifier.fillMaxWidth()
+                    )
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            Row(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
+                    .background(CardBg).padding(horizontal = 10.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    "Pending: ${summary.pendingRequestCount} · Outstanding balance: ${summary.outstandingBalance}",
+                    color = TextMuted,
+                    fontSize = 10.sp
+                )
+                Text(
+                    "Cost: BDT ${"%.0f".format(summary.totalCostTaka)} (${summary.smsUnitCostPaisa} poisha/SMS)",
+                    color = TextMuted,
+                    fontSize = 10.sp
+                )
+            }
+        }
+
+        val pending = requests.filter { it.status == "pending" }
+        Spacer(Modifier.height(8.dp))
+        if (pending.isEmpty()) {
+            Text(
+                "No SMS recharge requests pending",
+                color = TextWhite.copy(alpha = 0.75f),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+        } else {
+            pending.forEach { request ->
+                Spacer(Modifier.height(8.dp))
+                Card(
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = CardBg),
+                    border = BorderStroke(1.dp, BorderSub)
+                ) {
+                    Column(Modifier.padding(12.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    "${request.packageName} · ${request.smsCount} SMS",
+                                    color = TextWhite,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp
+                                )
+                                Text(
+                                    "BDT ${"%.0f".format(request.payableAmount)} (incl. ${"%.0f".format(request.chargeAmount)} charge) · ${request.paymentMethod.uppercase().replaceFirstChar { it.uppercase() }} · ${request.senderPhone}",
+                                    color = TextMuted,
+                                    fontSize = 10.sp
+                                )
+                                Text("Institute: ${request.instituteId}", color = TextMuted, fontSize = 9.sp)
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            val reviewing = request.requestId in reviewingRequestIds
+                            Button(
+                                onClick = { onApprove(request) },
+                                enabled = !reviewing,
+                                modifier = Modifier.weight(1f),
+                                colors = ButtonDefaults.buttonColors(containerColor = AccentGreen)
+                            ) {
+                                Text(
+                                    if (reviewing) "Approving..." else "Approve",
+                                    color = BgColor,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            OutlinedButton(
+                                onClick = {
+                                    rejectTarget = request
+                                    rejectNote = ""
+                                },
+                                enabled = !reviewing,
+                                modifier = Modifier.weight(1f),
+                                border = BorderStroke(1.dp, AccentRed)
+                            ) {
+                                Text("Reject", color = AccentRed, fontSize = 12.sp)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    rejectTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { rejectTarget = null },
+            containerColor = CardBg,
+            title = { Text("Reject recharge?", color = TextWhite, fontSize = 16.sp, fontWeight = FontWeight.Bold) },
+            text = {
+                Column {
+                    Text(
+                        "${target.packageName} · ${target.smsCount} SMS · BDT ${"%.0f".format(target.payableAmount)}",
+                        color = TextWhite,
+                        fontSize = 12.sp
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = rejectNote,
+                        onValueChange = { rejectNote = it },
+                        label = { Text("Reason (optional)", color = TextMuted) },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = AccentRed,
+                            unfocusedBorderColor = BorderSub,
+                            focusedTextColor = TextWhite,
+                            unfocusedTextColor = TextWhite
+                        )
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onReject(target, rejectNote.takeIf { it.isNotBlank() })
+                        rejectTarget = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = AccentRed)
+                ) { Text("Reject", color = TextWhite) }
+            },
+            dismissButton = {
+                TextButton(onClick = { rejectTarget = null }) { Text("Cancel", color = TextMuted) }
+            }
         )
     }
 }
@@ -2905,19 +3906,48 @@ private fun InstituteDetailsTabsDialog(
     onDismiss: () -> Unit
 ) {
     val inst = card.entity
-    val tabs = listOf("Overview", "Logins", "Subscription", "Usage", "Team", "Payments", "Support", "Audit")
+    val tabs = listOf("Overview", "Logins", "Subscription", "Usage", "Team", "Payments", "Support", "Activity", "Notes")
     var selectedTab by remember(inst.id, initialTab) {
         mutableIntStateOf(tabs.indexOf(initialTab).coerceAtLeast(0))
     }
     var team by remember { mutableStateOf<List<InstituteStaffSummary>?>(null) }
     var receipts by remember { mutableStateOf<List<SubscriptionReceiptData>?>(null) }
+    var timeline by remember(inst.id) { mutableStateOf<List<InstituteActivityEvent>?>(null) }
+    var timelineError by remember(inst.id) { mutableStateOf<String?>(null) }
+    var timelineNextCursor by remember(inst.id) { mutableStateOf("") }
+    var timelineHasMore by remember(inst.id) { mutableStateOf(false) }
+    var timelineLoadingMore by remember(inst.id) { mutableStateOf(false) }
+    // Legacy subscription-audit branch remains source-compatible while the
+    // visible Activity tab uses the new trusted timeline endpoint.
     var audit by remember { mutableStateOf<List<PlatformAuditEntry>?>(null) }
+    var clientNotes by remember(inst.id) { mutableStateOf<List<ClientNote>?>(null) }
+    var clientNotesError by remember(inst.id) { mutableStateOf<String?>(null) }
+    var clientNotesNextCursor by remember(inst.id) { mutableStateOf("") }
+    var clientNotesHasMore by remember(inst.id) { mutableStateOf(false) }
+    var clientNotesLoadingMore by remember(inst.id) { mutableStateOf(false) }
     var loginActivity by remember(inst.id) { mutableStateOf<InstituteOwnerLoginActivity?>(null) }
     var loginActivityLoading by remember(inst.id) { mutableStateOf(false) }
     var loginActivityError by remember(inst.id) { mutableStateOf<String?>(null) }
     var accessReason by remember { mutableStateOf("") }
     var accessDays by remember { mutableStateOf("7") }
     var showOwnerAccess by remember { mutableStateOf(false) }
+    var noteTitle by remember(inst.id) { mutableStateOf("") }
+    var noteBody by remember(inst.id) { mutableStateOf("") }
+    var noteStatus by remember(inst.id) { mutableStateOf("open") }
+    var followUpDays by remember(inst.id) { mutableStateOf("") }
+    var noteSaving by remember(inst.id) { mutableStateOf(false) }
+    var noteSaveError by remember(inst.id) { mutableStateOf<String?>(null) }
+    var supportQuery by remember(inst.id) { mutableStateOf("") }
+    var supportResults by remember(inst.id) { mutableStateOf<List<StudentSupportResult>?>(null) }
+    var supportSearchError by remember(inst.id) { mutableStateOf<String?>(null) }
+    var supportNextCursor by remember(inst.id) { mutableStateOf("") }
+    var supportHasMore by remember(inst.id) { mutableStateOf(false) }
+    var supportLoadingMore by remember(inst.id) { mutableStateOf(false) }
+    var selectedSupportStudent by remember(inst.id) { mutableStateOf<StudentSupportResult?>(null) }
+    var supportReason by remember(inst.id) { mutableStateOf("") }
+    var supportDetails by remember(inst.id) { mutableStateOf<StudentSupportDetails?>(null) }
+    var supportDetailsError by remember(inst.id) { mutableStateOf<String?>(null) }
+    var supportDetailLoading by remember(inst.id) { mutableStateOf(false) }
     LaunchedEffect(inst.id, selectedTab) {
         when (tabs[selectedTab]) {
             "Logins" -> {
@@ -2931,7 +3961,30 @@ private fun InstituteDetailsTabsDialog(
             }
             "Team" -> viewModel.loadInstituteStaff(inst.id) { team = it }
             "Payments" -> viewModel.loadInstituteReceipts(inst.id) { receipts = it }
-            "Audit" -> viewModel.loadInstituteAudit(inst.id) { audit = it }
+            "Overview", "Activity" -> {
+                timeline = null
+                timelineError = null
+                timelineNextCursor = ""
+                timelineHasMore = false
+                viewModel.loadInstituteTimelinePage(inst.id, null) { page, error ->
+                    timeline = page.events
+                    timelineError = error
+                    timelineNextCursor = page.nextCursor
+                    timelineHasMore = page.hasMore
+                }
+            }
+            "Notes" -> {
+                clientNotes = null
+                clientNotesError = null
+                clientNotesNextCursor = ""
+                clientNotesHasMore = false
+                viewModel.loadClientNotesPage(inst.id, null) { page, error ->
+                    clientNotes = page.notes
+                    clientNotesError = error
+                    clientNotesNextCursor = page.nextCursor
+                    clientNotesHasMore = page.hasMore
+                }
+            }
         }
     }
     AlertDialog(
@@ -2949,10 +4002,29 @@ private fun InstituteDetailsTabsDialog(
                     tabs.forEachIndexed { index, name -> Tab(selected = selectedTab == index, onClick = { selectedTab = index }, text = { Text(name, fontSize = 9.sp, maxLines = 1) }) }
                 }
                 when (tabs[selectedTab]) {
-                    "Overview" -> DetailRows(listOf(
-                        "Institute code" to (inst.instituteCode ?: "Not set"), "Phone" to (inst.phone ?: "Not set"),
-                        "Email" to (inst.email ?: "Not set"), "Status" to inst.subscriptionStatus, "Created" to SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(inst.createdAtMs))
-                    ))
+                    "Overview" -> {
+                        DetailRows(listOf(
+                            "Institute code" to (inst.instituteCode ?: "Not set"), "Phone" to (inst.phone ?: "Not set"),
+                            "Email" to (inst.email ?: "Not set"), "Status" to inst.subscriptionStatus, "Created" to SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(inst.createdAtMs))
+                        ))
+                        HorizontalDivider(color = BorderSub)
+                        Text("Recent activity", color = TextWhite, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        when {
+                            timeline == null -> LoadingDetail()
+                            timelineError != null -> EmptyDetail(timelineError!!)
+                            timeline!!.isEmpty() -> EmptyDetail("No trusted platform activity has been recorded for this institute yet.")
+                            else -> {
+                                timeline!!.take(5).forEach { event ->
+                                    Text(
+                                        "${SimpleDateFormat("dd MMM HH:mm", Locale.getDefault()).format(Date(event.occurredAtMs))} · ${event.summary.ifBlank { event.action.replace('_', ' ') }}",
+                                        color = TextMuted,
+                                        fontSize = 10.sp
+                                    )
+                                }
+                                Text("Open the Activity tab for the full timeline.", color = AccentCyan, fontSize = 10.sp)
+                            }
+                        }
+                    }
                     "Logins" -> when {
                         loginActivityLoading -> LoadingDetail()
                         loginActivityError != null -> EmptyDetail(loginActivityError!!)
@@ -2969,8 +4041,232 @@ private fun InstituteDetailsTabsDialog(
                     "Team" -> if (team == null) LoadingDetail() else if (team!!.isEmpty()) EmptyDetail("No active team members") else team!!.take(12).forEach { member -> Text("${member.fullName} · ${member.roleTitle} · ${member.status}", color = TextMuted, fontSize = 11.sp) }
                     "Payments" -> if (receipts == null) LoadingDetail() else if (receipts!!.isEmpty()) EmptyDetail("No canonical subscription receipts") else receipts!!.take(8).forEach { receipt -> Text("${receipt.receiptNumber} · BDT ${"%.0f".format(receipt.amountPaid)} · ${receipt.planName}", color = TextMuted, fontSize = 11.sp) }
                     "Support" -> {
-                        Text("Owner transfer and recovery preserve the institute ID and are always audited.", color = TextMuted, fontSize = 11.sp)
+                        Text("Owner recovery preserves the institute ID and is always audited.", color = TextMuted, fontSize = 11.sp)
                         OutlinedButton(onClick = { showOwnerAccess = true }, colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentCyan)) { Icon(Icons.Filled.Key, null, modifier = Modifier.size(15.dp)); Spacer(Modifier.width(5.dp)); Text("Owner access / recovery") }
+                        Spacer(Modifier.height(4.dp))
+                        Text("Student support lookup", color = TextWhite, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        Text("Search all institutes by student name, Student ID, or phone. Results contain minimum support data only.", color = TextMuted, fontSize = 10.sp)
+                        OutlinedTextField(
+                            value = supportQuery,
+                            onValueChange = { if (it.length <= 120) supportQuery = it },
+                            label = { Text("Student name, ID, or phone") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = directoryFieldColors()
+                        )
+                        Button(
+                            onClick = {
+                                supportSearchError = null
+                                supportDetails = null
+                                selectedSupportStudent = null
+                                supportResults = null
+                                supportNextCursor = ""
+                                supportHasMore = false
+                                viewModel.searchStudentsForSupportPage(supportQuery, inst.id, null) { page, error ->
+                                    supportResults = page.results
+                                    supportSearchError = error
+                                    supportNextCursor = page.nextCursor
+                                    supportHasMore = page.hasMore
+                                }
+                            },
+                            enabled = supportQuery.trim().length >= 3,
+                            colors = ButtonDefaults.buttonColors(containerColor = AccentCyan)
+                        ) { Text("Search students", color = BgColor) }
+                        supportSearchError?.let { Text(it, color = AccentRed, fontSize = 10.sp) }
+                        when {
+                            supportResults == null -> Spacer(Modifier.height(2.dp))
+                            supportResults!!.isEmpty() -> EmptyDetail("No matching active student was found in this search window.")
+                            else -> {
+                                supportResults!!.forEach { result ->
+                                    Card(colors = CardDefaults.cardColors(containerColor = BgColor), border = BorderStroke(1.dp, BorderSub)) {
+                                        Column(Modifier.padding(8.dp)) {
+                                            Text(result.fullName, color = TextWhite, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                            Text("${result.instituteName} / ${result.studentCode.ifBlank { "No Student ID" }}", color = TextMuted, fontSize = 10.sp)
+                                            Text("${result.status.replaceFirstChar { it.uppercase() }} / ${result.batchName}", color = AccentCyan, fontSize = 10.sp)
+                                            TextButton(onClick = {
+                                                selectedSupportStudent = result
+                                                supportReason = ""
+                                                supportDetails = null
+                                                supportDetailsError = null
+                                            }) { Text("View details", color = AccentCyan, fontSize = 11.sp) }
+                                        }
+                                    }
+                                }
+                                if (supportHasMore) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            supportLoadingMore = true
+                                            viewModel.searchStudentsForSupportPage(supportQuery, inst.id, supportNextCursor.takeIf { it.isNotBlank() }) { page, error ->
+                                                supportLoadingMore = false
+                                                if (error == null) {
+                                                    supportResults = supportResults.orEmpty() + page.results
+                                                    supportNextCursor = page.nextCursor
+                                                    supportHasMore = page.hasMore
+                                                } else supportSearchError = error
+                                            }
+                                        },
+                                        enabled = !supportLoadingMore,
+                                        colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentCyan)
+                                    ) { Text(if (supportLoadingMore) "Loading…" else "Load more", fontSize = 11.sp) }
+                                }
+                            }
+                        }
+                        selectedSupportStudent?.let { result ->
+                            HorizontalDivider(color = BorderSub)
+                            Text("Open student details", color = TextWhite, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            Text("A support reason is required and access will be recorded in Activity.", color = TextMuted, fontSize = 10.sp)
+                            OutlinedTextField(
+                                value = supportReason,
+                                onValueChange = { if (it.length <= 300) supportReason = it },
+                                label = { Text("Support reason (minimum 10 characters)") },
+                                minLines = 2,
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = directoryFieldColors()
+                            )
+                            Button(
+                                onClick = {
+                                    supportDetailLoading = true
+                                    supportDetailsError = null
+                                    viewModel.openStudentSupportDetails(result, supportReason) { details, error ->
+                                        supportDetails = details
+                                        supportDetailsError = error
+                                        supportDetailLoading = false
+                                    }
+                                },
+                                enabled = supportReason.trim().length >= 10 && !supportDetailLoading,
+                                colors = ButtonDefaults.buttonColors(containerColor = AccentAmber)
+                            ) { Text(if (supportDetailLoading) "Opening…" else "Open audited details", color = BgColor) }
+                            supportDetailsError?.let { Text(it, color = AccentRed, fontSize = 10.sp) }
+                            supportDetails?.let { details ->
+                                DetailRows(listOf(
+                                    "Student" to details.fullName,
+                                    "Student ID" to details.studentCode,
+                                    "Status" to details.status,
+                                    "Phone" to details.phone.ifBlank { "Not set" },
+                                    "Class" to details.className.ifBlank { "Not set" },
+                                    "Batches" to details.batchNames.joinToString().ifBlank { "No active batch" }
+                                ))
+                            }
+                        }
+                    }
+                    "Activity" -> when {
+                        timeline == null -> LoadingDetail()
+                        timelineError != null -> EmptyDetail(timelineError!!)
+                        timeline!!.isEmpty() -> EmptyDetail("No trusted platform activity has been recorded for this institute yet.")
+                        else -> {
+                            timeline!!.forEach { event ->
+                                Text(
+                                    "${event.action.replace('_', ' ')} / ${SimpleDateFormat("dd MMM HH:mm", Locale.getDefault()).format(Date(event.occurredAtMs))}\n${event.summary.ifBlank { "Completed" }} / ${event.actorRole}",
+                                    color = TextMuted,
+                                    fontSize = 10.sp
+                                )
+                            }
+                            if (timelineHasMore) {
+                                OutlinedButton(
+                                    onClick = {
+                                        timelineLoadingMore = true
+                                        viewModel.loadInstituteTimelinePage(inst.id, timelineNextCursor.takeIf { it.isNotBlank() }) { page, error ->
+                                            timelineLoadingMore = false
+                                            if (error == null) {
+                                                timeline = timeline.orEmpty() + page.events
+                                                timelineNextCursor = page.nextCursor
+                                                timelineHasMore = page.hasMore
+                                            } else timelineError = error
+                                        }
+                                    },
+                                    enabled = !timelineLoadingMore,
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentCyan)
+                                ) { Text(if (timelineLoadingMore) "Loading…" else "Load more", fontSize = 11.sp) }
+                            }
+                        }
+                    }
+                    "Notes" -> {
+                        val containsCredentialTerm = remember(noteTitle, noteBody) {
+                            Regex("\\b(password|passcode|one[ -]?time[ -]?code|otp|access[ -]?token|auth[ -]?token|security[ -]?pin)\\b", RegexOption.IGNORE_CASE)
+                                .containsMatchIn("$noteTitle\n$noteBody")
+                        }
+                        Text("Internal only. Do not write passwords, OTPs, PINs, or tokens.", color = AccentAmber, fontSize = 10.sp)
+                        OutlinedTextField(noteTitle, { if (it.length <= 120) noteTitle = it }, label = { Text("Subject (optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth(), colors = directoryFieldColors())
+                        OutlinedTextField(noteBody, { if (it.length <= 2_000) noteBody = it }, label = { Text("What was discussed?") }, minLines = 3, modifier = Modifier.fillMaxWidth(), colors = directoryFieldColors())
+                        Text("Status", color = TextMuted, fontSize = 10.sp)
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            listOf("open" to "Open", "follow_up" to "Follow-up", "resolved" to "Resolved").forEach { (value, label) ->
+                                OutlinedButton(
+                                    onClick = { noteStatus = value },
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = if (noteStatus == value) AccentCyan else TextMuted)
+                                ) { Text(label, fontSize = 10.sp) }
+                            }
+                        }
+                        OutlinedTextField(
+                            value = followUpDays,
+                            onValueChange = { if (it.all(Char::isDigit) && it.length <= 3) followUpDays = it },
+                            label = { Text("Follow-up in days (optional)") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = directoryFieldColors()
+                        )
+                        if (containsCredentialTerm) Text("Remove credential information before saving this note.", color = AccentRed, fontSize = 10.sp)
+                        noteSaveError?.let { Text(it, color = AccentRed, fontSize = 10.sp) }
+                        Button(
+                            onClick = {
+                                noteSaving = true
+                                noteSaveError = null
+                                val followUpAtMs = followUpDays.toLongOrNull()?.takeIf { it > 0L }
+                                    ?.let { System.currentTimeMillis() + it * 24L * 60L * 60L * 1_000L } ?: 0L
+                                viewModel.createClientNote(inst.id, noteTitle, noteBody, noteStatus, followUpAtMs) { note, error ->
+                                    noteSaving = false
+                                    if (note != null) {
+                                        noteTitle = ""
+                                        noteBody = ""
+                                        noteStatus = "open"
+                                        followUpDays = ""
+                                        clientNotes = listOf(note) + clientNotes.orEmpty()
+                                    } else noteSaveError = error
+                                }
+                            },
+                            enabled = noteBody.trim().length >= 3 && !containsCredentialTerm && !noteSaving,
+                            colors = ButtonDefaults.buttonColors(containerColor = AccentCyan)
+                        ) { Text(if (noteSaving) "Saving…" else "Add internal note", color = BgColor) }
+                        Spacer(Modifier.height(4.dp))
+                        when {
+                            clientNotes == null -> LoadingDetail()
+                            clientNotesError != null -> EmptyDetail(clientNotesError!!)
+                            clientNotes!!.isEmpty() -> EmptyDetail("No client notes yet.")
+                            else -> {
+                                clientNotes!!.forEach { note ->
+                                    Card(colors = CardDefaults.cardColors(containerColor = BgColor), border = BorderStroke(1.dp, BorderSub)) {
+                                        Column(Modifier.padding(8.dp)) {
+                                            Text(note.title.ifBlank { "Client update" }, color = TextWhite, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                            Text(note.body, color = TextMuted, fontSize = 10.sp)
+                                            Text(
+                                                "${note.status.replace('_', ' ')} / ${note.createdByName} / ${SimpleDateFormat("dd MMM yyyy, HH:mm", Locale.getDefault()).format(Date(note.createdAtMs))}",
+                                                color = AccentCyan,
+                                                fontSize = 9.sp
+                                            )
+                                            if (note.followUpAtMs > 0L) Text("Follow up: ${SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(note.followUpAtMs))}", color = AccentAmber, fontSize = 9.sp)
+                                        }
+                                    }
+                                }
+                                if (clientNotesHasMore) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            clientNotesLoadingMore = true
+                                            viewModel.loadClientNotesPage(inst.id, clientNotesNextCursor.takeIf { it.isNotBlank() }) { page, error ->
+                                                clientNotesLoadingMore = false
+                                                if (error == null) {
+                                                    clientNotes = clientNotes.orEmpty() + page.notes
+                                                    clientNotesNextCursor = page.nextCursor
+                                                    clientNotesHasMore = page.hasMore
+                                                } else clientNotesError = error
+                                            }
+                                        },
+                                        enabled = !clientNotesLoadingMore,
+                                        colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentCyan)
+                                    ) { Text(if (clientNotesLoadingMore) "Loading…" else "Load more", fontSize = 11.sp) }
+                                }
+                            }
+                        }
                     }
                     "Audit" -> if (audit == null) LoadingDetail() else if (audit!!.isEmpty()) EmptyDetail("No subscription audit records") else audit!!.take(12).forEach { entry -> Text("${entry.action.replace('_', ' ')} · ${SimpleDateFormat("dd MMM HH:mm", Locale.getDefault()).format(Date(entry.createdAtMs))}\n${entry.summary}", color = TextMuted, fontSize = 10.sp) }
                 }
@@ -3124,17 +4420,600 @@ private fun CsvInstituteImportDialog(
     } }, confirmButton = { Row { if (preview.isEmpty()) Button(onClick = { if (rows.isNotEmpty()) onPreview(rows) { preview = it } }, enabled = rows.isNotEmpty(), colors = ButtonDefaults.buttonColors(containerColor = AccentCyan)) { Text("Validate preview", color = BgColor) } else Button(onClick = { onImport(rows, validRows, batchId) }, enabled = validRows.isNotEmpty() && !report.running, colors = ButtonDefaults.buttonColors(containerColor = AccentCyan)) { Text(if (report.failedRows.isNotEmpty()) "Retry failed / import" else "Import valid rows", color = BgColor) } } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Close", color = TextMuted) } }, containerColor = CardBg, shape = RoundedCornerShape(16.dp))
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun PlatformRolesDialog(managedUsers: List<ManagedUserSummary>, onDismiss: () -> Unit, onProvision: (String, String, String) -> Unit) {
-    var name by remember { mutableStateOf("") }; var email by remember { mutableStateOf("") }; var role by remember { mutableStateOf("billing") }
-    val roles = listOf("root" to "Root", "billing" to "Billing", "support" to "Support", "operations" to "Operations", "read_only" to "Read-only")
-    AlertDialog(onDismissRequest = onDismiss, title = { Text("Platform Roles", color = TextWhite) }, text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Root retains all privileges. Billing, Support, Operations, and Read-only roles are least-privilege server roles; direct Firestore privilege writes are blocked.", color = TextMuted, fontSize = 11.sp)
-        roles.forEach { (key, label) -> FilterChip(selected = role == key, onClick = { if (key != "root") role = key }, label = { Text(label, fontSize = 11.sp) }, enabled = key != "root", colors = FilterChipDefaults.filterChipColors(containerColor = CardBg, selectedContainerColor = AccentCyan.copy(alpha = .15f))) }
-        Text("Existing platform accounts: ${managedUsers.count { it.role == "PlatformAdmin" || it.role == "SuperAdmin" }}", color = TextMuted, fontSize = 11.sp)
-        OutlinedTextField(name, { name = it }, label = { Text("Name") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-        OutlinedTextField(email, { email = it }, label = { Text("Email") }, modifier = Modifier.fillMaxWidth(), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email))
-    } }, confirmButton = { Button(onClick = { onProvision(name, email, role) }, enabled = name.isNotBlank() && email.contains("@") && role != "root", colors = ButtonDefaults.buttonColors(containerColor = AccentCyan)) { Text("Grant ${role.replace('_', ' ')}", color = BgColor) } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Close", color = TextMuted) } }, containerColor = CardBg)
+private fun PlatformAccessLoadingScreen(onLogout: () -> Unit) {
+    Scaffold(
+        containerColor = BgColor,
+        topBar = {
+            TopAppBar(
+                title = { Text("BatchFee Platform", color = TextWhite, fontWeight = FontWeight.Bold) },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = BgColor),
+                actions = {
+                    IconButton(onClick = { SessionManager.logout(); onLogout() }) {
+                        Icon(Icons.AutoMirrored.Filled.ExitToApp, "Logout", tint = AccentRed)
+                    }
+                }
+            )
+        }
+    ) { padding ->
+        Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(color = AccentCyan)
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PlatformMemberConsole(
+    role: String,
+    stats: SuperAdminStats,
+    isLoading: Boolean,
+    institutes: List<InstituteCardData>,
+    subscriptionPlans: List<SubscriptionPlanEntity>,
+    pendingRequests: List<SubscriptionRequest>,
+    approvingRequestIds: Set<String>,
+    recoveryLink: String?,
+    importReport: BulkImportReport,
+    viewModel: SuperAdminViewModel,
+    onLogout: () -> Unit,
+    snackbarHostState: SnackbarHostState,
+    smsRechargeRequests: List<SmsRechargeReviewRequest> = emptyList(),
+    reviewingSmsRequestIds: Set<String> = emptySet(),
+    onSmsLoaded: () -> Unit = {}
+) {
+    var showCreateInstitute by remember { mutableStateOf(false) }
+    var showCsvImport by remember { mutableStateOf(false) }
+    val roleTitle = when (role) {
+        "billing" -> "Billing"
+        "support" -> "Support"
+        "operations" -> "Operations"
+        else -> "Read-only"
+    }
+    Scaffold(
+        containerColor = BgColor,
+        snackbarHost = { SnackbarHost(snackbarHostState) },
+        topBar = {
+            TopAppBar(
+                title = {
+                    Column {
+                        Text("BatchFee $roleTitle", color = TextWhite, fontWeight = FontWeight.Bold)
+                        Text("Platform team account", color = TextMuted, fontSize = 11.sp)
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = BgColor),
+                actions = {
+                    IconButton(onClick = { SessionManager.logout(); onLogout() }) {
+                        Icon(Icons.AutoMirrored.Filled.ExitToApp, "Logout", tint = AccentRed)
+                    }
+                }
+            )
+        }
+    ) { padding ->
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            item { Spacer(Modifier.height(6.dp)) }
+            item {
+                Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = CardBg)) {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("$roleTitle access", color = AccentCyan, fontWeight = FontWeight.Bold)
+                        Text(
+                            when (role) {
+                                "billing" -> "Review subscription requests and issue canonical receipts."
+                                "support" -> "Create an audited one-time owner recovery link after verifying the request."
+                                "operations" -> "Provision institutes, import verified rows, and transfer ownership with a reason."
+                                else -> "View the platform dashboard. Changes and sensitive actions are unavailable."
+                            },
+                            color = TextMuted,
+                            fontSize = 12.sp
+                        )
+                    }
+                }
+            }
+            item {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Box(Modifier.weight(1f)) {
+                        CompactStat("Institutes", if (isLoading) "..." else stats.totalInstitutes.toString(), AccentCyan, Icons.Filled.Business, Modifier.fillMaxWidth())
+                    }
+                    Box(Modifier.weight(1f)) {
+                        CompactStat("Active", if (isLoading) "..." else stats.activeSubscriptions.toString(), AccentGreen, Icons.Filled.Verified, Modifier.fillMaxWidth())
+                    }
+                }
+            }
+            when (role) {
+                "billing" -> {
+                    item {
+                        SubscriptionRequestSection(
+                            requests = pendingRequests,
+                            institutes = institutes,
+                            plans = subscriptionPlans,
+                            approvingRequestIds = approvingRequestIds,
+                            onApprove = viewModel::approveRequest,
+                            onReject = { request, note -> viewModel.rejectRequest(request, note) }
+                        )
+                    }
+                    item {
+                        SmsRechargeReviewSection(
+                            requests = smsRechargeRequests,
+                            accounting = null,
+                            reviewingRequestIds = reviewingSmsRequestIds,
+                            onLoaded = onSmsLoaded,
+                            onRefresh = onSmsLoaded,
+                            onApprove = viewModel::approveSmsRecharge,
+                            onReject = { request, note -> viewModel.rejectSmsRecharge(request, note) }
+                        )
+                    }
+                }
+                "support" -> {
+                    item { SupportOwnerRecoveryCard(onRecovery = viewModel::sendOwnerRecovery) }
+                    item { SupportClientNotesCard(viewModel = viewModel) }
+                    item { SupportStudentLookupCard(viewModel = viewModel) }
+                    item { PlatformDirectoryCompactList(institutes = institutes, plans = subscriptionPlans) }
+                }
+                "operations" -> {
+                    item {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(
+                                onClick = { showCreateInstitute = true },
+                                modifier = Modifier.weight(1f),
+                                colors = ButtonDefaults.buttonColors(containerColor = AccentCyan)
+                            ) { Text("Create institute", color = BgColor) }
+                            OutlinedButton(
+                                onClick = { showCsvImport = true },
+                                modifier = Modifier.weight(1f),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentCyan)
+                            ) { Text("Import CSV") }
+                        }
+                    }
+                    item { OperationsOwnerTransferCard(onTransfer = viewModel::transferOwner) }
+                    item { PlatformDirectoryCompactList(institutes = institutes, plans = subscriptionPlans) }
+                }
+            }
+            item { Spacer(Modifier.height(28.dp)) }
+        }
+    }
+    if (showCreateInstitute) {
+        CreateInstituteWizard(
+            plans = subscriptionPlans,
+            onDismiss = { showCreateInstitute = false },
+            onCreate = { draft -> viewModel.createInstitute(draft); showCreateInstitute = false }
+        )
+    }
+    if (showCsvImport) {
+        CsvInstituteImportDialog(
+            report = importReport,
+            onDismiss = { showCsvImport = false },
+            onPreview = viewModel::previewInstituteImport,
+            onImport = viewModel::importInstitutes
+        )
+    }
+    recoveryLink?.let { link ->
+        OneTimeRecoveryLinkDialog(link, onDismiss = viewModel::clearRecoveryLink)
+    }
+}
+
+@Composable
+private fun SupportStudentLookupCard(viewModel: SuperAdminViewModel) {
+    var query by remember { mutableStateOf("") }
+    var results by remember { mutableStateOf<List<StudentSupportResult>?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var nextCursor by remember { mutableStateOf("") }
+    var hasMore by remember { mutableStateOf(false) }
+    var loadingMore by remember { mutableStateOf(false) }
+    var selectedStudent by remember { mutableStateOf<StudentSupportResult?>(null) }
+    var reason by remember { mutableStateOf("") }
+    var details by remember { mutableStateOf<StudentSupportDetails?>(null) }
+    var detailsError by remember { mutableStateOf<String?>(null) }
+    var detailLoading by remember { mutableStateOf(false) }
+    Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = CardBg)) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+            Text("Student support lookup", color = TextWhite, fontWeight = FontWeight.Bold)
+            Text("Search all institutes by student name, Student ID, or phone. Results contain minimum support data only.", color = TextMuted, fontSize = 11.sp)
+            OutlinedTextField(
+                value = query,
+                onValueChange = { if (it.length <= 120) query = it },
+                label = { Text("Student name, ID, or phone") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                colors = directoryFieldColors()
+            )
+            Button(
+                onClick = {
+                    error = null
+                    details = null
+                    selectedStudent = null
+                    results = null
+                    nextCursor = ""
+                    hasMore = false
+                    viewModel.searchStudentsForSupportPage(query, null, null) { page, pageError ->
+                        results = page.results
+                        error = pageError
+                        nextCursor = page.nextCursor
+                        hasMore = page.hasMore
+                    }
+                },
+                enabled = query.trim().length >= 3,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = AccentCyan)
+            ) { Text("Search students", color = BgColor) }
+            error?.let { Text(it, color = AccentRed, fontSize = 10.sp) }
+            when {
+                results == null -> Unit
+                results!!.isEmpty() -> EmptyDetail("No matching active student was found in this search window.")
+                else -> {
+                    results!!.forEach { result ->
+                        Card(colors = CardDefaults.cardColors(containerColor = BgColor), border = BorderStroke(1.dp, BorderSub)) {
+                            Column(Modifier.padding(8.dp)) {
+                                Text(result.fullName, color = TextWhite, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                Text("${result.instituteName} / ${result.studentCode.ifBlank { "No Student ID" }}", color = TextMuted, fontSize = 10.sp)
+                                Text("${result.status.replaceFirstChar { it.uppercase() }} / ${result.batchName}", color = AccentCyan, fontSize = 10.sp)
+                                TextButton(onClick = {
+                                    selectedStudent = result
+                                    reason = ""
+                                    details = null
+                                    detailsError = null
+                                }) { Text("View details", color = AccentCyan, fontSize = 11.sp) }
+                            }
+                        }
+                    }
+                    if (hasMore) {
+                        OutlinedButton(
+                            onClick = {
+                                loadingMore = true
+                                viewModel.searchStudentsForSupportPage(query, null, nextCursor.takeIf { it.isNotBlank() }) { page, pageError ->
+                                    loadingMore = false
+                                    if (pageError == null) {
+                                        results = results.orEmpty() + page.results
+                                        nextCursor = page.nextCursor
+                                        hasMore = page.hasMore
+                                    } else error = pageError
+                                }
+                            },
+                            enabled = !loadingMore,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentCyan)
+                        ) { Text(if (loadingMore) "Loading…" else "Load more", fontSize = 11.sp) }
+                    }
+                }
+            }
+            selectedStudent?.let { result ->
+                HorizontalDivider(color = BorderSub)
+                Text("Open student details", color = TextWhite, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Text("A support reason is required and access will be recorded in Activity.", color = TextMuted, fontSize = 10.sp)
+                OutlinedTextField(
+                    value = reason,
+                    onValueChange = { if (it.length <= 300) reason = it },
+                    label = { Text("Support reason (minimum 10 characters)") },
+                    minLines = 2,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = directoryFieldColors()
+                )
+                Button(
+                    onClick = {
+                        detailLoading = true
+                        detailsError = null
+                        viewModel.openStudentSupportDetails(result, reason) { loaded, loadError ->
+                            details = loaded
+                            detailsError = loadError
+                            detailLoading = false
+                        }
+                    },
+                    enabled = reason.trim().length >= 10 && !detailLoading,
+                    colors = ButtonDefaults.buttonColors(containerColor = AccentAmber)
+                ) { Text(if (detailLoading) "Opening…" else "Open audited details", color = BgColor) }
+                detailsError?.let { Text(it, color = AccentRed, fontSize = 10.sp) }
+                details?.let { loaded ->
+                    DetailRows(listOf(
+                        "Student" to loaded.fullName,
+                        "Student ID" to loaded.studentCode,
+                        "Status" to loaded.status,
+                        "Phone" to loaded.phone.ifBlank { "Not set" },
+                        "Class" to loaded.className.ifBlank { "Not set" },
+                        "Batches" to loaded.batchNames.joinToString().ifBlank { "No active batch" }
+                    ))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlatformDirectoryCompactList(
+    institutes: List<InstituteCardData>,
+    plans: List<SubscriptionPlanEntity>
+) {
+    Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = CardBg)) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            Text("Institute directory", color = TextWhite, fontWeight = FontWeight.Bold)
+            Text("Current directory window. Open the Root console for search, filters, and paging.", color = TextMuted, fontSize = 11.sp)
+            if (institutes.isEmpty()) {
+                EmptyDetail("No institutes are available in this directory window.")
+            } else {
+                institutes.take(15).forEach { card ->
+                    val inst = card.entity
+                    Card(colors = CardDefaults.cardColors(containerColor = BgColor), border = BorderStroke(1.dp, BorderSub)) {
+                        Column(Modifier.padding(8.dp)) {
+                            Text(inst.name, color = TextWhite, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                "${inst.ownerName ?: "No owner"} · ${planDisplayName(inst.currentPlanId, plans)} · ${inst.subscriptionStatus.replace('_', ' ')}",
+                                color = TextMuted,
+                                fontSize = 10.sp
+                            )
+                            Text(
+                                "Students ${card.studentCount} · Staff ${card.staffCount} · Batches ${card.batchCount}",
+                                color = AccentCyan,
+                                fontSize = 10.sp
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SupportOwnerRecoveryCard(onRecovery: (String, String) -> Unit) {
+    var instituteId by remember { mutableStateOf("") }
+    var reason by remember { mutableStateOf("") }
+    Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = CardBg)) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+            Text("Owner recovery", color = TextWhite, fontWeight = FontWeight.Bold)
+            Text("Confirm the institute through your approved support process before creating a recovery link.", color = TextMuted, fontSize = 11.sp)
+            OutlinedTextField(
+                value = instituteId,
+                onValueChange = { instituteId = it.trim() },
+                label = { Text("Institute ID") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+            OutlinedTextField(
+                value = reason,
+                onValueChange = { if (it.length <= 500) reason = it },
+                label = { Text("Verified support reason") },
+                modifier = Modifier.fillMaxWidth(),
+                minLines = 2
+            )
+            Button(
+                onClick = { onRecovery(instituteId, reason) },
+                enabled = instituteId.isNotBlank() && reason.trim().length >= 3,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = AccentCyan)
+            ) { Text("Create one-time recovery link", color = BgColor) }
+        }
+    }
+}
+
+@Composable
+private fun SupportClientNotesCard(viewModel: SuperAdminViewModel) {
+    var instituteId by remember { mutableStateOf("") }
+    var title by remember { mutableStateOf("") }
+    var body by remember { mutableStateOf("") }
+    var status by remember { mutableStateOf("open") }
+    var followUpDays by remember { mutableStateOf("") }
+    var notes by remember { mutableStateOf<List<ClientNote>?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var saving by remember { mutableStateOf(false) }
+    val containsCredentialTerm = remember(title, body) {
+        Regex("\\b(password|passcode|one[ -]?time[ -]?code|otp|access[ -]?token|auth[ -]?token|security[ -]?pin)\\b", RegexOption.IGNORE_CASE)
+            .containsMatchIn("$title\n$body")
+    }
+    Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = CardBg)) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+            Text("Client notes", color = TextWhite, fontWeight = FontWeight.Bold)
+            Text("Internal support history only. Institute owners cannot read these notes.", color = TextMuted, fontSize = 11.sp)
+            OutlinedTextField(instituteId, { instituteId = it.trim() }, label = { Text("Institute ID") }, modifier = Modifier.fillMaxWidth(), singleLine = true, colors = directoryFieldColors())
+            OutlinedButton(
+                onClick = {
+                    notes = null
+                    error = null
+                    viewModel.loadClientNotes(instituteId) { loaded, loadError ->
+                        notes = loaded
+                        error = loadError
+                    }
+                },
+                enabled = instituteId.isNotBlank(),
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentCyan)
+            ) { Text("Load note history") }
+            OutlinedTextField(title, { if (it.length <= 120) title = it }, label = { Text("Subject (optional)") }, modifier = Modifier.fillMaxWidth(), singleLine = true, colors = directoryFieldColors())
+            OutlinedTextField(body, { if (it.length <= 2_000) body = it }, label = { Text("What was discussed?") }, modifier = Modifier.fillMaxWidth(), minLines = 3, colors = directoryFieldColors())
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf("open" to "Open", "follow_up" to "Follow-up", "resolved" to "Resolved").forEach { (value, label) ->
+                    OutlinedButton(onClick = { status = value }, colors = ButtonDefaults.outlinedButtonColors(contentColor = if (status == value) AccentCyan else TextMuted)) {
+                        Text(label, fontSize = 10.sp)
+                    }
+                }
+            }
+            OutlinedTextField(
+                value = followUpDays,
+                onValueChange = { if (it.all(Char::isDigit) && it.length <= 3) followUpDays = it },
+                label = { Text("Follow-up in days (optional)") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                colors = directoryFieldColors()
+            )
+            if (containsCredentialTerm) Text("Remove credential information before saving.", color = AccentRed, fontSize = 10.sp)
+            error?.let { Text(it, color = AccentRed, fontSize = 10.sp) }
+            Button(
+                onClick = {
+                    saving = true
+                    error = null
+                    val followUpAtMs = followUpDays.toLongOrNull()?.takeIf { it > 0L }
+                        ?.let { System.currentTimeMillis() + it * 24L * 60L * 60L * 1_000L } ?: 0L
+                    viewModel.createClientNote(instituteId, title, body, status, followUpAtMs) { note, saveError ->
+                        saving = false
+                        if (note != null) {
+                            title = ""
+                            body = ""
+                            status = "open"
+                            followUpDays = ""
+                            notes = listOf(note) + notes.orEmpty()
+                        } else error = saveError
+                    }
+                },
+                enabled = instituteId.isNotBlank() && body.trim().length >= 3 && !containsCredentialTerm && !saving,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = AccentCyan)
+            ) { Text(if (saving) "Saving…" else "Add internal note", color = BgColor) }
+            when {
+                notes == null -> Unit
+                notes!!.isEmpty() -> EmptyDetail("No client notes yet.")
+                else -> notes!!.take(10).forEach { note ->
+                    Text("${note.title.ifBlank { "Client update" }} / ${note.status.replace('_', ' ')}\n${note.body}", color = TextMuted, fontSize = 10.sp)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun OperationsOwnerTransferCard(onTransfer: (String, String, String, String) -> Unit) {
+    var instituteId by remember { mutableStateOf("") }
+    var ownerName by remember { mutableStateOf("") }
+    var ownerEmail by remember { mutableStateOf("") }
+    var reason by remember { mutableStateOf("") }
+    Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = CardBg)) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+            Text("Transfer institute owner", color = TextWhite, fontWeight = FontWeight.Bold)
+            Text("The server prevents platform/institute identity mixing and records this change immutably.", color = TextMuted, fontSize = 11.sp)
+            OutlinedTextField(instituteId, { instituteId = it.trim() }, label = { Text("Institute ID") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+            OutlinedTextField(ownerName, { ownerName = it }, label = { Text("New owner name") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+            OutlinedTextField(ownerEmail, { ownerEmail = it.trim() }, label = { Text("New owner email") }, modifier = Modifier.fillMaxWidth(), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email))
+            OutlinedTextField(reason, { if (it.length <= 500) reason = it }, label = { Text("Reason") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
+            Button(
+                onClick = { onTransfer(instituteId, ownerName, ownerEmail, reason) },
+                enabled = instituteId.isNotBlank() && ownerName.isNotBlank() && ownerEmail.contains("@") && reason.trim().length >= 3,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = AccentCyan)
+            ) { Text("Transfer owner", color = BgColor) }
+        }
+    }
+}
+
+@Composable
+private fun PlatformRolesDialog(managedUsers: List<ManagedUserSummary>, onDismiss: () -> Unit, onProvision: (String, String, String) -> Unit, onUpdate: (ManagedUserSummary, String, String, String) -> Unit) {
+    var name by remember { mutableStateOf("") }
+    var email by remember { mutableStateOf("") }
+    var role by remember { mutableStateOf("billing") }
+    var editingMember by remember { mutableStateOf<ManagedUserSummary?>(null) }
+    val roles = listOf(
+        "billing" to "Billing",
+        "support" to "Support",
+        "operations" to "Operations",
+        "read_only" to "Read-only"
+    )
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Team Members", color = TextWhite) },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text("Root access cannot be created, downgraded, or shared here. Each member signs in through Admin using their own email and password setup link.", color = TextMuted, fontSize = 11.sp)
+                Text("Invite new member", color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                roles.forEach { (key, label) ->
+                    FilterChip(
+                        selected = role == key,
+                        onClick = { role = key },
+                        label = { Text(label, fontSize = 11.sp) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            containerColor = CardBg,
+                            selectedContainerColor = AccentCyan.copy(alpha = .15f)
+                        )
+                    )
+                }
+                OutlinedTextField(name, { name = it }, label = { Text("Name") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                OutlinedTextField(email, { email = it }, label = { Text("Email") }, modifier = Modifier.fillMaxWidth(), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email))
+                Text("Existing non-root members · ${managedUsers.size}", color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                if (managedUsers.isEmpty()) {
+                    Text("No platform team member has been added yet.", color = TextMuted, fontSize = 11.sp)
+                }
+                managedUsers.forEach { member ->
+                    Card(
+                        shape = RoundedCornerShape(10.dp),
+                        colors = CardDefaults.cardColors(containerColor = BgColor),
+                        border = BorderStroke(1.dp, BorderSub)
+                    ) {
+                        Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(member.name.ifBlank { member.email.substringBefore("@") }, color = TextWhite, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                Text(member.email, color = TextMuted, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text("${member.platformRole?.replace('_', ' ') ?: "platform"} · ${member.status}", color = if (member.status == "active") AccentGreen else AccentAmber, fontSize = 10.sp)
+                            }
+                            TextButton(onClick = { editingMember = member }) { Text("Manage", color = AccentCyan, fontSize = 11.sp) }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onProvision(name, email, role) },
+                enabled = name.isNotBlank() && email.contains("@"),
+                colors = ButtonDefaults.buttonColors(containerColor = AccentCyan)
+            ) { Text("Invite ${role.replace('_', ' ')}", color = BgColor) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Close", color = TextMuted) } },
+        containerColor = CardBg
+    )
+    editingMember?.let { member ->
+        PlatformMemberAccessDialog(
+            member = member,
+            onDismiss = { editingMember = null },
+            onSave = { nextRole, nextStatus, reason ->
+                onUpdate(member, nextRole, nextStatus, reason)
+                editingMember = null
+            }
+        )
+    }
+}
+
+@Composable
+private fun PlatformMemberAccessDialog(
+    member: ManagedUserSummary,
+    onDismiss: () -> Unit,
+    onSave: (String, String, String) -> Unit
+) {
+    var role by remember(member.id) { mutableStateOf(member.platformRole ?: "read_only") }
+    var status by remember(member.id) { mutableStateOf(member.status) }
+    var reason by remember(member.id) { mutableStateOf("") }
+    val roles = listOf("billing", "support", "operations", "read_only")
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Manage ${member.name.ifBlank { member.email }}", color = TextWhite) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Changing access takes effect on the member's next privileged request. Suspending keeps the immutable audit history.", color = TextMuted, fontSize = 11.sp)
+                roles.forEach { value ->
+                    FilterChip(
+                        selected = role == value,
+                        onClick = { role = value },
+                        label = { Text(value.replace('_', ' '), fontSize = 11.sp) },
+                        colors = FilterChipDefaults.filterChipColors(containerColor = CardBg, selectedContainerColor = AccentCyan.copy(alpha = .15f))
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(selected = status == "active", onClick = { status = "active" }, label = { Text("Active") })
+                    FilterChip(selected = status == "suspended", onClick = { status = "suspended" }, label = { Text("Suspended") })
+                }
+                OutlinedTextField(reason, { if (it.length <= 500) reason = it }, label = { Text("Reason") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onSave(role, status, reason) },
+                enabled = reason.trim().length >= 3 && (role != member.platformRole || status != member.status),
+                colors = ButtonDefaults.buttonColors(containerColor = AccentCyan)
+            ) { Text("Save access", color = BgColor) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel", color = TextMuted) } },
+        containerColor = CardBg
+    )
 }
 
 @Composable
@@ -5591,4 +7470,3 @@ private fun BroadcastSection(
         }
     }
 }
-

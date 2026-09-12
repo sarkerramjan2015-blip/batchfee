@@ -228,6 +228,7 @@ class FeeViewModel(private val db: AppDatabase) : ViewModel() {
                     firstMonthFeeAmount = enrollment.firstMonthFeeAmount,
                     customMonthlyFeeAmount = enrollment.customMonthlyFeeAmount,
                     customFeeEffectiveFromPeriod = enrollment.customFeeEffectiveFromPeriod,
+                    customFeePolicyTimeline = enrollment.customFeePolicyTimeline,
                     billingEndedAtMs = enrollment.leftAtMs
                 )
                 items.forEach { item ->
@@ -403,6 +404,16 @@ class FeeViewModel(private val db: AppDatabase) : ViewModel() {
                         Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${phone ?: ""}"))
                             .apply { putExtra("sms_body", msg) }
                     )
+                    runCatching {
+                        com.batchfee.edu.data.firestore.SmsWalletSyncHelper.recordCarrierSmsBatch(
+                            listOf(
+                                com.batchfee.edu.data.firestore.SmsOutboundRecord(
+                                    recipient = phone.orEmpty().replace(Regex("[^0-9]"), ""),
+                                    purpose = "Due fee reminder · $studentName · $feePeriod"
+                                )
+                            )
+                        )
+                    }
                 }
             }
             } catch (_: Exception) {

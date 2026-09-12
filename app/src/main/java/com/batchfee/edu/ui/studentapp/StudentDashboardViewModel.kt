@@ -59,8 +59,12 @@ class StudentDashboardViewModel : ViewModel() {
                 val totalDue = totalFee - totalPaid
 
                 val presentCount = attendance.count { it.status.equals("present", ignoreCase = true) }
-                val attendancePercent =
-                    if (attendance.isNotEmpty()) presentCount * 100.0 / attendance.size else 0.0
+                val lateCount = attendance.count { it.status.equals("late", ignoreCase = true) }
+                val absentCount = attendance.count { it.status.equals("absent", ignoreCase = true) }
+                val attendanceDenominator = presentCount + lateCount + absentCount
+                val attendancePercent = if (attendanceDenominator > 0) {
+                    (presentCount + lateCount) * 100.0 / attendanceDenominator
+                } else 0.0
 
                 val latestResult = results.maxByOrNull { it.examDateMs ?: 0L }
 

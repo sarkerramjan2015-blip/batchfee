@@ -159,6 +159,7 @@ fun AddEditStudentScreen(
     var saveError by remember { mutableStateOf<String?>(null) }
     var instituteName by remember { mutableStateOf("") }
     var instituteContact by remember { mutableStateOf("") }
+    var welcomeTemplate by remember { mutableStateOf<String?>(null) }
     var welcomeMessage by remember { mutableStateOf<String?>(null) }
     var welcomeRecipient by remember { mutableStateOf("") }
     val saveScope = rememberCoroutineScope()
@@ -241,6 +242,9 @@ fun AddEditStudentScreen(
             db.instituteDao().getInstitute(instituteId)?.name.orEmpty()
         }
         instituteContact = com.example.domain.MessageTemplateStore.loadInstituteContact(db, instituteId)
+        welcomeTemplate = com.example.domain.MessageTemplateStore.load(
+            db, instituteId, com.example.domain.MessageTemplateStore.TYPE_WELCOME
+        )
     }
 
     if (showDobPicker) {
@@ -716,8 +720,9 @@ fun AddEditStudentScreen(
                                                 studentName = fullName.trim(),
                                                 studentCode = savedStudentCode,
                                                 className = className.trim(),
-                                                temporaryPassword = accountPassword,
-                                                instituteContact = instituteContact
+                                            temporaryPassword = accountPassword,
+                                            instituteContact = instituteContact,
+                                            template = welcomeTemplate
                                             )
                                         },
                                         onPartialSuccess = { message ->
@@ -883,12 +888,13 @@ private fun buildAdmissionWelcomeMessage(
     studentCode: String,
     className: String,
     temporaryPassword: String?,
-    instituteContact: String = ""
+    instituteContact: String = "",
+    template: String? = null
 ): String {
-    val template = com.example.domain.MessageTemplateStore.defaultFor(com.example.domain.MessageTemplateStore.TYPE_WELCOME)
-    if (template != null) {
+    val resolvedTemplate = template ?: com.example.domain.MessageTemplateStore.defaultFor(com.example.domain.MessageTemplateStore.TYPE_WELCOME)
+    if (resolvedTemplate != null) {
         var out = com.example.domain.MessageTemplateStore.apply(
-            template,
+            resolvedTemplate,
             mapOf(
                 "guardianName" to "Guardian",
                 "studentName" to studentName,

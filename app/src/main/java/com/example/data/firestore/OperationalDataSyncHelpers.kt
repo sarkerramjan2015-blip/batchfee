@@ -72,15 +72,18 @@ object BatchStudentSyncHelper {
                         "leftAtMs" to enrollment.leftAtMs,
                         "firstMonthFeePeriod" to enrollment.firstMonthFeePeriod,
                         "firstMonthFeeAmount" to enrollment.firstMonthFeeAmount,
+                        "admissionDateLinked" to enrollment.admissionDateLinked,
                         "customMonthlyFeeAmount" to enrollment.customMonthlyFeeAmount,
                         "customFeeReason" to enrollment.customFeeReason,
                         "customFeeEffectiveFromPeriod" to enrollment.customFeeEffectiveFromPeriod,
+                        "customFeePolicyTimeline" to enrollment.customFeePolicyTimeline,
                         "customFeePolicySyncedAtMs" to enrollment.customFeePolicySyncedAtMs
                     )
                 ).await()
         } catch (e: Exception) {
             recordException(e)
-            rethrowUnlessAccessDenied(e)
+            // A denied membership write must never be mistaken for a commit.
+            throw e
         }
     }
 
@@ -157,9 +160,11 @@ object BatchStudentSyncHelper {
             leftAtMs = (get("leftAtMs") as? Number).asLong(),
             firstMonthFeePeriod = getString("firstMonthFeePeriod"),
             firstMonthFeeAmount = (get("firstMonthFeeAmount") as? Number).asDouble(),
+            admissionDateLinked = get("admissionDateLinked") as? Boolean,
             customMonthlyFeeAmount = (get("customMonthlyFeeAmount") as? Number).asDouble(),
             customFeeReason = getString("customFeeReason"),
             customFeeEffectiveFromPeriod = getString("customFeeEffectiveFromPeriod"),
+            customFeePolicyTimeline = getString("customFeePolicyTimeline"),
             customFeePolicySyncedAtMs = (get("customFeePolicySyncedAtMs") as? Number).asLong()
         )
     }
@@ -454,6 +459,9 @@ object AttendanceSyncHelper {
                     "attendanceDateMs" to record.attendanceDateMs,
                     "status" to record.status,
                     "note" to record.note,
+                    "arrivalTimeMs" to record.arrivalTimeMs,
+                    "scheduledStartTimeMs" to record.scheduledStartTimeMs,
+                    "lateByMinutes" to record.lateByMinutes,
                     "markedByUserId" to record.markedByUserId,
                     "createdAtMs" to record.createdAtMs,
                     "updatedAtMs" to record.updatedAtMs
@@ -560,6 +568,9 @@ object AttendanceSyncHelper {
                                 attendanceDateMs = (doc.get("attendanceDateMs") as? Number).asLong() ?: 0L,
                                 status = doc.getString("status") ?: "present",
                                 note = doc.getString("note"),
+                                arrivalTimeMs = (doc.get("arrivalTimeMs") as? Number).asLong(),
+                                scheduledStartTimeMs = (doc.get("scheduledStartTimeMs") as? Number).asLong(),
+                                lateByMinutes = (doc.get("lateByMinutes") as? Number)?.toInt(),
                                 markedByUserId = doc.getString("markedByUserId") ?: "",
                                 createdAtMs = (doc.get("createdAtMs") as? Number).asLong() ?: System.currentTimeMillis(),
                                 updatedAtMs = (doc.get("updatedAtMs") as? Number).asLong() ?: System.currentTimeMillis()

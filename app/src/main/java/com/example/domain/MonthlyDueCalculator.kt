@@ -14,6 +14,26 @@ data class ComputedMonthDue(
     val batchName: String
 )
 
+/**
+ * A display-only explanation for the reduced fee in an enrollment's first
+ * month. It deliberately contains no mutable ledger state: the backend and
+ * the frozen enrollment terms remain the source of truth for the amount.
+ */
+data class FirstMonthProrationInfo(
+    val period: String,
+    val admissionDay: Int,
+    val billableDays: Int,
+    val firstMonthFeeAmount: Double,
+    val nextPeriod: String,
+    val nextMonthFeeAmount: Double
+)
+
+data class CustomFeePolicyTransition(
+    val effectivePeriod: String,
+    /** Null means return to the batch-standard monthly fee. */
+    val customMonthlyFeeAmount: Double?
+)
+
 object MonthlyDueCalculator {
     private val monthNames = listOf("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
     private val billingTimeZone: TimeZone = TimeZone.getTimeZone("Asia/Dhaka")
@@ -36,6 +56,7 @@ object MonthlyDueCalculator {
         firstMonthFeeAmount: Double? = null,
         customMonthlyFeeAmount: Double? = null,
         customFeeEffectiveFromPeriod: String? = null,
+        customFeePolicyTimeline: String? = null,
         billingEndedAtMs: Long? = null,
         asOfMs: Long = System.currentTimeMillis()
     ): List<ComputedMonthDue> {
@@ -91,7 +112,9 @@ object MonthlyDueCalculator {
                     firstMonthFeePeriod = resolvedFirstMonthPeriod,
                     firstMonthFeeAmount = resolvedFirstMonthAmount,
                     customMonthlyFeeAmount = customMonthlyFeeAmount,
-                    customFeeEffectiveFromPeriod = customFeeEffectiveFromPeriod
+                    customFeeEffectiveFromPeriod = customFeeEffectiveFromPeriod,
+                    customFeePolicyTimeline = customFeePolicyTimeline,
+                    firstMonthStartDateMs = admissionDateMs
                 )
                 if (required > 0.0) {
                     result += ComputedMonthDue(
@@ -117,10 +140,92 @@ object MonthlyDueCalculator {
      */
     fun calculateFirstMonthFee(monthlyFeeAmount: Double, admissionDateMs: Long): Double {
         if (monthlyFeeAmount <= 0.0 || admissionDateMs <= 0L) return 0.0
-        val calendar = Calendar.getInstance(billingTimeZone).apply { timeInMillis = admissionDateMs }
-        val admissionDay = calendar.get(Calendar.DAY_OF_MONTH).coerceAtMost(30)
-        val billableDays = (31 - admissionDay).coerceAtLeast(1)
+        val billableDays = firstMonthBillableDays(admissionDateMs)
         return round((monthlyFeeAmount / 30.0) * billableDays)
+    }
+
+    /**
+     * BatchFee's fixed monthly cycle is day 1 through day 30, inclusive.
+     * The confirmed assignment day is chargeable: day 17 therefore has
+     * fourteen billable days (17..30), while day 30/31 has one.
+     */
+    fun firstMonthBillableDays(assignmentDateMs: Long): Int {
+        if (assignmentDateMs <= 0L) return 0
+        val calendar = Calendar.getInstance(billingTimeZone).apply { timeInMillis = assignmentDateMs }
+        val assignmentDay = calendar.get(Calendar.DAY_OF_MONTH).coerceAtMost(30)
+        return (31 - assignmentDay).coerceAtLeast(1)
+    }
+
+    /**
+     * Returns a human-readable calculation model only for a genuinely
+     * prorated first month. BatchFee bills monthly batches on a fixed 1st-30th
+     * cycle, so a mid-month admission pays the remaining days of that cycle
+     * and the next period uses the normal applicable monthly amount.
+     *
+     * A custom fee that already applies in the first period takes precedence
+     * over proration. In that case this returns null rather than displaying an
+     * explanation that would not match the authoritative ledger amount.
+     */
+    fun firstMonthProrationInfoForPeriod(
+        period: String,
+        firstMonthStartDateMs: Long,
+        monthlyFeeAmount: Double,
+        firstMonthFeePeriod: String? = null,
+        firstMonthFeeAmount: Double? = null,
+        customMonthlyFeeAmount: Double? = null,
+        customFeeEffectiveFromPeriod: String? = null,
+        customFeePolicyTimeline: String? = null
+    ): FirstMonthProrationInfo? {
+        if (firstMonthStartDateMs <= 0L || monthlyFeeAmount <= 0.0) return null
+        val firstPeriod = periodFor(firstMonthStartDateMs)
+        val resolvedFirstPeriod = firstMonthFeePeriod
+            ?.takeIf { it.equals(firstPeriod, ignoreCase = true) }
+            ?: firstPeriod
+        if (!period.equals(resolvedFirstPeriod, ignoreCase = true)) return null
+
+        val calendar = Calendar.getInstance(billingTimeZone).apply {
+            timeInMillis = firstMonthStartDateMs
+        }
+        val admissionDay = calendar.get(Calendar.DAY_OF_MONTH)
+        if (admissionDay <= 1) return null
+        val billableDays = firstMonthBillableDays(firstMonthStartDateMs)
+        val frozenFirstAmount = firstMonthFeeAmount
+            ?.takeIf { firstMonthFeePeriod.equals(resolvedFirstPeriod, ignoreCase = true) }
+            ?: calculateFirstMonthFee(monthlyFeeAmount, firstMonthStartDateMs)
+        if (frozenFirstAmount >= monthlyFeeAmount) return null
+
+        val applicableFirstAmount = monthlyFeeAmountForPeriod(
+            period = resolvedFirstPeriod,
+            monthlyFeeAmount = monthlyFeeAmount,
+            firstMonthFeePeriod = resolvedFirstPeriod,
+            firstMonthFeeAmount = frozenFirstAmount,
+            customMonthlyFeeAmount = customMonthlyFeeAmount,
+            customFeeEffectiveFromPeriod = customFeeEffectiveFromPeriod,
+            customFeePolicyTimeline = customFeePolicyTimeline,
+            firstMonthStartDateMs = firstMonthStartDateMs
+        )
+        // Do not explain a custom price as if it was calculated by proration.
+        if (kotlin.math.abs(applicableFirstAmount - frozenFirstAmount) > 0.001) return null
+
+        val nextPeriod = periodAfter(resolvedFirstPeriod) ?: return null
+        val nextMonthAmount = monthlyFeeAmountForPeriod(
+            period = nextPeriod,
+            monthlyFeeAmount = monthlyFeeAmount,
+            firstMonthFeePeriod = resolvedFirstPeriod,
+            firstMonthFeeAmount = frozenFirstAmount,
+            customMonthlyFeeAmount = customMonthlyFeeAmount,
+            customFeeEffectiveFromPeriod = customFeeEffectiveFromPeriod,
+            customFeePolicyTimeline = customFeePolicyTimeline,
+            firstMonthStartDateMs = firstMonthStartDateMs
+        )
+        return FirstMonthProrationInfo(
+            period = resolvedFirstPeriod,
+            admissionDay = admissionDay,
+            billableDays = billableDays,
+            firstMonthFeeAmount = frozenFirstAmount,
+            nextPeriod = nextPeriod,
+            nextMonthFeeAmount = nextMonthAmount
+        )
     }
 
     fun periodFor(admissionDateMs: Long): String {
@@ -133,10 +238,9 @@ object MonthlyDueCalculator {
      * Resolves the contractual start of one batch enrollment.
      *
      * A frozen first billing period (new/shifted enrollments) always wins.
-     * Otherwise the batch's Assign Date (`joinedAtMs`) is the billing start —
-     * this is the per-batch contract and must not fall back to the student's
-     * general admission date. The admission date is kept only as a fallback
-     * for legacy enrollments that never stored a joined date.
+     * Without a frozen period, legacy billing follows admission, matching the
+     * backend. A legacy join timestamp may describe cloud synchronization.
+     * New independently dated assignments must always freeze their first period.
      */
     fun effectiveBillingStartMs(
         studentAdmissionDateMs: Long,
@@ -144,8 +248,10 @@ object MonthlyDueCalculator {
         firstMonthFeePeriod: String? = null
     ): Long {
         periodStartMs(firstMonthFeePeriod)?.let { return it }
-        return enrollmentJoinedAtMs.takeIf { it > 0L }
-            ?: studentAdmissionDateMs.takeIf { it > 0L }
+        // Legacy records may contain a later sync timestamp as joinedAtMs.
+        // New assignments always freeze firstMonthFeePeriod explicitly.
+        return studentAdmissionDateMs.takeIf { it > 0L }
+            ?: enrollmentJoinedAtMs.takeIf { it > 0L }
             ?: 0L
     }
 
@@ -189,23 +295,63 @@ object MonthlyDueCalculator {
         firstMonthFeePeriod: String?,
         firstMonthFeeAmount: Double?,
         customMonthlyFeeAmount: Double? = null,
-        customFeeEffectiveFromPeriod: String? = null
+        customFeeEffectiveFromPeriod: String? = null,
+        customFeePolicyTimeline: String? = null,
+        firstMonthStartDateMs: Long? = null
     ): Double {
-        val customApplies = customMonthlyFeeAmount != null && customMonthlyFeeAmount > 0.0 &&
+        val customForPeriod = customMonthlyFeeForPeriod(
+            period = period,
+            customMonthlyFeeAmount = customMonthlyFeeAmount,
+            customFeeEffectiveFromPeriod = customFeeEffectiveFromPeriod,
+            customFeePolicyTimeline = customFeePolicyTimeline
+        )
+        val isFirstPeriod = !firstMonthFeePeriod.isNullOrBlank() &&
+            firstMonthFeeAmount != null && period.equals(firstMonthFeePeriod, ignoreCase = true)
+        if (!isFirstPeriod) return customForPeriod ?: monthlyFeeAmount
+        if (customForPeriod == null) return firstMonthFeeAmount
+
+        // A custom rate starting in the assignment month is prorated by the
+        // same frozen 30-day policy; it is never charged as a full month.
+        return firstMonthStartDateMs?.takeIf { it > 0L }?.let {
+            calculateFirstMonthFee(customForPeriod, it)
+        } ?: round((firstMonthFeeAmount / monthlyFeeAmount) * customForPeriod)
+    }
+
+    /** Resolves the custom amount for one period. Null means batch-standard. */
+    fun customMonthlyFeeForPeriod(
+        period: String,
+        customMonthlyFeeAmount: Double? = null,
+        customFeeEffectiveFromPeriod: String? = null,
+        customFeePolicyTimeline: String? = null
+    ): Double? {
+        val timeline = parseCustomFeePolicyTimeline(customFeePolicyTimeline)
+        if (timeline.isNotEmpty()) {
+            val targetKey = periodKey(period) ?: return null
+            return timeline.lastOrNull { transition ->
+                (periodKey(transition.effectivePeriod) ?: Int.MAX_VALUE) <= targetKey
+            }?.customMonthlyFeeAmount
+        }
+        val legacyApplies = customMonthlyFeeAmount != null && customMonthlyFeeAmount > 0.0 &&
             !customFeeEffectiveFromPeriod.isNullOrBlank() &&
             comparePeriods(period, customFeeEffectiveFromPeriod) >= 0
-        return if (customApplies) {
-            customMonthlyFeeAmount
-        } else if (
-        !firstMonthFeePeriod.isNullOrBlank() &&
-        firstMonthFeeAmount != null &&
-        period.equals(firstMonthFeePeriod, ignoreCase = true)
-    ) {
-        firstMonthFeeAmount
-    } else {
-        monthlyFeeAmount
+        return customMonthlyFeeAmount.takeIf { legacyApplies }
     }
-    }
+
+    /** Last scheduled transition, used only for a clear profile/confirmation label. */
+    fun latestCustomFeePolicyTransition(value: String?): CustomFeePolicyTransition? =
+        parseCustomFeePolicyTimeline(value).lastOrNull()
+
+    private fun parseCustomFeePolicyTimeline(value: String?): List<CustomFeePolicyTransition> =
+        value.orEmpty().split('|').mapNotNull { raw ->
+            val pieces = raw.split('=', limit = 2)
+            if (pieces.size != 2 || periodKey(pieces[0]) == null) return@mapNotNull null
+            val amount = if (pieces[1].equals("BATCH", ignoreCase = true)) {
+                null
+            } else {
+                pieces[1].toDoubleOrNull()?.takeIf { it > 0.0 } ?: return@mapNotNull null
+            }
+            CustomFeePolicyTransition(pieces[0].trim(), amount)
+        }.sortedBy { periodKey(it.effectivePeriod) }
 
     /** Compares "MMM yyyy" values without relying on the phone locale. */
     private fun comparePeriods(left: String, right: String): Int {
@@ -219,6 +365,14 @@ object MonthlyDueCalculator {
         val month = monthNames.indexOfFirst { cleaned.startsWith(it, ignoreCase = true) }
         val year = Regex("\\d{4}").find(cleaned)?.value?.toIntOrNull()
         return if (month >= 0 && year != null) year * 12 + month else null
+    }
+
+    /** Returns the canonical `MMM yyyy` period a positive number of months later. */
+    fun periodAfter(period: String, months: Int = 1): String? {
+        if (months < 1) return null
+        val key = periodKey(period) ?: return null
+        val nextKey = key + months
+        return "${monthNames[nextKey % 12]} ${nextKey / 12}"
     }
 
     private fun periodStartMs(value: String?): Long? {

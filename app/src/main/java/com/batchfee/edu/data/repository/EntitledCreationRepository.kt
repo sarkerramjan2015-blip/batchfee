@@ -43,7 +43,7 @@ class EntitledCreationRepository {
     }
 
     suspend fun createBatch(batch: BatchEntity) {
-        val operationId = UUID.randomUUID().toString()
+        val operationId = "batch-create-${batch.id}"
         callTrusted(
             "createEntitledBatch",
             mapOf(

@@ -3,7 +3,6 @@ package com.batchfee.edu.data.repository
 import androidx.room.withTransaction
 import com.batchfee.edu.data.database.AppDatabase
 import com.google.firebase.functions.FirebaseFunctions
-import kotlinx.coroutines.tasks.await
 
 /** Mirrors a completed server purge locally. Never removes local data before the server succeeds. */
 class PermanentStudentPurgeRepository(private val db: AppDatabase) {
@@ -22,7 +21,7 @@ class PermanentStudentPurgeRepository(private val db: AppDatabase) {
             val args = arrayOf<Any?>(instituteId, studentId)
             listOf(
                 "batch_students", "attendance", "fees", "payments", "receipts", "results",
-                "absent_messages", "homework_submissions", "assignment_submissions"
+                "absent_messages", "homework_submissions", "assignment_submissions", "payment_reversals"
             ).forEach { table -> sql.execSQL("DELETE FROM $table WHERE instituteId = ? AND studentId = ?", args) }
             db.studentDao().deleteStudent(instituteId, studentId)
         }

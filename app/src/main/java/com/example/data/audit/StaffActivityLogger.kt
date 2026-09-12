@@ -37,11 +37,6 @@ object StaffActivityLogger {
 
         // Preserve the history on this device immediately.  The action itself has
         // already succeeded; a logging failure must never make the action fail.
-        db.auditLogDao().insertAuditLog(log)
-        try {
-            AuditLogSyncHelper.upsertAuditLog(log)
-        } catch (_: Exception) {
-            // Audit logging is intentionally best-effort and must not interrupt staff work.
-        }
+        com.batchfee.edu.data.firestore.BackgroundSyncQueue.audit(db, log)
     }
 }

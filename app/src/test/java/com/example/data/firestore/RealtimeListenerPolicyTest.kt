@@ -17,6 +17,7 @@ class RealtimeListenerPolicyTest {
                 listenStudents = true,
                 listenBatchStructure = true,
                 listenStaff = true,
+                listenSalary = true,
                 listenFinance = true,
                 listenExpenses = true
             ),

@@ -131,7 +131,22 @@ object StaffSyncHelper {
         val createdAtMs: Long = 0L,
         val updatedAtMs: Long = 0L,
         val archivedAtMs: Long? = null
-    )
+    ) {
+        fun toEntity(id: String, tenantId: String, fallbackCreatedAtMs: Long = System.currentTimeMillis()) = StaffEntity(
+            id = id, instituteId = tenantId, staffCode = staffCode, fullName = fullName,
+            photoUri = photoUri.takeIf { it.isNotBlank() }, roleTitle = roleTitle,
+            phone = phone.takeIf { it.isNotBlank() }, email = email.takeIf { it.isNotBlank() },
+            address = address.takeIf { it.isNotBlank() }, joiningDateMs = joiningDateMs,
+            monthlySalary = monthlySalary, assignedBatchIds = assignedBatchIds.takeIf { it.isNotBlank() },
+            status = status, notes = notes.takeIf { it.isNotBlank() },
+            permissions = permissions.takeIf { it.isNotBlank() },
+            createdAtMs = createdAtMs.takeIf { it > 0L } ?: fallbackCreatedAtMs,
+            updatedAtMs = updatedAtMs.takeIf { it > 0L } ?: fallbackCreatedAtMs,
+            archivedAtMs = archivedAtMs, staffCategory = staffCategory, salaryType = salaryType,
+            perClassRate = perClassRate, perHourRate = perHourRate,
+            subjects = subjects.takeIf { it.isNotBlank() }
+        )
+    }
 
     suspend fun fetchStaffFromFirestore(instituteId: String, staffId: String): StaffFirestoreData? {
         return withContext(Dispatchers.IO) {

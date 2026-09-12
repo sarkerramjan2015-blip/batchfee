@@ -78,7 +78,7 @@ fun BulkSendProgressPanel(
                 modifier = Modifier.weight(1f)
             )
             Text(
-                "Sent ${state.sentCount} of ${state.totalCount}",
+                "Accepted ${state.sentCount + state.queuedCount} of ${state.totalCount}",
                 color = TextMuted,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.SemiBold
@@ -107,7 +107,7 @@ fun BulkSendProgressPanel(
 
         Spacer(Modifier.height(12.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            if (running) {
+            if (running && !state.serverManaged) {
                 OutlinedButton(
                     onClick = onStop,
                     modifier = Modifier.weight(1f).height(46.dp),
@@ -117,6 +117,14 @@ fun BulkSendProgressPanel(
                 ) {
                     Text("Stop", fontWeight = FontWeight.Bold, fontSize = 15.sp)
                 }
+            }
+            if (running && state.serverManaged) {
+                Text(
+                    "Sending securely through BatchFee Server…",
+                    color = TextMuted,
+                    fontSize = 12.sp,
+                    modifier = Modifier.weight(1f)
+                )
             }
             if (completed && state.failedCount > 0) {
                 OutlinedButton(
@@ -147,6 +155,7 @@ fun BulkSendProgressPanel(
 private fun BulkQueueItemRow(item: BulkMessageController.BulkQueueItem) {
     val (chipColor, chipBg, label) = when (item.status) {
         BulkMessageController.Status.SENT -> Triple(WAGreen, WAGreen.copy(alpha = 0.15f), "Sent")
+        BulkMessageController.Status.QUEUED -> Triple(Cyan, Cyan.copy(alpha = 0.15f), "Pending DLR")
         BulkMessageController.Status.FAILED -> Triple(SoftRed, SoftRed.copy(alpha = 0.15f), "Failed")
         BulkMessageController.Status.DUPLICATE -> Triple(Amber, Amber.copy(alpha = 0.15f), "Duplicate")
         BulkMessageController.Status.NO_PHONE -> Triple(TextMuted, TextMuted.copy(alpha = 0.15f), "No phone")

@@ -133,7 +133,8 @@ fun StudentDashboardScreen() {
                                 firstMonthFeePeriod = doc.getString("firstMonthFeePeriod"),
                                 firstMonthFeeAmount = (doc.get("firstMonthFeeAmount") as? Number)?.toDouble(),
                                 customMonthlyFeeAmount = (doc.get("customMonthlyFeeAmount") as? Number)?.toDouble(),
-                                customFeeEffectiveFromPeriod = doc.getString("customFeeEffectiveFromPeriod")
+                                customFeeEffectiveFromPeriod = doc.getString("customFeeEffectiveFromPeriod"),
+                                customFeePolicyTimeline = doc.getString("customFeePolicyTimeline")
                             )
                         }
                     }.orEmpty()
@@ -204,9 +205,11 @@ fun StudentDashboardScreen() {
                 if (error != null) return@addSnapshotListener
                 val docs = snap?.documents ?: emptyList()
                 val p = docs.count { it.getString("status") == "present" }
-                presentCount = p
-                totalAttCount = docs.size
-                attendancePct = if (docs.isNotEmpty()) (p.toDouble() / docs.size) * 100 else 0.0
+                val late = docs.count { it.getString("status") == "late" }
+                val absent = docs.count { it.getString("status") == "absent" }
+                presentCount = p + late
+                totalAttCount = p + late + absent
+                attendancePct = if (totalAttCount > 0) ((p + late).toDouble() / totalAttCount) * 100 else 0.0
             }
 
         // Latest result
@@ -383,7 +386,7 @@ fun StudentDashboardScreen() {
                     Spacer(Modifier.height(8.dp))
                     Text("${"%.0f".format(attendancePct)}%", color = StuWhite, fontWeight = FontWeight.ExtraBold, fontSize = 22.sp)
                     Text("Attendance", color = StuMuted, fontSize = 11.sp)
-                    Text("$presentCount/$totalAttCount present", color = StuDim, fontSize = 10.sp)
+                    Text("$presentCount/$totalAttCount attended", color = StuDim, fontSize = 10.sp)
                 }
             }
             Card(Modifier.weight(1f), shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = StuCard), border = BorderStroke(1.dp, StuStroke)) {

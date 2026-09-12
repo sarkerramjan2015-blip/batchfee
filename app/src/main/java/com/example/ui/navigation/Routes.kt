@@ -95,10 +95,11 @@ object BillingRoute
 @Serializable object EnquiryListRoute
 
 @Serializable object SettingsRoute
+@Serializable object NoticeCenterRoute
+@Serializable object ProductFeedbackRoute
+@Serializable object TutorialGuideRoute
 
 @Serializable object StudentRegistrationRoute
-
-@Serializable object StudentLoginRoute
 
 @Serializable object StudentDashboardRoute
 

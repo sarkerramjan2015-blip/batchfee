@@ -40,6 +40,14 @@ data class GroupedFeeCollectionResult(
     val payments: List<PaymentEntity>
 )
 
+data class CustomMonthlyFeeUpdateResult(
+    val customMonthlyFeeAmount: Double?,
+    val customFeeReason: String?,
+    val effectivePeriod: String,
+    val customFeePolicyTimeline: String,
+    val syncedAtMs: Long
+)
+
 class FeeCollectionRepository(
     private val db: AppDatabase,
     private val ledgerGateway: FinancialLedgerGateway = FirebaseFinancialLedgerGateway()
@@ -297,18 +305,37 @@ class FeeCollectionRepository(
         batchId: String,
         customMonthlyFeeAmount: Double?,
         customFeeReason: String?,
+        effectiveFromPeriod: String? = null,
         now: Long = System.currentTimeMillis(),
         operationId: String = UUID.randomUUID().toString()
-    ): FinancialOperationResult = execute(
-        request = baseRequest(operationId, instituteId, "set_custom_monthly_fee") + mapOf(
+    ): CustomMonthlyFeeUpdateResult {
+        val result = execute(
+            request = baseRequest(operationId, instituteId, "set_custom_monthly_fee") + mapOf(
             "enrollmentId" to enrollmentId,
             "studentId" to studentId,
             "batchId" to batchId,
             "customMonthlyFeeAmount" to customMonthlyFeeAmount,
-            "customFeeReason" to customFeeReason
-        ),
-        queuedAtMs = now
-    )
+            "customFeeReason" to customFeeReason,
+            "effectiveFromPeriod" to effectiveFromPeriod
+            ),
+            queuedAtMs = now
+        )
+        @Suppress("UNCHECKED_CAST")
+        val policy = result.metadata["customFeePolicy"] as? Map<String, Any?>
+            ?: error("The ledger did not return the confirmed custom-fee policy.")
+        check(policy["enrollmentId"] == enrollmentId && policy["studentId"] == studentId &&
+            policy["batchId"] == batchId) { "Custom-fee response does not match this enrollment." }
+        return CustomMonthlyFeeUpdateResult(
+            customMonthlyFeeAmount = (policy["customMonthlyFeeAmount"] as? Number)?.toDouble(),
+            customFeeReason = policy["customFeeReason"] as? String,
+            effectivePeriod = policy["effectivePeriod"] as? String
+                ?: error("The ledger did not confirm the effective month."),
+            customFeePolicyTimeline = policy["customFeePolicyTimeline"] as? String
+                ?: error("The ledger did not return the fee-policy timeline."),
+            syncedAtMs = (policy["syncedAtMs"] as? Number)?.toLong()
+                ?: error("The ledger did not confirm the policy time.")
+        )
+    }
 
     /**
      * Reconciles an owner's admission-date correction through the trusted
@@ -610,6 +637,14 @@ class FeeCollectionRepository(
             "set_custom_monthly_fee" -> {
                 check(result.payments.isEmpty() && result.receipts.isEmpty() && result.reversals.isEmpty())
                 check(result.deletedPaymentIds.isEmpty() && result.deletedReceiptIds.isEmpty())
+                @Suppress("UNCHECKED_CAST")
+                val policy = result.metadata["customFeePolicy"] as? Map<String, Any?>
+                    ?: error("Ledger response is missing the custom-fee policy.")
+                check(policy["enrollmentId"] == request["enrollmentId"] &&
+                    policy["studentId"] == request["studentId"] &&
+                    policy["batchId"] == request["batchId"])
+                check((policy["effectivePeriod"] as? String).orEmpty().matches(Regex("^[A-Za-z]{3} \\d{4}$")))
+                check((policy["customFeePolicyTimeline"] as? String).orEmpty().isNotBlank())
             }
             "update_student_admission_date" -> {
                 check(result.payments.isEmpty() && result.receipts.isEmpty() && result.reversals.isEmpty())

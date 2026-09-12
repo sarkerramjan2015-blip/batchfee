@@ -14,7 +14,8 @@ data class ManagedUserRecord(
     val role: String,
     val instituteId: String? = null,
     val createdAtMs: Long,
-    val status: String = "active"
+    val status: String = "active",
+    val platformRole: String? = null
 )
 
 object AppUserSyncHelper {
@@ -23,8 +24,7 @@ object AppUserSyncHelper {
 
     suspend fun upsertManagedUser(record: ManagedUserRecord) = withContext(Dispatchers.IO) {
         try {
-            firestore.collection(COLLECTION).document(record.id).set(
-                mapOf(
+            val fields = mutableMapOf<String, Any?>(
                     "name" to record.name,
                     "email" to record.email,
                     "role" to record.role,
@@ -32,7 +32,10 @@ object AppUserSyncHelper {
                     "createdAtMs" to record.createdAtMs,
                     "status" to record.status
                 )
-            ).await()
+            // A normal institute profile sync must never erase a server-issued
+            // platform role. Only the trusted platform callable may assign it.
+            record.platformRole?.let { fields["platformRole"] = it }
+            firestore.collection(COLLECTION).document(record.id).set(fields).await()
         } catch (e: Exception) {
             FirebaseFailureReporter.report(e, "sync app user to Firestore", permissionDeniedIsExpected = true)
             throw e
@@ -50,7 +53,8 @@ object AppUserSyncHelper {
                 role = doc.getString("role") ?: "",
                 instituteId = doc.getString("instituteId"),
                 createdAtMs = (doc.get("createdAtMs") as? Number)?.toLong() ?: System.currentTimeMillis(),
-                status = doc.getString("status") ?: "active"
+                status = doc.getString("status") ?: "active",
+                platformRole = doc.getString("platformRole")
             )
         } catch (e: Exception) {
             FirebaseFailureReporter.report(e, "sync app user from Firestore", permissionDeniedIsExpected = true)

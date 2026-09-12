@@ -83,15 +83,19 @@ fun EnquiryListScreen(db: AppDatabase, onBack: () -> Unit, onAddEnquiry: () -> U
     val instId = SessionManager.currentInstituteId.value
     var instituteName by remember { mutableStateOf("") }
     var instituteContact by remember { mutableStateOf("") }
+    var enquiryTemplate by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(instId) {
         val institute = instId?.let { db.instituteDao().getInstitute(it) }
         instituteName = institute?.name?.trim().orEmpty().ifBlank { "our institute" }
         instituteContact = com.example.domain.MessageTemplateStore.loadInstituteContact(db, instId)
+        enquiryTemplate = com.example.domain.MessageTemplateStore.load(
+            db, instId, com.example.domain.MessageTemplateStore.TYPE_ENQUIRY_FOLLOW_UP
+        )
     }
 
     fun enquiryOpener(enquiryName: String): String {
-        val template = com.example.domain.MessageTemplateStore.defaultFor(com.example.domain.MessageTemplateStore.TYPE_ENQUIRY_FOLLOW_UP)
+        val template = enquiryTemplate
         return template?.let {
             com.example.domain.MessageTemplateStore.apply(
                 it,

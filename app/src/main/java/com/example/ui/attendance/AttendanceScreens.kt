@@ -1,5 +1,6 @@
 package com.batchfee.edu.ui.attendance
 
+import android.app.TimePickerDialog
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
@@ -163,7 +164,7 @@ fun AttendanceBatchSelectScreen(db: AppDatabase, onBack: () -> Unit, onSelectBat
                                     miniChip("Present", "${"%.0f".format(pct)}%", AccentGreen)
                                     miniChip("Absent", "${"%.0f".format(absPct)}%", AccentRed)
                                     miniChip("Leave", "${"%.0f".format(summary.leavePct)}%", AccentSky)
-                                    miniChip("Holiday", "${"%.0f".format(summary.holidayPct)}%", AccentGray)
+                                    miniChip("Late", "${"%.0f".format(summary.latePct)}%", AccentAmber)
                                 }
                             }
                         }
@@ -345,6 +346,13 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
     val absentMessageTemplate by viewModel.absentMessageTemplate.collectAsState()
     val selectedDateMs by viewModel.selectedDateMs.collectAsState()
     val context = LocalContext.current
+    val bulkSaveError by viewModel.bulkSaveError.collectAsState()
+    LaunchedEffect(bulkSaveError) {
+        bulkSaveError?.let {
+            android.widget.Toast.makeText(context, it, android.widget.Toast.LENGTH_LONG).show()
+            viewModel.clearBulkSaveError()
+        }
+    }
 
     val dateLabel = remember(selectedDateMs) {
         SimpleDateFormat("MMM dd, yyyy", Locale.getDefault()).format(Date(selectedDateMs))
@@ -363,6 +371,10 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
     var messageDraft by remember { mutableStateOf("") }
     var showTemplateEditor by remember { mutableStateOf(false) }
     var templateDraft by remember { mutableStateOf("") }
+    var lateStudentId by remember { mutableStateOf<String?>(null) }
+    var lateScheduledStartMs by remember { mutableStateOf<Long?>(null) }
+    var lateArrivalTimeMs by remember { mutableStateOf<Long?>(null) }
+    var lateTimeError by remember { mutableStateOf<String?>(null) }
 
     // Bulk multi-select
     var selectionMode by remember { mutableStateOf(false) }
@@ -438,6 +450,15 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
                             Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${target.phone?.filter(Char::isDigit).orEmpty()}"))
                                 .apply { putExtra("sms_body", body) }
                         )
+                    }.also { launched ->
+                        if (launched.isSuccess) {
+                            // Carrier hand-off is recorded as sent; delivery confirmation
+                            // belongs to the phone's own SMS app and cannot be observed.
+                            viewModel.recordCarrierSms(
+                                recipient = target.phone?.filter(Char::isDigit).orEmpty(),
+                                purpose = "Bulk message · ${target.name}"
+                            )
+                        }
                     }.isSuccess
                 }
             }
@@ -499,7 +520,8 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
             val pCount = studentsWithStatus.count { it.second == "present" }
             val aCount = studentsWithStatus.count { it.second == "absent" }
             val lCount = studentsWithStatus.count { it.second == "leave" }
-            val hCount = studentsWithStatus.count { it.second == "holiday" }
+            val ltCount = studentsWithStatus.count { it.second == "late" }
+            val legacyHolidayCount = studentsWithStatus.count { it.second == "holiday" }
             val totalStudents = students.size
 
             Card(
@@ -509,7 +531,7 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
             ) {
                 Column(Modifier.padding(12.dp)) {
                     LinearProgressIndicator(
-                        progress = { if (totalStudents > 0) (pCount + aCount + lCount + hCount).toFloat() / totalStudents else 0f },
+                        progress = { if (totalStudents > 0) (pCount + aCount + lCount + ltCount + legacyHolidayCount).toFloat() / totalStudents else 0f },
                         modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
                         color = AccentGreen, trackColor = CardBgAlt
                     )
@@ -517,8 +539,8 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                         miniChip("P", "$pCount", AccentGreen)
                         miniChip("A", "$aCount", AccentRed)
-                        miniChip("L", "$lCount", AccentSky)
-                        miniChip("H", "$hCount", AccentGray)
+                        miniChip("Lv", "$lCount", AccentSky)
+                        miniChip("Lt", "$ltCount", AccentAmber)
                         miniChip("Total", "$totalStudents", TextWhite)
                     }
                 }
@@ -588,6 +610,7 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
                     studentName = student.fullName,
                     studentCode = student.studentCode,
                     status = status,
+                    lateByMinutes = records[student.id]?.lateByMinutes,
                     hasMessage = hasMessage,
                     isSending = isSending,
                     selectionMode = selectionMode,
@@ -603,7 +626,20 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
                             toggleSelection(student.id)
                         }
                     },
-                    onMark = { st -> viewModel.markAttendance(student.id, batchId, selectedDateMs, st) },
+                    onMark = { st ->
+                        if (st == "late") {
+                            lateStudentId = student.id
+                            lateScheduledStartMs = scheduledClassStartMs(selectedDateMs, batch?.startTime)
+                            lateArrivalTimeMs = if (viewModel.isToday(selectedDateMs)) {
+                                System.currentTimeMillis()
+                            } else {
+                                null
+                            }
+                            lateTimeError = null
+                        } else {
+                            viewModel.markAttendance(student.id, batchId, selectedDateMs, st)
+                        }
+                    },
                     onUndo = { viewModel.undoAttendance(student.id, selectedDateMs, batchId) },
                     onSendMessage = {
                         dialogStudentId = student.id
@@ -815,6 +851,7 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
                                 "present" -> AccentGreen
                                 "absent" -> AccentRed
                                 "leave" -> AccentSky
+                                "late" -> AccentAmber
                                 "holiday" -> AccentGray
                                 else -> TextMuted
                             }
@@ -847,7 +884,8 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
                                             "present" -> "Present"
                                             "absent" -> "Absent"
                                             "leave" -> "Leave"
-                                            "holiday" -> "Holiday"
+                                            "late" -> records[student.id]?.lateByMinutes?.let { "Late · $it min" } ?: "Late"
+                                            "holiday" -> "Holiday (legacy)"
                                             else -> "Not marked"
                                         },
                                         color = statusColor,
@@ -932,6 +970,48 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
     }
 
     // ── Bulk composer + progress ─────────────────────────
+    lateStudentId?.let { studentId ->
+        LateAttendanceDialog(
+            studentName = students.firstOrNull { it.id == studentId }?.fullName ?: "Student",
+            selectedDateMs = selectedDateMs,
+            scheduledStartTimeMs = lateScheduledStartMs,
+            arrivalTimeMs = lateArrivalTimeMs,
+            scheduledTimeLocked = !batch?.startTime.isNullOrBlank(),
+            errorMessage = lateTimeError,
+            onScheduledTimeClick = {
+                showAttendanceTimePicker(context, selectedDateMs, lateScheduledStartMs) {
+                    lateScheduledStartMs = it
+                    lateTimeError = null
+                }
+            },
+            onArrivalTimeClick = {
+                showAttendanceTimePicker(context, selectedDateMs, lateArrivalTimeMs ?: lateScheduledStartMs) {
+                    lateArrivalTimeMs = it
+                    lateTimeError = null
+                }
+            },
+            onDismiss = {
+                lateStudentId = null
+                lateTimeError = null
+            },
+            onConfirm = {
+                val scheduled = lateScheduledStartMs
+                val arrival = lateArrivalTimeMs
+                when {
+                    scheduled == null -> lateTimeError = "Select the scheduled class time."
+                    arrival == null -> lateTimeError = "Select the student's arrival time."
+                    arrival <= scheduled -> lateTimeError =
+                        "Arrival time is not later than the scheduled class time. Mark the student Present instead."
+                    else -> {
+                        viewModel.markLateAttendance(studentId, batchId, selectedDateMs, scheduled, arrival)
+                        lateStudentId = null
+                        lateTimeError = null
+                    }
+                }
+            }
+        )
+    }
+
     if (showBulkComposer) {
         BulkMessageDialog(
             title = if (bulkChannel == "whatsapp") "Bulk WhatsApp Message" else "Bulk SMS Message",
@@ -987,9 +1067,120 @@ private fun channelCard(label: String, icon: androidx.compose.ui.graphics.vector
     }
 }
 
+private val dhakaTimeZone: TimeZone = TimeZone.getTimeZone("Asia/Dhaka")
+
+private fun scheduledClassStartMs(dateMs: Long, startTime: String?): Long? {
+    val match = Regex("^(\\d{1,2}):(\\d{2})$").matchEntire(startTime?.trim().orEmpty()) ?: return null
+    val hour = match.groupValues[1].toIntOrNull() ?: return null
+    val minute = match.groupValues[2].toIntOrNull() ?: return null
+    if (hour !in 0..23 || minute !in 0..59) return null
+    return Calendar.getInstance(dhakaTimeZone).apply {
+        timeInMillis = dateMs
+        set(Calendar.HOUR_OF_DAY, hour)
+        set(Calendar.MINUTE, minute)
+        set(Calendar.SECOND, 0)
+        set(Calendar.MILLISECOND, 0)
+    }.timeInMillis
+}
+
+private fun showAttendanceTimePicker(
+    context: android.content.Context,
+    dateMs: Long,
+    currentTimeMs: Long?,
+    onSelected: (Long) -> Unit
+) {
+    val initial = Calendar.getInstance(dhakaTimeZone).apply {
+        timeInMillis = currentTimeMs ?: System.currentTimeMillis()
+    }
+    TimePickerDialog(
+        context,
+        { _, hour, minute ->
+            onSelected(Calendar.getInstance(dhakaTimeZone).apply {
+                timeInMillis = dateMs
+                set(Calendar.HOUR_OF_DAY, hour)
+                set(Calendar.MINUTE, minute)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+            }.timeInMillis)
+        },
+        initial.get(Calendar.HOUR_OF_DAY),
+        initial.get(Calendar.MINUTE),
+        false
+    ).show()
+}
+
+private fun attendanceTimeLabel(value: Long?): String = value?.let {
+    SimpleDateFormat("h:mm a", Locale.US).apply { timeZone = dhakaTimeZone }.format(Date(it))
+} ?: "Select time"
+
+@Composable
+private fun LateAttendanceDialog(
+    studentName: String,
+    selectedDateMs: Long,
+    scheduledStartTimeMs: Long?,
+    arrivalTimeMs: Long?,
+    scheduledTimeLocked: Boolean,
+    errorMessage: String?,
+    onScheduledTimeClick: () -> Unit,
+    onArrivalTimeClick: () -> Unit,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit
+) {
+    val lateByMinutes = if (scheduledStartTimeMs != null && arrivalTimeMs != null && arrivalTimeMs > scheduledStartTimeMs) {
+        ((arrivalTimeMs - scheduledStartTimeMs) / 60_000L).toInt()
+    } else null
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = CardBg,
+        title = { Text("Mark as Late", color = TextWhite, fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(studentName, color = TextWhite, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                Text(
+                    SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(selectedDateMs)),
+                    color = TextMuted,
+                    fontSize = 12.sp
+                )
+                OutlinedButton(
+                    onClick = onScheduledTimeClick,
+                    enabled = !scheduledTimeLocked,
+                    modifier = Modifier.fillMaxWidth(),
+                    border = BorderStroke(1.dp, if (scheduledStartTimeMs == null) AccentAmber else BorderSub)
+                ) {
+                    Text(
+                        "Scheduled class: ${attendanceTimeLabel(scheduledStartTimeMs)}",
+                        color = if (scheduledTimeLocked) TextMuted else Cyan
+                    )
+                }
+                if (scheduledTimeLocked) {
+                    Text("Taken from the batch schedule and saved with this attendance.", color = TextMuted, fontSize = 11.sp)
+                } else {
+                    Text("This batch has no start time. Select it manually.", color = AccentAmber, fontSize = 11.sp)
+                }
+                OutlinedButton(
+                    onClick = onArrivalTimeClick,
+                    modifier = Modifier.fillMaxWidth(),
+                    border = BorderStroke(1.dp, if (arrivalTimeMs == null) AccentAmber else Cyan)
+                ) {
+                    Text("Arrival time: ${attendanceTimeLabel(arrivalTimeMs)}", color = Cyan)
+                }
+                lateByMinutes?.let {
+                    Text("Late by: $it minutes", color = AccentAmber, fontWeight = FontWeight.Bold)
+                }
+                errorMessage?.let { Text(it, color = AccentRed, fontSize = 12.sp) }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm) { Text("Confirm", color = AccentAmber, fontWeight = FontWeight.Bold) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel", color = TextMuted) } }
+    )
+}
+
 @Composable
 private fun StudentAttendanceCard(
     studentName: String, studentCode: String, status: String,
+    lateByMinutes: Int?,
     hasMessage: Boolean, isSending: Boolean,
     onMark: (String) -> Unit, onUndo: () -> Unit,
     onSendMessage: () -> Unit,
@@ -1001,11 +1192,11 @@ private fun StudentAttendanceCard(
     val chipData = listOf(
         "present" to Triple("P", AccentGreen, "Present"),
         "absent" to Triple("A", AccentRed, "Absent"),
-        "leave" to Triple("L", AccentSky, "Leave"),
-        "holiday" to Triple("H", AccentGray, "Holiday")
+        "leave" to Triple("Lv", AccentSky, "Leave"),
+        "late" to Triple("Lt", AccentAmber, "Late")
     )
     val activeColor = when (status) {
-        "present" -> AccentGreen; "absent" -> AccentRed; "leave" -> AccentSky; "holiday" -> AccentGray; else -> TextMuted
+        "present" -> AccentGreen; "absent" -> AccentRed; "leave" -> AccentSky; "late" -> AccentAmber; "holiday" -> AccentGray; else -> TextMuted
     }
 
     Card(
@@ -1028,6 +1219,16 @@ private fun StudentAttendanceCard(
             Column(Modifier.weight(1f)) {
                 Text(studentName, color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(studentCode, color = TextMuted, fontSize = 10.sp)
+                if (status == "late") {
+                    Text(
+                        lateByMinutes?.let { "Late · $it min" } ?: "Late · time unavailable",
+                        color = AccentAmber,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                } else if (status == "holiday") {
+                    Text("Holiday · legacy record", color = AccentGray, fontSize = 10.sp)
+                }
             }
 
             // Status chips
@@ -1106,6 +1307,8 @@ fun AttendanceReportScreen(db: AppDatabase, onBack: () -> Unit) {
             presentCount = summaries.sumOf { it.presentCount },
             absentCount = summaries.sumOf { it.absentCount },
             leaveCount = summaries.sumOf { it.leaveCount },
+            lateCount = summaries.sumOf { it.lateCount },
+            lateMinutesTotal = summaries.sumOf { it.lateMinutesTotal },
             holidayCount = summaries.sumOf { it.holidayCount },
             expectedStudentDays = summaries.sumOf { it.expectedStudentDays },
             attendanceDays = summaries.maxOfOrNull { it.attendanceDays } ?: 0
@@ -1188,10 +1391,21 @@ private fun summaryCard(sum: BatchAttendanceSummary, modifier: Modifier = Modifi
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                 statChip("Coverage", "${"%.0f".format(sum.coveragePct)}%", sum.markedCount, AccentViolet)
-                statChip("Present", "${"%.0f".format(sum.presentPerformancePct)}%", sum.presentCount, AccentGreen)
+                statChip("Attendance", "${"%.0f".format(sum.attendanceRatePct)}%", sum.presentCount + sum.lateCount, AccentGreen)
                 statChip("Absent", "${"%.0f".format(sum.absentPerformancePct)}%", sum.absentCount, AccentRed)
-                statChip("Leave", sum.leaveCount.toString(), sum.leaveCount, AccentSky)
-                statChip("Holiday", sum.holidayCount.toString(), sum.holidayCount, AccentGray)
+                statChip("Late", "${"%.0f".format(sum.averageLateMinutes)}m avg", sum.lateCount, AccentAmber)
+                statChip("Punctual", "${"%.0f".format(sum.punctualityRatePct)}%", sum.presentCount, AccentSky)
+            }
+            if (sum.leaveCount > 0 || sum.holidayCount > 0) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    buildString {
+                        append("Leave: ${sum.leaveCount}")
+                        if (sum.holidayCount > 0) append(" · Legacy holiday: ${sum.holidayCount}")
+                    },
+                    color = TextMuted,
+                    fontSize = 10.sp
+                )
             }
         }
     }

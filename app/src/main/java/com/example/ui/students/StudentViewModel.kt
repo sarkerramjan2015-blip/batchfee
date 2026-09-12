@@ -388,13 +388,14 @@ class StudentViewModel(private val db: AppDatabase) : ViewModel() {
     ) = withContext(Dispatchers.IO) {
         val batchesById = db.batchDao().getBatchesByInstituteOnce(instituteId).associateBy { it.id }
         db.batchStudentDao().getActiveEnrollmentsForStudentOnce(studentId, instituteId).forEach { enrollment ->
-            val previousAdmissionPeriod = MonthlyDueCalculator.periodFor(previousAdmissionDateMs)
-            val admissionLinked = enrollment.firstMonthFeePeriod.isNullOrBlank() ||
-                enrollment.firstMonthFeePeriod.equals(previousAdmissionPeriod, ignoreCase = true)
+            val admissionLinked = com.batchfee.edu.domain.EnrollmentDatePolicy
+                .followsAdmission(enrollment, previousAdmissionDateMs)
             if (!admissionLinked) return@forEach
             val batch = batchesById[enrollment.batchId] ?: return@forEach
+            if (batch.isCourseBatch()) return@forEach
             db.batchStudentDao().enrollStudent(
                 enrollment.copy(
+                    admissionDateLinked = true,
                     firstMonthFeePeriod = if (batch.isCourseBatch()) null else MonthlyDueCalculator.periodFor(admissionDateMs),
                     firstMonthFeeAmount = if (batch.isCourseBatch()) null else {
                         MonthlyDueCalculator.calculateFirstMonthFee(batch.monthlyFeeAmount, admissionDateMs)

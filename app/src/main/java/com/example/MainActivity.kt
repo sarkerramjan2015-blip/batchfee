@@ -1,9 +1,12 @@
 package com.batchfee.edu
 
+import android.app.Activity
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
@@ -31,6 +34,9 @@ import com.batchfee.edu.data.firebase.FirebaseFailureReporter
 import com.batchfee.edu.ui.auth.AuthScreen
 import com.batchfee.edu.ui.billing.BillingScreen
 import com.batchfee.edu.ui.dashboard.DashboardScreen
+import com.batchfee.edu.ui.dashboard.AdminNoticeCenterScreen
+import com.batchfee.edu.ui.dashboard.ProductFeedbackScreen
+import com.batchfee.edu.ui.dashboard.TutorialGuideScreen
 import com.batchfee.edu.ui.legal.PrivacyPolicyScreen
 import com.batchfee.edu.ui.legal.TermsConditionsScreen
 import com.batchfee.edu.ui.navigation.*
@@ -39,8 +45,12 @@ import com.batchfee.edu.ui.superadmin.SuperAdminScreen
 import com.batchfee.edu.ui.subscription.SubscriptionExpiredScreen
 import com.batchfee.edu.ui.theme.MyApplicationTheme
 import com.batchfee.edu.ui.update.ForceUpdateScreen
-import com.batchfee.edu.ui.studentapp.StudentLoginScreen
 import com.batchfee.edu.ui.studentapp.StudentMainScaffold
+import com.google.android.play.core.appupdate.AppUpdateManager
+import com.google.android.play.core.appupdate.AppUpdateManagerFactory
+import com.google.android.play.core.appupdate.AppUpdateOptions
+import com.google.android.play.core.install.model.AppUpdateType
+import com.google.android.play.core.install.model.UpdateAvailability
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.CancellationException
@@ -51,6 +61,21 @@ import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 
 class MainActivity : FragmentActivity() {
+    private lateinit var appUpdateManager: AppUpdateManager
+    private var isImmediateUpdateCheckInFlight = false
+    private var isImmediateUpdateFlowRunning = false
+
+    private val immediateUpdateLauncher = registerForActivityResult(
+        ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        isImmediateUpdateFlowRunning = false
+        if (result.resultCode != Activity.RESULT_OK) {
+            // Cancellation and Play availability failures are normal outcomes, especially
+            // for sideloaded builds. Keep them out of Crashlytics and try again on a later resume.
+            Log.w(TAG, "Immediate update flow ended with result code ${result.resultCode}")
+        }
+    }
+
     override fun onUserInteraction() {
         super.onUserInteraction()
         SessionManager.markActivity()
@@ -58,6 +83,8 @@ class MainActivity : FragmentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        appUpdateManager = AppUpdateManagerFactory.create(this)
+        checkForImmediateUpdate()
         enableEdgeToEdge()
         val appDb = (application as BatchFeeApp).database
         
@@ -87,10 +114,59 @@ class MainActivity : FragmentActivity() {
             }
         }
     }
+
+    override fun onResume() {
+        super.onResume()
+        if (::appUpdateManager.isInitialized) checkForImmediateUpdate()
+    }
+
+    private fun checkForImmediateUpdate() {
+        if (!::appUpdateManager.isInitialized || isImmediateUpdateCheckInFlight) return
+
+        isImmediateUpdateCheckInFlight = true
+        appUpdateManager.appUpdateInfo
+            .addOnSuccessListener { appUpdateInfo ->
+                isImmediateUpdateCheckInFlight = false
+                if (isImmediateUpdateFlowRunning) return@addOnSuccessListener
+
+                val availability = appUpdateInfo.updateAvailability()
+                val canStartNewUpdate =
+                    availability == UpdateAvailability.UPDATE_AVAILABLE &&
+                        appUpdateInfo.isUpdateTypeAllowed(AppUpdateType.IMMEDIATE)
+                val shouldResumeUpdate =
+                    availability == UpdateAvailability.DEVELOPER_TRIGGERED_UPDATE_IN_PROGRESS
+
+                if (!canStartNewUpdate && !shouldResumeUpdate) return@addOnSuccessListener
+
+                isImmediateUpdateFlowRunning = true
+                val started = runCatching {
+                    appUpdateManager.startUpdateFlowForResult(
+                        appUpdateInfo,
+                        immediateUpdateLauncher,
+                        AppUpdateOptions.newBuilder(AppUpdateType.IMMEDIATE).build()
+                    )
+                }.onFailure { error ->
+                    Log.w(TAG, "Could not start immediate update flow", error)
+                }.getOrDefault(false)
+
+                if (!started) isImmediateUpdateFlowRunning = false
+            }
+            .addOnFailureListener { error ->
+                isImmediateUpdateCheckInFlight = false
+                // The API can fail for a sideloaded APK or a device without Google Play.
+                // That must not block startup or inflate production crash reports.
+                Log.d(TAG, "Google Play update check unavailable", error)
+            }
+    }
+
+    private companion object {
+        const val TAG = "BatchFeeAppUpdate"
+    }
 }
 
 @Composable
 private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
+    LaunchedEffect(appDb) { com.batchfee.edu.data.firestore.BackgroundSyncQueue.start(appDb) }
     val navController = rememberNavController()
     val currentBackStackEntry by navController.currentBackStackEntryAsState()
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -169,7 +245,8 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
                     SessionManager.expireSession()
                 }
             }
-            if (event == Lifecycle.Event.ON_RESUME && StudentSessionManager.isLoggedIn()) {
+            if (event == Lifecycle.Event.ON_RESUME &&
+                (StudentSessionManager.isLoggedIn() || StudentSessionManager.hasPendingVerification())) {
                 sessionScope.launch { StudentSessionManager.validateActiveSession() }
             }
         }
@@ -293,8 +370,10 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
                 onNavigateTermsConditions = {
                     navController.navigate(TermsConditionsRoute)
                 },
-                onNavigateStudentLogin = {
-                    navController.navigate(StudentLoginRoute)
+                onNavigateStudentDashboard = {
+                    navController.navigate(StudentDashboardRoute) {
+                        popUpTo(AuthRoute) { inclusive = true }
+                    }
                 }
             )
         }
@@ -355,6 +434,9 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
                             "IdCardGeneratorRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.IdCardGeneratorRoute)
                             "BirthdayReminderRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.BirthdayReminderRoute)
                             "SettingsRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.SettingsRoute)
+                            "NoticeCenterRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.NoticeCenterRoute)
+                            "ProductFeedbackRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.ProductFeedbackRoute)
+                            "TutorialGuideRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.TutorialGuideRoute)
                             "EnquiryListRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.EnquiryListRoute)
                             "WorksListRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.WorksListRoute)
                             "HomeworkListRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.HomeworkListRoute)
@@ -830,6 +912,17 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
                 }
             )
         }
+
+        composable<NoticeCenterRoute> {
+            AdminNoticeCenterScreen(onBack = { navController.popBackStack() })
+        }
+
+        composable<ProductFeedbackRoute> {
+            ProductFeedbackScreen(onBack = { navController.popBackStack() })
+        }
+        composable<TutorialGuideRoute> {
+            TutorialGuideScreen(onBack = { navController.popBackStack() })
+        }
         
         composable<StudentRegistrationRoute> {
             com.batchfee.edu.ui.registrations.RegistrationListScreen(
@@ -877,17 +970,6 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
                 onLogout = {
                     navController.navigate(AuthRoute) {
                         popUpTo(navController.graph.id) { inclusive = true }
-                    }
-                }
-            )
-        }
-
-        composable<StudentLoginRoute> {
-            StudentLoginScreen(
-                onBack = { navController.popBackStack() },
-                onLoginSuccess = {
-                    navController.navigate(StudentDashboardRoute) {
-                        popUpTo(AuthRoute) { inclusive = true }
                     }
                 }
             )

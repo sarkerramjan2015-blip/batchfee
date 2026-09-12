@@ -33,6 +33,7 @@ import java.util.Locale
 @Database(
     entities = [
         InstituteEntity::class,
+        com.batchfee.edu.data.models.BackgroundSyncEntity::class,
         UserEntity::class,
         SubscriptionPlanEntity::class,
         com.batchfee.edu.data.models.StudentEntity::class,
@@ -68,12 +69,13 @@ import java.util.Locale
         com.batchfee.edu.data.models.CustomRoutineEntity::class,
         com.batchfee.edu.data.models.CustomRoutineEntryEntity::class
     ],
-    version = 41,
+    version = 46,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
 
     abstract fun instituteDao(): InstituteDao
+    abstract fun backgroundSyncDao(): com.batchfee.edu.data.dao.BackgroundSyncDao
     abstract fun userDao(): UserDao
     abstract fun subscriptionPlanDao(): SubscriptionPlanDao
     abstract fun studentDao(): com.batchfee.edu.data.dao.StudentDao
@@ -658,6 +660,38 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        internal val MIGRATION_41_42 = object : androidx.room.migration.Migration(41, 42) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE batch_students ADD COLUMN admissionDateLinked INTEGER")
+            }
+        }
+
+        internal val MIGRATION_42_43 = object : androidx.room.migration.Migration(42, 43) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS background_sync (id TEXT NOT NULL PRIMARY KEY, actorUid TEXT NOT NULL, instituteId TEXT NOT NULL, kind TEXT NOT NULL, documentId TEXT NOT NULL, payload TEXT NOT NULL, createdAtMs INTEGER NOT NULL)")
+            }
+        }
+
+        internal val MIGRATION_43_44 = object : androidx.room.migration.Migration(43, 44) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE batch_students ADD COLUMN customFeePolicyTimeline TEXT")
+            }
+        }
+
+        internal val MIGRATION_44_45 = object : androidx.room.migration.Migration(44, 45) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE attendance ADD COLUMN arrivalTimeMs INTEGER")
+                db.execSQL("ALTER TABLE attendance ADD COLUMN scheduledStartTimeMs INTEGER")
+                db.execSQL("ALTER TABLE attendance ADD COLUMN lateByMinutes INTEGER")
+            }
+        }
+
+        internal val MIGRATION_45_46 = object : androidx.room.migration.Migration(45, 46) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE institutes ADD COLUMN instituteType TEXT")
+            }
+        }
+
         fun getDatabase(context: Context, scope: CoroutineScope): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val builder = Room.databaseBuilder(
@@ -667,6 +701,7 @@ abstract class AppDatabase : RoomDatabase() {
                 )
                 .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_18_19, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33, MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36, MIGRATION_36_37, MIGRATION_37_38, MIGRATION_38_39, MIGRATION_39_40, MIGRATION_40_41)
 
+                builder.addMigrations(MIGRATION_41_42, MIGRATION_42_43, MIGRATION_43_44, MIGRATION_44_45, MIGRATION_45_46)
                 if (BuildConfig.DEBUG) {
                     builder.fallbackToDestructiveMigration()
                 }

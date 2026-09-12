@@ -1134,6 +1134,20 @@ fun CustomRoutineDetailScreen(
                         }
                     }
                     Spacer(Modifier.height(12.dp))
+                    if (isOwner) {
+                        OutlinedButton(
+                            onClick = { onEdit(routineId) },
+                            modifier = Modifier.fillMaxWidth().height(44.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, CrCyan.copy(alpha = 0.75f)),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = CrCyan)
+                        ) {
+                            Icon(Icons.Filled.Edit, null, Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Edit Routine", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        }
+                        Spacer(Modifier.height(8.dp))
+                    }
                     Row(
                         Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(10.dp)

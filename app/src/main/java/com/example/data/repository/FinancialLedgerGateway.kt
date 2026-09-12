@@ -20,7 +20,8 @@ data class FinancialOperationResult(
     val receipts: List<ReceiptEntity> = emptyList(),
     val reversals: List<PaymentReversalEntity> = emptyList(),
     val deletedPaymentIds: List<String> = emptyList(),
-    val deletedReceiptIds: List<String> = emptyList()
+    val deletedReceiptIds: List<String> = emptyList(),
+    val metadata: Map<String, Any?> = emptyMap()
 )
 
 class FinancialOperationRejectedException(message: String, cause: Throwable? = null) :
@@ -149,10 +150,11 @@ private fun parseFinancialResult(data: Map<String, Any?>): FinancialOperationRes
         receipts = data.maps("receipts").map(::parseReceipt),
         reversals = data.maps("reversals").map(::parseReversal),
         deletedPaymentIds = data.strings("deletedPaymentIds"),
-        deletedReceiptIds = data.strings("deletedReceiptIds")
+        deletedReceiptIds = data.strings("deletedReceiptIds"),
+        metadata = data.mapOrEmpty("metadata")
     )
 
-private fun parseFee(data: Map<String, Any?>) = FeeEntity(
+internal fun parseFee(data: Map<String, Any?>) = FeeEntity(
     id = data.string("id"),
     instituteId = data.string("instituteId"),
     studentId = data.string("studentId"),
@@ -251,3 +253,8 @@ private fun Map<String, Any?>.maps(key: String): List<Map<String, Any?>> =
 
 private fun Map<String, Any?>.strings(key: String): List<String> =
     (this[key] as? List<*>)?.mapNotNull { it as? String }.orEmpty()
+
+private fun Map<String, Any?>.mapOrEmpty(key: String): Map<String, Any?> {
+    @Suppress("UNCHECKED_CAST")
+    return this[key] as? Map<String, Any?> ?: emptyMap()
+}

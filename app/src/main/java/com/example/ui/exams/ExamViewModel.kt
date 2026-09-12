@@ -41,6 +41,7 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
 
     private val _instituteName = MutableStateFlow("")
     private val _instituteContact = MutableStateFlow("")
+    private val _resultMessageTemplate = MutableStateFlow<String?>(null)
 
     private val _institute = MutableStateFlow<InstituteEntity?>(null)
     val institute = _institute.asStateFlow()
@@ -80,6 +81,11 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
                 _instituteName.value = institute?.name?.trim().orEmpty()
                 _instituteContact.value = com.example.domain.MessageTemplateStore.loadInstituteContact(db, instId)
             }
+        }
+        viewModelScope.launch {
+            _resultMessageTemplate.value = com.example.domain.MessageTemplateStore.load(
+                db, instId, com.example.domain.MessageTemplateStore.TYPE_RESULT
+            )
         }
     }
 
@@ -283,6 +289,10 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
             return
         }
         val totalMarks = exam.totalMarks
+        if (exam.id != examId || exam.batchId != batchId || marksList.any { !it.second.isFinite() }) {
+            onError("Exam selection or marks are invalid. Refresh and retry.")
+            return
+        }
         val passingMarks = exam.passingMarks
         val mutationKey = "$instId:$examId"
         if (!synchronized(resultMutationsInProgress) { resultMutationsInProgress.add(mutationKey) }) {
@@ -309,13 +319,8 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
                     )
                 }
                 withContext(Dispatchers.IO) {
-                    results.forEach {
-                        ExamSyncHelper.upsertResult(it)
-                        db.resultDao().insertOrUpdateResult(it)
-                    }
                     val completedExam = exam.copy(status = "completed", updatedAtMs = now)
-                    ExamSyncHelper.upsertExam(completedExam)
-                    db.examDao().updateExam(completedExam)
+                    com.batchfee.edu.data.firestore.AtomicBulkSync.results(db, results, completedExam)
                 }
                 loadExamDetails(examId)
                 StaffActivityLogger.logCompletedAction(
@@ -331,16 +336,21 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
     }
 
     fun publishResults(examId: String, onSuccess: () -> Unit, onError: (String) -> Unit = {}) {
+        val instId = SessionManager.currentInstituteId.value ?: return
         val results = _studentResults.value.filter { it.result != null }
         if (results.isEmpty()) { onError("No results to publish."); return }
+        if (results.any { it.result!!.examId != examId || it.result!!.instituteId != instId }) {
+            onError("Exam selection changed. Refresh and retry."); return
+        }
+        val mutationKey = "$instId:$examId"
+        if (!synchronized(resultMutationsInProgress) { resultMutationsInProgress.add(mutationKey) }) {
+            onError("Results are already being saved for this exam."); return
+        }
         viewModelScope.launch {
             try {
                 withContext(Dispatchers.IO) {
-                    results.forEach { item ->
-                        val updated = item.result!!.copy(published = true, updatedAtMs = System.currentTimeMillis())
-                        ExamSyncHelper.upsertResult(updated)
-                        db.resultDao().insertOrUpdateResult(updated)
-                    }
+                    val updates = results.map { it.result!!.copy(published = true, updatedAtMs = System.currentTimeMillis()) }
+                    com.batchfee.edu.data.firestore.AtomicBulkSync.results(db, updates)
                 }
                 loadExamDetails(examId)
                 StaffActivityLogger.logCompletedAction(
@@ -349,6 +359,8 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
                 onSuccess()
             } catch (e: Exception) {
                 onError(e.message ?: "Failed to publish")
+            } finally {
+                synchronized(resultMutationsInProgress) { resultMutationsInProgress.remove(mutationKey) }
             }
         }
     }
@@ -415,7 +427,7 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
         val marks = item.result?.marksObtained?.let { formatMarks(it) } ?: "-"
         val batchName = _batches.value.find { it.id == exam.batchId }?.name ?: "Batch"
         val instituteName = currentInstituteName()
-        val template = com.example.domain.MessageTemplateStore.defaultFor(com.example.domain.MessageTemplateStore.TYPE_RESULT)
+        val template = _resultMessageTemplate.value
         return template?.let {
             com.example.domain.MessageTemplateStore.apply(
                 it,

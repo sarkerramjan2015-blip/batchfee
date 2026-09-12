@@ -16,6 +16,12 @@ data class AttendanceEntity(
     val attendanceDateMs: Long,
     val status: String,
     val note: String?,
+    /** Exact arrival instant captured when status is `late`. */
+    val arrivalTimeMs: Long? = null,
+    /** Scheduled class-start instant captured at marking time. */
+    val scheduledStartTimeMs: Long? = null,
+    /** Frozen difference between arrival and scheduled start. */
+    val lateByMinutes: Int? = null,
     val markedByUserId: String,
     val createdAtMs: Long,
     val updatedAtMs: Long

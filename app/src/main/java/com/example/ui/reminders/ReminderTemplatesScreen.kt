@@ -3,28 +3,26 @@
 import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.batchfee.edu.data.database.AppDatabase
-import com.batchfee.edu.data.firestore.ReminderTemplateSyncHelper
 import com.batchfee.edu.data.models.ReminderTemplateEntity
-import java.util.UUID
 
 private val ReBg     = Color(0xFF07111F)
 private val ReCard   = Color(0xFF0F172A)
@@ -37,13 +35,55 @@ private val ReWhite  = Color(0xFFF8FAFC)
 private val ReMuted  = Color(0xFF94A3B8)
 private val ReDim    = Color(0xFF64748B)
 
+private data class ReminderTemplateSpec(
+    val type: String,
+    val title: String,
+    val description: String,
+    val usedAt: String,
+    val icon: androidx.compose.ui.graphics.vector.ImageVector,
+    val accent: Color,
+    val placeholders: List<String>,
+)
+
+private val connectedReminderTemplates = listOf(
+    ReminderTemplateSpec(
+        "AttendanceAbsent", "Attendance absent", "Send when a student is marked absent",
+        "Attendance → send message", Icons.Filled.EventBusy, ReRed,
+        listOf("{guardianName}", "{studentName}", "{studentCode}", "{batchName}", "{date}", "{instituteName}", "{instituteContact}")
+    ),
+    ReminderTemplateSpec(
+        "DueFee", "Due fee reminder", "Send for unpaid or overdue fees",
+        "Fees & batch due list", Icons.Filled.Payments, ReCyan,
+        listOf("{guardianName}", "{studentName}", "{amount}", "{period}", "{date}", "{instituteName}", "{instituteContact}")
+    ),
+    ReminderTemplateSpec(
+        "Birthday", "Birthday greeting", "Send on a student's birthday",
+        "Birthdays", Icons.Filled.Cake, Color(0xFFEC4899),
+        listOf("{guardianName}", "{studentName}", "{instituteName}", "{instituteContact}")
+    ),
+    ReminderTemplateSpec(
+        "ResultPublished", "Result published", "Send with exam marks, grade and position",
+        "Exam results", Icons.Filled.Assessment, ReBlue,
+        listOf("{guardianName}", "{studentName}", "{examName}", "{marks}", "{grade}", "{position}", "{instituteName}", "{instituteContact}")
+    ),
+    ReminderTemplateSpec(
+        "EnquiryFollowUp", "Enquiry follow-up", "Send to a prospective student or guardian",
+        "Enquiries", Icons.Filled.SupportAgent, ReGreen,
+        listOf("{guardianName}", "{studentName}", "{instituteName}", "{instituteContact}")
+    ),
+    ReminderTemplateSpec(
+        "WelcomeMessage", "Admission welcome", "Send after a student is admitted",
+        "Student admission & profile", Icons.Filled.WavingHand, ReGreen,
+        listOf("{guardianName}", "{studentName}", "{studentCode}", "{className}", "{instituteName}", "{instituteContact}")
+    ),
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ReminderTemplatesScreen(db: AppDatabase, onBack: () -> Unit) {
     val viewModel: ReminderTemplateViewModel = viewModel(factory = ReminderTemplateViewModelFactory(db))
     val templates by viewModel.templates.collectAsState()
-    var showAddDialog by remember { mutableStateOf(false) }
-    var editingTemplate by remember { mutableStateOf<ReminderTemplateEntity?>(null) }
+    var editingSpec by remember { mutableStateOf<ReminderTemplateSpec?>(null) }
 
     Scaffold(
         containerColor = ReBg,
@@ -54,130 +94,111 @@ fun ReminderTemplatesScreen(db: AppDatabase, onBack: () -> Unit) {
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = ReBg)
             )
         },
-        floatingActionButton = {
-            FloatingActionButton(
-                onClick = { showAddDialog = true },
-                containerColor = ReBlue, contentColor = Color.White, shape = CircleShape
-            ) { Icon(Icons.Filled.Add, "Add Template") }
-        }
     ) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding).background(ReBg)) {
-            if (templates.isEmpty()) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(Icons.Filled.Notifications, null, Modifier.size(48.dp), tint = ReDim)
-                        Spacer(Modifier.height(12.dp))
-                        Text("No reminder templates yet", color = ReMuted, fontSize = 16.sp)
-                        Spacer(Modifier.height(4.dp))
-                        Text("Tap + to create your first template", color = ReDim, fontSize = 13.sp)
-                    }
-                }
-            } else {
-                LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    items(templates, key = { it.id }) { t ->
-                        Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = ReCard), border = BorderStroke(1.dp, ReStroke)) {
-                            Column(Modifier.padding(16.dp)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Box(Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(ReBlue.copy(alpha = 0.15f)), contentAlignment = Alignment.Center) {
-                                        Icon(Icons.Filled.Notifications, null, tint = ReBlue, modifier = Modifier.size(20.dp))
-                                    }
-                                    Spacer(Modifier.width(12.dp))
-                                    Text(t.title, Modifier.weight(1f), color = ReWhite, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                                    if (t.isDefault) {
-                                        Surface(shape = RoundedCornerShape(6.dp), color = ReGreen.copy(alpha = 0.15f)) {
-                                            Text("Default", Modifier.padding(horizontal = 8.dp, vertical = 2.dp), color = ReGreen, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                                        }
-                                    }
-                                }
-                                Spacer(Modifier.height(8.dp))
-                                Text(t.type.replaceFirstChar { it.uppercase() }, color = ReCyan, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-                                Spacer(Modifier.height(6.dp))
-                                Text(t.messageTemplate, color = ReMuted, fontSize = 13.sp, maxLines = 3, lineHeight = 18.sp)
-                                Spacer(Modifier.height(10.dp))
-                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
-                                    IconButton(onClick = { editingTemplate = t }, modifier = Modifier.size(32.dp)) {
-                                        Icon(Icons.Filled.Edit, null, tint = ReCyan, modifier = Modifier.size(18.dp))
-                                    }
-                                    IconButton(onClick = {
-                                        viewModel.deleteTemplate(t)
-                                    }, modifier = Modifier.size(32.dp)) {
-                                        Icon(Icons.Filled.Delete, null, tint = ReRed, modifier = Modifier.size(18.dp))
-                                    }
-                                }
-                            }
+        Column(
+            Modifier.fillMaxSize().padding(padding).background(ReBg)
+                .verticalScroll(rememberScrollState()).padding(16.dp),
+        ) {
+            Card(
+                modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = ReCard), border = BorderStroke(1.dp, ReStroke),
+            ) {
+                Column(Modifier.padding(15.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(ReCyan.copy(alpha = 0.14f)), contentAlignment = Alignment.Center) {
+                            Icon(Icons.Filled.AutoAwesome, null, tint = ReCyan, modifier = Modifier.size(20.dp))
+                        }
+                        Spacer(Modifier.width(11.dp))
+                        Column {
+                            Text("Messages that work automatically", color = ReWhite, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                            Text("Edit one template for each feature. Your saved text is used there automatically.", color = ReMuted, fontSize = 11.sp)
                         }
                     }
-                    item { Spacer(Modifier.height(80.dp)) }
                 }
             }
+            Spacer(Modifier.height(16.dp))
+            Text("Message templates", color = ReMuted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(8.dp))
+            connectedReminderTemplates.forEach { spec ->
+                val existing = templates.firstOrNull { it.type == spec.type }
+                ReminderTemplateCard(spec, existing, onClick = { editingSpec = spec })
+                Spacer(Modifier.height(9.dp))
+            }
+            Spacer(Modifier.height(72.dp))
         }
     }
 
-    // Add / Edit dialog
-    if (showAddDialog || editingTemplate != null) {
+    editingSpec?.let { spec ->
         TemplateEditorDialog(
-            existing = editingTemplate,
-            onDismiss = { showAddDialog = false; editingTemplate = null },
-            onSave = { title, type, message ->
-                viewModel.upsertTemplate(title, type, message)
-                showAddDialog = false; editingTemplate = null
+            spec = spec,
+            existing = templates.firstOrNull { it.type == spec.type },
+            onDismiss = { editingSpec = null },
+            onSave = { title, message ->
+                viewModel.upsertTemplate(title, spec.type, message)
+                editingSpec = null
             }
         )
+    }
+}
+
+@Composable
+private fun ReminderTemplateCard(
+    spec: ReminderTemplateSpec,
+    existing: ReminderTemplateEntity?,
+    onClick: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(15.dp),
+        onClick = onClick,
+        colors = CardDefaults.cardColors(containerColor = ReCard), border = BorderStroke(1.dp, ReStroke),
+    ) {
+        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(42.dp).clip(RoundedCornerShape(12.dp)).background(spec.accent.copy(alpha = 0.13f)), contentAlignment = Alignment.Center) {
+                Icon(spec.icon, null, tint = spec.accent, modifier = Modifier.size(21.dp))
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(spec.title, color = ReWhite, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                    Spacer(Modifier.width(7.dp))
+                    Text(if (existing == null) "Default" else "Custom", color = if (existing == null) ReMuted else ReGreen, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                }
+                Spacer(Modifier.height(3.dp))
+                Text(spec.description, color = ReMuted, fontSize = 11.sp, maxLines = 1)
+                Text("Used in: ${spec.usedAt}", color = spec.accent, fontSize = 10.sp)
+            }
+            Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Edit ${spec.title}", tint = ReDim, modifier = Modifier.size(18.dp))
+        }
     }
 }
 
 @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
 private fun TemplateEditorDialog(
+    spec: ReminderTemplateSpec,
     existing: ReminderTemplateEntity?,
     onDismiss: () -> Unit,
-    onSave: (String, String, String) -> Unit
+    onSave: (String, String) -> Unit
 ) {
-    var title by remember(existing) { mutableStateOf(existing?.title ?: "") }
-    var type by remember(existing) { mutableStateOf(existing?.type ?: "AttendanceAbsent") }
-    var message by remember(existing) { mutableStateOf(existing?.messageTemplate ?: "") }
+    var title by remember(existing, spec) { mutableStateOf(existing?.title ?: spec.title) }
+    var message by remember(existing, spec) { mutableStateOf(existing?.messageTemplate ?: (com.example.domain.MessageTemplateStore.defaultFor(spec.type) ?: "")) }
     var showPlaceholders by remember { mutableStateOf(false) }
-
-    val types = listOf(
-        "AttendanceAbsent" to "Attendance Absent",
-        "DueFee" to "Due Fee Reminder",
-        "Birthday" to "Birthday Greeting",
-        "PaymentConfirmation" to "Payment Confirmation",
-        "EnquiryFollowUp" to "Enquiry Follow-Up",
-        "ResultPublished" to "Result Published",
-        "WelcomeMessage" to "Welcome Message",
-        "Custom" to "Custom"
-    )
-    val placeholders = listOf("{guardianName}", "{studentName}", "{studentCode}", "{batchName}", "{className}", "{date}", "{instituteName}", "{instituteContact}", "{amount}", "{period}", "{grade}", "{rank}", "{position}", "{marks}", "{examName}")
-    val typeDefaults = mapOf(
-        "AttendanceAbsent" to (listOf("Attendance Alert") to (com.example.domain.MessageTemplateStore.defaultFor("AttendanceAbsent") ?: "")),
-        "DueFee" to (listOf("Due Fee Reminder") to (com.example.domain.MessageTemplateStore.defaultFor("DueFee") ?: "")),
-        "Birthday" to (listOf("Happy Birthday!") to (com.example.domain.MessageTemplateStore.defaultFor("Birthday") ?: "")),
-        "PaymentConfirmation" to (listOf("Payment Received") to (com.example.domain.MessageTemplateStore.defaultFor("PaymentConfirmation") ?: "")),
-        "EnquiryFollowUp" to (listOf("Follow-Up") to (com.example.domain.MessageTemplateStore.defaultFor("EnquiryFollowUp") ?: "")),
-        "ResultPublished" to (listOf("Results Out!") to (com.example.domain.MessageTemplateStore.defaultFor("ResultPublished") ?: "")),
-        "WelcomeMessage" to (listOf("Welcome!") to (com.example.domain.MessageTemplateStore.defaultFor("WelcomeMessage") ?: "")),
-        "Custom" to (listOf("Custom Reminder") to "")
-    )
-
-    fun pickDefault(key: String) { typeDefaults[key]?.let { title = it.first.first(); message = it.second } }
-    if (existing == null) LaunchedEffect(Unit) { pickDefault(type) }
+    val preview = remember(message, spec) {
+        com.example.domain.MessageTemplateStore.apply(message, templatePreviewValues(spec.type))
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = ReCard,
         shape = RoundedCornerShape(16.dp),
-        title = { Text(if (existing != null) "Edit Template" else "New Template", color = ReWhite, fontWeight = FontWeight.Bold) },
+        title = { Text(spec.title, color = ReWhite, fontWeight = FontWeight.Bold) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(
+                modifier = Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text("This message is used in: ${spec.usedAt}", color = spec.accent, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("Template Name", color = ReMuted) }, placeholder = { Text("e.g. Attendance Alert", color = ReDim) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), singleLine = true, colors = reFieldColors())
-                var typeExp by remember { mutableStateOf(false) }
-                ExposedDropdownMenuBox(expanded = typeExp, onExpandedChange = { typeExp = it }) {
-                    OutlinedTextField(value = types.first { it.first == type }.second, onValueChange = {}, readOnly = true, label = { Text("Type", color = ReMuted) }, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(typeExp) }, modifier = Modifier.fillMaxWidth().menuAnchor(), shape = RoundedCornerShape(12.dp), colors = reFieldColors())
-                    ExposedDropdownMenu(expanded = typeExp, onDismissRequest = { typeExp = false }, containerColor = ReCard) {
-                        types.forEach { (key, label) -> DropdownMenuItem(text = { Text(label, color = ReWhite) }, onClick = { type = key; pickDefault(key); typeExp = false }) }
-                    }
-                }
                 OutlinedTextField(value = message, onValueChange = { message = it }, label = { Text("Message Template", color = ReMuted) }, modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp), shape = RoundedCornerShape(12.dp), minLines = 4, colors = reFieldColors())
                 TextButton(onClick = { showPlaceholders = !showPlaceholders }) {
                     Icon(Icons.Filled.Code, null, Modifier.size(14.dp), tint = ReCyan)
@@ -185,15 +206,31 @@ private fun TemplateEditorDialog(
                     Text(if (showPlaceholders) "Hide placeholders" else "Show placeholders", color = ReCyan, fontSize = 12.sp)
                 }
                 if (showPlaceholders) {
+                    Text("Tap a field to add it to the message", color = ReMuted, fontSize = 11.sp)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        placeholders.forEach { ph ->
+                        spec.placeholders.forEach { ph ->
                             SuggestionChip(
-                                onClick = { message += " $ph" },
+                                onClick = { message = message.trimEnd() + if (message.isBlank()) ph else " $ph" },
                                 label = { Text(ph, fontSize = 11.sp, color = ReCyan) },
                                 colors = SuggestionChipDefaults.suggestionChipColors(containerColor = ReBlue.copy(alpha = 0.1f))
                             )
                         }
                     }
+                }
+                Text("Preview", color = ReWhite, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF0B1424)),
+                    border = BorderStroke(1.dp, ReStroke)
+                ) {
+                    Text(
+                        preview.ifBlank { "Your message preview will appear here." },
+                        modifier = Modifier.padding(12.dp),
+                        color = ReMuted,
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp
+                    )
                 }
             }
         },
@@ -201,9 +238,7 @@ private fun TemplateEditorDialog(
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, ReMuted.copy(alpha = 0.3f))) { Text("Cancel", color = ReMuted) }
                 Button(
-                    onClick = {
-                        if (title.isNotBlank() && message.isNotBlank()) onSave(title.trim(), type, message.trim())
-                    },
+                    onClick = { if (title.isNotBlank() && message.isNotBlank()) onSave(title.trim(), message.trim()) },
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = ReBlue),
@@ -211,8 +246,37 @@ private fun TemplateEditorDialog(
                 ) { Text("Save", fontWeight = FontWeight.Bold) }
             }
         },
-        dismissButton = null
+        dismissButton = if (existing != null) {
+            {
+                TextButton(onClick = {
+                    title = spec.title
+                    message = com.example.domain.MessageTemplateStore.defaultFor(spec.type).orEmpty()
+                }) { Text("Restore default text", color = ReMuted, fontSize = 12.sp) }
+            }
+        } else null
     )
+}
+
+private fun templatePreviewValues(type: String): Map<String, String> {
+    val common = mutableMapOf(
+        "guardianName" to "Guardian",
+        "studentName" to if (type == "EnquiryFollowUp") "Nusrat Jahan" else "Rahim Ahmed",
+        "instituteName" to "ABC Coaching",
+        "instituteContact" to "+8801712345678",
+    )
+    common += mapOf(
+        "studentCode" to "ST-1025",
+        "batchName" to "HSC ICT",
+        "className" to "HSC ICT",
+        "date" to "11 Sep 2026",
+        "amount" to "1500",
+        "period" to "Sep 2026",
+        "grade" to "A+",
+        "position" to "2",
+        "marks" to "87 / 100",
+        "examName" to "Monthly Exam",
+    )
+    return common
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

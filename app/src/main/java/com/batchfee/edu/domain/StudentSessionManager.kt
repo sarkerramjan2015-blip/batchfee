@@ -91,6 +91,7 @@ object StudentSessionManager {
             return false
         }
         this.firebaseUid = firebaseUid
+        pendingVerificationUid = null
         _studentId.value = studentId
         _instituteId.value = instituteId
         _instituteCode.value = instituteCode
@@ -143,6 +144,11 @@ object StudentSessionManager {
             }
     }
 
+    private var pendingVerificationUid: String? = null
+
+    fun hasPendingVerification(): Boolean = pendingVerificationUid != null &&
+        FirebaseAuth.getInstance().currentUser?.uid == pendingVerificationUid
+
     suspend fun restoreFromFirebase(): Boolean = validateFirebaseSession()
 
     suspend fun validateActiveSession(): Boolean = validateFirebaseSession()
@@ -193,7 +199,16 @@ object StudentSessionManager {
                 expiresAtMs = expiry,
                 restored = true
             )
-        } catch (_: Exception) {
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            if (isTemporaryStudentSessionFailure(error)) {
+                // Block unverified UI access, but preserve Firebase credentials so
+                // the next online validation can restore without another password.
+                clearMemory()
+                pendingVerificationUid = user.uid
+                return@withContext false
+            }
             if (isStudentToken && auth.currentUser?.uid == user.uid) auth.signOut()
             clearMemory()
             false
@@ -216,6 +231,7 @@ object StudentSessionManager {
         _studentId.value != null && _sessionExpiresAtMs.value > System.currentTimeMillis()
 
     private fun clearMemory() {
+        pendingVerificationUid = null
         accessListener?.remove()
         accessListener = null
         firebaseUid = null

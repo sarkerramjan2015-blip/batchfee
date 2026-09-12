@@ -44,24 +44,32 @@ data class BatchAttendanceSummary(
     val presentCount: Int = 0,
     val absentCount: Int = 0,
     val leaveCount: Int = 0,
+    val lateCount: Int = 0,
+    val lateMinutesTotal: Int = 0,
+    /** Retained only so historic production `holiday` rows remain readable. */
     val holidayCount: Int = 0,
     val expectedStudentDays: Int = 0,
     val attendanceDays: Int = 0
 ) {
-    val markedCount get() = presentCount + absentCount + leaveCount + holidayCount
+    val markedCount get() = presentCount + absentCount + leaveCount + lateCount + holidayCount
     // Daily dashboards must include students who are not marked yet. Otherwise
     // 2 present students from a class of 3 incorrectly looks like 100% present.
     val chartTotal get() = maxOf(totalStudents, markedCount)
     val pendingCount get() = (chartTotal - markedCount).coerceAtLeast(0)
     private val statusDenominator get() = chartTotal
-    private val performanceDenominator get() = (presentCount + absentCount).takeIf { it > 0 } ?: markedCount
+    private val performanceDenominator get() = presentCount + lateCount + absentCount
+    private val attendedCount get() = presentCount + lateCount
     val presentPct get() = if (statusDenominator > 0) presentCount * 100f / statusDenominator else 0f
     val absentPct get() = if (statusDenominator > 0) absentCount * 100f / statusDenominator else 0f
     val leavePct get() = if (statusDenominator > 0) leaveCount * 100f / statusDenominator else 0f
+    val latePct get() = if (statusDenominator > 0) lateCount * 100f / statusDenominator else 0f
     val holidayPct get() = if (statusDenominator > 0) holidayCount * 100f / statusDenominator else 0f
     val pendingPct get() = if (statusDenominator > 0) pendingCount * 100f / statusDenominator else 0f
     val coveragePct get() = if (expectedStudentDays > 0) markedCount * 100f / expectedStudentDays else 0f
-    val presentPerformancePct get() = if (performanceDenominator > 0) presentCount * 100f / performanceDenominator else 0f
+    val attendanceRatePct get() = if (performanceDenominator > 0) attendedCount * 100f / performanceDenominator else 0f
+    val punctualityRatePct get() = if (attendedCount > 0) presentCount * 100f / attendedCount else 0f
+    val averageLateMinutes get() = if (lateCount > 0) lateMinutesTotal.toFloat() / lateCount else 0f
+    val presentPerformancePct get() = attendanceRatePct
     val absentPerformancePct get() = if (performanceDenominator > 0) absentCount * 100f / performanceDenominator else 0f
 }
 
@@ -275,6 +283,7 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
         if (status != "absent") {
             val statusText = when (status) {
                 "present" -> "was present"
+                "late" -> "arrived late"
                 "leave" -> "was on leave"
                 "holiday" -> "had a holiday"
                 else -> "has an attendance update"
@@ -331,93 +340,128 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
     }
 
     fun markAttendance(studentId: String, batchId: String, dateMs: Long, status: String) {
+        if (status !in setOf("present", "absent", "leave")) {
+            _bulkSaveError.value = "Unsupported attendance status. Refresh and try again."
+            return
+        }
+        bulkMark(batchId, dateMs, listOf(studentId), status)
+    }
+
+    fun markLateAttendance(
+        studentId: String,
+        batchId: String,
+        dateMs: Long,
+        scheduledStartTimeMs: Long,
+        arrivalTimeMs: Long
+    ) {
+        if (arrivalTimeMs <= scheduledStartTimeMs) {
+            _bulkSaveError.value = "Arrival time is not later than the scheduled class time. Mark the student Present instead."
+            return
+        }
+        val lateByMinutes = ((arrivalTimeMs - scheduledStartTimeMs) / 60_000L).toInt()
+        if (lateByMinutes <= 0) {
+            _bulkSaveError.value = "Arrival time must be at least one minute after the scheduled class time."
+            return
+        }
         val instId = SessionManager.currentInstituteId.value ?: return
         val currentUserId = SessionManager.currentUserId.value ?: return
         val startDay = startOfDay(dateMs)
         viewModelScope.launch {
+            if (!bulkAttendanceMutex.tryLock()) return@launch
             try {
-                val existing = _attendanceRecords.value[studentId]
-                val record = existing?.copy(status = status, updatedAtMs = System.currentTimeMillis())
-                    ?: AttendanceEntity(
-                        id = UUID.randomUUID().toString(),
-                        instituteId = instId, batchId = batchId, studentId = studentId,
-                        attendanceDateMs = startDay, status = status, note = null,
-                        markedByUserId = currentUserId,
-                        createdAtMs = System.currentTimeMillis(), updatedAtMs = System.currentTimeMillis()
-                    )
-                AttendanceSyncHelper.upsertAttendance(record)
-                db.attendanceDao().insertOrUpdateAttendance(record)
-                StaffActivityLogger.logCompletedAction(
-                    db, "student_attendance_marked", "attendance", "Marked one student ${status.replaceFirstChar { it.uppercase() }}"
+                val now = System.currentTimeMillis()
+                val existing = _attendanceRecords.value[studentId]?.takeIf {
+                    it.instituteId == instId && it.batchId == batchId && it.attendanceDateMs == startDay
+                }
+                val record = existing?.copy(
+                    status = "late",
+                    note = null,
+                    arrivalTimeMs = arrivalTimeMs,
+                    scheduledStartTimeMs = scheduledStartTimeMs,
+                    lateByMinutes = lateByMinutes,
+                    markedByUserId = currentUserId,
+                    updatedAtMs = now
+                ) ?: AttendanceEntity(
+                    id = UUID.nameUUIDFromBytes("$instId|$batchId|$studentId|$startDay".toByteArray()).toString(),
+                    instituteId = instId,
+                    batchId = batchId,
+                    studentId = studentId,
+                    attendanceDateMs = startDay,
+                    status = "late",
+                    note = null,
+                    arrivalTimeMs = arrivalTimeMs,
+                    scheduledStartTimeMs = scheduledStartTimeMs,
+                    lateByMinutes = lateByMinutes,
+                    markedByUserId = currentUserId,
+                    createdAtMs = now,
+                    updatedAtMs = now
                 )
-            } catch (_: Exception) {
-                // Cloud-first marking: a failed write must never crash the
-                // screen or leave a local-only mark other devices would lose.
+                com.batchfee.edu.data.firestore.AtomicBulkSync.attendance(db, listOf(record))
+                StaffActivityLogger.logCompletedAction(
+                    db, "student_attendance_marked", "attendance", "Marked one student late by $lateByMinutes minutes"
+                )
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                _bulkSaveError.value = error.message ?: "Late attendance was not confirmed. Refresh and retry."
+            } finally {
+                bulkAttendanceMutex.unlock()
             }
         }
     }
 
     fun markAll(batchId: String, dateMs: Long, status: String) {
-        val instId = SessionManager.currentInstituteId.value ?: return
-        val currentUserId = SessionManager.currentUserId.value ?: return
-        val startDay = startOfDay(dateMs)
-        viewModelScope.launch {
-            try {
-                _students.value.forEach { student ->
-                    val existing = _attendanceRecords.value[student.id]
-                    val record = existing?.copy(status = status, updatedAtMs = System.currentTimeMillis())
-                        ?: AttendanceEntity(
-                            id = UUID.randomUUID().toString(),
-                            instituteId = instId, batchId = batchId, studentId = student.id,
-                            attendanceDateMs = startDay, status = status, note = null,
-                            markedByUserId = currentUserId,
-                            createdAtMs = System.currentTimeMillis(), updatedAtMs = System.currentTimeMillis()
-                        )
-                    AttendanceSyncHelper.upsertAttendance(record)
-                    db.attendanceDao().insertOrUpdateAttendance(record)
-                }
-                StaffActivityLogger.logCompletedAction(
-                    db,
-                    "student_attendance_marked",
-                    "attendance",
-                    "Marked ${_students.value.size} students ${status.replaceFirstChar { it.uppercase() }}"
-                )
-            } catch (_: Exception) {
-                // Cloud-first marking: a failed write must never crash the screen.
-            }
-        }
+        bulkMark(batchId, dateMs, _students.value.map { it.id }, status)
     }
+
+    private val bulkAttendanceMutex = kotlinx.coroutines.sync.Mutex()
 
     fun bulkMark(batchId: String, dateMs: Long, studentIds: List<String>, status: String) {
         val instId = SessionManager.currentInstituteId.value ?: return
         val currentUserId = SessionManager.currentUserId.value ?: return
         val startDay = startOfDay(dateMs)
+        val selectedIds = studentIds.distinct()
         viewModelScope.launch {
+            if (!bulkAttendanceMutex.tryLock()) return@launch
             try {
-                studentIds.forEach { sid ->
-                    val existing = _attendanceRecords.value[sid]
-                    val record = existing?.copy(status = status, updatedAtMs = System.currentTimeMillis())
+                val now = System.currentTimeMillis()
+                val records = selectedIds.map { sid ->
+                    val existing = _attendanceRecords.value[sid]?.takeIf {
+                        it.instituteId == instId && it.batchId == batchId && it.attendanceDateMs == startDay
+                    }
+                    existing?.copy(
+                        status = status,
+                        note = null,
+                        arrivalTimeMs = null,
+                        scheduledStartTimeMs = null,
+                        lateByMinutes = null,
+                        markedByUserId = currentUserId,
+                        updatedAtMs = now
+                    )
                         ?: AttendanceEntity(
-                            id = UUID.randomUUID().toString(),
+                            id = UUID.nameUUIDFromBytes("$instId|$batchId|$sid|$startDay".toByteArray()).toString(),
                             instituteId = instId, batchId = batchId, studentId = sid,
                             attendanceDateMs = startDay, status = status, note = null,
-                            markedByUserId = currentUserId,
-                            createdAtMs = System.currentTimeMillis(), updatedAtMs = System.currentTimeMillis()
+                            markedByUserId = currentUserId, createdAtMs = now, updatedAtMs = now
                         )
-                    AttendanceSyncHelper.upsertAttendance(record)
-                    db.attendanceDao().insertOrUpdateAttendance(record)
                 }
+                com.batchfee.edu.data.firestore.AtomicBulkSync.attendance(db, records)
                 StaffActivityLogger.logCompletedAction(
-                    db,
-                    "student_attendance_marked",
-                    "attendance",
-                    "Marked ${studentIds.size} students ${status.replaceFirstChar { it.uppercase() }}"
+                    db, "student_attendance_marked", "attendance", "Marked ${records.size} students $status"
                 )
-            } catch (_: Exception) {
-                // Cloud-first marking: a failed write must never crash the screen.
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                _bulkSaveError.value = error.message ?: "Attendance was not confirmed. Refresh and retry."
+            } finally {
+                bulkAttendanceMutex.unlock()
             }
         }
     }
+
+    private val _bulkSaveError = MutableStateFlow<String?>(null)
+    val bulkSaveError = _bulkSaveError.asStateFlow()
+    fun clearBulkSaveError() { _bulkSaveError.value = null }
 
     fun undoAttendance(studentId: String, dateMs: Long, batchId: String) {
         val instId = SessionManager.currentInstituteId.value ?: return
@@ -431,6 +475,22 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
                 )
             } catch (_: Exception) {
                 // Cloud-first removal: a failed delete must never crash the screen.
+            }
+        }
+    }
+
+    /** Fire-and-forget tracking for carrier SMS hand-offs; never blocks the send. */
+    fun recordCarrierSms(recipient: String, purpose: String) {
+        viewModelScope.launch {
+            runCatching {
+                com.batchfee.edu.data.firestore.SmsWalletSyncHelper.recordCarrierSmsBatch(
+                    listOf(
+                        com.batchfee.edu.data.firestore.SmsOutboundRecord(
+                            recipient = recipient,
+                            purpose = purpose
+                        )
+                    )
+                )
             }
         }
     }
@@ -485,6 +545,21 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
                         removeSendingId(student.id)
                         onError("Unsupported message channel.")
                         return@launch
+                    }
+                }
+
+                if (channel == "sms") {
+                    // Carrier hand-off is recorded as sent; delivery confirmation
+                    // belongs to the phone's own SMS app and cannot be observed.
+                    runCatching {
+                        com.batchfee.edu.data.firestore.SmsWalletSyncHelper.recordCarrierSmsBatch(
+                            listOf(
+                                com.batchfee.edu.data.firestore.SmsOutboundRecord(
+                                    recipient = recipientDigits,
+                                    purpose = "Absent message · ${student.fullName}"
+                                )
+                            )
+                        )
                     }
                 }
 
@@ -545,6 +620,8 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
             presentCount = records.count { it.status == "present" },
             absentCount = records.count { it.status == "absent" },
             leaveCount = records.count { it.status == "leave" },
+            lateCount = records.count { it.status == "late" },
+            lateMinutesTotal = records.filter { it.status == "late" }.sumOf { it.lateByMinutes ?: 0 },
             holidayCount = records.count { it.status == "holiday" },
             expectedStudentDays = expectedStudentDays,
             attendanceDays = records.map { it.attendanceDateMs }.distinct().size

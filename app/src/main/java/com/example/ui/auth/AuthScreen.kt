@@ -59,6 +59,9 @@ import com.batchfee.edu.domain.PasswordHasher
 import com.batchfee.edu.domain.SubscriptionPolicy
 import com.batchfee.edu.domain.SessionManager
 import com.batchfee.edu.domain.InstituteContactNumber
+import com.batchfee.edu.domain.UnifiedLoginPreferences
+import com.batchfee.edu.domain.RememberedStudentIdStore
+import com.batchfee.edu.ui.studentapp.StudentLoginViewModel
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseAuthException
 import com.google.firebase.firestore.FirebaseFirestore
@@ -118,6 +121,7 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
         email: String,
         password: String,
         whatsappNumber: String,
+        instituteType: String,
         onSuccess: () -> Unit,
         onError: (String) -> Unit
     ) {
@@ -130,6 +134,7 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
             onError("Enter a valid Bangladesh institute contact number.")
             return
         }
+        val safeInstituteType = instituteType.trim().takeIf { it.isNotBlank() } ?: "Coaching"
 
         viewModelScope.launch {
             var createdUid: String? = null
@@ -170,6 +175,7 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                             "currentPeriodEndMs" to (now + trialDurationMs),
                             "currentPlanId" to "plan_free_trial",
                             "subscriptionStatus" to "trial",
+                            "instituteType" to safeInstituteType,
                             "studentLimit" to SubscriptionPolicy.FREE_TRIAL_STUDENT_LIMIT,
                             "staffLimit" to 1,
                             "studentCount" to 0,
@@ -230,7 +236,8 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                     currentPeriodEndMs = now + trialDurationMs,
                     createdAtMs = now,
                     phone = primaryContact,
-                    whatsappNumber = primaryContact
+                    whatsappNumber = primaryContact,
+                    instituteType = safeInstituteType
                 )
 
                 val user = UserEntity(
@@ -335,6 +342,19 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                 val managedUser = withContext(Dispatchers.IO) {
                     AppUserSyncHelper.fetchManagedUser(uid)
                 }
+                if (managedUser?.role == "PlatformAdmin") {
+                    val allowedPlatformRoles = setOf("billing", "support", "operations", "read_only")
+                    if (managedUser.status != "active") {
+                        try { FirebaseAuth.getInstance().signOut() } catch (_: Exception) { }
+                        onError("This platform account is suspended. Contact the Root administrator.")
+                        return@launch
+                    }
+                    if (managedUser.platformRole !in allowedPlatformRoles) {
+                        try { FirebaseAuth.getInstance().signOut() } catch (_: Exception) { }
+                        onError("This platform account is not configured correctly. Contact the Root administrator.")
+                        return@launch
+                    }
+                }
                 var localUser = db.userDao().getUserById(uid)
                 // Most production accounts have a managed-user record. The legacy institute
                 // lookup is only needed if that record is absent (or for staff resolution).
@@ -382,28 +402,7 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                     else db.userDao().updateUser(syncedUser)
                     localUser = syncedUser
                     db.staffDao().insertStaff(
-                        com.batchfee.edu.data.models.StaffEntity(
-                            id = uid,
-                            instituteId = managedInstituteId,
-                            staffCode = foundStaff.staffCode,
-                            fullName = foundStaff.fullName,
-                            photoUri = foundStaff.photoUri.takeIf { it.isNotBlank() },
-                            roleTitle = foundStaff.roleTitle,
-                            phone = foundStaff.phone.takeIf { it.isNotBlank() },
-                            email = foundStaff.email.takeIf { it.isNotBlank() },
-                            address = foundStaff.address.takeIf { it.isNotBlank() },
-                            joiningDateMs = foundStaff.joiningDateMs,
-                            monthlySalary = foundStaff.monthlySalary,
-                            assignedBatchIds = foundStaff.assignedBatchIds.takeIf { it.isNotBlank() },
-                            status = foundStaff.status,
-                            notes = foundStaff.notes.takeIf { it.isNotBlank() },
-                            permissions = foundStaff.permissions.takeIf { it.isNotBlank() },
-                            createdAtMs = foundStaff.createdAtMs.takeIf { it > 0L }
-                                ?: managedUser.createdAtMs,
-                            updatedAtMs = foundStaff.updatedAtMs.takeIf { it > 0L }
-                                ?: System.currentTimeMillis(),
-                            archivedAtMs = foundStaff.archivedAtMs
-                        )
+                        foundStaff.toEntity(uid, managedInstituteId, managedUser.createdAtMs)
                     )
                 } else if (managedUser != null) {
                     role = when (managedUser.role) {
@@ -535,6 +534,13 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                             )
                         )
                     }
+                } else if (localUser?.role == "PlatformAdmin") {
+                    // Platform authority is never allowed to fall back to a
+                    // stale Room record. A suspended or revoked team member
+                    // must be denied even if this device logged in before.
+                    try { FirebaseAuth.getInstance().signOut() } catch (_: Exception) { }
+                    onError("Platform access could not be confirmed. Contact the Root administrator.")
+                    return@launch
                 } else if (localUser != null && localUser.role != "Staff") {
                     // Firestore doc missing but user exists in local Room — offline/legacy fallback
                     android.util.Log.w("AUTH_LOGIN", "Firestore doc not found but local user exists: uid=$uid, role=${localUser.role}")
@@ -596,26 +602,7 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                         db.userDao().insertUser(localUser)
                     }
                     // Sync staff to local Room
-                    val staffEntity = com.batchfee.edu.data.models.StaffEntity(
-                        id = uid,
-                        instituteId = foundInstId,
-                        staffCode = foundStaff.staffCode,
-                        fullName = foundStaff.fullName,
-                        photoUri = foundStaff.photoUri.takeIf { it.isNotBlank() },
-                        roleTitle = foundStaff.roleTitle,
-                        phone = foundStaff.phone.takeIf { it.isNotBlank() },
-                        email = foundStaff.email.takeIf { it.isNotBlank() },
-                        address = foundStaff.address.takeIf { it.isNotBlank() },
-                        joiningDateMs = foundStaff.joiningDateMs,
-                        monthlySalary = foundStaff.monthlySalary,
-                        assignedBatchIds = foundStaff.assignedBatchIds.takeIf { it.isNotBlank() },
-                        status = foundStaff.status,
-                        notes = foundStaff.notes.takeIf { it.isNotBlank() },
-                        permissions = foundStaff.permissions.takeIf { it.isNotBlank() },
-                        createdAtMs = foundStaff.createdAtMs.takeIf { it > 0L } ?: System.currentTimeMillis(),
-                        updatedAtMs = foundStaff.updatedAtMs.takeIf { it > 0L } ?: System.currentTimeMillis(),
-                        archivedAtMs = foundStaff.archivedAtMs
-                    )
+                    val staffEntity = foundStaff.toEntity(uid, foundInstId)
                     db.staffDao().insertStaff(staffEntity)
                 }
 
@@ -664,8 +651,7 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                             newValue = null,
                             createdAtMs = System.currentTimeMillis()
                         )
-                        db.auditLogDao().insertAuditLog(log)
-                        try { AuditLogSyncHelper.upsertAuditLog(log) } catch (_: Exception) {}
+                        com.batchfee.edu.data.firestore.BackgroundSyncQueue.audit(db, log)
                     }
                 }
                 
@@ -814,6 +800,69 @@ private val AuthAmber    = Color(0xFFFBBF24)
 private val AuthWhite    = Color(0xFFF8FAFC)
 private val AuthMuted    = Color(0xFF94A3B8)
 private val AuthErrorBg  = Color(0x33EF4444)
+private val BengaliCharacters = Regex("[\\u0980-\\u09FF]")
+
+private enum class UnifiedLoginRole(val label: String) {
+    ADMIN("Admin"), STAFF("Staff"), STUDENT("Student");
+
+    companion object {
+        fun fromStored(value: String): UnifiedLoginRole = entries.firstOrNull { it.label == value } ?: ADMIN
+    }
+}
+
+private fun String.hasBengaliCharacters(): Boolean = BengaliCharacters.containsMatchIn(this)
+
+@Composable
+private fun AuthContactFooter(context: Context, modifier: Modifier = Modifier) {
+    val encodedMessage = remember {
+        java.net.URLEncoder.encode(
+            "Hello Developer, I am contacting you regarding some queries about the BatchFee app.",
+            "UTF-8"
+        )
+    }
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(Brush.verticalGradient(listOf(Color.Transparent, AuthBg.copy(alpha = 0.96f))))
+            .padding(top = 16.dp, bottom = 8.dp)
+            .navigationBarsPadding(),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        OutlinedButton(
+            onClick = {
+                try {
+                    context.startActivity(
+                        android.content.Intent(
+                            android.content.Intent.ACTION_VIEW,
+                            android.net.Uri.parse("https://wa.me/8801518657869?text=$encodedMessage")
+                        ).setPackage("com.whatsapp")
+                    )
+                } catch (_: ActivityNotFoundException) {
+                    Toast.makeText(context, "WhatsApp is not installed on this device.", Toast.LENGTH_SHORT).show()
+                }
+            },
+            modifier = Modifier.height(36.dp),
+            shape = RoundedCornerShape(12.dp),
+            border = BorderStroke(1.dp, AuthViolet.copy(alpha = 0.5f)),
+            colors = ButtonDefaults.outlinedButtonColors(
+                containerColor = AuthViolet.copy(alpha = 0.08f),
+                contentColor = AuthWhite
+            ),
+            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp)
+        ) {
+            Icon(Icons.Filled.Chat, null, tint = AuthViolet, modifier = Modifier.size(15.dp))
+            Spacer(Modifier.width(6.dp))
+            Text("Contact with Developer", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        }
+        Spacer(Modifier.height(5.dp))
+        Text(
+            text = "v${BuildConfig.VERSION_NAME} · BatchFee",
+            style = MaterialTheme.typography.labelSmall,
+            color = AuthMuted.copy(alpha = 0.58f),
+            textAlign = TextAlign.Center
+        )
+    }
+}
 
 // Animated, floating logo composable
 @Composable
@@ -922,6 +971,107 @@ private fun DarkTextField(
     )
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun LoginRoleDropdown(
+    selectedRole: UnifiedLoginRole,
+    onSelected: (UnifiedLoginRole) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    ExposedDropdownMenuBox(
+        expanded = expanded,
+        onExpandedChange = { expanded = !expanded }
+    ) {
+        OutlinedTextField(
+            value = selectedRole.label,
+            onValueChange = {},
+            readOnly = true,
+            label = { Text("Login as", color = AuthMuted) },
+            leadingIcon = { Icon(Icons.Filled.Person, null, tint = AuthMuted) },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            modifier = Modifier.fillMaxWidth().menuAnchor(),
+            singleLine = true,
+            shape = RoundedCornerShape(12.dp),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedContainerColor = AuthCardAlt,
+                unfocusedContainerColor = AuthCardAlt,
+                focusedBorderColor = AuthCyan,
+                unfocusedBorderColor = AuthBorder,
+                focusedTextColor = AuthWhite,
+                unfocusedTextColor = AuthWhite,
+                focusedLabelColor = AuthCyan,
+                unfocusedLabelColor = AuthMuted
+            )
+        )
+        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            UnifiedLoginRole.entries.forEach { role ->
+                DropdownMenuItem(
+                    text = { Text(role.label) },
+                    onClick = { expanded = false; onSelected(role) },
+                    leadingIcon = {
+                        Icon(
+                            if (role == UnifiedLoginRole.ADMIN) Icons.Filled.AdminPanelSettings else Icons.Filled.Person,
+                            contentDescription = null
+                        )
+                    }
+                )
+            }
+        }
+    }
+}
+
+private val INSTITUTE_TYPES = listOf("Coaching", "School", "College", "Madrasa")
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun InstituteTypeDropdown(
+    selected: String,
+    onSelected: (String) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    ExposedDropdownMenuBox(
+        expanded = expanded,
+        onExpandedChange = { expanded = !expanded }
+    ) {
+        OutlinedTextField(
+            value = selected,
+            onValueChange = {},
+            readOnly = true,
+            label = { Text("Institute Type *", color = AuthMuted) },
+            leadingIcon = { Icon(Icons.Filled.School, null, tint = AuthMuted) },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            modifier = Modifier.fillMaxWidth().menuAnchor(),
+            singleLine = true,
+            shape = RoundedCornerShape(12.dp),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedContainerColor = AuthCardAlt,
+                unfocusedContainerColor = AuthCardAlt,
+                focusedBorderColor = AuthCyan,
+                unfocusedBorderColor = AuthBorder,
+                focusedTextColor = AuthWhite,
+                unfocusedTextColor = AuthWhite,
+                focusedLabelColor = AuthCyan,
+                unfocusedLabelColor = AuthMuted
+            )
+        )
+        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            INSTITUTE_TYPES.forEach { type ->
+                DropdownMenuItem(
+                    text = { Text(type, color = AuthWhite) },
+                    onClick = { expanded = false; onSelected(type) },
+                    leadingIcon = {
+                        Icon(
+                            Icons.Filled.School,
+                            contentDescription = null,
+                            tint = if (type == selected) AuthCyan else AuthMuted
+                        )
+                    }
+                )
+            }
+        }
+    }
+}
+
 @Composable
 fun AuthScreen(
     db: AppDatabase,
@@ -930,17 +1080,28 @@ fun AuthScreen(
     onNavigateSuperAdmin: () -> Unit,
     onNavigatePrivacyPolicy: () -> Unit,
     onNavigateTermsConditions: () -> Unit,
-    onNavigateStudentLogin: () -> Unit = {}
+    onNavigateStudentDashboard: () -> Unit = {}
 ) {
     val viewModel: AuthViewModel = viewModel(factory = AuthViewModelFactory(db))
     val context = LocalContext.current
+    val loginPreferences = remember(context.applicationContext) { UnifiedLoginPreferences(context.applicationContext) }
+    var selectedRole by remember { mutableStateOf(UnifiedLoginRole.fromStored(loginPreferences.loadRole())) }
     var isLoginMode by remember { mutableStateOf(true) }
 
-    var email by remember { mutableStateOf(SessionManager.getLastLoginId(context) ?: "") }
+    // The unified store always keeps the selected role and its matching identifier together.
+    // Do not fall back to the legacy shared identifier here: it could show a staff ID
+    // under the Admin (email) role after an app upgrade.
+    var email by remember { mutableStateOf(loginPreferences.loadIdentifier()) }
     var password by remember { mutableStateOf("") }
+    val studentLoginViewModel = remember(context.applicationContext) {
+        StudentLoginViewModel(RememberedStudentIdStore(context.applicationContext))
+    }
+    val studentLoginState by studentLoginViewModel.uiState.collectAsState()
+    val studentLoginSuccess by studentLoginViewModel.loginSuccess.collectAsState()
     var instituteName by remember { mutableStateOf("") }
     var ownerName by remember { mutableStateOf("") }
     var whatsappNumber by remember { mutableStateOf("") }
+    var instituteType by remember { mutableStateOf("Coaching") }
 
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var infoMessage by remember { mutableStateOf<String?>(null) }
@@ -955,13 +1116,19 @@ fun AuthScreen(
     var consentChecked by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { contentVisible = true }
-    LaunchedEffect(sessionNotice, isLoginMode) {
+    LaunchedEffect(selectedRole, email, isLoginMode) {
+        if (isLoginMode) loginPreferences.save(selectedRole.label, email)
+    }
+    LaunchedEffect(studentLoginSuccess) {
+        if (studentLoginSuccess) onNavigateStudentDashboard()
+    }
+    LaunchedEffect(sessionNotice, isLoginMode, selectedRole) {
         // An expiry notice must not be hidden behind an old informational/error message.
         if (isLoginMode && sessionNotice != null) {
             errorMessage = null
             infoMessage = null
         }
-        biometricLoginAvailable = isLoginMode &&
+        biometricLoginAvailable = isLoginMode && selectedRole == UnifiedLoginRole.ADMIN &&
             BiometricAuthManager.savedSession(context) != null &&
             BiometricAuthManager.canAuthenticate(context)
     }
@@ -1030,76 +1197,21 @@ fun AuthScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .statusBarsPadding()
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = contentHorizontalPadding, vertical = contentVerticalPadding)
+                    .then(
+                        // The login page stays fixed; only the longer register
+                        // form may scroll on compact screens.
+                        if (isLoginMode) Modifier else Modifier.verticalScroll(rememberScrollState())
+                    )
+                    .padding(
+                        start = contentHorizontalPadding,
+                        end = contentHorizontalPadding,
+                        top = contentVerticalPadding,
+                        bottom = 116.dp
+                    )
                     .navigationBarsPadding(),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // Quick actions stay at the top so owner/staff and student
-                // entry points are both easy to find without adding height.
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .widthIn(max = actionsMaxWidth),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    OutlinedButton(
-                        onClick = onNavigateStudentLogin,
-                        modifier = Modifier.height(36.dp),
-                        shape = RoundedCornerShape(12.dp),
-                        border = BorderStroke(1.dp, AuthCyan.copy(alpha = 0.48f)),
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            containerColor = AuthCyan.copy(alpha = 0.08f),
-                            contentColor = AuthCyan
-                        ),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)
-                    ) {
-                        Icon(Icons.Filled.Person, null, modifier = Modifier.size(15.dp))
-                        Spacer(Modifier.width(5.dp))
-                        Text("Student Login", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                    }
-
-                    val encodedMsg = java.net.URLEncoder.encode(
-                        "Hello Developer, I am contacting you regarding some queries about the BatchFee app.",
-                        "UTF-8"
-                    )
-                    val waUri = "https://wa.me/8801518657869?text=$encodedMsg"
-                    OutlinedButton(
-                        onClick = {
-                            // Keep the developer contact action inside WhatsApp. A generic web
-                            // intent can be claimed by an unrelated app on some devices.
-                            try {
-                                context.startActivity(
-                                    android.content.Intent(
-                                        android.content.Intent.ACTION_VIEW,
-                                        android.net.Uri.parse(waUri)
-                                    ).setPackage("com.whatsapp")
-                                )
-                            } catch (_: ActivityNotFoundException) {
-                                Toast.makeText(
-                                    context,
-                                    "WhatsApp is not installed on this device.",
-                                    Toast.LENGTH_SHORT
-                                ).show()
-                            }
-                        },
-                        modifier = Modifier.height(36.dp),
-                        shape = RoundedCornerShape(12.dp),
-                        border = BorderStroke(1.dp, AuthViolet.copy(alpha = 0.5f)),
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            containerColor = AuthViolet.copy(alpha = 0.08f),
-                            contentColor = AuthWhite
-                        ),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)
-                    ) {
-                        Icon(Icons.Filled.Chat, null, tint = AuthViolet, modifier = Modifier.size(15.dp))
-                        Spacer(Modifier.width(5.dp))
-                        Text("Contact", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                    }
-                }
-
-                Spacer(Modifier.height(if (compactHeight) 14.dp else 18.dp))
+                Spacer(Modifier.height(if (compactHeight) 8.dp else 14.dp))
 
                 // Animated Logo
                 AnimatedLogo(modifier = Modifier.size(logoSize))
@@ -1134,6 +1246,28 @@ fun AuthScreen(
                         Modifier.fillMaxWidth()
                     }
                 ) {
+                    if (isLoginMode) {
+                        LoginRoleDropdown(
+                            selectedRole = selectedRole,
+                            onSelected = { nextRole ->
+                                if (selectedRole != nextRole) {
+                                    selectedRole = nextRole
+                                    email = if (loginPreferences.loadRole() == nextRole.label) {
+                                        loginPreferences.loadIdentifier()
+                                    } else if (nextRole == UnifiedLoginRole.STUDENT) {
+                                        studentLoginState.studentId
+                                    } else {
+                                        ""
+                                    }
+                                    password = ""
+                                    errorMessage = null
+                                    infoMessage = null
+                                    fieldError = emptyMap()
+                                }
+                            }
+                        )
+                        Spacer(Modifier.height(12.dp))
+                    }
                     if (!isLoginMode) {
             val hasInstErr = fieldError.containsKey("instituteName")
             val hasOwnerErr = fieldError.containsKey("ownerName")
@@ -1145,6 +1279,11 @@ fun AuthScreen(
                 leadingIcon = { Icon(Icons.Filled.AccountBalance, null, tint = AuthMuted) }
             )
             if (hasInstErr) Text("This field is required", color = Color(0xFFF87171), fontSize = 10.sp, modifier = Modifier.padding(start = 12.dp, top = 2.dp))
+            Spacer(Modifier.height(12.dp))
+            InstituteTypeDropdown(
+                selected = instituteType,
+                onSelected = { instituteType = it }
+            )
             Spacer(Modifier.height(12.dp))
             DarkTextField(
                 value = ownerName,
@@ -1183,20 +1322,44 @@ fun AuthScreen(
         }
 
         val hasEmailErr = fieldError.containsKey("email")
+        val credentialLabel = when (selectedRole) {
+            UnifiedLoginRole.ADMIN -> "Admin Email"
+            UnifiedLoginRole.STAFF -> "Staff ID"
+            UnifiedLoginRole.STUDENT -> "Student ID"
+        }
+        val credentialHasBengali = email.hasBengaliCharacters()
         DarkTextField(
             value = email,
-            onValueChange = { email = it; if (hasEmailErr) { fieldError = fieldError - "email"; errorMessage = null } },
-            label = if (isLoginMode) "Email or Staff ID" else "Email *",
-            leadingIcon = { Icon(Icons.Filled.Email, null, tint = AuthMuted) },
-            keyboardType = androidx.compose.ui.text.input.KeyboardType.Email
+            onValueChange = {
+                email = it
+                if (isLoginMode && selectedRole == UnifiedLoginRole.STUDENT) studentLoginViewModel.updateStudentId(it)
+                if (hasEmailErr) { fieldError = fieldError - "email"; errorMessage = null }
+            },
+            label = if (isLoginMode) credentialLabel else "Email *",
+            leadingIcon = {
+                Icon(
+                    if (isLoginMode && selectedRole != UnifiedLoginRole.ADMIN) Icons.Filled.Badge else Icons.Filled.Email,
+                    null,
+                    tint = AuthMuted
+                )
+            },
+            keyboardType = if (isLoginMode && selectedRole != UnifiedLoginRole.ADMIN) {
+                androidx.compose.ui.text.input.KeyboardType.Text
+            } else androidx.compose.ui.text.input.KeyboardType.Email
         )
         if (hasEmailErr) Text("This field is required", color = Color(0xFFF87171), fontSize = 10.sp, modifier = Modifier.padding(start = 12.dp, top = 2.dp))
+        if (credentialHasBengali) Text("দয়া করে এই ফিল্ডটি ইংরেজিতে পূরণ করুন", color = Color(0xFFF87171), fontSize = 11.sp, modifier = Modifier.padding(start = 12.dp, top = 2.dp))
         Spacer(Modifier.height(12.dp))
 
         val hasPwdErr = fieldError.containsKey("password")
+        val passwordHasBengali = password.hasBengaliCharacters()
         DarkTextField(
             value = password,
-            onValueChange = { password = it; if (hasPwdErr) { fieldError = fieldError - "password"; errorMessage = null } },
+            onValueChange = {
+                password = it
+                if (isLoginMode && selectedRole == UnifiedLoginRole.STUDENT) studentLoginViewModel.updatePassword(it)
+                if (hasPwdErr) { fieldError = fieldError - "password"; errorMessage = null }
+            },
             label = if (isLoginMode) "Password" else "Password *",
             leadingIcon = { Icon(Icons.Filled.Lock, null, tint = AuthMuted) },
             visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
@@ -1213,6 +1376,7 @@ fun AuthScreen(
             }
         )
         if (hasPwdErr) Text("This field is required", color = Color(0xFFF87171), fontSize = 10.sp, modifier = Modifier.padding(start = 12.dp, top = 2.dp))
+        if (passwordHasBengali) Text("দয়া করে এই ফিল্ডটি ইংরেজিতে পূরণ করুন", color = Color(0xFFF87171), fontSize = 11.sp, modifier = Modifier.padding(start = 12.dp, top = 2.dp))
 
                     if (!isLoginMode) {
                         Spacer(Modifier.height(8.dp))
@@ -1261,7 +1425,7 @@ fun AuthScreen(
                     }
 
                     // Forgot Password link (login mode only)
-                    if (isLoginMode) {
+                    if (isLoginMode && selectedRole == UnifiedLoginRole.ADMIN) {
                         Spacer(Modifier.height(4.dp))
                         TextButton(
                             onClick = {
@@ -1275,7 +1439,10 @@ fun AuthScreen(
                         }
                     }
 
-                    if (errorMessage != null) {
+                    val shownError = errorMessage ?: studentLoginState.errorMessage?.takeIf {
+                        isLoginMode && selectedRole == UnifiedLoginRole.STUDENT
+                    }
+                    if (shownError != null) {
                         Spacer(Modifier.height(12.dp))
                         Box(
                             modifier = Modifier
@@ -1286,7 +1453,7 @@ fun AuthScreen(
                                 .padding(10.dp)
                         ) {
                             Text(
-                                errorMessage!!,
+                                shownError,
                                 color = Color(0xFFFCA5A5),
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.Medium,
@@ -1349,21 +1516,55 @@ fun AuthScreen(
                     // Primary action button
                     Button(
                         onClick = {
-                            if (isLoading || loadingDemoAccount != null) return@Button
+                            if (isLoading || studentLoginState.isLoading || loadingDemoAccount != null) return@Button
                             errorMessage = null
-                            isLoading = true
                             if (isLoginMode) {
-                                viewModel.login(email, password, onSuccess = { role ->
-                                    isLoading = false
-                                    SessionManager.saveLastLoginId(context, email.trim())
-                                    BiometricAuthManager.refreshCurrentSession(context, email)
-                                    if (role == "SuperAdmin") onNavigateSuperAdmin()
-                                    else onNavigateDashboard()
-                                }, onError = {
-                                    errorMessage = it
-                                    isLoading = false
-                                })
+                                if (email.isBlank() || password.isBlank() ||
+                                    email.hasBengaliCharacters() || password.hasBengaliCharacters()) {
+                                    fieldError = buildMap {
+                                        if (email.isBlank() || email.hasBengaliCharacters()) put("email", true)
+                                        if (password.isBlank() || password.hasBengaliCharacters()) put("password", true)
+                                    }
+                                    errorMessage = "Please complete the fields in English."
+                                    return@Button
+                                }
+                                when (selectedRole) {
+                                    UnifiedLoginRole.ADMIN -> {
+                                        if (!email.trim().contains("@")) {
+                                            fieldError = mapOf("email" to true)
+                                            errorMessage = "Enter your admin email address."
+                                            return@Button
+                                        }
+                                        isLoading = true
+                                        viewModel.login(email, password, onSuccess = { role ->
+                                            isLoading = false
+                                            SessionManager.saveLastLoginId(context, email.trim())
+                                            BiometricAuthManager.refreshCurrentSession(context, email)
+                                            if (role == "SuperAdmin") onNavigateSuperAdmin() else onNavigateDashboard()
+                                        }, onError = { errorMessage = it; isLoading = false })
+                                    }
+                                    UnifiedLoginRole.STAFF -> {
+                                        if (email.trim().contains("@")) {
+                                            fieldError = mapOf("email" to true)
+                                            errorMessage = "Please enter your Staff ID, not an email address."
+                                            return@Button
+                                        }
+                                        isLoading = true
+                                        viewModel.login(email, password, onSuccess = { role ->
+                                            isLoading = false
+                                            SessionManager.saveLastLoginId(context, email.trim())
+                                            BiometricAuthManager.refreshCurrentSession(context, email)
+                                            if (role == "SuperAdmin") onNavigateSuperAdmin() else onNavigateDashboard()
+                                        }, onError = { errorMessage = it; isLoading = false })
+                                    }
+                                    UnifiedLoginRole.STUDENT -> {
+                                        studentLoginViewModel.updateStudentId(email)
+                                        studentLoginViewModel.updatePassword(password)
+                                        studentLoginViewModel.login()
+                                    }
+                                }
                             } else {
+                                isLoading = true
                                 // Per-field validation before calling ViewModel
                                 val errs = mutableMapOf<String, Boolean>()
                                 if (instituteName.isBlank()) errs["instituteName"] = true
@@ -1389,6 +1590,7 @@ fun AuthScreen(
                                     email.trim(),
                                     password.trim(),
                                     whatsappNumber,
+                                    instituteType,
                                     onSuccess = {
                                         isLoading = false
                                         SessionManager.saveLastLoginId(context, email.trim())
@@ -1417,7 +1619,7 @@ fun AuthScreen(
                                 .background(Brush.horizontalGradient(listOf(AuthBlue, AuthCyan))),
                             contentAlignment = Alignment.Center
                         ) {
-                            if (isLoading && loadingDemoAccount == null) {
+                            if ((isLoading || studentLoginState.isLoading) && loadingDemoAccount == null) {
                                 CircularProgressIndicator(
                                     modifier = Modifier.size(22.dp),
                                     color = Color.White,
@@ -1590,18 +1792,12 @@ fun AuthScreen(
                     }
                 }
 
-                Spacer(Modifier.height(8.dp))
-
-                Text(
-                    text = "v" + BuildConfig.VERSION_NAME + " · BatchFee",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = AuthMuted.copy(alpha = 0.5f),
-                    textAlign = TextAlign.Center
-                )
-
-                Spacer(Modifier.height(16.dp))
             }
         }
+        AuthContactFooter(
+            context = context,
+            modifier = Modifier.align(Alignment.BottomCenter)
+        )
     }
 }
 

@@ -19,6 +19,13 @@ class MonthlyDueCalculatorTest {
     }
 
     @Test
+    fun `assignment on seventeenth includes assignment day through day thirty`() {
+        val assigned = date(2026, Calendar.JULY, 17)
+        assertEquals(14, MonthlyDueCalculator.firstMonthBillableDays(assigned))
+        assertEquals(700.0, MonthlyDueCalculator.calculateFirstMonthFee(1_500.0, assigned), 0.0)
+    }
+
+    @Test
     fun `only the frozen first month uses prorated amount`() {
         assertEquals(
             1000.0,
@@ -187,6 +194,65 @@ class MonthlyDueCalculatorTest {
             ),
             0.0
         )
+    }
+
+    @Test
+    fun `policy timeline supports a future custom fee and later batch fee restore`() {
+        val timeline = "Sep 2026=700|Nov 2026=BATCH"
+        assertEquals(null, MonthlyDueCalculator.customMonthlyFeeForPeriod("Aug 2026", customFeePolicyTimeline = timeline))
+        assertEquals(700.0, MonthlyDueCalculator.customMonthlyFeeForPeriod("Sep 2026", customFeePolicyTimeline = timeline)!!, 0.0)
+        assertEquals(700.0, MonthlyDueCalculator.customMonthlyFeeForPeriod("Oct 2026", customFeePolicyTimeline = timeline)!!, 0.0)
+        assertEquals(null, MonthlyDueCalculator.customMonthlyFeeForPeriod("Nov 2026", customFeePolicyTimeline = timeline))
+    }
+
+    @Test
+    fun `custom fee beginning in assignment month is prorated instead of charged in full`() {
+        val assigned = date(2026, Calendar.JULY, 17)
+        assertEquals(
+            560.0,
+            MonthlyDueCalculator.monthlyFeeAmountForPeriod(
+                period = "Jul 2026",
+                monthlyFeeAmount = 1_500.0,
+                firstMonthFeePeriod = "Jul 2026",
+                firstMonthFeeAmount = 700.0,
+                customFeePolicyTimeline = "Jul 2026=1200",
+                firstMonthStartDateMs = assigned
+            ),
+            0.0
+        )
+    }
+
+    @Test
+    fun `proration explanation uses the 1st to 30th cycle and next month full fee`() {
+        val info = MonthlyDueCalculator.firstMonthProrationInfoForPeriod(
+            period = "Sep 2026",
+            firstMonthStartDateMs = date(2026, Calendar.SEPTEMBER, 16),
+            monthlyFeeAmount = 1_000.0,
+            firstMonthFeePeriod = "Sep 2026",
+            firstMonthFeeAmount = 500.0
+        )
+
+        requireNotNull(info)
+        assertEquals(16, info.admissionDay)
+        assertEquals(15, info.billableDays)
+        assertEquals(500.0, info.firstMonthFeeAmount, 0.0)
+        assertEquals("Oct 2026", info.nextPeriod)
+        assertEquals(1_000.0, info.nextMonthFeeAmount, 0.0)
+    }
+
+    @Test
+    fun `proration explanation is hidden when custom fee overrides first month`() {
+        val info = MonthlyDueCalculator.firstMonthProrationInfoForPeriod(
+            period = "Sep 2026",
+            firstMonthStartDateMs = date(2026, Calendar.SEPTEMBER, 16),
+            monthlyFeeAmount = 1_000.0,
+            firstMonthFeePeriod = "Sep 2026",
+            firstMonthFeeAmount = 500.0,
+            customMonthlyFeeAmount = 700.0,
+            customFeeEffectiveFromPeriod = "Sep 2026"
+        )
+
+        assertEquals(null, info)
     }
 
     @Test

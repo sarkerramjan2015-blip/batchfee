@@ -173,6 +173,8 @@ secrets {
 // Some unused dependencies are commented out below instead of being removed.
 // This makes it easy to add them back in the future if needed.
 dependencies {
+  implementation("com.google.android.play:app-update:2.1.0")
+  implementation("com.google.android.play:app-update-ktx:2.1.0")
   implementation(platform(libs.androidx.compose.bom))
   implementation(platform(libs.firebase.bom))
   implementation(libs.firebase.analytics)

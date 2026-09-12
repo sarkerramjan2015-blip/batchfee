@@ -21,6 +21,7 @@ data class InstituteEntity(
     val email: String? = null,
     val instituteCode: String? = null,
     val securityPin: String? = null,
-    val trackStaffEntryExit: Boolean = false
+    val trackStaffEntryExit: Boolean = false,
+    val instituteType: String? = null
 )
 

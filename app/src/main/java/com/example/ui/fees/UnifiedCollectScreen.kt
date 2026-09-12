@@ -122,6 +122,7 @@ import com.batchfee.edu.data.repository.FinancialSessionExpiredException
 import com.batchfee.edu.data.repository.GroupedMonthlyCollectionAllocation
 import com.batchfee.edu.domain.SessionManager
 import com.batchfee.edu.domain.DueCollectionPolicy
+import com.batchfee.edu.domain.FirstMonthProrationInfo
 import com.batchfee.edu.domain.MonthlyDueCalculator
 import com.batchfee.edu.domain.isCourseBatch
 import androidx.core.content.FileProvider
@@ -150,7 +151,12 @@ private val AccentGreen = Color(0xFF22C55E)
 private val AccentRed = Color(0xFFEF4444)
 private val AccentAmber = Color(0xFFF59E0B)
 
-data class EnrichedDue(val fee: FeeEntity, val studentName: String, val batchName: String?) {
+data class EnrichedDue(
+    val fee: FeeEntity,
+    val studentName: String,
+    val batchName: String?,
+    val firstMonthProration: FirstMonthProrationInfo? = null
+) {
     /** UI-only identity. Virtual dues never use an empty Firestore ID as a key. */
     val selectionKey: String get() = DueCollectionPolicy.selectionKey(fee)
 }
@@ -293,7 +299,35 @@ fun UnifiedCollectScreen(
             firstMonthFeeAmount = if (storedTermsMatch) enrollment?.firstMonthFeeAmount
                 else billingStartMs?.let { MonthlyDueCalculator.calculateFirstMonthFee(safeBatch.monthlyFeeAmount, it) },
             customMonthlyFeeAmount = enrollment?.customMonthlyFeeAmount,
-            customFeeEffectiveFromPeriod = enrollment?.customFeeEffectiveFromPeriod
+            customFeeEffectiveFromPeriod = enrollment?.customFeeEffectiveFromPeriod,
+            customFeePolicyTimeline = enrollment?.customFeePolicyTimeline,
+            firstMonthStartDateMs = billingStartMs
+        )
+    }
+
+    fun firstMonthStartDateMs(enrollment: BatchStudentEntity, student: StudentEntity): Long =
+        if (enrollment.admissionDateLinked == false) {
+            enrollment.joinedAtMs
+        } else {
+            student.admissionDateMs.takeIf { it > 0L } ?: enrollment.joinedAtMs
+        }
+
+    fun firstMonthProrationFor(
+        period: String,
+        batch: BatchEntity?,
+        enrollment: BatchStudentEntity?,
+        student: StudentEntity?
+    ): FirstMonthProrationInfo? {
+        if (batch == null || enrollment == null || student == null || batch.isCourseBatch()) return null
+        return MonthlyDueCalculator.firstMonthProrationInfoForPeriod(
+            period = period,
+            firstMonthStartDateMs = firstMonthStartDateMs(enrollment, student),
+            monthlyFeeAmount = batch.monthlyFeeAmount,
+            firstMonthFeePeriod = enrollment.firstMonthFeePeriod,
+            firstMonthFeeAmount = enrollment.firstMonthFeeAmount,
+            customMonthlyFeeAmount = enrollment.customMonthlyFeeAmount,
+            customFeeEffectiveFromPeriod = enrollment.customFeeEffectiveFromPeriod,
+            customFeePolicyTimeline = enrollment.customFeePolicyTimeline
         )
     }
 
@@ -412,6 +446,7 @@ fun UnifiedCollectScreen(
             // ── Monthly dues ──
             // Saved monthly rows retain their receipt/fee ID, but only a row
             // inside the student's admission + batch window can be collected.
+            val enrollmentByBatchId = billingEnrollments.associateBy { it.batchId }
             val actualMonthlyDues = allFees.filter { fee ->
                 fee.dueAmount > 0.0 &&
                     MonthlyDueCalculator.isMonthlyInstallmentDue(fee.feeType, fee.feePeriod) &&
@@ -428,7 +463,15 @@ fun UnifiedCollectScreen(
                 EnrichedDue(
                     fee = fee,
                     studentName = student.fullName,
-                    batchName = fee.batchId?.let { batchMap[it]?.name }
+                    batchName = fee.batchId?.let { batchMap[it]?.name },
+                    firstMonthProration = fee.batchId?.let { batchId ->
+                        firstMonthProrationFor(
+                            period = fee.feePeriod,
+                            batch = batchMap[batchId],
+                            enrollment = enrollmentByBatchId[batchId],
+                            student = student
+                        )
+                    }
                 )
             }
             val monthlyDues = billingEnrollments.flatMap { enrollment ->
@@ -453,6 +496,7 @@ fun UnifiedCollectScreen(
                     firstMonthFeeAmount = enrollment.firstMonthFeeAmount,
                     customMonthlyFeeAmount = enrollment.customMonthlyFeeAmount,
                     customFeeEffectiveFromPeriod = enrollment.customFeeEffectiveFromPeriod,
+                    customFeePolicyTimeline = enrollment.customFeePolicyTimeline,
                     billingEndedAtMs = enrollment.leftAtMs
                 )
                 items.map { item ->
@@ -468,7 +512,17 @@ fun UnifiedCollectScreen(
                             status = if (item.paidAmount > 0.0) "partially_paid" else "unpaid",
                             note = null, createdAtMs = 0L, updatedAtMs = 0L, cancelledAtMs = null
                         )
-                        EnrichedDue(virtualFee, student.fullName, batch.name)
+                        EnrichedDue(
+                            fee = virtualFee,
+                            studentName = student.fullName,
+                            batchName = batch.name,
+                            firstMonthProration = firstMonthProrationFor(
+                                period = item.period,
+                                batch = batch,
+                                enrollment = enrollment,
+                                student = student
+                            )
+                        )
                     }
                 }
             }
@@ -759,7 +813,7 @@ fun UnifiedCollectScreen(
                                 history = paymentHistory,
                                 onPrint = { item -> scope.launch { printHistoryReceipt(context, instituteInfo, student, item) } },
                                 onWhatsApp = { item -> scope.launch { sendHistoryReceiptWhatsApp(context, instituteInfo, student, student.phone, item) } },
-                                onMessage = { item -> sendHistoryReceiptMessage(context, student.phone, buildHistoryReceiptText(instituteInfo, student, item)) },
+                                onMessage = { item -> scope.launch { sendHistoryReceiptMessage(context, instituteInfo, student, item) } },
                                 onShare = { item -> shareHistoryReceipt(context, buildHistoryReceiptText(instituteInfo, student, item)) },
                                 onEdit = { item -> editingHistoryItem = item }
                             )
@@ -856,6 +910,12 @@ fun UnifiedCollectScreen(
                             }
                         } else {
                             item {
+                                val firstMonthProration = firstMonthProrationFor(
+                                    period = monthOptions.getOrNull(startMonthIdx)?.label.orEmpty(),
+                                    batch = selectedBatch,
+                                    enrollment = studentEnrollments.firstOrNull { it.batchId == selectedBatchId },
+                                    student = selectedStudent
+                                )
                                 NewFeeForm(
                                     batches = studentBatches,
                                     selectedBatchId = selectedBatchId,
@@ -879,6 +939,7 @@ fun UnifiedCollectScreen(
                                         }
                                         ?: selectedStudent?.admissionDateMs
                                         ?: 0L,
+                                    firstMonthProration = firstMonthProration,
                                     lockedMonthIndices = lockedMonthIndices,
                                     onBatchSelected = { batch ->
                                         selectedBatchId = batch?.id
@@ -2217,6 +2278,12 @@ private fun ExistingDueSelector(
                                     .joinToString(" · "),
                                 color = TextMuted, fontSize = 11.sp
                             )
+                            if (selected) {
+                                due.firstMonthProration?.let { info ->
+                                    Spacer(Modifier.height(6.dp))
+                                    FirstMonthProrationExplanation(info, compact = true)
+                                }
+                            }
                         }
                         Text(formatSmartAmount(due.fee.dueAmount), color = AccentRed, fontWeight = FontWeight.Bold)
                     }
@@ -2248,6 +2315,7 @@ private fun NewFeeForm(
     calculatedBase: Double,
     discountPercent: Double,
     admissionDateMs: Long = 0L,
+    firstMonthProration: FirstMonthProrationInfo? = null,
     lockedMonthIndices: Set<Int> = emptySet(),
     onBatchSelected: (BatchEntity?) -> Unit,
     onStartMonthChanged: (Int) -> Unit,
@@ -2345,6 +2413,10 @@ private fun NewFeeForm(
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Bold
                 )
+            }
+
+            firstMonthProration?.let { info ->
+                FirstMonthProrationExplanation(info)
             }
 
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
@@ -3024,12 +3096,24 @@ private fun shareHistoryReceipt(context: Context, receiptText: String) {
     )
 }
 
-private fun sendHistoryReceiptMessage(context: Context, phone: String?, receiptText: String) {
+private suspend fun sendHistoryReceiptMessage(context: Context, institute: InstituteInfo, student: StudentEntity, item: StudentPaymentHistory) {
     context.startActivity(
-        Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${phone.orEmpty()}")).apply {
-            putExtra("sms_body", receiptText)
+        Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${student.phone.orEmpty()}")).apply {
+            putExtra("sms_body", buildHistoryReceiptText(institute, student, item))
         }
     )
+    // Carrier hand-off is recorded as sent; delivery confirmation belongs to the
+    // phone's own SMS app and cannot be observed by BatchFee.
+    runCatching {
+        com.batchfee.edu.data.firestore.SmsWalletSyncHelper.recordCarrierSmsBatch(
+            listOf(
+                com.batchfee.edu.data.firestore.SmsOutboundRecord(
+                    recipient = student.phone.orEmpty().replace(Regex("[^0-9]"), ""),
+                    purpose = "Payment receipt · ${student.fullName}"
+                )
+            )
+        )
+    }
 }
 
 private suspend fun sendHistoryReceiptWhatsApp(context: Context, institute: InstituteInfo, student: StudentEntity, phone: String?, item: StudentPaymentHistory) {
@@ -3284,6 +3368,42 @@ private fun generateReceiptPdf(context: Context, institute: InstituteInfo, stude
     file.outputStream().use { document.writeTo(it) }
     document.close()
     return file
+}
+
+@Composable
+private fun FirstMonthProrationExplanation(
+    info: FirstMonthProrationInfo,
+    compact: Boolean = false
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(Cyan.copy(alpha = if (compact) 0.08f else 0.12f))
+            .border(1.dp, Cyan.copy(alpha = 0.32f), RoundedCornerShape(10.dp))
+            .padding(if (compact) 8.dp else 12.dp),
+        verticalArrangement = Arrangement.spacedBy(3.dp)
+    ) {
+        Text(
+            "First-month fee calculation (1st-30th cycle)",
+            color = Cyan,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = if (compact) 10.sp else 12.sp
+        )
+        Text(
+            "Admitted on day ${info.admissionDay}: ${info.billableDays} of 30 days are billed. " +
+                "BDT ${formatSmartAmount(info.firstMonthFeeAmount)} is due for ${info.period}.",
+            color = TextWhite,
+            fontSize = if (compact) 10.sp else 12.sp,
+            lineHeight = if (compact) 13.sp else 16.sp
+        )
+        Text(
+            "From ${info.nextPeriod}, the monthly fee will be BDT ${formatSmartAmount(info.nextMonthFeeAmount)}.",
+            color = TextMuted,
+            fontSize = if (compact) 10.sp else 11.sp,
+            lineHeight = if (compact) 13.sp else 15.sp
+        )
+    }
 }
 
 /** Compact one-page receipt for a trusted grouped collection. The detailed

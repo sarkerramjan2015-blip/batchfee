@@ -48,7 +48,9 @@ import com.batchfee.edu.data.models.PaymentEntity
 import com.batchfee.edu.data.models.BatchEntity
 import com.batchfee.edu.data.repository.BatchEnrollmentRepository
 import com.batchfee.edu.data.models.StaffEntity
+import com.batchfee.edu.domain.MonthlyDueCalculator
 import com.batchfee.edu.domain.appendInstituteSignature
+import com.batchfee.edu.domain.isCourseBatch
 import com.batchfee.edu.domain.loadInstituteSignature
 import com.batchfee.edu.domain.SessionManager
 import com.batchfee.edu.ui.components.buildWhatsAppUrl
@@ -77,6 +79,12 @@ private val WAGreen       = Color(0xFF25D366)
 private val AccentRed     = Color(0xFFEF4444)
 private val AccentAmber   = Color(0xFFF59E0B)
 
+private fun batchBillingDateOrdinal(timestampMs: Long): Int? = timestampMs.takeIf { it > 0L }?.let {
+    SimpleDateFormat("yyyyMMdd", Locale.US).apply {
+        timeZone = TimeZone.getTimeZone("Asia/Dhaka")
+    }.format(Date(it)).toIntOrNull()
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BatchDetailScreen(
@@ -103,12 +111,16 @@ fun BatchDetailScreen(
     var instituteSignature by remember { mutableStateOf("") }
     var instituteName by remember { mutableStateOf("") }
     var instituteContact by remember { mutableStateOf("") }
+    var dueFeeTemplate by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(instId) {
         instituteSignature = loadInstituteSignature(db, instId)
         val institute = instId?.let { db.instituteDao().getInstitute(it) }
         instituteName = institute?.name?.trim().orEmpty().ifBlank { "BatchFee" }
         instituteContact = com.example.domain.MessageTemplateStore.loadInstituteContact(db, instId)
+        dueFeeTemplate = com.example.domain.MessageTemplateStore.load(
+            db, instId, com.example.domain.MessageTemplateStore.TYPE_DUE_FEE
+        )
     }
 
     // This-month stats
@@ -217,7 +229,7 @@ fun BatchDetailScreen(
     fun buildDueMessage(target: BatchStudentWithFee): String {
         val months = target.monthsDue(monthlyFee)
         val monthText = if (months > 1) "$months months" else (target.fee?.feePeriod ?: "this month")
-        val template = com.example.domain.MessageTemplateStore.defaultFor(com.example.domain.MessageTemplateStore.TYPE_DUE_FEE)
+        val template = dueFeeTemplate
         return template?.let {
             com.example.domain.MessageTemplateStore.apply(
                 it,
@@ -1149,14 +1161,16 @@ private fun AttendanceMiniChart(attendance: List<AttendanceEntity>) {
             val present = records.count { it.status.equals("present", ignoreCase = true) }
             val absent = records.count { it.status.equals("absent", ignoreCase = true) }
             val leave = records.count { it.status.equals("leave", ignoreCase = true) }
+            val late = records.count { it.status.equals("late", ignoreCase = true) }
             val holiday = records.count { it.status.equals("holiday", ignoreCase = true) }
             val total = records.size.coerceAtLeast(1)
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.weight(1f)) {
                 Box(modifier = Modifier.fillMaxWidth().height(88.dp), contentAlignment = Alignment.BottomCenter) {
                     Box(Modifier.width(1.dp).fillMaxHeight().background(BorderSub))
                     Column(modifier = Modifier.width(9.dp).height(74.dp), verticalArrangement = Arrangement.Bottom) {
-                        AttendanceSegment(holiday, total, SkyBlue)
-                        AttendanceSegment(leave, total, AccentAmber)
+                        AttendanceSegment(holiday, total, TextMuted)
+                        AttendanceSegment(late, total, AccentAmber)
+                        AttendanceSegment(leave, total, SkyBlue)
                         AttendanceSegment(absent, total, AccentRed)
                         AttendanceSegment(present, total, WAGreen)
                     }
@@ -1178,8 +1192,8 @@ private fun AttendanceLegend() {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
         LegendItem("Present", WAGreen)
         LegendItem("Absent", AccentRed)
-        LegendItem("Leave", AccentAmber)
-        LegendItem("Holiday", SkyBlue)
+        LegendItem("Leave", SkyBlue)
+        LegendItem("Late", AccentAmber)
     }
 }
 
@@ -1294,7 +1308,13 @@ private fun buildBatchAttendanceReport(batchName: String, monthLabel: String, at
     val present = attendance.count { it.status.equals("present", ignoreCase = true) }
     val absent = attendance.count { it.status.equals("absent", ignoreCase = true) }
     val leave = attendance.count { it.status.equals("leave", ignoreCase = true) }
+    val lateRecords = attendance.filter { it.status.equals("late", ignoreCase = true) }
+    val late = lateRecords.size
+    val averageLateMinutes = if (late > 0) lateRecords.sumOf { it.lateByMinutes ?: 0 }.toFloat() / late else 0f
     val holiday = attendance.count { it.status.equals("holiday", ignoreCase = true) }
+    val attendanceDenominator = present + late + absent
+    val attendanceRate = if (attendanceDenominator > 0) (present + late) * 100f / attendanceDenominator else 0f
+    val punctualityRate = if (present + late > 0) present * 100f / (present + late) else 0f
     return buildString {
         appendLine("Batch Attendance Report")
         appendLine("Batch: $batchName")
@@ -1302,7 +1322,11 @@ private fun buildBatchAttendanceReport(batchName: String, monthLabel: String, at
         appendLine("Present: $present")
         appendLine("Absent: $absent")
         appendLine("Leave: $leave")
-        appendLine("Holiday: $holiday")
+        appendLine("Late: $late")
+        if (late > 0) appendLine("Average late: ${"%.0f".format(averageLateMinutes)} minutes")
+        appendLine("Attendance rate: ${"%.0f".format(attendanceRate)}%")
+        appendLine("Punctuality rate: ${"%.0f".format(punctualityRate)}%")
+        if (holiday > 0) appendLine("Legacy holiday records: $holiday")
         appendLine("Total marked records: ${attendance.size}")
     }
 }
@@ -1531,6 +1555,10 @@ fun EnrollStudentsScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
     var enrolledStudents by remember { mutableStateOf<List<com.batchfee.edu.data.models.StudentEntity>>(emptyList()) }
     var batchForEnrollment by remember { mutableStateOf<BatchEntity?>(null) }
     var enrollingStudentIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var pendingAssignment by remember { mutableStateOf<com.batchfee.edu.data.models.StudentEntity?>(null) }
+    var assignmentDateMs by remember { mutableStateOf(System.currentTimeMillis()) }
+    var firstAssignment by remember { mutableStateOf(false) }
+    var showAssignmentDatePicker by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(instId, batchId) {
@@ -1576,16 +1604,12 @@ fun EnrollStudentsScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
                                     enrollingStudentIds = enrollingStudentIds + s.id
                                     scope.launch {
                                         try {
-                                            val enrollmentStart = s.admissionDateMs.takeIf { it > 0L }
-                                                ?: System.currentTimeMillis()
-                                            val selectedBatch = batchForEnrollment
-                                                ?: error("Batch details are still loading. Please try again.")
-                                            BatchEnrollmentRepository(db).enroll(
-                                                instituteId = instId,
-                                                studentId = s.id,
-                                                batch = selectedBatch,
-                                                enrollmentStartMs = enrollmentStart
-                                            )
+                                            firstAssignment = db.batchStudentDao()
+                                                .getBillingEnrollmentsForStudentOnce(s.id, instId).isEmpty()
+                                            // The student admission date is profile history. The
+                                            // batch always receives its own confirmed assign date.
+                                            assignmentDateMs = System.currentTimeMillis()
+                                            pendingAssignment = s
                                         } catch (error: Exception) {
                                             Toast.makeText(
                                                 context,
@@ -1598,13 +1622,107 @@ fun EnrollStudentsScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
                                     }
                                 }
                             }, enabled = s.id !in enrollingStudentIds) {
-                                Text(if (s.id in enrollingStudentIds) "Adding..." else "Add")
+                                Text(if (s.id in enrollingStudentIds) "Loading..." else "Add")
                             }
                         }
                     }
                 }
             }
         }
+    }
+    pendingAssignment?.let { selectedStudent ->
+        val busy = selectedStudent.id in enrollingStudentIds
+        val selectedBatch = batchForEnrollment
+        val assignmentPeriod = MonthlyDueCalculator.periodFor(assignmentDateMs)
+        val billableDays = MonthlyDueCalculator.firstMonthBillableDays(assignmentDateMs)
+        val firstMonthAmount = selectedBatch?.takeUnless { it.isCourseBatch() }?.let {
+            MonthlyDueCalculator.calculateFirstMonthFee(it.monthlyFeeAmount, assignmentDateMs)
+        }
+        val nextPeriod = MonthlyDueCalculator.periodAfter(assignmentPeriod).orEmpty()
+        val assignmentDay = batchBillingDateOrdinal(assignmentDateMs)
+        val admissionDay = batchBillingDateOrdinal(selectedStudent.admissionDateMs)
+        val today = batchBillingDateOrdinal(System.currentTimeMillis())
+        val dateError = when {
+            assignmentDay == null -> "Select a valid assign date."
+            today != null && assignmentDay > today -> "Assign date cannot be in the future."
+            admissionDay != null && assignmentDay < admissionDay ->
+                "Assign date cannot be before the student's admission date."
+            else -> null
+        }
+        AlertDialog(
+            onDismissRequest = { if (!busy) pendingAssignment = null },
+            title = { Text("Confirm batch assignment") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Student: ${selectedStudent.fullName}", fontWeight = FontWeight.SemiBold)
+                    selectedBatch?.let { batch ->
+                        Text("Batch: ${batch.name}")
+                        if (batch.isCourseBatch()) {
+                            Text("Course fee: BDT ${batch.courseFeeAmount.toLong()} (one-time)")
+                        } else {
+                            Text("Batch fee: BDT ${batch.monthlyFeeAmount.toLong()}/month")
+                        }
+                    }
+                    if (!firstAssignment) {
+                        Text(
+                            "This is an additional batch and will have separate billing.",
+                            color = AccentAmber
+                        )
+                    }
+                    TextButton(enabled = !busy, onClick = { showAssignmentDatePicker = true }) {
+                        Text("Assign Date: " + SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(assignmentDateMs)))
+                    }
+                    if (selectedBatch != null && !selectedBatch.isCourseBatch() && firstMonthAmount != null) {
+                        HorizontalDivider()
+                        Text("Billing period: $assignmentPeriod")
+                        Text("Billable days: $billableDays/30")
+                        Text("First-month fee: BDT ${firstMonthAmount.toLong()}", color = AccentAmber, fontWeight = FontWeight.Bold)
+                        Text("From $nextPeriod: BDT ${selectedBatch.monthlyFeeAmount.toLong()}/month", color = Cyan)
+                    }
+                    Text("Admission information and previous payments will remain unchanged.", style = MaterialTheme.typography.bodySmall)
+                    dateError?.let { Text(it, color = AccentRed, style = MaterialTheme.typography.bodySmall) }
+                }
+            },
+            confirmButton = {
+                TextButton(enabled = !busy && dateError == null && selectedBatch != null, onClick = {
+                    val tenant = instId ?: return@TextButton
+                    val targetBatch = batchForEnrollment ?: return@TextButton
+                    enrollingStudentIds = enrollingStudentIds + selectedStudent.id
+                    scope.launch {
+                        try {
+                            val confirmed = BatchEnrollmentRepository(db).enroll(
+                                instituteId = tenant, studentId = selectedStudent.id,
+                                batch = targetBatch, enrollmentStartMs = assignmentDateMs,
+                                admissionDateLinked = false
+                            )
+                            val success = if (targetBatch.isCourseBatch()) {
+                                "${targetBatch.name} assigned. Course fee BDT ${targetBatch.courseFeeAmount.toLong()} added once."
+                            } else {
+                                val period = confirmed.firstMonthFeePeriod ?: assignmentPeriod
+                                val amount = confirmed.firstMonthFeeAmount ?: firstMonthAmount ?: 0.0
+                                "${targetBatch.name} assigned. $period fee BDT ${amount.toLong()}; from ${MonthlyDueCalculator.periodAfter(period).orEmpty()} BDT ${targetBatch.monthlyFeeAmount.toLong()}/month."
+                            }
+                            Toast.makeText(context, success, Toast.LENGTH_LONG).show()
+                            pendingAssignment = null
+                        } catch (error: Exception) {
+                            Toast.makeText(context, error.message ?: "Could not assign student.", Toast.LENGTH_LONG).show()
+                        } finally { enrollingStudentIds = enrollingStudentIds - selectedStudent.id }
+                    }
+                }) { Text(if (busy) "Assigning..." else "Confirm Assignment") }
+            },
+            dismissButton = { TextButton(enabled = !busy, onClick = { pendingAssignment = null }) { Text("Cancel") } }
+        )
+    }
+    if (showAssignmentDatePicker) {
+        val picker = rememberDatePickerState(initialSelectedDateMillis = assignmentDateMs)
+        DatePickerDialog(
+            onDismissRequest = { showAssignmentDatePicker = false },
+            confirmButton = { TextButton(onClick = {
+                assignmentDateMs = picker.selectedDateMillis ?: assignmentDateMs
+                showAssignmentDatePicker = false
+            }) { Text("OK") } },
+            dismissButton = { TextButton(onClick = { showAssignmentDatePicker = false }) { Text("Cancel") } }
+        ) { DatePicker(state = picker) }
     }
 }
 

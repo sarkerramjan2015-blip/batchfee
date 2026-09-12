@@ -38,7 +38,7 @@ private val AbWhite  = Color(0xFFF8FAFC)
 private val AbMuted  = Color(0xFF94A3B8)
 private val AbDim    = Color(0xFF64748B)
 
-data class AttRecord(val id: String, val dateMs: Long, val status: String)
+data class AttRecord(val id: String, val dateMs: Long, val status: String, val lateByMinutes: Int? = null)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -77,7 +77,12 @@ fun StudentAttendanceScreen(onBack: () -> Unit) {
                 reportListenerError(error)
                 if (error != null) return@addSnapshotListener
                 allRecords = snap?.documents?.map { doc ->
-                    AttRecord(id = doc.id, dateMs = (doc.get("attendanceDateMs") as? Number)?.toLong() ?: 0L, status = doc.getString("status") ?: "absent")
+                    AttRecord(
+                        id = doc.id,
+                        dateMs = (doc.get("attendanceDateMs") as? Number)?.toLong() ?: 0L,
+                        status = doc.getString("status") ?: "absent",
+                        lateByMinutes = (doc.get("lateByMinutes") as? Number)?.toInt()
+                    )
                 }?.sortedByDescending { it.dateMs } ?: emptyList()
                 loading = false
             }
@@ -93,6 +98,7 @@ fun StudentAttendanceScreen(onBack: () -> Unit) {
     val monthRecords = allRecords.filter { it.dateMs in startMs..endMs }
     val presentCount = monthRecords.count { it.status == "present" }
     val absentCount = monthRecords.count { it.status == "absent" }
+    val leaveCount = monthRecords.count { it.status == "leave" }
     val lateCount = monthRecords.count { it.status == "late" }
 
     // Build day grid
@@ -124,7 +130,7 @@ fun StudentAttendanceScreen(onBack: () -> Unit) {
                     }) { Icon(Icons.Filled.ChevronLeft, "Prev", tint = AbCyan) }
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(monthDf.format(Date(startMs)), color = AbWhite, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
-                        Text("P:$presentCount A:$absentCount L:$lateCount", color = AbMuted, fontSize = 11.sp)
+                        Text("P:$presentCount A:$absentCount Lv:$leaveCount Lt:$lateCount", color = AbMuted, fontSize = 11.sp)
                     }
                     IconButton(onClick = {
                         calStart.set(selectedYear, selectedMonth, 1); calStart.add(Calendar.MONTH, 1)
@@ -162,6 +168,7 @@ fun StudentAttendanceScreen(onBack: () -> Unit) {
                                 record?.status == "present" -> AbGreen.copy(alpha = 0.15f)
                                 record?.status == "absent" -> AbRed.copy(alpha = 0.1f)
                                 record?.status == "late" -> Color(0xFFF59E0B).copy(alpha = 0.15f)
+                                record?.status == "leave" -> AbCyan.copy(alpha = 0.12f)
                                 else -> AbCard
                             }),
                             border = if (isToday) BorderStroke(1.5.dp, AbCyan) else BorderStroke(1.dp, AbStroke)
@@ -171,7 +178,16 @@ fun StudentAttendanceScreen(onBack: () -> Unit) {
                                 when (record?.status) {
                                     "present" -> Icon(Icons.Filled.Check, null, tint = AbGreen, modifier = Modifier.size(18.dp))
                                     "absent" -> Icon(Icons.Filled.Close, null, tint = AbRed, modifier = Modifier.size(18.dp))
-                                    "late" -> Text("L", color = Color(0xFFF59E0B), fontWeight = FontWeight.ExtraBold, fontSize = 14.sp)
+                                    "late" -> Text(
+                                        record.lateByMinutes?.let { "Lt\n${it}m" } ?: "Lt",
+                                        color = Color(0xFFF59E0B),
+                                        fontWeight = FontWeight.ExtraBold,
+                                        fontSize = 9.sp,
+                                        lineHeight = 9.sp,
+                                        textAlign = TextAlign.Center
+                                    )
+                                    "leave" -> Text("Lv", color = AbCyan, fontWeight = FontWeight.Bold, fontSize = 10.sp)
+                                    "holiday" -> Text("H", color = AbDim, fontWeight = FontWeight.Bold, fontSize = 10.sp)
                                     else -> if (dayMs < System.currentTimeMillis()) Icon(Icons.Filled.Remove, null, tint = AbDim.copy(alpha = 0.3f), modifier = Modifier.size(14.dp)) else {}
                                 }
                             }

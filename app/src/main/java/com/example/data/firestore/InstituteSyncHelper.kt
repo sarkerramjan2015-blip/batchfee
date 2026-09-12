@@ -1,6 +1,7 @@
 ﻿package com.batchfee.edu.data.firestore
 
 import com.batchfee.edu.data.database.AppDatabase
+import androidx.room.withTransaction
 import com.batchfee.edu.data.firebase.FirebaseFailureReporter
 import com.batchfee.edu.data.models.InstituteEntity
 import com.batchfee.edu.domain.InstituteContactNumber
@@ -49,9 +50,15 @@ object InstituteSyncHelper {
     suspend fun syncInstituteFromFirestore(db: AppDatabase, instituteId: String) {
         withContext(Dispatchers.IO) {
             try {
+                val localBeforeFetch = db.instituteDao().getInstitute(instituteId)
+                val hadPendingProfile = db.backgroundSyncDao().pendingProfiles(instituteId) > 0
                 val snapshot = firestore.collection("institutes").document(instituteId).get().await()
                 if (!snapshot.exists()) return@withContext
                 val data = snapshot.data ?: emptyMap<String, Any?>()
+                db.withTransaction {
+                val localNow = db.instituteDao().getInstitute(instituteId)
+                val pendingProfile = if (hadPendingProfile || db.backgroundSyncDao().pendingProfiles(instituteId) > 0 || localNow != localBeforeFetch)
+                    localNow else null
                 val localProfilePhotoUri = db.instituteDao().getInstitute(instituteId)?.profilePhotoUri
                 val now = System.currentTimeMillis()
                 val currentPlanId = data["currentPlanId"] as? String ?: "plan_free_trial"
@@ -89,9 +96,17 @@ object InstituteSyncHelper {
                         email = data["email"] as? String,
                         instituteCode = data["instituteCode"] as? String,
                         securityPin = data["securityPin"] as? String,
-                        trackStaffEntryExit = localTrackStaffEntryExit
-                    )
+                        trackStaffEntryExit = localTrackStaffEntryExit,
+                        instituteType = data["instituteType"] as? String
+                    ).let { cloud ->
+                        pendingProfile?.let { pending -> cloud.copy(
+                            name = pending.name, phone = pending.phone, address = pending.address,
+                            whatsappNumber = pending.whatsappNumber, profilePhotoUri = pending.profilePhotoUri,
+                            ownerName = pending.ownerName
+                        ) } ?: cloud
+                    }
                 )
+                }
             } catch (e: Exception) {
                 FirebaseFailureReporter.report(e, "sync institute from Firestore", permissionDeniedIsExpected = true)
             }
@@ -112,7 +127,8 @@ object InstituteSyncHelper {
                         "profilePhotoUri" to institute.profilePhotoUri?.takeUnless { it.startsWith("file:") },
                         "ownerName" to institute.ownerName,
                         "email" to institute.email,
-                        "instituteCode" to institute.instituteCode
+                        "instituteCode" to institute.instituteCode,
+                        "instituteType" to institute.instituteType
                     ),
                     com.google.firebase.firestore.SetOptions.merge()
                 ).await()
