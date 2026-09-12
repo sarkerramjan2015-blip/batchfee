@@ -56,6 +56,55 @@ private val SoftRed      = Color(0xFFF87171)
 private val Amber        = Color(0xFFF59E0B)
 private val CloseSoftRed = Color(0xFFFFA3A3)
 
+/**
+ * Display-only automatic-SMS estimate. The trusted server remains the only
+ * authority that deducts credits; its same ASCII/Unicode limits are mirrored
+ * here so the owner sees the expected charge before sending.
+ */
+data class BulkSmsPreviewMessage(
+    val recipientName: String,
+    val phone: String?,
+    val message: String
+)
+
+data class BulkSmsPreview(
+    val firstRecipientName: String,
+    val firstMessage: String,
+    val firstMessageCharacters: Int,
+    val firstMessageCredits: Int,
+    val eligibleRecipientCount: Int,
+    val skippedRecipientCount: Int,
+    val totalCharacters: Int,
+    val totalCredits: Int
+)
+
+/** Matches functions/src/smsWallet.js: ASCII 160/153, Unicode 70/67. */
+fun estimateSmsCredits(message: String): Int {
+    if (message.isEmpty()) return 0
+    val ascii = message.all { it.code <= 0x7F }
+    val singleLimit = if (ascii) 160 else 70
+    val joinedLimit = if (ascii) 153 else 67
+    return if (message.length <= singleLimit) 1 else (message.length + joinedLimit - 1) / joinedLimit
+}
+
+fun buildBulkSmsPreview(messages: List<BulkSmsPreviewMessage>): BulkSmsPreview? {
+    val first = messages.firstOrNull() ?: return null
+    val eligible = messages.filter { row ->
+        row.phone?.filter(Char::isDigit).orEmpty().isNotBlank() &&
+            row.message.isNotBlank() && row.message.length <= 480
+    }
+    return BulkSmsPreview(
+        firstRecipientName = first.recipientName,
+        firstMessage = first.message,
+        firstMessageCharacters = first.message.length,
+        firstMessageCredits = estimateSmsCredits(first.message),
+        eligibleRecipientCount = eligible.size,
+        skippedRecipientCount = messages.size - eligible.size,
+        totalCharacters = eligible.sumOf { it.message.length },
+        totalCredits = eligible.sumOf { estimateSmsCredits(it.message) }
+    )
+}
+
 // ── Bulk send progress panel ─────────────────────────────────────
 @Composable
 fun BulkSendProgressPanel(
@@ -311,7 +360,11 @@ fun BulkMessageDialog(
     onStartWhatsApp: (delayMs: Long) -> Unit,
     onStartSms: (delayMs: Long) -> Unit,
     onDismiss: () -> Unit,
-    broadcastMode: Boolean = false
+    broadcastMode: Boolean = false,
+    /** When set, prevents a Due Fee SMS flow from offering the WhatsApp path (and vice versa). */
+    lockedChannel: String? = null,
+    /** Per-recipient, resolved preview supplied by a feature-specific caller. */
+    smsPreview: BulkSmsPreview? = null
 ) {
     val scope = rememberCoroutineScope()
     val instituteId by SessionManager.currentInstituteId.collectAsState()
@@ -327,6 +380,14 @@ fun BulkMessageDialog(
     var methodSaving by remember { mutableStateOf(false) }
     var methodError by remember { mutableStateOf<String?>(null) }
     var methodWarning by remember { mutableStateOf<String?>(null) }
+    val showsSms = lockedChannel != "whatsapp"
+    val showsWhatsApp = lockedChannel != "sms"
+    val automaticSms = showsSms && smsMethod == SmsWalletState.METHOD_SERVER && methodBackendAvailable
+    val automaticCharge = smsPreview?.totalCredits ?: 0
+    val insufficientAutomaticBalance = automaticSms && automaticCharge > smsBalance
+    // Automatic SMS is handled by the trusted backend, so a phone-app delay
+    // is neither used nor shown. WhatsApp and carrier SMS still need it.
+    val showDelayControl = showsWhatsApp || (showsSms && !automaticSms)
 
     LaunchedEffect(instituteId, role) {
         val resolvedInstituteId = instituteId
@@ -387,44 +448,51 @@ fun BulkMessageDialog(
                     fontSize = 13.sp,
                     lineHeight = 18.sp
                 )
-                OutlinedTextField(
-                    value = messageText,
-                    onValueChange = onMessageChange,
-                    placeholder = {
-                        Text(
-                            if (broadcastMode) {
-                                "Write the common message to send to everyone."
-                            } else {
-                                "Optional note added on top of each student's due report."
-                            },
-                            color = TextMuted.copy(alpha = 0.75f)
-                        )
-                    },
-                    supportingText = {
-                        Text(
-                            if (broadcastMode) {
-                                "Same message for all. Use {name} for each student's name."
-                            } else {
-                                "Due report (name, amounts, periods) is added automatically for each student."
-                            },
-                            color = TextMuted.copy(alpha = 0.6f),
-                            fontSize = 11.sp
-                        )
-                    },
-                    minLines = 3,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = TextWhite,
-                        unfocusedTextColor = TextWhite,
-                        focusedBorderColor = Cyan,
-                        unfocusedBorderColor = Cyan.copy(alpha = 0.28f),
-                        focusedContainerColor = CardBgAlt,
-                        unfocusedContainerColor = CardBgAlt,
-                        cursorColor = Cyan
-                    ),
-                    shape = RoundedCornerShape(16.dp)
-                )
-                Column(
+                if (!broadcastMode && smsPreview != null) {
+                    MessagePreviewCard(smsPreview)
+                    OutlinedTextField(
+                        value = messageText,
+                        onValueChange = onMessageChange,
+                        label = { Text("Optional note") },
+                        placeholder = { Text("Added above every student's due reminder.") },
+                        supportingText = {
+                            Text(
+                                "Use {name}, {amount} or {period} in this note.",
+                                color = TextMuted.copy(alpha = 0.6f),
+                                fontSize = 11.sp
+                            )
+                        },
+                        minLines = 2,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = composerTextFieldColors(),
+                        shape = RoundedCornerShape(16.dp)
+                    )
+                } else {
+                    OutlinedTextField(
+                        value = messageText,
+                        onValueChange = onMessageChange,
+                        placeholder = {
+                            Text(
+                                if (broadcastMode) "Write the common message to send to everyone."
+                                else "Optional note added on top of each student's due report.",
+                                color = TextMuted.copy(alpha = 0.75f)
+                            )
+                        },
+                        supportingText = {
+                            Text(
+                                if (broadcastMode) "Same message for all. Use {name} for each student's name."
+                                else "Due report (name, amounts, periods) is added automatically for each student.",
+                                color = TextMuted.copy(alpha = 0.6f),
+                                fontSize = 11.sp
+                            )
+                        },
+                        minLines = 3,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = composerTextFieldColors(),
+                        shape = RoundedCornerShape(16.dp)
+                    )
+                }
+                if (showsSms) Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(16.dp))
@@ -465,8 +533,33 @@ fun BulkMessageDialog(
                     methodWarning?.let { warning ->
                         Text(warning, color = Amber, fontSize = 11.sp, lineHeight = 15.sp)
                     }
+                    if (automaticSms && smsPreview != null) {
+                        val skipped = smsPreview.skippedRecipientCount
+                        Text(
+                            "Automatic charge: ${smsPreview.totalCredits} SMS credits for ${smsPreview.eligibleRecipientCount} recipient${if (smsPreview.eligibleRecipientCount == 1) "" else "s"}.",
+                            color = Cyan,
+                            fontSize = 11.sp,
+                            lineHeight = 15.sp
+                        )
+                        if (skipped > 0) {
+                            Text(
+                                "$skipped recipient${if (skipped == 1) "" else "s"} will be skipped (missing phone or message over 480 characters).",
+                                color = Amber,
+                                fontSize = 11.sp,
+                                lineHeight = 15.sp
+                            )
+                        }
+                        if (insufficientAutomaticBalance) {
+                            Text(
+                                "Insufficient balance: ${smsPreview.totalCredits} credits are needed, but only $smsBalance remain.",
+                                color = SoftRed,
+                                fontSize = 11.sp,
+                                lineHeight = 15.sp
+                            )
+                        }
+                    }
                 }
-                Row(
+                if (showDelayControl) Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
@@ -506,7 +599,7 @@ fun BulkMessageDialog(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                OutlinedButton(
+                if (showsWhatsApp) OutlinedButton(
                     onClick = {
                         val seconds = (delayText.toIntOrNull() ?: initialDelaySeconds).coerceIn(0, 999)
                         onStartWhatsApp(seconds * 1000L)
@@ -519,7 +612,7 @@ fun BulkMessageDialog(
                 ) {
                     Text("WhatsApp", fontWeight = FontWeight.Bold, fontSize = 15.sp)
                 }
-                Button(
+                if (showsSms) Button(
                     onClick = {
                         val seconds = (delayText.toIntOrNull() ?: initialDelaySeconds).coerceIn(0, 999)
                         val resolvedInstituteId = instituteId
@@ -547,12 +640,20 @@ fun BulkMessageDialog(
                         }
                     },
                     enabled = (!broadcastMode || messageText.isNotBlank()) &&
-                        !methodLoading && !methodSaving && methodError == null,
+                        !methodLoading && !methodSaving && methodError == null && !insufficientAutomaticBalance,
                     modifier = Modifier.weight(1f).height(52.dp),
                     shape = RoundedCornerShape(16.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = Cyan, contentColor = BgColor)
                 ) {
-                    Text(if (methodSaving) "Preparing..." else "SMS", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    Text(
+                        when {
+                            methodSaving -> "Preparing..."
+                            automaticSms && smsPreview != null -> "Send ${smsPreview.totalCredits} SMS"
+                            else -> "SMS"
+                        },
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp
+                    )
                 }
             }
         }
@@ -560,6 +661,70 @@ fun BulkMessageDialog(
 }
 
 // ── Selectable check badge shown on list cards in selection mode ──
+@Composable
+private fun MessagePreviewCard(preview: BulkSmsPreview) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(CardBgAlt)
+            .border(1.dp, Cyan.copy(alpha = 0.35f), RoundedCornerShape(16.dp))
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(7.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Filled.Preview, contentDescription = null, tint = Cyan, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(7.dp))
+            Text("Message preview · ${preview.firstRecipientName}", color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        }
+        Text(
+            preview.firstMessage,
+            color = TextWhite,
+            fontSize = 12.sp,
+            lineHeight = 17.sp,
+            maxLines = 8,
+            overflow = TextOverflow.Ellipsis
+        )
+        Text(
+            "${preview.firstMessageCharacters} characters · ${preview.firstMessageCredits} SMS credit${if (preview.firstMessageCredits == 1) "" else "s"}",
+            color = Cyan,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold
+        )
+        Text(
+            "Bulk SMS: ${preview.eligibleRecipientCount} recipient${if (preview.eligibleRecipientCount == 1) "" else "s"} · ${preview.totalCharacters} characters total · ${preview.totalCredits} SMS credit${if (preview.totalCredits == 1) "" else "s"}",
+            color = TextWhite,
+            fontSize = 11.sp,
+            lineHeight = 15.sp
+        )
+        if (preview.skippedRecipientCount > 0) {
+            Text(
+                "${preview.skippedRecipientCount} recipient${if (preview.skippedRecipientCount == 1) "" else "s"} cannot be included (missing phone or message over 480 characters).",
+                color = Amber,
+                fontSize = 11.sp,
+                lineHeight = 15.sp
+            )
+        }
+        Text(
+            "Each student's name, due amount and fee months update automatically.",
+            color = TextMuted,
+            fontSize = 11.sp,
+            lineHeight = 15.sp
+        )
+    }
+}
+
+@Composable
+private fun composerTextFieldColors() = OutlinedTextFieldDefaults.colors(
+    focusedTextColor = TextWhite,
+    unfocusedTextColor = TextWhite,
+    focusedBorderColor = Cyan,
+    unfocusedBorderColor = Cyan.copy(alpha = 0.28f),
+    focusedContainerColor = CardBgAlt,
+    unfocusedContainerColor = CardBgAlt,
+    cursorColor = Cyan
+)
+
 @Composable
 private fun SmsDeliveryOption(
     title: String,

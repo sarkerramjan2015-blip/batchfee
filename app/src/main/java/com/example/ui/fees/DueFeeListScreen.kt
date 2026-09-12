@@ -98,9 +98,11 @@ import com.example.domain.BulkMessageController
 import com.example.domain.BulkMessagePreferences
 import com.example.ui.components.BulkActionBar
 import com.example.ui.components.BulkMessageDialog
+import com.example.ui.components.BulkSmsPreviewMessage
 import com.example.ui.components.BulkSelectionTopBar
 import com.example.ui.components.BulkSendProgressPanel
 import com.example.ui.components.SelectionBadge
+import com.example.ui.components.buildBulkSmsPreview
 import kotlinx.coroutines.launch
 import java.net.URLEncoder
 import java.text.NumberFormat
@@ -287,9 +289,39 @@ fun DueFeeListScreen(db: AppDatabase, onBack: () -> Unit) {
         )
     }
 
-    fun startBulkSend(channel: String, delayMs: Long, recipientIds: Set<String> = selectedIds) {
-        val customText = bulkMessageText.trim()
+    fun buildDueReminderMessage(group: DueStudentGroup): String {
         val dateLabel = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date())
+        val periods = group.items.joinToString(", ") { it.feePeriod }.ifBlank { "fee period" }
+        val customNote = bulkMessageText.trim()
+            .replace("{name}", group.studentName)
+            .replace("{amount}", formatAmount(group.totalDue))
+            .replace("{period}", periods)
+        val base = dueFeeTemplate?.let {
+            com.example.domain.MessageTemplateStore.apply(
+                it,
+                mapOf(
+                    "guardianName" to "Guardian",
+                    "studentName" to group.studentName,
+                    "amount" to formatAmount(group.totalDue),
+                    "period" to periods,
+                    "date" to dateLabel,
+                    "instituteName" to instituteName,
+                    "instituteContact" to instituteContact
+                )
+            )
+        } ?: buildString {
+            appendLine("Dear Guardian,")
+            appendLine()
+            appendLine("${group.studentName} has a pending fee of ${formatCurrency(group.totalDue)} for $periods.")
+            appendLine("Please clear the due fees at your earliest convenience.")
+            appendLine()
+            appendLine("- $instituteName")
+            appendLine("Contact: $instituteContact")
+        }
+        return if (customNote.isBlank()) base.trim() else "$customNote\n\n$base".trim()
+    }
+
+    fun startBulkSend(channel: String, delayMs: Long, recipientIds: Set<String> = selectedIds) {
         val targets = filteredDetails
             .filter { it.studentId in recipientIds }
             .map { group ->
@@ -309,38 +341,9 @@ fun DueFeeListScreen(db: AppDatabase, onBack: () -> Unit) {
             channel = channel,
             delayMs = delayMs,
             messageBuilder = { target ->
-                val group = filteredDetails.firstOrNull { it.studentId == target.key }
-                val periods = group?.items?.joinToString(", ") { it.feePeriod }?.ifBlank { "fee period" } ?: "fee period"
-                val due = group?.totalDue ?: 0.0
-                val customNote = bulkMessageText.trim()
-                    .replace("{name}", target.name)
-                    .replace("{amount}", formatAmount(due))
-                    .replace("{period}", periods)
-                val template = dueFeeTemplate
-                val base = template?.let {
-                    com.example.domain.MessageTemplateStore.apply(
-                        it,
-                        mapOf(
-                            "guardianName" to "Guardian",
-                            "studentName" to target.name,
-                            "amount" to formatAmount(due),
-                            "period" to periods,
-                            "date" to dateLabel,
-                            "instituteName" to instituteName,
-                            "instituteContact" to instituteContact
-                        )
-                    )
-                } ?: buildString {
-                    appendLine("Dear Guardian,")
-                    appendLine()
-                    appendLine("${target.name} has a pending fee of ${formatCurrency(due)} for $periods.")
-                    appendLine("Please clear the due fees at your earliest convenience.")
-                    appendLine()
-                    appendLine("- $instituteName")
-                    appendLine("Contact: $instituteContact")
-                }
-                val withNote = if (customNote.isBlank()) base else "$customNote\n\n$base"
-                withNote.trim()
+                filteredDetails.firstOrNull { it.studentId == target.key }
+                    ?.let(::buildDueReminderMessage)
+                    .orEmpty()
             },
             launcher = { target, body ->
                 if (channel == "whatsapp") {
@@ -462,8 +465,18 @@ fun DueFeeListScreen(db: AppDatabase, onBack: () -> Unit) {
             if (selectionMode) {
                 BulkActionBar(
                     selectedCount = selectedIds.size,
-                    onWhatsApp = { showBulkComposer = true },
-                    onSms = { showBulkComposer = true }
+                    onWhatsApp = {
+                        broadcastMode = false
+                        bulkChannel = "whatsapp"
+                        pickerSelectedIds = selectedIds
+                        showBulkComposer = true
+                    },
+                    onSms = {
+                        broadcastMode = false
+                        bulkChannel = "sms"
+                        pickerSelectedIds = selectedIds
+                        showBulkComposer = true
+                    }
                 )
             }
         }
@@ -635,6 +648,22 @@ fun DueFeeListScreen(db: AppDatabase, onBack: () -> Unit) {
         )
     }
 
+    val dueSmsPreview = if (!broadcastMode && bulkChannel == "sms") {
+        buildBulkSmsPreview(
+            filteredDetails
+                .filter { it.studentId in pickerSelectedIds }
+                .map { group ->
+                    BulkSmsPreviewMessage(
+                        recipientName = group.studentName,
+                        phone = group.studentPhone,
+                        message = buildDueReminderMessage(group)
+                    )
+                }
+        )
+    } else {
+        null
+    }
+
     if (showBulkComposer) {
         BulkMessageDialog(
             title = if (broadcastMode) "Broadcast Message" else "Bulk Due Reminder",
@@ -661,7 +690,9 @@ fun DueFeeListScreen(db: AppDatabase, onBack: () -> Unit) {
                 showBulkComposer = false
                 clearSelection()
             },
-            onDismiss = { showBulkComposer = false }
+            onDismiss = { showBulkComposer = false },
+            lockedChannel = bulkChannel,
+            smsPreview = dueSmsPreview
         )
     }
 
