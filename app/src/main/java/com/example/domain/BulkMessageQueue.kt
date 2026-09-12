@@ -15,6 +15,7 @@ import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.data.firestore.ServerSmsOutbound
 import com.batchfee.edu.data.firestore.SmsWalletState
 import com.batchfee.edu.data.firestore.SmsWalletSyncHelper
+import com.google.firebase.functions.FirebaseFunctionsException
 
 /**
  * Drives a queued, one-by-one bulk SMS/WhatsApp send flow.
@@ -201,7 +202,23 @@ class BulkMessageController(
                 )
             }.getOrElse { error ->
                 val message = error.message?.takeIf { it.isNotBlank() } ?: "Server SMS could not be sent"
-                chunk.forEach { update(it.index, Status.FAILED, message) }
+                val ambiguous = error !is FirebaseFunctionsException || error.code in setOf(
+                    FirebaseFunctionsException.Code.ABORTED,
+                    FirebaseFunctionsException.Code.CANCELLED,
+                    FirebaseFunctionsException.Code.DATA_LOSS,
+                    FirebaseFunctionsException.Code.DEADLINE_EXCEEDED,
+                    FirebaseFunctionsException.Code.INTERNAL,
+                    FirebaseFunctionsException.Code.UNKNOWN,
+                    FirebaseFunctionsException.Code.UNAVAILABLE
+                )
+                chunk.forEach {
+                    if (ambiguous) {
+                        update(it.index, Status.QUEUED, "SMS request status is being reconciled. Do not resend.")
+                        log(it.target.key, it.body, "sent")
+                    } else {
+                        update(it.index, Status.FAILED, message)
+                    }
+                }
                 return@forEachIndexed
             }
             val results = batchResult.results.associateBy { it.targetKey }
@@ -218,11 +235,15 @@ class BulkMessageController(
                         // locally so a new screen session cannot duplicate it.
                         log(preparedItem.target.key, preparedItem.body, "sent")
                     }
-                    else -> update(
+                    "failed" -> update(
                         preparedItem.index,
                         Status.FAILED,
-                        result?.failureReason?.takeIf { it.isNotBlank() } ?: "SMS provider rejected the message"
+                        result.failureReason.takeIf { it.isNotBlank() } ?: "SMS provider rejected the message"
                     )
+                    else -> {
+                        update(preparedItem.index, Status.QUEUED, "SMS request status is being reconciled. Do not resend.")
+                        log(preparedItem.target.key, preparedItem.body, "sent")
+                    }
                 }
             }
         }

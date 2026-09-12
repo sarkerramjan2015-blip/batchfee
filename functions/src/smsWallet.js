@@ -811,14 +811,26 @@ async function sendServerSmsBatch({ db, request, smsProvider, now = Date.now() }
     } catch (error) {
       providerError = error;
     }
-    return settleServerSms({
-      db,
-      instituteId: actor.instituteId,
-      ref: refs[index],
-      providerResult,
-      providerError,
-      now: Date.now(),
-    });
+    try {
+      return await settleServerSms({
+        db,
+        instituteId: actor.instituteId,
+        ref: refs[index],
+        providerResult,
+        providerError,
+        now: Date.now(),
+      });
+    } catch (_) {
+      // The provider may already have accepted the SMS even when persisting its
+      // acknowledgement fails. Keep the reservation pending and return a
+      // non-retryable result so the client cannot create a second operation.
+      return publicServerSmsResult(documentId(refs[index]), {
+        ...row,
+        status: "pending",
+        providerStatus: "SETTLEMENT_PENDING",
+        failureReason: "SMS gateway response is awaiting reconciliation.",
+      });
+    }
   });
   const walletSnap = await instituteRef.get();
   return { replayed: false, wallet: walletDto(walletSnap.data() || {}), results };

@@ -607,6 +607,43 @@ test("ambiguous provider timeout stays pending and cannot be resent by replay", 
   assert.equal(providerCalls, 1);
 });
 
+test("a lost provider settlement stays pending and replay never sends twice", async () => {
+  const db = seededDb();
+  db.documents.get("institutes/i").sms_send_method = "server";
+  db.documents.get("institutes/i").sms_balance = 2;
+  let providerCalls = 0;
+  const handler = serverHandlerFor(db, {
+    sendTextSms: async () => {
+      providerCalls += 1;
+      return { accepted: true, status: "sent", providerStatus: "1000", messageId: "provider-settlement" };
+    },
+  });
+  const originalRunTransaction = db.runTransaction.bind(db);
+  let transactionCount = 0;
+  db.runTransaction = async (callback) => {
+    transactionCount += 1;
+    if (transactionCount === 2) throw new Error("firestore acknowledgement unavailable");
+    return originalRunTransaction(callback);
+  };
+  const request = {
+    auth: { uid: "owner" },
+    data: {
+      operationId: "server-send-settlement-001",
+      messages: [{ recipient: "01712345678", message: "Fee reminder", purpose: "due", targetKey: "s1" }],
+    },
+  };
+
+  const first = await handler(request);
+  assert.equal(first.results[0].status, "pending");
+  assert.equal(first.results[0].providerStatus, "SETTLEMENT_PENDING");
+  assert.equal(db.documents.get("institutes/i").sms_balance, 1);
+
+  const replay = await handler(request);
+  assert.equal(replay.replayed, true);
+  assert.equal(replay.results[0].status, "pending");
+  assert.equal(providerCalls, 1);
+});
+
 test("server SMS fails closed for insufficient balance and unauthorized staff", async () => {
   const db = seededDb();
   db.documents.set("institutes/i", {
