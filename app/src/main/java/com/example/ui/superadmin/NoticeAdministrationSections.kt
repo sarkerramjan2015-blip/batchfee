@@ -3,6 +3,7 @@ package com.batchfee.edu.ui.superadmin
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -119,13 +120,13 @@ fun V18NoticeAdministrationSection() {
             OutlinedTextField(title, { if (it.length <= 120) title = it }, label = { Text("Notice title") }, singleLine = true, modifier = Modifier.fillMaxWidth(), colors = noticeAdminFieldColors())
             OutlinedTextField(body, { if (it.length <= 3_000) body = it }, label = { Text("Full notice — Bengali and English are supported") }, minLines = 4, modifier = Modifier.fillMaxWidth(), colors = noticeAdminFieldColors())
             Text("Category", color = NoticeAdminMuted, fontSize = 11.sp)
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 listOf("update", "maintenance", "billing", "feature", "important").forEach { option ->
-                    FilterChip(selected = category == option, onClick = { category = option }, label = { Text(option.replaceFirstChar { it.uppercase() }, fontSize = 9.sp) })
+                    FilterChip(selected = category == option, onClick = { category = option }, label = { Text(option.replaceFirstChar { it.uppercase() }, fontSize = 10.sp) })
                 }
             }
             Text("Audience", color = NoticeAdminMuted, fontSize = 11.sp)
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 FilterChip(selected = includeOwners, onClick = { includeOwners = !includeOwners }, label = { Text("Owners", fontSize = 10.sp) })
                 FilterChip(selected = includeStaff, onClick = { includeStaff = !includeStaff }, label = { Text("Staff", fontSize = 10.sp) })
             }
@@ -291,7 +292,7 @@ fun V18SupportFeedbackInboxSection() {
     }
 }
 
-@Composable private fun FeedbackFilterChip(label: String, selected: Boolean, onClick: () -> Unit) = FilterChip(selected, onClick, { Text(label, fontSize = 9.sp) })
+@Composable private fun FeedbackFilterChip(label: String, selected: Boolean, onClick: () -> Unit) = FilterChip(selected, onClick, { Text(label, fontSize = 10.sp) })
 
 @Composable
 private fun NoticeAdminHistoryCard(notice: AppNotice, onOpen: () -> Unit) {
@@ -365,7 +366,7 @@ private fun FeedbackDetailDialog(details: ProductFeedbackDetails, onDismiss: () 
                 Text("Add immutable internal update", color = NoticeAdminMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                 OutlinedTextField(note, { if (it.length <= 2_000) note = it }, label = { Text("What was checked / next update plan") }, minLines = 3, modifier = Modifier.fillMaxWidth(), colors = noticeAdminFieldColors())
                 Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                    listOf("open", "in_progress", "resolved").forEach { option -> FilterChip(status == option, { status = option }, { Text(option.replace('_', ' '), fontSize = 9.sp) }) }
+                    listOf("open", "in_progress", "resolved").forEach { option -> FilterChip(status == option, { status = option }, { Text(option.replace('_', ' '), fontSize = 10.sp) }) }
                 }
             }
         },
