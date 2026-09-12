@@ -7,7 +7,9 @@ import android.widget.Toast
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.LocalOverscrollConfiguration
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -30,6 +32,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -1020,7 +1023,19 @@ private fun LoginRoleDropdown(
     }
 }
 
-private val INSTITUTE_TYPES = listOf("Coaching", "School", "College", "Madrasa")
+private data class InstituteTypeOption(
+    val value: String,
+    val label: String,
+    val description: String,
+    val icon: ImageVector
+)
+
+private val INSTITUTE_TYPES = listOf(
+    InstituteTypeOption("Coaching", "Coaching Centre", "Coaching, tuition and courses", Icons.Filled.Groups),
+    InstituteTypeOption("School", "School", "Primary and secondary education", Icons.Filled.School),
+    InstituteTypeOption("College", "College", "Higher secondary and college", Icons.Filled.AccountBalance),
+    InstituteTypeOption("Madrasa", "Madrasa", "Islamic and general education", Icons.Filled.MenuBook)
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -1029,18 +1044,28 @@ private fun InstituteTypeDropdown(
     onSelected: (String) -> Unit
 ) {
     var expanded by remember { mutableStateOf(false) }
+    val selectedOption = INSTITUTE_TYPES.firstOrNull { it.value == selected } ?: INSTITUTE_TYPES.first()
     ExposedDropdownMenuBox(
         expanded = expanded,
         onExpandedChange = { expanded = !expanded }
     ) {
         OutlinedTextField(
-            value = selected,
+            value = selectedOption.label,
             onValueChange = {},
             readOnly = true,
-            label = { Text("Institute Type *", color = AuthMuted) },
-            leadingIcon = { Icon(Icons.Filled.School, null, tint = AuthMuted) },
+            label = { Text("Institute type *", color = AuthMuted) },
+            supportingText = {
+                Text(
+                    selectedOption.description,
+                    color = AuthMuted.copy(alpha = 0.9f),
+                    fontSize = 11.sp
+                )
+            },
+            leadingIcon = { Icon(selectedOption.icon, null, tint = AuthCyan) },
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-            modifier = Modifier.fillMaxWidth().menuAnchor(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .menuAnchor(MenuAnchorType.PrimaryNotEditable, enabled = true),
             singleLine = true,
             shape = RoundedCornerShape(12.dp),
             colors = OutlinedTextFieldDefaults.colors(
@@ -1054,17 +1079,37 @@ private fun InstituteTypeDropdown(
                 unfocusedLabelColor = AuthMuted
             )
         )
-        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            INSTITUTE_TYPES.forEach { type ->
+        ExposedDropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            modifier = Modifier.background(AuthCardBg)
+        ) {
+            Text(
+                text = "Choose the option that best describes your institute",
+                color = AuthMuted,
+                fontSize = 11.sp,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+            )
+            INSTITUTE_TYPES.forEach { option ->
                 DropdownMenuItem(
-                    text = { Text(type, color = AuthWhite) },
-                    onClick = { expanded = false; onSelected(type) },
+                    text = {
+                        Column {
+                            Text(option.label, color = AuthWhite, fontWeight = FontWeight.SemiBold)
+                            Text(option.description, color = AuthMuted, fontSize = 11.sp)
+                        }
+                    },
+                    onClick = { expanded = false; onSelected(option.value) },
                     leadingIcon = {
                         Icon(
-                            Icons.Filled.School,
+                            option.icon,
                             contentDescription = null,
-                            tint = if (type == selected) AuthCyan else AuthMuted
+                            tint = if (option.value == selected) AuthCyan else AuthMuted
                         )
+                    },
+                    trailingIcon = {
+                        if (option.value == selected) {
+                            Icon(Icons.Filled.CheckCircle, contentDescription = "Selected", tint = AuthCyan)
+                        }
                     }
                 )
             }
@@ -1072,6 +1117,7 @@ private fun InstituteTypeDropdown(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun AuthScreen(
     db: AppDatabase,
@@ -1114,8 +1160,12 @@ fun AuthScreen(
     var showForgotDialog by remember { mutableStateOf(false) }
     var forgotEmail by remember { mutableStateOf("") }
     var consentChecked by remember { mutableStateOf(false) }
+    val registerScrollState = rememberScrollState()
 
     LaunchedEffect(Unit) { contentVisible = true }
+    LaunchedEffect(isLoginMode) {
+        if (!isLoginMode) registerScrollState.scrollTo(0)
+    }
     LaunchedEffect(selectedRole, email, isLoginMode) {
         if (isLoginMode) loginPreferences.save(selectedRole.label, email)
     }
@@ -1187,54 +1237,77 @@ fun AuthScreen(
                 )
         )
 
-        AnimatedVisibility(
-            visible = contentVisible,
-            enter = fadeIn(tween(800, easing = FastOutSlowInEasing)) +
-                    slideInVertically(tween(800, easing = FastOutSlowInEasing, delayMillis = 200)) { it / 2 },
-            modifier = Modifier.fillMaxSize()
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .statusBarsPadding()
-                    .then(
-                        // The login page stays fixed; only the longer register
-                        // form may scroll on compact screens.
-                        if (isLoginMode) Modifier else Modifier.verticalScroll(rememberScrollState())
-                    )
-                    .padding(
-                        start = contentHorizontalPadding,
-                        end = contentHorizontalPadding,
-                        top = contentVerticalPadding,
-                        bottom = 116.dp
-                    )
-                    .navigationBarsPadding(),
-                horizontalAlignment = Alignment.CenterHorizontally
+        CompositionLocalProvider(LocalOverscrollConfiguration provides null) {
+            AnimatedVisibility(
+                visible = contentVisible,
+                enter = fadeIn(tween(800, easing = FastOutSlowInEasing)) +
+                        slideInVertically(tween(800, easing = FastOutSlowInEasing, delayMillis = 200)) { it / 2 },
+                modifier = Modifier.fillMaxSize()
             ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .statusBarsPadding()
+                        .then(
+                            // Registration remains reachable on small devices and with the
+                            // keyboard open, but has no distracting stretch/glow overscroll.
+                            if (isLoginMode) Modifier else Modifier.verticalScroll(registerScrollState)
+                        )
+                        .padding(
+                            start = contentHorizontalPadding,
+                            end = contentHorizontalPadding,
+                            top = contentVerticalPadding,
+                            bottom = if (isLoginMode) 116.dp else 20.dp
+                        )
+                        .navigationBarsPadding(),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
                 Spacer(Modifier.height(if (compactHeight) 8.dp else 14.dp))
 
-                // Animated Logo
-                AnimatedLogo(modifier = Modifier.size(logoSize))
-
-                Spacer(Modifier.height(if (compactHeight) 10.dp else 14.dp))
-
-                // App Name + Tagline
-                Text(
-                    text = "BatchFee",
-                    style = MaterialTheme.typography.headlineLarge.copy(
-                        fontWeight = FontWeight.ExtraBold,
-                        letterSpacing = androidx.compose.ui.unit.TextUnit(1.5f, androidx.compose.ui.unit.TextUnitType.Sp)
-                    ),
-                    color = AuthWhite
-                )
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    text = "Smart institute management, simplified.",
-                    style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
-                    color = AuthCyan,
-                    textAlign = TextAlign.Center
-                )
-                Spacer(Modifier.height(if (compactHeight) 14.dp else 20.dp))
+                if (isLoginMode) {
+                    AnimatedLogo(modifier = Modifier.size(logoSize))
+                    Spacer(Modifier.height(if (compactHeight) 10.dp else 14.dp))
+                    Text(
+                        text = "BatchFee",
+                        style = MaterialTheme.typography.headlineLarge.copy(
+                            fontWeight = FontWeight.ExtraBold,
+                            letterSpacing = androidx.compose.ui.unit.TextUnit(1.5f, androidx.compose.ui.unit.TextUnitType.Sp)
+                        ),
+                        color = AuthWhite
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = "Smart institute management, simplified.",
+                        style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
+                        color = AuthCyan,
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(Modifier.height(if (compactHeight) 14.dp else 20.dp))
+                } else {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .then(if (formMaxWidth > 0.dp) Modifier.widthIn(max = formMaxWidth) else Modifier),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            modifier = Modifier.size(52.dp),
+                            shape = RoundedCornerShape(16.dp),
+                            color = AuthCyan.copy(alpha = 0.14f),
+                            border = BorderStroke(1.dp, AuthCyan.copy(alpha = 0.35f))
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(Icons.Filled.AccountBalance, null, tint = AuthCyan, modifier = Modifier.size(27.dp))
+                            }
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column {
+                            Text("Create your institute", color = AuthWhite, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                            Text("Set up your profile and start the free trial", color = AuthMuted, fontSize = 12.sp)
+                        }
+                    }
+                    Spacer(Modifier.height(14.dp))
+                }
 
                 // Login / Register Form Card
                 GlassCard(
@@ -1792,12 +1865,15 @@ fun AuthScreen(
                     }
                 }
 
+                }
             }
         }
-        AuthContactFooter(
-            context = context,
-            modifier = Modifier.align(Alignment.BottomCenter)
-        )
+        if (isLoginMode) {
+            AuthContactFooter(
+                context = context,
+                modifier = Modifier.align(Alignment.BottomCenter)
+            )
+        }
     }
 }
 
