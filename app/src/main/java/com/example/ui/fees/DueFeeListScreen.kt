@@ -692,7 +692,8 @@ fun DueFeeListScreen(db: AppDatabase, onBack: () -> Unit) {
             },
             onDismiss = { showBulkComposer = false },
             lockedChannel = bulkChannel,
-            smsPreview = dueSmsPreview
+            smsPreview = dueSmsPreview,
+            showResolvedPreview = true
         )
     }
 

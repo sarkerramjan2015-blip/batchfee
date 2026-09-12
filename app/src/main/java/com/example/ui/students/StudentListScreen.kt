@@ -51,9 +51,11 @@ import com.example.domain.BulkMessageController
 import com.example.domain.BulkMessagePreferences
 import com.example.ui.components.BulkActionBar
 import com.example.ui.components.BulkMessageDialog
+import com.example.ui.components.BulkSmsPreviewMessage
 import com.example.ui.components.BulkSelectionTopBar
 import com.example.ui.components.BulkSendProgressPanel
 import com.example.ui.components.SelectionBadge
+import com.example.ui.components.buildBulkSmsPreview
 import kotlinx.coroutines.launch
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
@@ -621,6 +623,17 @@ fun StudentListScreen(
         )
     }
 
+    val studentSmsPreview = if (bulkChannel == "sms" && messageText.trim().isNotBlank()) {
+        val resolvedMessage = appendInstituteSignature(messageText.trim(), instituteSignature)
+        buildBulkSmsPreview(
+            filteredStudents
+                .filter { it.id in selectedIds }
+                .map { student -> BulkSmsPreviewMessage(student.fullName, student.phone, resolvedMessage) }
+        )
+    } else {
+        null
+    }
+
     if (showBulkComposer) {
         BulkMessageDialog(
             title = "Bulk Message",
@@ -638,7 +651,9 @@ fun StudentListScreen(
                 showBulkComposer = false
                 clearSelection()
             },
-            onDismiss = { showBulkComposer = false }
+            onDismiss = { showBulkComposer = false },
+            lockedChannel = bulkChannel,
+            smsPreview = studentSmsPreview
         )
     }
 

@@ -58,8 +58,10 @@ import com.batchfee.edu.data.models.ExamEntity
 import com.batchfee.edu.domain.SessionManager
 import com.example.domain.BulkMessageController
 import com.example.ui.components.BulkMessageDialog
+import com.example.ui.components.BulkSmsPreviewMessage
 import com.example.ui.components.BulkSendProgressPanel
 import com.example.ui.components.SelectionBadge
+import com.example.ui.components.buildBulkSmsPreview
 import com.batchfee.edu.ui.components.buildWhatsAppUrl
 import coil.compose.AsyncImage
 import java.io.FileOutputStream
@@ -1059,6 +1061,21 @@ fun ExamDetailScreen(db: AppDatabase, examId: String, onBack: () -> Unit, onEdit
     // ── Result composer ────────────────────────────
     if (showResultComposer && selectedExam != null) {
         val exam = selectedExam!!
+        val examSmsPreview = if (resultBulkChannel == "sms") {
+            buildBulkSmsPreview(
+                studentResults
+                    .filter { it.result != null && it.student.id in resultPickerIds }
+                    .map { item ->
+                        val base = viewModel.buildStudentMessage(item, exam)
+                        val message = resultBulkText.trim().takeIf { it.isNotBlank() }
+                            ?.let { "$it\n\n$base" }
+                            ?: base
+                        BulkSmsPreviewMessage(item.student.fullName, item.student.phone, message)
+                    }
+            )
+        } else {
+            null
+        }
         BulkMessageDialog(
             title = "Send Exam Results",
             recipientCount = resultPickerIds.size,
@@ -1074,7 +1091,10 @@ fun ExamDetailScreen(db: AppDatabase, examId: String, onBack: () -> Unit, onEdit
                 showResultComposer = false
             },
             onDismiss = { showResultComposer = false },
-            broadcastMode = false
+            broadcastMode = false,
+            lockedChannel = resultBulkChannel,
+            smsPreview = examSmsPreview,
+            showResolvedPreview = true
         )
     }
 

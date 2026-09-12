@@ -58,9 +58,11 @@ import com.example.domain.BulkMessageController
 import com.example.domain.BulkMessagePreferences
 import com.example.ui.components.BulkActionBar
 import com.example.ui.components.BulkMessageDialog
+import com.example.ui.components.BulkSmsPreviewMessage
 import com.example.ui.components.BulkSelectionTopBar
 import com.example.ui.components.BulkSendProgressPanel
 import com.example.ui.components.SelectionBadge
+import com.example.ui.components.buildBulkSmsPreview
 import kotlinx.coroutines.launch
 import java.net.URLEncoder
 import java.text.SimpleDateFormat
@@ -157,6 +159,7 @@ fun BatchDetailScreen(
     )) { mutableStateOf(setOf<String>()) }
     var showBulkComposer by remember { mutableStateOf(false) }
     var bulkMessageText by remember { mutableStateOf("") }
+    var bulkChannel by remember { mutableStateOf("sms") }
 
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -420,8 +423,14 @@ fun BatchDetailScreen(
             if (selectionMode) {
                 BulkActionBar(
                     selectedCount = selectedIds.size,
-                    onWhatsApp = { showBulkComposer = true },
-                    onSms = { showBulkComposer = true }
+                    onWhatsApp = {
+                        bulkChannel = "whatsapp"
+                        showBulkComposer = true
+                    },
+                    onSms = {
+                        bulkChannel = "sms"
+                        showBulkComposer = true
+                    }
                 )
             }
         }
@@ -795,6 +804,26 @@ fun BatchDetailScreen(
     }
 
     // ── Bulk composer + progress ─────────────────────────
+    val batchSmsPreview = if (bulkChannel == "sms") {
+        buildBulkSmsPreview(
+            displayedStudents
+                .filter { it.student.id in selectedIds }
+                .map { studentWithFee ->
+                    val message = bulkMessageText.trim().takeIf { it.isNotBlank() }
+                        ?.replace("{name}", studentWithFee.student.fullName)
+                        ?.let { appendInstituteSignature(it, instituteSignature) }
+                        ?: if (studentWithFee.dueAmount > 0) {
+                            buildDueMessage(studentWithFee)
+                        } else {
+                            "Dear Guardian,\n\nThis is a message from $instituteName about ${studentWithFee.student.fullName}.\n\n- $instituteName\nContact: $instituteContact"
+                        }
+                    BulkSmsPreviewMessage(studentWithFee.student.fullName, studentWithFee.student.phone, message)
+                }
+        )
+    } else {
+        null
+    }
+
     if (showBulkComposer) {
         BulkMessageDialog(
             title = "Bulk Message",
@@ -812,7 +841,10 @@ fun BatchDetailScreen(
                 showBulkComposer = false
                 clearSelection()
             },
-            onDismiss = { showBulkComposer = false }
+            onDismiss = { showBulkComposer = false },
+            lockedChannel = bulkChannel,
+            smsPreview = batchSmsPreview,
+            showResolvedPreview = true
         )
     }
 

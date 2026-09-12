@@ -364,7 +364,9 @@ fun BulkMessageDialog(
     /** When set, prevents a Due Fee SMS flow from offering the WhatsApp path (and vice versa). */
     lockedChannel: String? = null,
     /** Per-recipient, resolved preview supplied by a feature-specific caller. */
-    smsPreview: BulkSmsPreview? = null
+    smsPreview: BulkSmsPreview? = null,
+    /** Generated reminders keep their message read-only; normal bulk text stays editable. */
+    showResolvedPreview: Boolean = false
 ) {
     val scope = rememberCoroutineScope()
     val instituteId by SessionManager.currentInstituteId.collectAsState()
@@ -385,6 +387,7 @@ fun BulkMessageDialog(
     val automaticSms = showsSms && smsMethod == SmsWalletState.METHOD_SERVER && methodBackendAvailable
     val automaticCharge = smsPreview?.totalCredits ?: 0
     val insufficientAutomaticBalance = automaticSms && automaticCharge > smsBalance
+    val usesResolvedPreview = !broadcastMode && smsPreview != null && showResolvedPreview
     // Automatic SMS is handled by the trusted backend, so a phone-app delay
     // is neither used nor shown. WhatsApp and carrier SMS still need it.
     val showDelayControl = showsWhatsApp || (showsSms && !automaticSms)
@@ -448,7 +451,7 @@ fun BulkMessageDialog(
                     fontSize = 13.sp,
                     lineHeight = 18.sp
                 )
-                if (!broadcastMode && smsPreview != null) {
+                if (usesResolvedPreview) {
                     MessagePreviewCard(smsPreview)
                     OutlinedTextField(
                         value = messageText,
@@ -491,6 +494,9 @@ fun BulkMessageDialog(
                         colors = composerTextFieldColors(),
                         shape = RoundedCornerShape(16.dp)
                     )
+                    if (smsPreview != null) {
+                        SmsEstimateSummary(smsPreview)
+                    }
                 }
                 if (showsSms) Column(
                     modifier = Modifier
@@ -708,6 +714,24 @@ private fun MessagePreviewCard(preview: BulkSmsPreview) {
         Text(
             "Each student's name, due amount and fee months update automatically.",
             color = TextMuted,
+            fontSize = 11.sp,
+            lineHeight = 15.sp
+        )
+    }
+}
+
+@Composable
+private fun SmsEstimateSummary(preview: BulkSmsPreview) {
+    Text(
+        "SMS estimate: ${preview.firstMessageCharacters} characters per message · ${preview.firstMessageCredits} credit${if (preview.firstMessageCredits == 1) "" else "s"}. Total: ${preview.eligibleRecipientCount} recipient${if (preview.eligibleRecipientCount == 1) "" else "s"} · ${preview.totalCredits} SMS credit${if (preview.totalCredits == 1) "" else "s"}.",
+        color = Cyan,
+        fontSize = 11.sp,
+        lineHeight = 15.sp
+    )
+    if (preview.skippedRecipientCount > 0) {
+        Text(
+            "${preview.skippedRecipientCount} recipient${if (preview.skippedRecipientCount == 1) "" else "s"} cannot be included (missing phone or message over 480 characters).",
+            color = Amber,
             fontSize = 11.sp,
             lineHeight = 15.sp
         )

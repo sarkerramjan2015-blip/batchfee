@@ -49,9 +49,11 @@ import com.example.domain.BulkMessageController
 import com.example.domain.BulkMessagePreferences
 import com.example.ui.components.BulkActionBar
 import com.example.ui.components.BulkMessageDialog
+import com.example.ui.components.BulkSmsPreviewMessage
 import com.example.ui.components.BulkSelectionTopBar
 import com.example.ui.components.BulkSendProgressPanel
 import com.example.ui.components.SelectionBadge
+import com.example.ui.components.buildBulkSmsPreview
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -498,8 +500,14 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
             if (selectionMode) {
                 BulkActionBar(
                     selectedCount = selectedIds.size,
-                    onWhatsApp = { showBulkComposer = true },
-                    onSms = { showBulkComposer = true }
+                    onWhatsApp = {
+                        bulkChannel = "whatsapp"
+                        showBulkComposer = true
+                    },
+                    onSms = {
+                        bulkChannel = "sms"
+                        showBulkComposer = true
+                    }
                 )
             }
         }
@@ -1012,6 +1020,22 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
         )
     }
 
+    val attendanceSmsPreview = if (bulkChannel == "sms") {
+        buildBulkSmsPreview(
+            students
+                .filter { it.id in selectedIds }
+                .map { student ->
+                    val status = records[student.id]?.status ?: "absent"
+                    val message = bulkMessageText.trim().takeIf { it.isNotBlank() }
+                        ?.replace("{name}", student.fullName)
+                        ?: viewModel.buildAttendanceMessage(student, batch?.name.orEmpty(), selectedDateMs, status)
+                    BulkSmsPreviewMessage(student.fullName, student.phone, message)
+                }
+        )
+    } else {
+        null
+    }
+
     if (showBulkComposer) {
         BulkMessageDialog(
             title = if (bulkChannel == "whatsapp") "Bulk WhatsApp Message" else "Bulk SMS Message",
@@ -1030,7 +1054,10 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
                 clearSelection()
             },
             onDismiss = { showBulkComposer = false },
-            broadcastMode = false
+            broadcastMode = false,
+            lockedChannel = bulkChannel,
+            smsPreview = attendanceSmsPreview,
+            showResolvedPreview = true
         )
     }
 
