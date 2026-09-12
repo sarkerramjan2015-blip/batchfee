@@ -25,6 +25,20 @@ test("public registration validation normalizes a valid Bangladesh submission", 
   assert.equal(result.bloodGroup, "AB-");
 });
 
+test("public registration accepts the Bengali slugs created for Bengali institute names", () => {
+  const result = canonicalRegistrationPayload({
+    slug: "\u09b8\u09be\u09ab\u09b2\u09cd\u09af-\u098f\u0995\u09be\u09a1\u09c7\u09ae\u09bf-abc123",
+    fullName: "Karim",
+    phone: "01540140464",
+    guardianName: "Din Islam",
+    whatsappNumber: "01540140464",
+  });
+
+  assert.equal(result.slug, "\u09b8\u09be\u09ab\u09b2\u09cd\u09af-\u098f\u0995\u09be\u09a1\u09c7\u09ae\u09bf-abc123");
+  assert.equal(result.phone, "+8801540140464");
+  assert.equal(result.whatsappNumber, "+8801540140464");
+});
+
 test("public registration validation rejects unsafe or malformed input", () => {
   assert.throws(() => canonicalRegistrationPayload({
     slug: "../private-institute",

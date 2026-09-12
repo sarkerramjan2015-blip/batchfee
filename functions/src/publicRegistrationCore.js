@@ -12,7 +12,11 @@ const MAX = {
 };
 
 const BANGLADESH_MOBILE = /^1[3-9][0-9]{8}$/;
-const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+// Registration profiles deliberately keep institute names readable in their
+// public URL, including Bengali names. Keep this in sync with the browser and
+// registrationProfileCore instead of accepting ASCII-only slugs at submit
+// time.
+const SLUG = /^[\p{L}\p{M}\p{N}]+(?:-[\p{L}\p{M}\p{N}]+)*$/u;
 const BLOOD_GROUPS = new Set(["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"]);
 const NAME = /^[\p{L}\p{M}][\p{L}\p{M}\p{N} .,'’-]*$/u;
 
