@@ -59,7 +59,7 @@ class FirebaseSafeDeletionGateway : SafeDeletionGateway {
                     FirebaseFunctionsException.Code.PERMISSION_DENIED,
                     FirebaseFunctionsException.Code.UNAUTHENTICATED ->
                         throw SafeDeletionRejectedException(
-                            error.message ?: "Deletion operation was rejected.",
+                            deletionFailureMessage(error, "Deletion operation was rejected."),
                             error
                         )
                     else -> throw error

@@ -37,9 +37,14 @@ function isProtectedAuthIdentity({ actorUid, authUid, appUser }) {
   return !!authUid && (authUid === actorUid || hasPlatformAdminRole(appUser));
 }
 
-function isManagedAdmin(data, instituteId) {
+// The deletion flow must recognise both the current ownerUid binding and the
+// managed owner/admin records.  In particular, older institutes can have a
+// document ID that differs from their owner's Firebase UID, so comparing the
+// caller only with instituteId incorrectly rejected a legitimate owner.
+function isManagedInstitutePrincipal(data, instituteId) {
   return data && data.instituteId === instituteId &&
-    ["InstituteAdmin", "admin", "instituteAdmin", "institute_admin"].includes(data.role) &&
+    ["InstituteOwner", "owner", "instituteOwner", "institute_owner",
+      "InstituteAdmin", "admin", "instituteAdmin", "institute_admin"].includes(data.role) &&
     (!Object.prototype.hasOwnProperty.call(data, "status") || data.status === "active");
 }
 
@@ -55,7 +60,8 @@ function assertAuthority({ auth, institute, appUser, staff, instituteId, entityT
   if (!hasCurrentSubscription(institute)) {
     throw new HttpsError("failed-precondition", "Subscription has expired. Renew the plan to continue.");
   }
-  if (auth.uid === instituteId || isManagedAdmin(appUser, instituteId)) return;
+  if (auth.uid === resolveInstituteOwnerUid(instituteId, institute) ||
+      isManagedInstitutePrincipal(appUser, instituteId)) return;
   const permission = entityType === "student" ? "manage_student"
     : entityType === "staff" ? "manage_staff" : "manage_batch";
   if (isActive(staff) && hasPermission(staff.permissions, permission)) return;
@@ -650,5 +656,7 @@ module.exports = {
   createSafeDeletionHandler,
   hasPlatformAdminRole,
   resolveInstituteOwnerUid,
+  isManagedInstitutePrincipal,
+  assertAuthority,
   isProtectedAuthIdentity,
 };

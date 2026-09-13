@@ -3,6 +3,7 @@ package com.batchfee.edu.data.repository
 import androidx.room.withTransaction
 import com.batchfee.edu.data.database.AppDatabase
 import com.google.firebase.functions.FirebaseFunctions
+import com.google.firebase.functions.FirebaseFunctionsException
 import kotlinx.coroutines.tasks.await
 
 /**
@@ -13,12 +14,14 @@ class PermanentArchivePurgeRepository(private val db: AppDatabase) {
     private val functions = FirebaseFunctions.getInstance("asia-south1")
 
     suspend fun purgeBatch(instituteId: String, batchId: String) {
-        callTrustedFunction(functions, "permanentlyPurgeBatch",
-            mapOf(
-                "instituteId" to instituteId,
-                "batchId" to batchId
+        runPermanentPurge("Could not permanently delete this batch.") {
+            callTrustedFunction(functions, "permanentlyPurgeBatch",
+                mapOf(
+                    "instituteId" to instituteId,
+                    "batchId" to batchId
+                )
             )
-        )
+        }
 
         db.withTransaction {
             val sql = db.openHelper.writableDatabase
@@ -53,12 +56,14 @@ class PermanentArchivePurgeRepository(private val db: AppDatabase) {
     }
 
     suspend fun purgeStaff(instituteId: String, staffId: String) {
-        callTrustedFunction(functions, "permanentlyPurgeStaff",
-            mapOf(
-                "instituteId" to instituteId,
-                "staffId" to staffId
+        runPermanentPurge("Could not permanently delete this staff record.") {
+            callTrustedFunction(functions, "permanentlyPurgeStaff",
+                mapOf(
+                    "instituteId" to instituteId,
+                    "staffId" to staffId
+                )
             )
-        )
+        }
 
         db.withTransaction {
             val sql = db.openHelper.writableDatabase
@@ -75,9 +80,11 @@ class PermanentArchivePurgeRepository(private val db: AppDatabase) {
     }
 
     suspend fun purgeInstitute(instituteId: String) {
-        callTrustedFunction(functions, "permanentlyPurgeInstitute",
-            mapOf("instituteId" to instituteId)
-        )
+        runPermanentPurge("Could not permanently delete this institute.") {
+            callTrustedFunction(functions, "permanentlyPurgeInstitute",
+                mapOf("instituteId" to instituteId)
+            )
+        }
 
         // Mirror the server result only after the trusted purge succeeds. Child
         // tables are cleared before parent tables to preserve local FK integrity.
@@ -95,6 +102,14 @@ class PermanentArchivePurgeRepository(private val db: AppDatabase) {
                 sql.execSQL("DELETE FROM $table WHERE instituteId = ?", args)
             }
             sql.execSQL("DELETE FROM institutes WHERE id = ?", args)
+        }
+    }
+
+    private suspend fun runPermanentPurge(fallback: String, operation: suspend () -> Unit) {
+        try {
+            operation()
+        } catch (error: FirebaseFunctionsException) {
+            throw IllegalArgumentException(deletionFailureMessage(error, fallback), error)
         }
     }
 }

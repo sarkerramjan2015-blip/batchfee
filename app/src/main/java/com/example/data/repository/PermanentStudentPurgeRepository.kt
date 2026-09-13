@@ -3,18 +3,26 @@ package com.batchfee.edu.data.repository
 import androidx.room.withTransaction
 import com.batchfee.edu.data.database.AppDatabase
 import com.google.firebase.functions.FirebaseFunctions
+import com.google.firebase.functions.FirebaseFunctionsException
 
 /** Mirrors a completed server purge locally. Never removes local data before the server succeeds. */
 class PermanentStudentPurgeRepository(private val db: AppDatabase) {
     private val functions = FirebaseFunctions.getInstance("asia-south1")
 
     suspend fun purge(instituteId: String, studentId: String) {
-        callTrustedFunction(functions, "permanentlyPurgeStudent",
-            mapOf(
-                "instituteId" to instituteId,
-                "studentId" to studentId
+        try {
+            callTrustedFunction(functions, "permanentlyPurgeStudent",
+                mapOf(
+                    "instituteId" to instituteId,
+                    "studentId" to studentId
+                )
             )
-        )
+        } catch (error: FirebaseFunctionsException) {
+            throw IllegalArgumentException(
+                deletionFailureMessage(error, "Could not permanently delete this student."),
+                error
+            )
+        }
 
         db.withTransaction {
             val sql = db.openHelper.writableDatabase
