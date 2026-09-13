@@ -202,6 +202,20 @@ private fun receiptPeriodSortKey(value: String): Int {
     return if (month >= 0) year * 12 + month else Int.MAX_VALUE
 }
 
+/** A grouped monthly payment is displayed as one ordinary receipt. */
+private fun receiptPeriodSummary(item: StudentPaymentHistory): String {
+    val periods = item.groupedLines.map { it.feePeriod }.ifEmpty { listOf(item.feePeriod) }
+    return when (periods.size) {
+        0 -> item.feePeriod
+        1 -> periods.single()
+        2 -> periods.joinToString(" & ")
+        else -> "${periods.first()} to ${periods.last()} (${periods.size} months)"
+    }
+}
+
+private fun receiptPeriodDetails(item: StudentPaymentHistory): String =
+    item.groupedLines.map { it.feePeriod }.ifEmpty { listOf(item.feePeriod) }.joinToString(", ")
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun UnifiedCollectScreen(
@@ -3057,16 +3071,9 @@ private fun buildHistoryReceiptText(institute: InstituteInfo, student: StudentEn
         appendLine("Student : ${student.fullName}")
         appendLine("ID      : ${student.studentCode}")
         appendLine("Batch   : ${item.batchName ?: "Direct"}")
-        appendLine("Period  : ${item.displayPeriod}")
+        appendLine("Period  : ${receiptPeriodDetails(item)}")
         appendLine("Date    : ${formatDate(item.payment.paymentDateMs)}")
         appendLine("________________________________")
-        if (item.isGroupedReceipt) {
-            appendLine("GROUPED MONTHLY COLLECTION")
-            item.groupedLines.forEach { line ->
-                appendLine("• ${line.feePeriod}: BDT ${formatSmartAmount(line.payment.amount)}")
-            }
-            appendLine("________________________________")
-        }
         appendLine("Fee Amount  : BDT ${formatSmartAmount(item.baseAmount)}")
         if (item.discountAmount > 0.0) {
             appendLine("Discount    : ${formatDiscountPercent(item)}% - BDT ${formatSmartAmount(item.discountAmount)}")
@@ -3163,9 +3170,6 @@ private suspend fun printHistoryReceipt(context: Context, institute: InstituteIn
 }
 
 private fun generateReceiptPdf(context: Context, institute: InstituteInfo, student: StudentEntity, item: StudentPaymentHistory): File {
-    if (item.isGroupedReceipt) {
-        return generateGroupedReceiptPdf(context, institute, student, item)
-    }
     val document = PdfDocument()
     val hasDiscount = item.discountAmount > 0.0
     val hasRemark = !item.payment.note.isNullOrBlank()
@@ -3300,7 +3304,7 @@ private fun generateReceiptPdf(context: Context, institute: InstituteInfo, stude
     // Fee details
     card(canvas, fill, stroke, 28f, y, right, feeH)
     sectionLabel(canvas, text, "FEE DETAILS", 46f, y + 16f)
-    row(canvas, text, bold, "Period", item.feePeriod, 46f, y + 36f, right - 28f)
+    row(canvas, text, bold, "Period", receiptPeriodSummary(item), 46f, y + 36f, right - 28f)
     row(canvas, text, bold, "Fee amount", "BDT ${formatSmartAmount(item.baseAmount)}", 46f, y + 56f, right - 28f)
     if (hasDiscount) {
         row(canvas, text, bold, "Discount", "−BDT ${formatSmartAmount(item.discountAmount)}", 46f, y + 76f, right - 28f, green)
@@ -3314,7 +3318,7 @@ private fun generateReceiptPdf(context: Context, institute: InstituteInfo, stude
     card(canvas, fill, stroke, 28f, y, right, paymentH)
     sectionLabel(canvas, text, "COLLECTED", 46f, y + 16f)
     large.textAlign = Paint.Align.RIGHT; large.color = blue
-    canvas.drawText("BDT ${formatSmartAmount(item.payment.amount)}", right - 28f, y + 18f, large)
+    canvas.drawText("BDT ${formatSmartAmount(item.collectedAmount)}", right - 28f, y + 18f, large)
     large.textAlign = Paint.Align.LEFT
     stroke.color = AndroidColor.argb(50, 37, 99, 235); stroke.strokeWidth = 0.7f
     canvas.drawLine(46f, y + 38f, right - 28f, y + 38f, stroke)
