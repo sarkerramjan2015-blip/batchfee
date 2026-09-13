@@ -245,6 +245,66 @@ test("request rejects a plan that cannot support legacy active students without 
   );
 });
 
+test("Corporate Offer quotes 501+ seats on the server and locks the approved seat limit", async () => {
+  const db = seededDb(Date.now());
+  for (let index = 0; index < 501; index += 1) {
+    db.documents.set(`institutes/institute-a/students/corporate-${index}`, { status: "active" });
+  }
+  const handler = handlerFor(db);
+  const request = await handler({
+    auth: { uid: "institute-a" },
+    data: {
+      action: "submit_request",
+      instituteId: "institute-a",
+      operationId: "sub_corporate_request_0001",
+      requestedPlanId: "plan_corporate",
+      corporateStudentLimit: 600,
+      durationMonths: 6,
+      paymentMethod: "bkash",
+      senderPhone: "01710000000",
+    },
+  });
+  assert.equal(request.request.studentLimitAtRequest, 600);
+  assert.equal(request.request.amountPaid, 5400);
+  assert.equal(request.request.quote.pricingMode, "per_student");
+
+  const approval = await handler({
+    auth: { uid: "super-admin" },
+    data: {
+      action: "approve_request",
+      instituteId: "institute-a",
+      operationId: "sub_corporate_approval_0001",
+      requestId: request.request.requestId,
+    },
+  });
+  const institute = db.documents.get("institutes/institute-a");
+  assert.equal(institute.currentPlanId, "plan_corporate");
+  assert.equal(institute.studentLimit, 600);
+  assert.equal(approval.receipt.studentLimit, 600);
+  assert.equal(approval.receipt.corporateRatePerStudentMonthBdt, 1.5);
+
+  const tooSmallDb = seededDb(Date.now());
+  for (let index = 0; index < 501; index += 1) {
+    tooSmallDb.documents.set(`institutes/institute-a/students/minimum-${index}`, { status: "active" });
+  }
+  await assert.rejects(
+    handlerFor(tooSmallDb)({
+      auth: { uid: "institute-a" },
+      data: {
+        action: "submit_request",
+        instituteId: "institute-a",
+        operationId: "sub_corporate_request_0002",
+        requestedPlanId: "plan_corporate",
+        corporateStudentLimit: 500,
+        durationMonths: 1,
+        paymentMethod: "bkash",
+        senderPhone: "01710000000",
+      },
+    }),
+    (error) => error.code === "invalid-argument" && error.message.includes("corporateStudentLimit"),
+  );
+});
+
 test("a lower plan cannot reduce a live paid institute before its current period ends", async () => {
   const now = Date.now();
   const db = seededDb(now);

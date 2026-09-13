@@ -59,6 +59,13 @@ const defaultPlans = [
     priceBdt: 4999, priceInr: 3999, maxStudents: 5000, maxBatches: 300, maxUsers: 999,
     maxBranches: 5, tag: "Advanced", tierLevel: 104,
   },
+  {
+    // Price is a server-verifiable per-student monthly rate. The actual seat
+    // limit is chosen by the owner (501+) and frozen in each request.
+    id: "plan_corporate", name: "Corporate Offer", description: "For institutes with 501+ active students",
+    priceBdt: 1.5, priceInr: 0, maxStudents: 100000, maxBatches: 300, maxUsers: 999,
+    maxBranches: 20, tag: "501+ students", tierLevel: 105,
+  },
   ...legacyPricingPlans,
 ];
 

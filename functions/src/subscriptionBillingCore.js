@@ -8,6 +8,9 @@ const DURATION_DISCOUNTS = new Map([
   [6, 0.9],
   [12, 0.8],
 ]);
+const CORPORATE_MIN_STUDENTS = 501;
+const CORPORATE_MAX_STUDENTS = 100000;
+const CORPORATE_PER_STUDENT_MONTHLY_BDT = 1.5;
 
 function roundedMoney(value) {
   return Math.round(value * 100) / 100;
@@ -20,6 +23,17 @@ function quoteForPlan(monthlyPrice, durationMonths) {
     throw new RangeError("Plan or subscription duration is not eligible for payment.");
   }
   return roundedMoney(price * durationMonths * discount);
+}
+
+/** Corporate Offer deliberately has no duration discount: the advertised
+ * BDT 1.50 rate applies to every approved student seat for every month. */
+function quoteForCorporateOffer(studentLimit, durationMonths) {
+  if (!Number.isSafeInteger(studentLimit) ||
+      studentLimit < CORPORATE_MIN_STUDENTS || studentLimit > CORPORATE_MAX_STUDENTS ||
+      !DURATION_DISCOUNTS.has(durationMonths)) {
+    throw new RangeError("Corporate Offer requires 501 to 100000 students and a supported duration.");
+  }
+  return roundedMoney(CORPORATE_PER_STUDENT_MONTHLY_BDT * studentLimit * durationMonths);
 }
 
 function addCalendarMonths(startMs, months) {
@@ -92,11 +106,15 @@ function normalizeBangladeshiMobileNumber(value) {
 
 module.exports = {
   DAY_MS,
+  CORPORATE_MAX_STUDENTS,
+  CORPORATE_MIN_STUDENTS,
+  CORPORATE_PER_STUDENT_MONTHLY_BDT,
   addCalendarMonths,
   maskedTransactionReference,
   normalizeBangladeshiMobileNumber,
   normalizeTransactionReference,
   quoteForPlan,
+  quoteForCorporateOffer,
   subscriptionStartMs,
   subscriptionStatusFor,
   transactionReferenceHash,

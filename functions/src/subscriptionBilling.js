@@ -4,9 +4,12 @@ const { createHash } = require("node:crypto");
 const { HttpsError } = require("firebase-functions/v2/https");
 const {
   DAY_MS,
+  CORPORATE_MIN_STUDENTS,
+  CORPORATE_PER_STUDENT_MONTHLY_BDT,
   addCalendarMonths,
   normalizeBangladeshiMobileNumber,
   quoteForPlan,
+  quoteForCorporateOffer,
   subscriptionStartMs,
   subscriptionStatusFor,
 } = require("./subscriptionBillingCore");
@@ -24,6 +27,7 @@ const ALLOWED_ACTIONS = new Set([
 ]);
 const SUPER_ADMIN_ROLES = new Set(["SuperAdmin", "superAdmin", "super_admin"]);
 const PAYMENT_METHODS = new Set(["bkash", "nagad"]);
+const CORPORATE_PLAN_ID = "plan_corporate";
 
 function stableValue(value) {
   if (Array.isArray(value)) return value.map(stableValue);
@@ -117,6 +121,32 @@ function isFreeTrialPlan(planId) {
   return planId === "plan_free_trial";
 }
 
+function isCorporatePlan(planId) {
+  return planId === CORPORATE_PLAN_ID;
+}
+
+function corporateStudentLimit(data) {
+  return requiredSafeInteger(data, "corporateStudentLimit", CORPORATE_MIN_STUDENTS, 100000);
+}
+
+function subscriptionQuote({ planId, plan, durationMonths, studentLimit }) {
+  return isCorporatePlan(planId)
+    ? quoteForCorporateOffer(studentLimit, durationMonths)
+    : quoteForPlan(plan.priceBdt, durationMonths);
+}
+
+function assertCorporateEligibility(activeStudentCount, studentLimit) {
+  if (activeStudentCount < CORPORATE_MIN_STUDENTS) {
+    throw new HttpsError("failed-precondition", "Corporate Offer is available from 501 active students.");
+  }
+  if (studentLimit < activeStudentCount) {
+    throw new HttpsError(
+      "failed-precondition",
+      `Your institute has ${activeStudentCount} active students. Enter at least that many seats.`,
+    );
+  }
+}
+
 function activeStudentCountQuery(instituteRef) {
   // `status` is present on both legacy and current active student documents.
   // Querying `archivedAtMs == null` would exclude legacy records that predate
@@ -169,7 +199,9 @@ function requirePendingRequest(requestSnap) {
       "This legacy request has no secure server quote. Ask the owner to submit it again.",
     );
   }
-  const expected = quoteForPlan(request.quote.monthlyPriceBdt, request.durationMonths);
+  const expected = isCorporatePlan(request.requestedPlanId)
+    ? quoteForCorporateOffer(request.studentLimitAtRequest, request.durationMonths)
+    : quoteForPlan(request.quote.monthlyPriceBdt, request.durationMonths);
   if (expected !== request.quote.amountBdt || expected !== request.amountPaid) {
     throw new HttpsError("failed-precondition", "Subscription request price verification failed.");
   }
@@ -183,7 +215,9 @@ function invalidPendingRequestReason(request, institute) {
     return "Legacy request without a secure server quote.";
   }
   try {
-    const expected = quoteForPlan(request.quote.monthlyPriceBdt, request.durationMonths);
+    const expected = isCorporatePlan(request.requestedPlanId)
+      ? quoteForCorporateOffer(request.studentLimitAtRequest, request.durationMonths)
+      : quoteForPlan(request.quote.monthlyPriceBdt, request.durationMonths);
     if (expected !== request.quote.amountBdt || expected !== request.amountPaid) {
       return "Subscription request price verification failed.";
     }
@@ -356,6 +390,8 @@ function createSubscriptionBillingHandler({ db, FieldValue }) {
 
       if (action === "submit_request") {
         const requestedPlanId = requiredString(data, "requestedPlanId");
+        const requestedCorporateStudentLimit = isCorporatePlan(requestedPlanId)
+          ? corporateStudentLimit(data) : null;
         const durationMonths = requiredSafeInteger(data, "durationMonths", 1, 12);
         const normalizedPaymentMethod = requiredString(data, "paymentMethod", 24).toLowerCase();
         if (!PAYMENT_METHODS.has(normalizedPaymentMethod) || ![1, 6, 12].includes(durationMonths)) {
@@ -394,11 +430,21 @@ function createSubscriptionBillingHandler({ db, FieldValue }) {
           throw new HttpsError("failed-precondition", "Free Trial cannot be purchased. Choose a paid plan.");
         }
         const currentStudentCount = studentCountSnap.data().count;
-        assertPlanSupportsStudentCount(plan, currentStudentCount);
-        assertNoEarlyCapacityDowngrade(authority.institute, plan.maxStudents, now);
+        const requestedStudentLimit = requestedCorporateStudentLimit ?? plan.maxStudents;
+        if (isCorporatePlan(requestedPlanId)) {
+          assertCorporateEligibility(currentStudentCount, requestedStudentLimit);
+        } else {
+          assertPlanSupportsStudentCount(plan, currentStudentCount);
+        }
+        assertNoEarlyCapacityDowngrade(authority.institute, requestedStudentLimit, now);
         let amountPaid;
         try {
-          amountPaid = quoteForPlan(plan.priceBdt, durationMonths);
+          amountPaid = subscriptionQuote({
+            planId: requestedPlanId,
+            plan,
+            durationMonths,
+            studentLimit: requestedStudentLimit,
+          });
         } catch (error) {
           throw new HttpsError("failed-precondition", error.message);
         }
@@ -412,17 +458,21 @@ function createSubscriptionBillingHandler({ db, FieldValue }) {
           institutePhone: typeof institute.phone === "string"
             ? institute.phone : (typeof institute.whatsappNumber === "string" ? institute.whatsappNumber : ""),
           requestedPlanId,
-          planName: typeof plan.name === "string" ? plan.name : requestedPlanId,
+          planName: isCorporatePlan(requestedPlanId) ? "Corporate Offer" :
+            (typeof plan.name === "string" ? plan.name : requestedPlanId),
           activeStudentCountAtRequest: currentStudentCount,
           durationMonths,
           amountPaid,
           paymentMethod: normalizedPaymentMethod,
           senderPhone: normalizedSenderPhone,
-          studentLimitAtRequest: plan.maxStudents,
+          studentLimitAtRequest: requestedStudentLimit,
           quote: {
-            monthlyPriceBdt: Number(plan.priceBdt),
+            monthlyPriceBdt: isCorporatePlan(requestedPlanId)
+              ? CORPORATE_PER_STUDENT_MONTHLY_BDT : Number(plan.priceBdt),
             amountBdt: amountPaid,
             durationMonths,
+            pricingMode: isCorporatePlan(requestedPlanId) ? "per_student" : "flat",
+            studentLimit: requestedStudentLimit,
             quotedAtMs: now,
           },
           status: "pending",
@@ -471,8 +521,14 @@ function createSubscriptionBillingHandler({ db, FieldValue }) {
           throw new HttpsError("failed-precondition", "Free Trial requests cannot be approved as paid subscriptions.");
         }
         const currentStudentCount = studentCountSnap.data().count;
-        assertPlanSupportsStudentCount(requestedPlan, currentStudentCount);
-        assertNoEarlyCapacityDowngrade(authority.institute, requestedPlan.maxStudents, now);
+        const approvedStudentLimit = isCorporatePlan(subscriptionRequest.requestedPlanId)
+          ? Number(subscriptionRequest.studentLimitAtRequest) : requestedPlan.maxStudents;
+        if (isCorporatePlan(subscriptionRequest.requestedPlanId)) {
+          assertCorporateEligibility(currentStudentCount, approvedStudentLimit);
+        } else {
+          assertPlanSupportsStudentCount(requestedPlan, currentStudentCount);
+        }
+        assertNoEarlyCapacityDowngrade(authority.institute, approvedStudentLimit, now);
         const startDateMs = subscriptionStartMs(paidPeriodEnd(authority.institute), now);
         const endDateMs = addCalendarMonths(startDateMs, subscriptionRequest.durationMonths);
         const receiptId = `SUBREC_${operationId}`;
@@ -491,6 +547,9 @@ function createSubscriptionBillingHandler({ db, FieldValue }) {
           instituteAddress: typeof authority.institute.address === "string" ? authority.institute.address : "",
           planId: subscriptionRequest.requestedPlanId,
           planName: subscriptionRequest.planName || subscriptionRequest.requestedPlanId,
+          studentLimit: approvedStudentLimit,
+          corporateRatePerStudentMonthBdt: isCorporatePlan(subscriptionRequest.requestedPlanId)
+            ? CORPORATE_PER_STUDENT_MONTHLY_BDT : null,
           durationMonths: subscriptionRequest.durationMonths,
           amountPaid: subscriptionRequest.amountPaid,
           paymentMethod: subscriptionRequest.paymentMethod,
@@ -508,7 +567,7 @@ function createSubscriptionBillingHandler({ db, FieldValue }) {
         const afterInstitute = {
           currentPlanId: subscriptionRequest.requestedPlanId,
           currentPeriodEndMs: endDateMs,
-          studentLimit: requestedPlan.maxStudents,
+          studentLimit: approvedStudentLimit,
           staffLimit: requestedPlan.maxUsers,
           subscriptionStatus: "active",
           isActive: true,

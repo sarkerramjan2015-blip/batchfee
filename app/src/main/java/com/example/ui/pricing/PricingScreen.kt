@@ -84,6 +84,13 @@ private val publishedPricingPlans = listOf(
     BatchFeePlan("scale", "Scale", 500, "500 Students", 1099.0, isPremium = true)
 )
 
+private const val CORPORATE_PLAN_ID = "plan_corporate"
+private const val CORPORATE_MIN_STUDENTS = 501
+private const val CORPORATE_RATE_PER_STUDENT_MONTH_BDT = 1.5
+
+private fun corporateOfferTotal(studentLimit: Int, durationMonths: Int): Double =
+    studentLimit * CORPORATE_RATE_PER_STUDENT_MONTH_BDT * durationMonths
+
 // ── ViewModel ───────────────────────────────────────────────────
 class PricingViewModel(private val db: AppDatabase) : ViewModel() {
     private val _plans = MutableStateFlow<List<BatchFeePlan>>(emptyList())
@@ -268,6 +275,7 @@ fun PricingScreen(
     var submitSuccess by remember { mutableStateOf(false) }
     var submitError by remember { mutableStateOf<String?>(null) }
     var selectedPlanId by remember { mutableStateOf<String?>(null) }
+    var corporateStudentLimitInput by remember { mutableStateOf("") }
     var showPaymentDialog by remember { mutableStateOf(false) }
     var showPaymentConfirmation by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
@@ -454,6 +462,79 @@ fun PricingScreen(
                 }
             }
 
+            val corporateStudentLimit = corporateStudentLimitInput.toIntOrNull()
+            val corporateEligible = activeStudentCount >= CORPORATE_MIN_STUDENTS
+            val corporateCapacityValid = corporateStudentLimit != null &&
+                corporateStudentLimit >= CORPORATE_MIN_STUDENTS &&
+                corporateStudentLimit >= activeStudentCount
+            val corporateDurationMonths = viewModel.billingMonths()
+            val corporateTotal = corporateStudentLimit?.takeIf { corporateCapacityValid }
+                ?.let { corporateOfferTotal(it, corporateDurationMonths) }
+
+            Spacer(Modifier.height(16.dp))
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 18.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Brush.linearGradient(listOf(CardBgAlt, CardBg)))
+                    .border(1.5.dp, if (corporateEligible) Cyan.copy(alpha = 0.75f) else BorderSub, RoundedCornerShape(16.dp))
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(9.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        Modifier.size(38.dp).clip(RoundedCornerShape(11.dp)).background(Cyan.copy(alpha = 0.15f)),
+                        contentAlignment = Alignment.Center
+                    ) { Icon(Icons.Filled.Business, null, tint = Cyan, modifier = Modifier.size(21.dp)) }
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("Corporate Offer", color = TextWhite, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                        Text("For institutes with 501+ active students", color = TextMuted, fontSize = 11.sp)
+                    }
+                    Text("BDT 1.50", color = Cyan, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                }
+                Text("Per student / month · same rate for 1, 6 and 12 months", color = TextMuted, fontSize = 11.sp)
+                OutlinedTextField(
+                    value = corporateStudentLimitInput,
+                    onValueChange = { if (it.length <= 6 && it.all(Char::isDigit)) corporateStudentLimitInput = it },
+                    label = { Text("Student capacity (minimum 501)") },
+                    placeholder = { Text("e.g. ${maxOf(activeStudentCount, CORPORATE_MIN_STUDENTS)}") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    enabled = corporateEligible,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    leadingIcon = { Icon(Icons.Filled.Groups, null, tint = Cyan) },
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = TextWhite, unfocusedTextColor = TextWhite,
+                        focusedBorderColor = Cyan, unfocusedBorderColor = BorderSub,
+                        disabledBorderColor = BorderSub, disabledTextColor = TextMuted
+                    )
+                )
+                val corporateMessage = when {
+                    !corporateEligible -> "Corporate Offer unlocks when your institute has at least 501 active students."
+                    corporateStudentLimit == null -> "Enter the maximum number of students you want to use."
+                    corporateStudentLimit < CORPORATE_MIN_STUDENTS -> "Corporate capacity must be at least 501 students."
+                    corporateStudentLimit < activeStudentCount -> "Your active student count is $activeStudentCount. Enter at least $activeStudentCount seats."
+                    else -> "${corporateDurationMonths} month${if (corporateDurationMonths > 1) "s" else ""}: BDT ${"%.2f".format(corporateTotal)}"
+                }
+                Text(corporateMessage, color = if (corporateCapacityValid) Green else TextMuted, fontSize = 11.sp)
+                Button(
+                    onClick = {
+                        selectedPlanId = CORPORATE_PLAN_ID
+                        senderPhone = ""
+                        senderPhoneError = null
+                        submitSuccess = false
+                        submitError = null
+                        showPaymentConfirmation = false
+                        showPaymentDialog = true
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = corporateEligible && corporateCapacityValid,
+                    colors = ButtonDefaults.buttonColors(containerColor = Cyan, disabledContainerColor = CardBg)
+                ) { Text("Choose Corporate Offer", color = if (corporateCapacityValid) BgColor else TextMuted, fontWeight = FontWeight.Bold) }
+            }
+
             if (plans.isEmpty()) {
                 Text(
                     text = "Loading available plans…",
@@ -560,10 +641,17 @@ fun PricingScreen(
 
             // ── Payment Request Dialog ──────────────────────────
             if (showPaymentDialog && selectedPlanId != null) {
-                val selPlan = plans.find { it.id == selectedPlanId } ?: return@Scaffold
-                val selPrice = remember(selectedDuration) { viewModel.priceFor(selPlan) }
+                val selectedCorporateLimit = corporateStudentLimitInput.toIntOrNull()
+                val isCorporateOffer = selectedPlanId == CORPORATE_PLAN_ID
+                val selPlan = plans.find { it.id == selectedPlanId } ?: if (
+                    isCorporateOffer && selectedCorporateLimit != null
+                ) BatchFeePlan(CORPORATE_PLAN_ID, "Corporate Offer", selectedCorporateLimit,
+                    "$selectedCorporateLimit Students", CORPORATE_RATE_PER_STUDENT_MONTH_BDT) else return@Scaffold
                 val selBilling = remember(selectedDuration) { viewModel.billingLabel() }
                 val durationMonths = when (selectedDuration) { 0 -> 1; 1 -> 6; 2 -> 12; else -> 1 }
+                val selPrice = if (isCorporateOffer) {
+                    corporateOfferTotal(selectedCorporateLimit ?: return@Scaffold, durationMonths)
+                } else remember(selectedDuration) { viewModel.priceFor(selPlan) }
 
                 AlertDialog(
                     onDismissRequest = { if (!isSubmitting) showPaymentDialog = false },
@@ -574,7 +662,10 @@ fun PricingScreen(
                     },
                     text = {
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Text("${selPlan.name} · ${selBilling} · BDT ${"%.0f".format(selPrice)}", color = Cyan, fontSize = 13.sp)
+                            Text("${selPlan.name} · ${selBilling} · BDT ${"%.2f".format(selPrice)}", color = Cyan, fontSize = 13.sp)
+                            if (isCorporateOffer) {
+                                Text("${selPlan.studentCount} student seats × BDT 1.50 × $durationMonths month(s)", color = TextMuted, fontSize = 11.sp)
+                            }
                             HorizontalDivider(color = BorderSub)
 
                             // Payment method chips
@@ -692,9 +783,16 @@ fun PricingScreen(
             }
 
             if (showPaymentConfirmation && selectedPlanId != null) {
-                val selPlan = plans.find { it.id == selectedPlanId } ?: return@Scaffold
-                val selPrice = remember(selectedDuration) { viewModel.priceFor(selPlan) }
                 val durationMonths = when (selectedDuration) { 0 -> 1; 1 -> 6; 2 -> 12; else -> 1 }
+                val selectedCorporateLimit = corporateStudentLimitInput.toIntOrNull()
+                val isCorporateOffer = selectedPlanId == CORPORATE_PLAN_ID
+                val selPlan = plans.find { it.id == selectedPlanId } ?: if (
+                    isCorporateOffer && selectedCorporateLimit != null
+                ) BatchFeePlan(CORPORATE_PLAN_ID, "Corporate Offer", selectedCorporateLimit,
+                    "$selectedCorporateLimit Students", CORPORATE_RATE_PER_STUDENT_MONTH_BDT) else return@Scaffold
+                val selPrice = if (isCorporateOffer) {
+                    corporateOfferTotal(selectedCorporateLimit ?: return@Scaffold, durationMonths)
+                } else remember(selectedDuration) { viewModel.priceFor(selPlan) }
                 val normalizedSenderPhone = normalizeBangladeshiMobileForSubmission(senderPhone).orEmpty()
                 val paymentRequestOperationId = remember(
                     selectedPlanId,
@@ -747,7 +845,11 @@ fun PricingScreen(
                                     verticalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
                                     PaymentConfirmationRow("Plan", selPlan.name, Cyan)
-                                    PaymentConfirmationRow("Student access", "Up to ${selPlan.studentCount} students", SkyBlue)
+                                    PaymentConfirmationRow(
+                                        "Student access",
+                                        if (isCorporateOffer) "${selPlan.studentCount} approved seats" else "Up to ${selPlan.studentCount} students",
+                                        SkyBlue
+                                    )
                                     PaymentConfirmationRow("Access period", accessPeriod, Green)
                                     PaymentConfirmationRow("Amount", "BDT ${"%.0f".format(selPrice)}", TextWhite)
                                     PaymentConfirmationRow("Payment", selectedPaymentMethod.replaceFirstChar { it.uppercase() }, Cyan)
@@ -792,6 +894,7 @@ fun PricingScreen(
                                                 durationMonths = durationMonths,
                                                 paymentMethod = selectedPaymentMethod,
                                                 senderPhone = normalizedSenderPhone,
+                                                corporateStudentLimit = if (isCorporateOffer) selPlan.studentCount else null,
                                                 operationId = paymentRequestOperationId
                                             )
                                             submitSuccess = true

@@ -43,7 +43,8 @@ class SubscriptionRepository(
     /**
      * The Function, not the mobile app, resolves the current plan price and owns
      * sender-number validation, plan quote, and one-pending-request protection.
-     * The owner never chooses the paid amount or student capacity.
+     * Corporate capacity is also server-validated against the active count;
+     * the owner never chooses a trusted paid amount.
      */
     suspend fun submitRequest(
         instituteId: String,
@@ -51,6 +52,7 @@ class SubscriptionRepository(
         durationMonths: Int,
         paymentMethod: String,
         senderPhone: String,
+        corporateStudentLimit: Int? = null,
         operationId: String = UUID.randomUUID().toString()
     ): SubscriptionRequest {
         val result = commit(
@@ -62,7 +64,11 @@ class SubscriptionRepository(
                 "durationMonths" to durationMonths,
                 "paymentMethod" to paymentMethod,
                 "senderPhone" to senderPhone
-            )
+            ) + if (requestedPlanId == "plan_corporate") {
+                mapOf("corporateStudentLimit" to requireNotNull(corporateStudentLimit))
+            } else {
+                emptyMap()
+            }
         )
         return SubscriptionRequest.fromFirestore(
             id = result.map("request").string("requestId"),
@@ -326,4 +332,3 @@ private fun Map<String, Any?>.double(key: String): Double =
 
 private fun Map<String, Any?>.boolean(key: String): Boolean =
     this[key] as? Boolean ?: error("Missing $key in subscription response.")
-
