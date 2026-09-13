@@ -828,23 +828,32 @@ private fun SubscriptionWarningBanner(
     subscriptionStatus: String?,
     trialDaysLeft: Int,
     subscriptionRemainingDays: Int,
+    periodEndMs: Long,
     modifier: Modifier = Modifier
 ) {
     if (subscriptionStatus == null) return
     val remainingDays = if (subscriptionStatus == "trial") trialDaysLeft else subscriptionRemainingDays
-    if (remainingDays > 7 || remainingDays <= 0) return
+    val hasExpired = periodEndMs > 0L && periodEndMs <= System.currentTimeMillis()
+    if (!hasExpired && remainingDays > 7) return
     var dismissed by remember { mutableStateOf(false) }
     if (dismissed) return
 
-    val isCritical = remainingDays <= 3
+    val isCritical = hasExpired || remainingDays <= 3
     val bgColor = if (isCritical) AccentRed.copy(alpha = 0.12f) else AccentAmber.copy(alpha = 0.14f)
     val borderColor = if (isCritical) AccentRed.copy(alpha = 0.45f) else WarningAmber.copy(alpha = 0.50f)
     val iconColor = if (isCritical) AccentRed else AccentOrange
     val textColor = if (isCritical) Color(0xFFFCA5A5) else Color(0xFFFDE68A)
 
-    val message = when (subscriptionStatus) {
+    val message = when {
+        hasExpired -> "Your subscription has ended. Contact BatchFee support to renew access; your records are safe."
+        subscriptionStatus == "trial" && remainingDays <= 0 ->
+            "Your trial ends in less than one day. Subscribe now to keep using all features."
+        subscriptionStatus != "trial" && remainingDays <= 0 ->
+            "Your subscription ends in less than one day. Renew now to keep all features active."
+        else -> when (subscriptionStatus) {
         "trial" -> "আপনার ট্রায়ালের মেয়াদ আর মাত্র $remainingDays দিন পর শেষ হবে। সাবস্ক্রাইব করে সব ফিচার চালু রাখুন।"
         else -> "আপনার সাবস্ক্রিপশনের মেয়াদ আর মাত্র $remainingDays দিন পর শেষ হবে। নবায়ন করুন।"
+        }
     }
 
     Card(
@@ -1210,7 +1219,8 @@ fun DashboardScreen(
                 SubscriptionWarningBanner(
                     subscriptionStatus = institute?.subscriptionStatus,
                     trialDaysLeft = trialDays,
-                    subscriptionRemainingDays = subscriptionRemainingDays
+                    subscriptionRemainingDays = subscriptionRemainingDays,
+                    periodEndMs = institute?.currentPeriodEndMs ?: 0L
                 )
 
                 Column(modifier = Modifier.padding(horizontal = if (compactLayout) 12.dp else 16.dp, vertical = 14.dp)) {

@@ -114,6 +114,18 @@ async function seedBaseData() {
       studentLimit: 50,
       staffLimit: 1,
     });
+    // Legacy paid records created before isActive was introduced must obey the
+    // same subscription policy as trusted Functions: an omitted flag means
+    // enabled, but status and a future period end remain mandatory.
+    await setDoc(instituteRef(db, "legacy-active-institute"), {
+      instituteName: "Legacy Active Institute",
+      ownerName: "Legacy Owner",
+      email: "legacy-owner@example.test",
+      role: "owner",
+      currentPlanId: "plan_growth",
+      subscriptionStatus: "active",
+      currentPeriodEndMs: Date.now() + 2_592_000_000,
+    });
     await setDoc(instituteRef(db, "managed-institute-a"), {
       instituteName: "নাজমুল টিউটোরিয়াল হোম",
       ownerName: "Managed Owner",
@@ -401,6 +413,18 @@ describe("Atomic bulk saves and durable audit replay", { concurrency: false }, (
     });
     batch.update(tenantDoc(db, OWNER_A, "exams", "owner-exam"), { status: "completed" });
     await assertSucceeds(batch.commit());
+  });
+  test("legacy paid owner without isActive can save exam results", async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(tenantDoc(context.firestore(), "legacy-active-institute", "exams", "legacy-exam"), {
+        instituteId: "legacy-active-institute", batchId: "batch-legacy", status: "scheduled",
+      });
+    });
+    const db = authDb("legacy-active-institute");
+    await assertSucceeds(setDoc(tenantDoc(db, "legacy-active-institute", "results", "legacy-result"), {
+      instituteId: "legacy-active-institute", studentId: "student-legacy", batchId: "batch-legacy",
+      examId: "legacy-exam", marksObtained: 40,
+    }));
   });
   test("staff without manage-exams permission cannot write exam results", async () => {
     const db = authDb("staff-none-a");

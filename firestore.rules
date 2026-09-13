@@ -93,7 +93,12 @@ service cloud.firestore {
     function hasActiveSubscription(instituteId) {
       let path = institutePath(instituteId);
       return exists(path)
-        && get(path).data.isActive == true
+        // Keep this authorization predicate byte-for-byte aligned in meaning
+        // with functions/src/subscriptionPolicy.js. Older paid institute
+        // documents legitimately predate the isActive field; missing means
+        // enabled, while an explicit false always fails closed.
+        && (!('isActive' in get(path).data) || get(path).data.isActive == true)
+        && (!('deletionState' in get(path).data) || get(path).data.deletionState != 'retained')
         && get(path).data.currentPeriodEndMs is int
         && get(path).data.currentPeriodEndMs > request.time.toMillis()
         && get(path).data.subscriptionStatus in ['trial', 'active'];
