@@ -52,6 +52,7 @@ const { createServerSmsHandler, createSmsWalletHandler } = require("./smsWallet"
 const { createBulkSmsDhakaProvider } = require("./bulkSmsDhakaProvider");
 const {
   activityActorLabel,
+  resolveTenantActor,
   resolveTenantActorInTransaction,
   setTenantActivity,
   transactionTenantActivity,
