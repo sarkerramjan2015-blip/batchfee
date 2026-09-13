@@ -73,7 +73,10 @@ async function resolveExamFeeAuthority(transaction, db, auth, instituteId) {
     throw new HttpsError("failed-precondition", "Subscription has expired. Renew the plan to continue.");
   }
   if (institute.isActive === false) throw new HttpsError("failed-precondition", "Institute is inactive.");
-  if (auth.uid === instituteId) return instituteRef;
+  // Keep trusted exam-fee authority aligned with Firestore's owner rule. Some
+  // managed/legacy institutes use a document ID that differs from the
+  // institute owner's Firebase UID, which is stored as ownerUid.
+  if (auth.uid === instituteId || auth.uid === institute.ownerUid) return instituteRef;
 
   const isManagedOwnerOrAdmin = appUser && appUser.instituteId === instituteId &&
     ["InstituteOwner", "owner", "instituteOwner", "institute_owner", "InstituteAdmin", "admin", "instituteAdmin", "institute_admin"].includes(appUser.role) &&

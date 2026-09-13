@@ -118,3 +118,15 @@ test("an inactive student is not billed even if a stale enrollment exists", asyn
   assert.equal(result.billedStudentCount, 1);
   assert.equal(result.fees[0].studentId, "student-a");
 });
+
+test("a canonical ownerUid can create an exam when it differs from the institute document ID", async () => {
+  const db = seededDb(Date.now());
+  db.documents.get("institutes/institute-a").ownerUid = "owner-uid-a";
+  const ownerRequest = request();
+  ownerRequest.auth.uid = "owner-uid-a";
+
+  const result = await createExamFeeBillingHandler({ db })(ownerRequest);
+
+  assert.equal(result.billedStudentCount, 2);
+  assert.equal(result.exam.id, "exam-a");
+});
