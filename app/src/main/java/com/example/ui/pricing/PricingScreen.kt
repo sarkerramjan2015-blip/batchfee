@@ -264,7 +264,7 @@ fun PricingScreen(
     }
     val activeStudentCount by produceState(initialValue = 0, key1 = instituteId) {
         val activeInstituteId = instituteId ?: return@produceState
-        db.studentDao().countStudents(activeInstituteId).collect { value = it }
+        db.studentDao().countActiveStudents(activeInstituteId).collect { value = it }
     }
 
     // Payment submission state
