@@ -1,4 +1,4 @@
-package com.example.data.repository
+package com.batchfee.edu.data.repository
 
 import com.google.firebase.functions.FirebaseFunctionsException
 
