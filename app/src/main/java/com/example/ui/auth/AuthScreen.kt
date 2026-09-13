@@ -1863,21 +1863,26 @@ fun AuthScreen(
 
                 Spacer(Modifier.height(8.dp))
 
-                // A highlighted shortcut keeps registration easy to find.
-                Surface(
+                // Keep the registration shortcut as a real button. Some devices
+                // rendered the old clickable Surface border but omitted its row
+                // content, making registration impossible to discover.
+                OutlinedButton(
+                    onClick = {
+                        isLoginMode = !isLoginMode
+                        errorMessage = null
+                        fieldError = emptyMap()
+                    },
                     modifier = Modifier
-                        .clip(RoundedCornerShape(14.dp))
-                        .clickable {
-                            isLoginMode = !isLoginMode
-                            errorMessage = null
-                            fieldError = emptyMap()
-                        },
+                        .height(42.dp),
                     shape = RoundedCornerShape(14.dp),
-                    color = AuthAmber.copy(alpha = 0.12f),
-                    border = BorderStroke(1.dp, AuthAmber.copy(alpha = 0.45f))
+                    border = BorderStroke(1.dp, AuthAmber.copy(alpha = 0.55f)),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        containerColor = AuthAmber.copy(alpha = 0.12f),
+                        contentColor = AuthAmber
+                    ),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp)
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.Center
                     ) {
