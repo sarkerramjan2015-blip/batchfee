@@ -1186,7 +1186,14 @@ fun AuthScreen(
     var showForgotDialog by remember { mutableStateOf(false) }
     var forgotEmail by remember { mutableStateOf("") }
     var consentChecked by remember { mutableStateOf(false) }
+    val loginScrollState = rememberScrollState()
     val registerScrollState = rememberScrollState()
+    val hasLoginFeedback = isLoginMode && (
+        errorMessage != null ||
+            infoMessage != null ||
+            sessionNotice != null ||
+            (selectedRole == UnifiedLoginRole.STUDENT && studentLoginState.errorMessage != null)
+        )
     val primaryActionInteraction = remember { MutableInteractionSource() }
     val primaryActionPressed by primaryActionInteraction.collectIsPressedAsState()
     val primaryActionScale by animateFloatAsState(
@@ -1200,7 +1207,7 @@ fun AuthScreen(
 
     LaunchedEffect(Unit) { contentVisible = true }
     LaunchedEffect(isLoginMode) {
-        if (!isLoginMode) registerScrollState.scrollTo(0)
+        if (isLoginMode) loginScrollState.scrollTo(0) else registerScrollState.scrollTo(0)
     }
     LaunchedEffect(selectedRole, email, isLoginMode) {
         if (isLoginMode) loginPreferences.save(selectedRole.label, email)
@@ -1229,7 +1236,7 @@ fun AuthScreen(
             .background(bgGradient)
     ) {
         val compactWidth = maxWidth < 360.dp
-        val compactHeight = maxHeight < 700.dp
+        val compactHeight = maxHeight < 760.dp
         val contentHorizontalPadding = if (compactWidth) 16.dp else 24.dp
         val contentVerticalPadding = if (compactHeight) 10.dp else 14.dp
         val logoSize = if (compactWidth || compactHeight) 78.dp else 86.dp
@@ -1285,16 +1292,21 @@ fun AuthScreen(
                         .fillMaxSize()
                         .statusBarsPadding()
                         .then(
-                            // Keep this as one form. Scrolling is available only when a
-                            // small screen or the keyboard makes the content overflow.
-                            if (isLoginMode) Modifier else Modifier.verticalScroll(registerScrollState)
+                            // The normal login view remains a single page. If feedback
+                            // makes it taller than a small display, it becomes safely
+                            // scrollable instead of hiding the primary Login button.
+                            when {
+                                !isLoginMode -> Modifier.verticalScroll(registerScrollState)
+                                hasLoginFeedback -> Modifier.verticalScroll(loginScrollState)
+                                else -> Modifier
+                            }
                         )
-                        .then(if (isLoginMode) Modifier else Modifier.imePadding())
+                        .imePadding()
                         .padding(
                             start = contentHorizontalPadding,
                             end = contentHorizontalPadding,
                             top = contentVerticalPadding,
-                            bottom = if (isLoginMode) 128.dp else 20.dp
+                            bottom = if (isLoginMode && !hasLoginFeedback) 128.dp else 20.dp
                         )
                         .navigationBarsPadding(),
                     horizontalAlignment = Alignment.CenterHorizontally
@@ -1303,7 +1315,7 @@ fun AuthScreen(
                     Modifier.height(
                         when {
                             compactHeight -> 8.dp
-                            isLoginMode -> 22.dp
+                            isLoginMode -> 14.dp
                             else -> 14.dp
                         }
                     )
@@ -1914,7 +1926,7 @@ fun AuthScreen(
                 }
             }
         }
-        if (isLoginMode) {
+        if (isLoginMode && !hasLoginFeedback) {
             AuthContactFooter(
                 context = context,
                 onNavigatePrivacyPolicy = onNavigatePrivacyPolicy,
