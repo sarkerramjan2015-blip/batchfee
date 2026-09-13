@@ -757,9 +757,11 @@ service cloud.firestore {
     }
 
     match /institutes/{instituteId}/reminder_templates/{templateId} {
-      allow read: if hasStaffPermission(instituteId, 'manage_reminders')
+      allow read: if isActiveInstitutePrincipal(instituteId)
+        || hasStaffPermission(instituteId, 'manage_reminders')
         || hasStaffPermission(instituteId, 'send_due_message');
-      allow write: if hasStaffPermission(instituteId, 'manage_reminders');
+      allow write: if isActiveInstitutePrincipal(instituteId)
+        || hasStaffPermission(instituteId, 'manage_reminders');
     }
 
     match /institutes/{instituteId}/audit_logs/{logId} {

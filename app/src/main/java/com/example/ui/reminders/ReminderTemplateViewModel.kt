@@ -53,13 +53,18 @@ class ReminderTemplateViewModel(private val db: AppDatabase) : ViewModel() {
 
     fun deleteTemplate(template: ReminderTemplateEntity) {
         viewModelScope.launch(Dispatchers.IO) {
-            db.reminderTemplateDao().deleteTemplate(template)
             try {
                 FirebaseFirestore.getInstance()
                     .collection("institutes").document(template.instituteId)
                     .collection("reminder_templates").document(template.id)
                     .delete().await()
-            } catch (_: Exception) {}
+                // The cloud rule is authoritative. Delete Room only after the
+                // remote write succeeds so a rejected old/stale session cannot
+                // make the template disappear locally and then reappear later.
+                db.reminderTemplateDao().deleteTemplate(template)
+            } catch (_: Exception) {
+                return@launch
+            }
             StaffActivityLogger.logCompletedAction(
                 db, "reminder_deleted", "reminders", "Deleted reminder template ${template.title}"
             )
