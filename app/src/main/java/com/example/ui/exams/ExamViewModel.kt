@@ -505,7 +505,7 @@ internal fun examOperationErrorMessage(
     permissionDenied && staffSession && !canManageExams ->
         "Exam access is not enabled for this staff account. Ask the institute owner to enable Manage Exams."
     permissionDenied ->
-        "Your exam access could not be verified. Please log out, log in again, and retry."
+        "Exam changes are blocked because the institute subscription is inactive or your access changed. Ask the platform admin to activate the institute, then log in again."
     rawMessage.isNullOrBlank() -> fallback
     else -> rawMessage
 }

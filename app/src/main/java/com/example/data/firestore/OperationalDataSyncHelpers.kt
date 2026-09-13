@@ -919,7 +919,11 @@ object ExamSyncHelper {
             ).await()
         } catch (e: Exception) {
             recordException(e)
-            rethrowUnlessAccessDenied(e)
+            // This write originates from an explicit owner/staff action.  Unlike a
+            // background cache refresh, swallowing PERMISSION_DENIED here would
+            // make the UI save a Room-only exam that never reached Firestore.
+            // Propagate it so the screen can keep the local and cloud state honest.
+            throw e
         }
     }
 
@@ -942,7 +946,9 @@ object ExamSyncHelper {
             ).await()
         } catch (e: Exception) {
             recordException(e)
-            rethrowUnlessAccessDenied(e)
+            // Result entry is also an explicit user action.  Never report success
+            // or persist a local-only mark when Firestore rejected the write.
+            throw e
         }
     }
 
