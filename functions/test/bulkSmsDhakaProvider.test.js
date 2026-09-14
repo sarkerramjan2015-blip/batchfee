@@ -83,6 +83,26 @@ test("uses POST form data and keeps credentials out of the URL", async () => {
   assert.equal(result.accepted, true);
 });
 
+test("preserves a provider IP-whitelist rejection returned with HTTP 401", async () => {
+  const provider = createBulkSmsDhakaProvider({
+    apiKey: opaqueCredential(),
+    callerId: opaqueCredential(),
+    fetchImpl: async () => ({
+      ok: false,
+      status: 401,
+      text: async () => "Access Denied. Your IP is not whitelisted for API access.",
+    }),
+  });
+  const result = await provider.sendTextSms({ number: "01712345678", message: "Fee reminder" });
+  assert.deepEqual(result, {
+    accepted: false,
+    status: "failed",
+    providerStatus: "1008",
+    messageId: "",
+    failureReason: "The SMS server IP is not whitelisted.",
+  });
+});
+
 test("rejects missing configuration before contacting the provider", async () => {
   let called = false;
   const provider = createBulkSmsDhakaProvider({

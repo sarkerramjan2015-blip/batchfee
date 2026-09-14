@@ -120,6 +120,24 @@ function createBulkSmsDhakaProvider({ apiKey, callerId, fetchImpl = globalThis.f
         });
         const body = await response.text();
         if (!response.ok) {
+          // Bulk SMS Dhaka may return its documented provider error in a non-2xx
+          // HTTP response. Preserve that actionable status rather than reducing
+          // it to a generic temporary-outage message.
+          if (/\b(?:IP\s+)?not\s+whitelisted\b/i.test(body)) {
+            return {
+              accepted: false,
+              status: "failed",
+              providerStatus: "1008",
+              messageId: "",
+              failureReason: KNOWN_FAILURES.get("1008"),
+            };
+          }
+          try {
+            const parsed = parseProviderResponse(body);
+            if (!parsed.accepted) return parsed;
+          } catch (_) {
+            // No documented provider status was supplied; use the HTTP fallback.
+          }
           throw new BulkSmsDhakaError(
             `HTTP_${response.status}`,
             "The SMS provider is temporarily unavailable.",
