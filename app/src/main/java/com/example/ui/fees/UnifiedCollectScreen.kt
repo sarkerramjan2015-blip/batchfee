@@ -3169,7 +3169,7 @@ private suspend fun printHistoryReceipt(context: Context, institute: InstituteIn
     }
 }
 
-private fun generateReceiptPdf(context: Context, institute: InstituteInfo, student: StudentEntity, item: StudentPaymentHistory): File {
+private suspend fun generateReceiptPdf(context: Context, institute: InstituteInfo, student: StudentEntity, item: StudentPaymentHistory): File {
     val document = PdfDocument()
     val hasDiscount = item.discountAmount > 0.0
     val hasRemark = !item.payment.note.isNullOrBlank()
@@ -3211,28 +3211,7 @@ private fun generateReceiptPdf(context: Context, institute: InstituteInfo, stude
     canvas.drawColor(AndroidColor.WHITE)
 
     // ── Load logo image ──
-    val logoBitmap: Bitmap? = FirebaseStorageImageUploadHelper.displaySource(context, institute.logoUri)?.let { source ->
-        try {
-            val uri = Uri.parse(source)
-            when (uri.scheme?.lowercase()) {
-                "http", "https" -> {
-                    val connection = (java.net.URL(source).openConnection() as java.net.HttpURLConnection).apply {
-                        doInput = true
-                        connectTimeout = 5_000
-                        readTimeout = 5_000
-                    }
-                    try {
-                        connection.inputStream.use(BitmapFactory::decodeStream)
-                    } finally {
-                        connection.disconnect()
-                    }
-                }
-                else -> context.contentResolver.openInputStream(uri)?.use(BitmapFactory::decodeStream)
-            }
-        } catch (_: Exception) {
-            null
-        }
-    }
+    val logoBitmap = loadReceiptLogoBitmap(context, institute.logoUri)
 
     // ── Page border ──
     fill.color = pale
@@ -3469,6 +3448,30 @@ private fun generateGroupedReceiptPdf(
 }
 
 // ── Helpers ──
+
+private suspend fun loadReceiptLogoBitmap(context: Context, reference: String?): Bitmap? {
+    val source = FirebaseStorageImageUploadHelper.resolveForDirectRead(context, reference) ?: return null
+    return try {
+        val uri = Uri.parse(source)
+        when (uri.scheme?.lowercase()) {
+            "http", "https" -> {
+                val connection = (java.net.URL(source).openConnection() as java.net.HttpURLConnection).apply {
+                    doInput = true
+                    connectTimeout = 5_000
+                    readTimeout = 5_000
+                }
+                try {
+                    connection.inputStream.use(BitmapFactory::decodeStream)
+                } finally {
+                    connection.disconnect()
+                }
+            }
+            else -> context.contentResolver.openInputStream(uri)?.use(BitmapFactory::decodeStream)
+        }
+    } catch (_: Exception) {
+        null
+    }
+}
 
 private fun card(canvas: android.graphics.Canvas, fill: Paint, stroke: Paint, l: Float, t: Float, r: Float, h: Float) {
     fill.color = AndroidColor.WHITE

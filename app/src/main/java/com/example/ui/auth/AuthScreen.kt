@@ -1202,6 +1202,8 @@ fun AuthScreen(
     val registerScrollState = rememberScrollState()
     val keyboardController = LocalSoftwareKeyboardController.current
     val imeVisible = WindowInsets.isImeVisible
+    val hasLoginFeedback = errorMessage != null || infoMessage != null ||
+        (selectedRole == UnifiedLoginRole.STUDENT && !studentLoginState.errorMessage.isNullOrBlank())
     val primaryActionInteraction = remember { MutableInteractionSource() }
     val primaryActionPressed by primaryActionInteraction.collectIsPressedAsState()
     val primaryActionScale by animateFloatAsState(
