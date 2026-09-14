@@ -722,7 +722,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
 
     fun refreshSmsRecharge() = loadSmsRecharge()
 
-    fun approveSmsRecharge(request: SmsRechargeReviewRequest) {
+    fun approveSmsRecharge(request: SmsRechargeReviewRequest, receivedAmount: Double, note: String? = null) {
         if (request.requestId in _reviewingSmsRequestIds.value) return
         _reviewingSmsRequestIds.value = _reviewingSmsRequestIds.value + request.requestId
         viewModelScope.launch {
@@ -730,12 +730,19 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                 platformAdminRepository.reviewSmsRechargeRequest(
                     instituteId = request.instituteId,
                     requestId = request.requestId,
-                    decision = "approve"
+                    decision = if (receivedAmount < request.payableAmount) "approve_partial" else "approve",
+                    receivedAmount = receivedAmount,
+                    note = note
                 )
                 _smsRechargeRequests.value = _smsRechargeRequests.value.map {
-                    if (it.requestId == request.requestId) it.copy(status = "approved") else it
+                    if (it.requestId == request.requestId) {
+                        val credited = if (receivedAmount < request.payableAmount) {
+                            kotlin.math.floor(receivedAmount / request.payableAmount * request.requestedSmsCount).toInt()
+                        } else request.requestedSmsCount
+                        it.copy(status = "approved", smsCount = credited, creditedSmsCount = credited, receivedAmount = receivedAmount)
+                    } else it
                 }
-                _operationMsg.value = "Approved ${request.packageName} recharge (${request.smsCount} SMS) for ${request.instituteId}"
+                _operationMsg.value = "Approved ${request.packageName}: ${if (receivedAmount < request.payableAmount) "partial " else ""}SMS credit applied for BDT ${"%.0f".format(receivedAmount)}"
                 loadSmsRecharge()
             } catch (e: Exception) {
                 _operationMsg.value = "SMS approve failed: ${e.message}"
@@ -2833,11 +2840,14 @@ private fun SmsRechargeReviewSection(
     institutes: List<InstituteCardData>,
     onLoaded: () -> Unit,
     onRefresh: () -> Unit,
-    onApprove: (SmsRechargeReviewRequest) -> Unit,
+    onApprove: (SmsRechargeReviewRequest, Double, String?) -> Unit,
     onReject: (SmsRechargeReviewRequest, String?) -> Unit
 ) {
     var rejectTarget by remember { mutableStateOf<SmsRechargeReviewRequest?>(null) }
     var rejectNote by remember { mutableStateOf("") }
+    var approveTarget by remember { mutableStateOf<SmsRechargeReviewRequest?>(null) }
+    var verifiedAmount by remember { mutableStateOf("") }
+    var approveNote by remember { mutableStateOf("") }
     LaunchedEffect(Unit) { onLoaded() }
 
     Column {
@@ -2974,13 +2984,17 @@ private fun SmsRechargeReviewSection(
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             val reviewing = request.requestId in reviewingRequestIds
                             Button(
-                                onClick = { onApprove(request) },
+                                onClick = {
+                                    approveTarget = request
+                                    verifiedAmount = "%.0f".format(request.payableAmount)
+                                    approveNote = ""
+                                },
                                 enabled = !reviewing,
                                 modifier = Modifier.weight(1f),
                                 colors = ButtonDefaults.buttonColors(containerColor = AccentGreen)
                             ) {
                                 Text(
-                                    if (reviewing) "Approving..." else "Approve",
+                                    if (reviewing) "Approving..." else "Review payment",
                                     color = BgColor,
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold
@@ -3002,6 +3016,79 @@ private fun SmsRechargeReviewSection(
                 }
             }
         }
+    }
+
+    approveTarget?.let { target ->
+        val amount = verifiedAmount.toDoubleOrNull()
+        val validAmount = amount != null && amount > 0
+        val isPartial = validAmount && amount < target.payableAmount
+        val calculatedCredits = if (!validAmount) 0 else if (!isPartial) target.requestedSmsCount else {
+            kotlin.math.floor(amount / target.payableAmount * target.requestedSmsCount).toInt()
+        }
+        AlertDialog(
+            onDismissRequest = { approveTarget = null },
+            containerColor = CardBg,
+            title = { Text("Verify SMS recharge", color = TextWhite, fontSize = 16.sp, fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "Requested: ${target.requestedSmsCount} SMS credits · Due: BDT ${"%.0f".format(target.payableAmount)}",
+                        color = TextWhite,
+                        fontSize = 12.sp
+                    )
+                    OutlinedTextField(
+                        value = verifiedAmount,
+                        onValueChange = { verifiedAmount = it },
+                        label = { Text("Verified received amount (BDT)", color = TextMuted) },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = AccentCyan,
+                            unfocusedBorderColor = BorderSub,
+                            focusedTextColor = TextWhite,
+                            unfocusedTextColor = TextWhite
+                        )
+                    )
+                    if (validAmount) {
+                        Text(
+                            if (isPartial) "Partial approval: ${calculatedCredits.coerceAtLeast(0)} SMS credits will be granted."
+                            else "Full approval: ${target.requestedSmsCount} SMS credits will be granted.",
+                            color = if (isPartial) AccentAmber else AccentGreen,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    } else {
+                        Text("Enter the exact amount verified in bKash/Nagad before approving.", color = AccentRed, fontSize = 11.sp)
+                    }
+                    OutlinedTextField(
+                        value = approveNote,
+                        onValueChange = { approveNote = it },
+                        label = { Text("Admin note (optional)", color = TextMuted) },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = AccentCyan,
+                            unfocusedBorderColor = BorderSub,
+                            focusedTextColor = TextWhite,
+                            unfocusedTextColor = TextWhite
+                        )
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (amount != null && amount > 0 && calculatedCredits > 0) {
+                            onApprove(target, amount, approveNote.takeIf { it.isNotBlank() })
+                            approveTarget = null
+                        }
+                    },
+                    enabled = validAmount && calculatedCredits > 0,
+                    colors = ButtonDefaults.buttonColors(containerColor = if (isPartial) AccentAmber else AccentGreen)
+                ) { Text(if (isPartial) "Approve partial credits" else "Approve full package", color = BgColor) }
+            },
+            dismissButton = { TextButton(onClick = { approveTarget = null }) { Text("Cancel", color = TextMuted) } }
+        )
     }
 
     rejectTarget?.let { target ->

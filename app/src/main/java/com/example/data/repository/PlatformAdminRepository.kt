@@ -165,9 +165,12 @@ data class SmsRechargeReviewRequest(
     val packageName: String,
     val layer: String,
     val smsCount: Int,
+    val requestedSmsCount: Int,
+    val creditedSmsCount: Int,
     val baseAmount: Double,
     val chargeAmount: Double,
     val payableAmount: Double,
+    val receivedAmount: Double,
     val paymentMethod: String,
     val senderPhone: String,
     val instituteId: String,
@@ -449,19 +452,25 @@ class PlatformAdminRepository(
         instituteId: String,
         requestId: String,
         decision: String,
+        receivedAmount: Double? = null,
         note: String? = null,
         operationId: String = UUID.randomUUID().toString()
     ): SmsRechargeReviewRequest {
-        require(decision in setOf("approve", "reject")) { "Decision must be approve or reject." }
+        require(decision in setOf("approve", "approve_partial", "reject")) { "Invalid review decision." }
+        if (decision != "reject") require(receivedAmount != null && receivedAmount > 0) {
+            "Enter the verified received amount."
+        }
+        val values = mutableMapOf<String, Any>(
+            "instituteId" to instituteId,
+            "requestId" to requestId,
+            "decision" to decision,
+            "note" to note.orEmpty()
+        )
+        receivedAmount?.let { values["receivedAmount"] = it }
         val data = callSmsWallet(
             action = "review_recharge_request",
             operationId = operationId,
-            values = mapOf(
-                "instituteId" to instituteId,
-                "requestId" to requestId,
-                "decision" to decision,
-                "note" to note.orEmpty()
-            )
+            values = values
         )
         @Suppress("UNCHECKED_CAST")
         val request = data["request"] as? Map<*, *> ?: error("The reviewed request was not returned.")
@@ -649,9 +658,13 @@ private fun Map<*, *>.toSmsReviewRequest(): SmsRechargeReviewRequest {
         packageName = string("packageName"),
         layer = string("layer"),
         smsCount = (this["smsCount"] as? Number)?.toInt() ?: 0,
+        requestedSmsCount = (this["requestedSmsCount"] as? Number)?.toInt()
+            ?: ((this["smsCount"] as? Number)?.toInt() ?: 0),
+        creditedSmsCount = (this["creditedSmsCount"] as? Number)?.toInt() ?: 0,
         baseAmount = (this["baseAmount"] as? Number)?.toDouble() ?: 0.0,
         chargeAmount = (this["chargeAmount"] as? Number)?.toDouble() ?: 0.0,
         payableAmount = (this["payableAmount"] as? Number)?.toDouble() ?: 0.0,
+        receivedAmount = (this["receivedAmount"] as? Number)?.toDouble() ?: 0.0,
         paymentMethod = string("paymentMethod"),
         senderPhone = string("senderPhone"),
         instituteId = string("instituteId"),

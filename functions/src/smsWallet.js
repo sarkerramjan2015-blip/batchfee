@@ -25,7 +25,7 @@ const SMS_WALLET_ACTIONS = new Set([
 ]);
 const SMS_SEND_METHODS = new Set(["carrier", "server"]);
 const SMS_PAYMENT_METHODS = new Set(["bkash", "nagad"]);
-const SMS_REVIEW_DECISIONS = new Set(["approve", "reject"]);
+const SMS_REVIEW_DECISIONS = new Set(["approve", "approve_partial", "reject"]);
 const SMS_MESSAGE_STATUSES = new Set(["pending", "sent", "delivered", "failed"]);
 const SMS_MESSAGE_CHANNELS = new Set(["carrier", "server"]);
 const PLATFORM_ROLES = new Set(["root", "billing", "support", "operations", "read_only"]);
@@ -78,6 +78,15 @@ function optionalString(data, field, maxLength = 500) {
     throw new HttpsError("invalid-argument", `Invalid ${field}.`);
   }
   return data[field].trim();
+}
+
+/** Actual amount verified by Root/Billing; never supplied by an institute owner. */
+function verifiedReceivedAmount(data) {
+  const value = Number(data && data.receivedAmount);
+  if (!Number.isFinite(value) || value <= 0 || value > 1000000) {
+    throw new HttpsError("invalid-argument", "Enter the verified received amount.");
+  }
+  return Math.round(value * 100) / 100;
 }
 
 function validOperationId(value) {
@@ -160,16 +169,25 @@ function publicPackage(pkg) {
 }
 
 function publicRechargeRequest(id, data) {
+  const status = typeof data.status === "string" ? data.status : "pending";
+  const requestedSmsCount = Number.isInteger(data.requestedSmsCount) ? data.requestedSmsCount
+    : (Number.isInteger(data.smsCount) ? data.smsCount : 0);
+  const creditedSmsCount = Number.isInteger(data.creditedSmsCount) ? data.creditedSmsCount
+    : (status === "approved" ? requestedSmsCount : 0);
   return {
     requestId: id,
-    status: typeof data.status === "string" ? data.status : "pending",
+    status,
     packageId: typeof data.packageId === "string" ? data.packageId : "",
     packageName: typeof data.packageName === "string" ? data.packageName : "",
     layer: typeof data.layer === "string" ? data.layer : "",
-    smsCount: Number.isInteger(data.smsCount) ? data.smsCount : 0,
+    // Pending requests show the quote; approved requests show the credits actually granted.
+    smsCount: status === "approved" ? creditedSmsCount : requestedSmsCount,
+    requestedSmsCount,
+    creditedSmsCount,
     baseAmount: Number.isFinite(data.baseAmount) ? data.baseAmount : 0,
     chargeAmount: Number.isFinite(data.chargeAmount) ? data.chargeAmount : 0,
     payableAmount: Number.isFinite(data.payableAmount) ? data.payableAmount : 0,
+    receivedAmount: Number.isFinite(data.receivedAmount) ? data.receivedAmount : 0,
     paymentMethod: typeof data.paymentMethod === "string" ? data.paymentMethod : "",
     senderPhone: typeof data.senderPhone === "string" ? data.senderPhone : "",
     instituteId: typeof data.instituteId === "string" ? data.instituteId : "",
@@ -381,6 +399,8 @@ async function submitRechargeRequest({ db, request, operationId, now }) {
     packageName: quote.name,
     layer: quote.layer,
     smsCount: quote.smsCount,
+    requestedSmsCount: quote.smsCount,
+    creditedSmsCount: 0,
     baseAmount: quote.baseAmount,
     chargePercent: quote.chargePercent,
     chargeAmount: quote.chargeAmount,
@@ -446,23 +466,39 @@ async function reviewRechargeRequest({ db, request, operationId, now }) {
 
     // Re-quote the package server-side; a stale or forged amount is ignored.
     const pkg = packageById(data.packageId);
-    if (!pkg || data.smsCount !== pkg.smsCount) {
+    const requestedSmsCount = Number.isInteger(data.requestedSmsCount) ? data.requestedSmsCount : data.smsCount;
+    if (!pkg || requestedSmsCount !== pkg.smsCount) {
       throw new HttpsError("failed-precondition", "This request has no valid server quote. Ask the owner to resubmit.");
     }
 
     const instituteRef = db.collection("institutes").doc(data.instituteId);
     const auditRef = instituteRef.collection("sms_wallet_audit").doc(operationId);
     const activityRef = instituteRef.collection("platform_activity_events").doc(operationId);
+    let creditedSmsCount = 0;
+    let receivedAmount = 0;
 
-    if (decision === "approve") {
+    if (decision === "approve" || decision === "approve_partial") {
+      const quote = rechargeQuote(pkg);
+      receivedAmount = verifiedReceivedAmount(request.data);
+      if (decision === "approve" && receivedAmount < quote.payableAmount) {
+        throw new HttpsError("failed-precondition", "The verified payment is below the quoted amount. Use partial approval or reject it.");
+      }
+      if (decision === "approve_partial" && receivedAmount >= quote.payableAmount) {
+        throw new HttpsError("failed-precondition", "The full quoted amount was received. Use full approval instead.");
+      }
+      creditedSmsCount = decision === "approve" ? quote.smsCount
+        : Math.floor((receivedAmount / quote.payableAmount) * quote.smsCount);
+      if (!Number.isInteger(creditedSmsCount) || creditedSmsCount < 1 || creditedSmsCount > quote.smsCount) {
+        throw new HttpsError("failed-precondition", "The verified payment is too small to credit an SMS segment.");
+      }
       const instituteSnap = await tx.get(instituteRef);
       if (!instituteSnap.exists) {
         throw new HttpsError("failed-precondition", "The institute account is not ready yet.");
       }
       const wallet = walletDefaults(instituteSnap.data() || {});
       tx.update(instituteRef, {
-        sms_balance: wallet.sms_balance + data.smsCount,
-        total_sms_purchased: wallet.total_sms_purchased + data.smsCount,
+        sms_balance: wallet.sms_balance + creditedSmsCount,
+        total_sms_purchased: wallet.total_sms_purchased + creditedSmsCount,
       });
       tx.update(ref, {
         status: "approved",
@@ -470,14 +506,21 @@ async function reviewRechargeRequest({ db, request, operationId, now }) {
         reviewDecision: decision,
         reviewedAtMs: now,
         reviewerNote: note,
+        requestedSmsCount,
+        creditedSmsCount,
+        receivedAmount,
       });
       tx.set(auditRef, {
         instituteId: data.instituteId,
         action: "recharge_approved",
         requestId,
         packageId: data.packageId,
-        smsCount: data.smsCount,
-        payableAmount: data.payableAmount,
+        smsCount: creditedSmsCount,
+        requestedSmsCount,
+        creditedSmsCount,
+        payableAmount: quote.payableAmount,
+        receivedAmount,
+        partialApproval: decision === "approve_partial",
         paymentMethod: data.paymentMethod,
         actorUid: reviewer.uid,
         createdAtMs: now,
@@ -490,7 +533,7 @@ async function reviewRechargeRequest({ db, request, operationId, now }) {
         targetType: "institute",
         targetId: data.instituteId,
         outcome: "completed",
-        summary: `${data.smsCount} SMS credited (${data.packageName}, BDT ${data.payableAmount})`,
+        summary: `${creditedSmsCount} SMS credited (${data.packageName}, BDT ${receivedAmount}${decision === "approve_partial" ? ", partial payment" : ""})`,
         supportReason: "",
         occurredAtMs: now,
       });
@@ -517,11 +560,14 @@ async function reviewRechargeRequest({ db, request, operationId, now }) {
     return {
       request: publicRechargeRequest(requestId, {
         ...data,
-        status: decision === "approve" ? "approved" : "rejected",
+        status: decision === "approve" || decision === "approve_partial" ? "approved" : "rejected",
         reviewedBy: reviewer.uid,
         reviewDecision: decision,
         reviewedAtMs: now,
         reviewerNote: note,
+        requestedSmsCount,
+        creditedSmsCount: decision === "approve" || decision === "approve_partial" ? creditedSmsCount : 0,
+        receivedAmount: decision === "approve" || decision === "approve_partial" ? receivedAmount : 0,
       }),
       alreadyReviewed: false,
     };
@@ -545,8 +591,10 @@ async function smsAccounting({ db, request }) {
   let approvedCount = 0;
   for (const doc of approved.docs) {
     const data = doc.data() || {};
-    totalCollectedTaka += Number.isFinite(data.payableAmount) ? data.payableAmount : 0;
-    totalCreditedSms += Number.isInteger(data.smsCount) ? data.smsCount : 0;
+    totalCollectedTaka += Number.isFinite(data.receivedAmount)
+      ? data.receivedAmount : (Number.isFinite(data.payableAmount) ? data.payableAmount : 0);
+    totalCreditedSms += Number.isInteger(data.creditedSmsCount)
+      ? data.creditedSmsCount : (Number.isInteger(data.smsCount) ? data.smsCount : 0);
     approvedCount += 1;
   }
 

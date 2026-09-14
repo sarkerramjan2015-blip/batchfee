@@ -377,7 +377,7 @@ test("review approval credits the wallet once, writes audit and activity, and re
 
   const review = {
     auth: { uid: "root" },
-    data: { action: "review_recharge_request", operationId: "review-approve-0001", instituteId: "i", requestId: "recharge-submit-0001", decision: "approve", note: "" },
+    data: { action: "review_recharge_request", operationId: "review-approve-0001", instituteId: "i", requestId: "recharge-submit-0001", decision: "approve", receivedAmount: 102, note: "" },
   };
   const approved = await handler(review);
   assert.equal(approved.request.status, "approved");
@@ -408,7 +408,7 @@ test("billing role can review but support cannot", async () => {
 
   const billingReview = {
     auth: { uid: "billing" },
-    data: { action: "review_recharge_request", operationId: "review-billing-0001", instituteId: "i", requestId: "recharge-submit-0001", decision: "approve", note: "" },
+    data: { action: "review_recharge_request", operationId: "review-billing-0001", instituteId: "i", requestId: "recharge-submit-0001", decision: "approve", receivedAmount: 204, note: "" },
   };
   const result = await handler(billingReview);
   assert.equal(result.request.status, "approved");
@@ -418,6 +418,37 @@ test("billing role can review but support cannot", async () => {
     handler({ auth: { uid: "support" }, data: { action: "review_recharge_request", operationId: "review-support-0001", instituteId: "i", requestId: "recharge-submit-0001", decision: "reject", note: "" } }),
     /platform access/i,
   );
+});
+
+test("partial approval credits only the server-calculated portion of a short payment", async () => {
+  const db = seededDb();
+  const handler = handlerFor(db);
+  await handler({ auth: { uid: "owner" }, data: { action: "submit_recharge_request", operationId: "recharge-submit-partial", packageId: "standard", paymentMethod: "bkash", senderPhone: "01711111111" } });
+
+  await assert.rejects(
+    handler({ auth: { uid: "root" }, data: { action: "review_recharge_request", operationId: "review-underpaid-full", instituteId: "i", requestId: "recharge-submit-partial", decision: "approve", receivedAmount: 450 } }),
+    /below the quoted amount/i,
+  );
+
+  const result = await handler({
+    auth: { uid: "root" },
+    data: {
+      action: "review_recharge_request", operationId: "review-partial-0001", instituteId: "i",
+      requestId: "recharge-submit-partial", decision: "approve_partial", receivedAmount: 450,
+      note: "Verified partial payment",
+    },
+  });
+
+  // Standard quote is BDT 509 for 1,450 credits: floor(450 / 509 * 1450) = 1,281.
+  assert.equal(result.request.status, "approved");
+  assert.equal(result.request.requestedSmsCount, 1450);
+  assert.equal(result.request.creditedSmsCount, 1281);
+  assert.equal(result.request.smsCount, 1281);
+  assert.equal(db.documents.get("institutes/i").sms_balance, 1281);
+  const stored = db.documents.get("institutes/i/sms_recharge_requests/recharge-submit-partial");
+  assert.equal(stored.receivedAmount, 450);
+  assert.equal(stored.creditedSmsCount, 1281);
+
 });
 
 test("rejection never credits the wallet and writes an activity event", async () => {
