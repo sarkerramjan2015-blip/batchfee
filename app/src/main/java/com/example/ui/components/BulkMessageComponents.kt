@@ -35,6 +35,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.batchfee.edu.data.firestore.SmsWalletState
 import com.batchfee.edu.data.firestore.SmsWalletSyncHelper
 import com.batchfee.edu.domain.SessionManager
@@ -111,18 +113,19 @@ fun BulkSendProgressPanel(
     state: BulkMessageController.BulkQueueState,
     onRetryFailed: () -> Unit,
     onStop: () -> Unit,
-    onClose: () -> Unit
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val running = state.phase == BulkMessageController.Phase.RUNNING ||
         state.phase == BulkMessageController.Phase.AWAITING_RESUME
     val completed = state.phase == BulkMessageController.Phase.COMPLETED
 
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp))
+            .clip(RoundedCornerShape(22.dp))
             .background(ModalBg)
-            .border(1.dp, Cyan.copy(alpha = 0.22f), RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp))
+            .border(1.dp, Cyan.copy(alpha = 0.22f), RoundedCornerShape(22.dp))
             .padding(16.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -204,6 +207,39 @@ fun BulkSendProgressPanel(
                 }
             }
         }
+    }
+}
+
+/**
+ * A modal, centered result surface for an in-progress or completed bulk send.
+ * It deliberately cannot be dismissed by tapping the underlying list: the
+ * owner must make an explicit Stop, Retry, or Close decision.
+ */
+@Composable
+fun BulkSendProgressDialog(
+    state: BulkMessageController.BulkQueueState,
+    onRetryFailed: () -> Unit,
+    onStop: () -> Unit,
+    onClose: () -> Unit
+) {
+    Dialog(
+        onDismissRequest = {},
+        properties = DialogProperties(
+            dismissOnBackPress = false,
+            dismissOnClickOutside = false,
+            usePlatformDefaultWidth = false
+        )
+    ) {
+        BulkSendProgressPanel(
+            state = state,
+            onRetryFailed = onRetryFailed,
+            onStop = onStop,
+            onClose = onClose,
+            modifier = Modifier
+                .fillMaxWidth()
+                .widthIn(max = 520.dp)
+                .padding(horizontal = 20.dp)
+        )
     }
 }
 

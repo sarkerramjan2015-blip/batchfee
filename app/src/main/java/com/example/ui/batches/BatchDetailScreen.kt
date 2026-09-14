@@ -60,7 +60,7 @@ import com.example.ui.components.BulkActionBar
 import com.example.ui.components.BulkMessageDialog
 import com.example.ui.components.BulkSmsPreviewMessage
 import com.example.ui.components.BulkSelectionTopBar
-import com.example.ui.components.BulkSendProgressPanel
+import com.example.ui.components.BulkSendProgressDialog
 import com.example.ui.components.SelectionBadge
 import com.example.ui.components.buildBulkSmsPreview
 import kotlinx.coroutines.launch
@@ -849,19 +849,12 @@ fun BatchDetailScreen(
     }
 
     if (bulkState.active) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 12.dp),
-            contentAlignment = Alignment.BottomCenter
-        ) {
-            BulkSendProgressPanel(
-                state = bulkState,
-                onRetryFailed = { paymentVM.bulkSender.retryFailed() },
-                onStop = { paymentVM.bulkSender.cancel() },
-                onClose = { paymentVM.bulkSender.reset() }
-            )
-        }
+        BulkSendProgressDialog(
+            state = bulkState,
+            onRetryFailed = { paymentVM.bulkSender.retryFailed() },
+            onStop = { paymentVM.bulkSender.cancel() },
+            onClose = { paymentVM.bulkSender.reset() }
+        )
     }
 }
 

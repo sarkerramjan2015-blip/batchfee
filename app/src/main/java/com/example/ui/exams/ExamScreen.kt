@@ -59,7 +59,7 @@ import com.batchfee.edu.domain.SessionManager
 import com.example.domain.BulkMessageController
 import com.example.ui.components.BulkMessageDialog
 import com.example.ui.components.BulkSmsPreviewMessage
-import com.example.ui.components.BulkSendProgressPanel
+import com.example.ui.components.BulkSendProgressDialog
 import com.example.ui.components.SelectionBadge
 import com.example.ui.components.buildBulkSmsPreview
 import com.batchfee.edu.ui.components.buildWhatsAppUrl
@@ -1100,17 +1100,12 @@ fun ExamDetailScreen(db: AppDatabase, examId: String, onBack: () -> Unit, onEdit
 
     // ── Bulk send progress ─────────────────────────
     if (bulkState.active) {
-        Box(
-            modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
-            contentAlignment = Alignment.BottomCenter
-        ) {
-            BulkSendProgressPanel(
-                state = bulkState,
-                onRetryFailed = { viewModel.bulkSender.retryFailed() },
-                onStop = { viewModel.bulkSender.cancel() },
-                onClose = { viewModel.bulkSender.reset() }
-            )
-        }
+        BulkSendProgressDialog(
+            state = bulkState,
+            onRetryFailed = { viewModel.bulkSender.retryFailed() },
+            onStop = { viewModel.bulkSender.cancel() },
+            onClose = { viewModel.bulkSender.reset() }
+        )
     }
 
     // ── Single student result card ─────────────
