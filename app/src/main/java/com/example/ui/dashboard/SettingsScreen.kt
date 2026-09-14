@@ -377,7 +377,7 @@ fun SettingsScreen(
                                         modifier = Modifier.padding(top = 8.dp, bottom = 2.dp)
                                     )
                                 }
-                                val ratePaisa = if (pkg.smsCount > 0) pkg.baseAmount * 100.0 / pkg.smsCount else 0.0
+                                val ratePaisa = pkg.effectiveRatePaisa()
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -387,7 +387,7 @@ fun SettingsScreen(
                                     Column(Modifier.weight(1f)) {
                                         Text(pkg.name, color = TextWhite, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                                         Text(
-                                            "${pkg.smsCount} SMS · ≈ ${"%.1f".format(ratePaisa)} paisa/SMS",
+                                            "${pkg.smsCount} SMS credits · ${"%.1f".format(ratePaisa)} paisa per credit",
                                             color = TextMuted,
                                             fontSize = 9.sp
                                         )
@@ -395,19 +395,25 @@ fun SettingsScreen(
                                     Spacer(Modifier.width(10.dp))
                                     Column(horizontalAlignment = Alignment.End) {
                                         Text(
-                                            "BDT ${"%.0f".format(pkg.baseAmount)}",
+                                            "BDT ${"%.0f".format(pkg.payableAmount)}",
                                             color = Color(0xFFF59E0B),
                                             fontSize = 12.sp,
                                             fontWeight = FontWeight.Bold
                                         )
-                                        Text("Pay ${"%.0f".format(pkg.payableAmount)}", color = TextMuted, fontSize = 9.sp)
+                                        Text("Final payable", color = TextMuted, fontSize = 9.sp)
                                     }
                                 }
                             }
                             Text(
-                                "Recharge payable includes the ${if (smsPackages.isNotEmpty()) smsPackages.first().chargePercent else "1.8"}% processing charge.",
+                                "Displayed rate uses the final payable package amount, including its processing charge.",
                                 color = TextMuted,
                                 fontSize = 9.sp
+                            )
+                            Text(
+                                "One SMS credit equals one billable SMS segment. Long or Bangla/Unicode messages can use more than one credit.",
+                                color = TextMuted,
+                                fontSize = 9.sp,
+                                modifier = Modifier.padding(top = 3.dp)
                             )
                             Text(
                                 "Usage counters show BatchFee automatic SMS credits; phone-carrier hand-offs remain in SMS Report.",
@@ -705,7 +711,7 @@ private fun SmsRechargeDialog(
                     }
                 } else {
                     Text(
-                        "${pkg.name} · ${pkg.smsCount} SMS",
+                        "${pkg.name} · ${pkg.smsCount} SMS credits",
                         color = TextWhite,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Bold
@@ -722,6 +728,18 @@ private fun SmsRechargeDialog(
                         color = Color(0xFFF59E0B),
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        "Effective rate: ${"%.1f".format(pkg.effectiveRatePaisa())} paisa per SMS credit",
+                        color = Cyan,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        "One credit covers one billable SMS segment. Long or Bangla/Unicode messages may use multiple credits.",
+                        color = TextMuted,
+                        fontSize = 10.sp,
+                        modifier = Modifier.padding(top = 3.dp)
                     )
                     Spacer(Modifier.height(10.dp))
                     Text("Payment method", color = TextWhite, fontSize = 12.sp, fontWeight = FontWeight.Medium)
@@ -758,7 +776,7 @@ private fun SmsRechargeDialog(
                         )
                     )
                     Text(
-                        "Pay exactly BDT ${"%.0f".format(pkg.payableAmount)} including the ${pkg.chargePercent}% charge, then submit for admin approval.",
+                        "Pay exactly BDT ${"%.0f".format(pkg.payableAmount)}. This final package price includes the ${pkg.chargePercent}% processing charge; no extra amount is added in the app.",
                         color = TextMuted,
                         fontSize = 10.sp
                     )
@@ -828,12 +846,16 @@ private fun SmsPackageRow(pkg: SmsPackage, onClick: () -> Unit) {
     ) {
         Column(Modifier.weight(1f)) {
             Text(
-                "${pkg.name} — BDT ${"%.0f".format(pkg.baseAmount)}",
+                "${pkg.name} — ${pkg.smsCount} SMS credits",
                 color = TextWhite,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Bold
             )
-            Text("${pkg.smsCount} SMS", color = TextMuted, fontSize = 11.sp)
+            Text(
+                "${"%.1f".format(pkg.effectiveRatePaisa())} paisa per credit (final price)",
+                color = TextMuted,
+                fontSize = 11.sp
+            )
         }
         Column(horizontalAlignment = Alignment.End) {
             Text(
@@ -842,10 +864,13 @@ private fun SmsPackageRow(pkg: SmsPackage, onClick: () -> Unit) {
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Bold
             )
-            Text("incl. ${pkg.chargePercent}% charge", color = TextMuted, fontSize = 9.sp)
+            Text("final payable", color = TextMuted, fontSize = 9.sp)
         }
     }
 }
+
+private fun SmsPackage.effectiveRatePaisa(): Double =
+    if (smsCount > 0) payableAmount * 100.0 / smsCount else 0.0
 
 @Composable
 private fun SmsReportDialog(onDismiss: () -> Unit) {
