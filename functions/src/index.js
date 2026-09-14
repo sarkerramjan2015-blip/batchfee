@@ -49,7 +49,7 @@ const { createSubscriptionBillingHandler } = require("./subscriptionBilling");
 const { createPlatformAdminHandler } = require("./platformAdmin");
 const { createNoticeCenterHandler } = require("./noticeCenter");
 const { createServerSmsHandler, createSmsWalletHandler } = require("./smsWallet");
-const { createBulkSmsDhakaProvider } = require("./bulkSmsDhakaProvider");
+const { createSmsNetBdProvider } = require("./smsNetBdProvider");
 const {
   activityActorLabel,
   resolveTenantActor,
@@ -111,8 +111,7 @@ const callableOptions = {
   enforceAppCheck: false,
 };
 const registrationRateLimitSecret = defineSecret("REGISTRATION_RATE_LIMIT_SECRET");
-const bulkSmsDhakaApiKey = defineSecret("BULK_SMS_DHAKA_API_KEY");
-const bulkSmsDhakaCallerId = defineSecret("BULK_SMS_DHAKA_CALLER_ID");
+const smsNetBdApiKey = defineSecret("SMS_NET_BD_API_KEY");
 
 const db = getFirestore();
 const adminAuth = getAuth();
@@ -2592,13 +2591,12 @@ exports.sendBulkSms = onCall(
     ...callableOptions,
     timeoutSeconds: 300,
     memory: "256MiB",
-    secrets: [bulkSmsDhakaApiKey, bulkSmsDhakaCallerId],
+    secrets: [smsNetBdApiKey],
   },
   guarded(createServerSmsHandler({
     db,
-    smsProvider: createBulkSmsDhakaProvider({
-      apiKey: () => bulkSmsDhakaApiKey.value(),
-      callerId: () => bulkSmsDhakaCallerId.value(),
+    smsProvider: createSmsNetBdProvider({
+      apiKey: () => smsNetBdApiKey.value(),
     }),
   }), "server_sms_batch"),
 );
