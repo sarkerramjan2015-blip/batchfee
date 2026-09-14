@@ -34,6 +34,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -75,6 +76,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.TimeoutCancellationException
 import androidx.lifecycle.viewModelScope
 
 class AuthViewModel(private val db: AppDatabase) : ViewModel() {
@@ -322,10 +325,12 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                 val authStartedAt = SystemClock.elapsedRealtime()
                 try { FirebaseAuth.getInstance().signOut() } catch (_: Exception) { }
                 val uid = if (hasAt) {
-                    withContext(Dispatchers.IO) {
-                        FirebaseAuth.getInstance()
-                            .signInWithEmailAndPassword(input, cleanPassword)
-                            .await().user?.uid
+                    withTimeout(20_000L) {
+                        withContext(Dispatchers.IO) {
+                            FirebaseAuth.getInstance()
+                                .signInWithEmailAndPassword(input, cleanPassword)
+                                .await().user?.uid
+                        }
                     } ?: throw IllegalStateException("Firebase Auth returned null UID")
                 } else {
                     try {
@@ -342,8 +347,10 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
 
                 // ── Fetch or rebuild local user record ──
                 val profileStartedAt = SystemClock.elapsedRealtime()
-                val managedUser = withContext(Dispatchers.IO) {
-                    AppUserSyncHelper.fetchManagedUser(uid)
+                val managedUser = withTimeout(20_000L) {
+                    withContext(Dispatchers.IO) {
+                        AppUserSyncHelper.fetchManagedUser(uid)
+                    }
                 }
                 if (managedUser?.role == "PlatformAdmin") {
                     val allowedPlatformRoles = setOf("billing", "support", "operations", "read_only")
@@ -631,7 +638,9 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                     db.userDao().resetFailedAttempts(firebaseEmail)
                 }
 
-                resolveInstituteBeforeNavigation(instituteId, role)
+                withTimeout(20_000L) {
+                    resolveInstituteBeforeNavigation(instituteId, role)
+                }
                 SessionManager.login(uid, instituteId ?: "", role, staffPermissions)
                 trackInstituteOwnerLogin(instituteId, role, "password")
                 android.util.Log.i(
@@ -660,6 +669,9 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                 
                 onSuccess(role)
 
+            } catch (e: TimeoutCancellationException) {
+                FirebaseFailureReporter.report(e, "login timeout")
+                onError("Login is taking too long. Check your internet connection and try again.")
             } catch (e: FirebaseAuthException) {
                 android.util.Log.e("AUTH_LOGIN", "FirebaseAuthException: code=${e.errorCode}, msg=${e.message}")
                 FirebaseFailureReporter.report(e, "login authentication")
@@ -1143,7 +1155,7 @@ private fun InstituteTypeDropdown(
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 @Composable
 fun AuthScreen(
     db: AppDatabase,
@@ -1188,12 +1200,8 @@ fun AuthScreen(
     var consentChecked by remember { mutableStateOf(false) }
     val loginScrollState = rememberScrollState()
     val registerScrollState = rememberScrollState()
-    val hasLoginFeedback = isLoginMode && (
-        errorMessage != null ||
-            infoMessage != null ||
-            sessionNotice != null ||
-            (selectedRole == UnifiedLoginRole.STUDENT && studentLoginState.errorMessage != null)
-        )
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val imeVisible = WindowInsets.isImeVisible
     val primaryActionInteraction = remember { MutableInteractionSource() }
     val primaryActionPressed by primaryActionInteraction.collectIsPressedAsState()
     val primaryActionScale by animateFloatAsState(
@@ -1297,8 +1305,7 @@ fun AuthScreen(
                             // scrollable instead of hiding the primary Login button.
                             when {
                                 !isLoginMode -> Modifier.verticalScroll(registerScrollState)
-                                hasLoginFeedback -> Modifier.verticalScroll(loginScrollState)
-                                else -> Modifier
+                                else -> Modifier.verticalScroll(loginScrollState)
                             }
                         )
                         .imePadding()
@@ -1322,24 +1329,26 @@ fun AuthScreen(
                 )
 
                 if (isLoginMode) {
-                    AnimatedLogo(modifier = Modifier.size(logoSize))
-                    Spacer(Modifier.height(if (compactHeight) 10.dp else 14.dp))
+                    AnimatedLogo(modifier = Modifier.size(if (imeVisible) 58.dp else logoSize))
+                    Spacer(Modifier.height(if (imeVisible) 6.dp else if (compactHeight) 10.dp else 14.dp))
                     Text(
                         text = "BatchFee",
-                        style = MaterialTheme.typography.headlineLarge.copy(
+                        style = (if (imeVisible) MaterialTheme.typography.headlineMedium else MaterialTheme.typography.headlineLarge).copy(
                             fontWeight = FontWeight.ExtraBold,
                             letterSpacing = androidx.compose.ui.unit.TextUnit(1.5f, androidx.compose.ui.unit.TextUnitType.Sp)
                         ),
                         color = AuthWhite
                     )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        text = "Smart institute management, simplified.",
-                        style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
-                        color = AuthCyan,
-                        textAlign = TextAlign.Center
-                    )
-                    Spacer(Modifier.height(if (compactHeight) 14.dp else 20.dp))
+                    if (!imeVisible) {
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = "Smart institute management, simplified.",
+                            style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
+                            color = AuthCyan,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                    Spacer(Modifier.height(if (imeVisible) 12.dp else if (compactHeight) 14.dp else 20.dp))
                 } else {
                     Row(
                         modifier = Modifier
@@ -1646,6 +1655,7 @@ fun AuthScreen(
                     Button(
                         onClick = {
                             if (isLoading || studentLoginState.isLoading || loadingDemoAccount != null) return@Button
+                            keyboardController?.hide()
                             errorMessage = null
                             if (isLoginMode) {
                                 if (email.isBlank() || password.isBlank() ||
