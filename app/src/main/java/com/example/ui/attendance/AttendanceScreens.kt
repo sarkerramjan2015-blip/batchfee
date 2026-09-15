@@ -458,6 +458,7 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
                             // belongs to the phone's own SMS app and cannot be observed.
                             viewModel.recordCarrierSms(
                                 recipient = target.phone?.filter(Char::isDigit).orEmpty(),
+                                messageBody = body,
                                 purpose = "Bulk message · ${target.name}"
                             )
                         }

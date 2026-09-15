@@ -706,7 +706,10 @@ test("staff can record and read the SMS report but never mark delivery", async (
   const handler = handlerFor(db);
   await handler({
     auth: { uid: "staff" },
-    data: { action: "record_sms_batch", operationId: "sms-batch-0000003", channel: "carrier", messages: [{ recipient: "01711111111", purpose: "Bulk message" }] },
+    data: {
+      action: "record_sms_batch", operationId: "sms-batch-0000003", channel: "carrier",
+      messages: [{ recipient: "01711111111", purpose: "Bulk message", messageBody: "Dear guardian, this is a test." }],
+    },
   });
 
   const report = await handler({ auth: { uid: "owner" }, data: { action: "list_sms_report", operationId: "report-000000001" } });
@@ -714,12 +717,46 @@ test("staff can record and read the SMS report but never mark delivery", async (
   assert.equal(report.counts.delivered, 0);
   assert.equal(report.messages.length, 1);
   assert.equal(report.messages[0].purpose, "Bulk message");
+  assert.equal(report.messages[0].messageBody, "Dear guardian, this is a test.");
+  assert.equal(report.messages[0].credits, 0);
 
   // No tenant action can change a message status; only the trusted server helper can.
   await assert.rejects(
     handler({ auth: { uid: "owner" }, data: { action: "mark_sms_delivered", operationId: "deliver-000000001" } }),
     /invalid SMS wallet operation/i,
   );
+});
+
+test("SMS history keeps full body, period totals, failures, and tenant isolation", async () => {
+  const db = seededDb();
+  const handler = handlerFor(db);
+  const now = Date.now();
+  db.documents.set("institutes/i/sms_messages/history-now-delivered", {
+    instituteId: "i", recipient: "8801711111111", purpose: "Attendance", messageBody: "Rahim is present today.",
+    channel: "server", status: "delivered", credits: 2, createdAtMs: now, deliveredAtMs: now,
+  });
+  db.documents.set("institutes/i/sms_messages/history-now-failed", {
+    instituteId: "i", recipient: "8801811111111", purpose: "Due reminder", messageBody: "BDT 500 due.",
+    channel: "server", status: "failed", credits: 1, failureReason: "Provider rejected the destination.", createdAtMs: now,
+  });
+  db.documents.set("institutes/i/sms_messages/history-week-sent", {
+    instituteId: "i", recipient: "01711111111", purpose: "Receipt", messageBody: "Payment receipt.",
+    channel: "carrier", status: "sent", credits: 0, createdAtMs: now - 24 * 60 * 60 * 1000,
+  });
+  db.documents.set("institutes/j/sms_messages/other-tenant", {
+    instituteId: "j", recipient: "8801999999999", purpose: "Private", messageBody: "Must never leak.",
+    channel: "server", status: "delivered", credits: 1, createdAtMs: now,
+  });
+
+  const report = await handler({ auth: { uid: "owner" }, data: { action: "list_sms_report", operationId: "history-report-00001" } });
+  assert.equal(report.periods.today.total, 2);
+  assert.equal(report.periods.today.credits, 3);
+  assert.equal(report.periods.today.delivered, 1);
+  assert.equal(report.periods.today.failed, 1);
+  assert.equal(report.periods.lifetime.total, 3);
+  assert.equal(report.periods.lifetime.credits, 3);
+  assert.equal(report.messages.some((message) => message.messageBody === "Rahim is present today."), true);
+  assert.equal(report.messages.some((message) => message.recipient === "8801999999999"), false);
 });
 
 test("updateSmsMessageStatus transitions a server message through gateway callbacks", async () => {

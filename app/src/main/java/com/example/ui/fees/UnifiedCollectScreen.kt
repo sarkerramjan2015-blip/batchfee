@@ -3116,6 +3116,7 @@ private suspend fun sendHistoryReceiptMessage(context: Context, institute: Insti
             listOf(
                 com.batchfee.edu.data.firestore.SmsOutboundRecord(
                     recipient = student.phone.orEmpty().replace(Regex("[^0-9]"), ""),
+                    messageBody = buildHistoryReceiptText(institute, student, item),
                     purpose = "Payment receipt · ${student.fullName}"
                 )
             )

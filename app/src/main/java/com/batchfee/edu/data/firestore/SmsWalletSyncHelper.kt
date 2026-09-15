@@ -7,7 +7,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import java.util.UUID
-import kotlin.math.roundToInt
 
 /**
  * Multi-tenant SMS wallet state. Counters are server-authoritative: the client
@@ -58,18 +57,33 @@ data class SmsRechargeRequest(
 /** One outbound message handed to the phone's SMS app (carrier channel). */
 data class SmsOutboundRecord(
     val recipient: String,
-    val purpose: String = ""
+    val purpose: String = "",
+    /** Full body for the institute's private Bulk SMS History. */
+    val messageBody: String = ""
 )
 
 data class SmsMessageStatus(
     val messageId: String,
     val recipient: String,
     val purpose: String,
+    val messageBody: String,
     val channel: String,
     val status: String,
+    val providerStatus: String,
+    val credits: Int,
     val createdAtMs: Long,
     val deliveredAtMs: Long,
     val failureReason: String
+)
+
+/** Period totals are server-calculated from only this institute's message ledger. */
+data class SmsMessagePeriod(
+    val total: Int = 0,
+    val credits: Int = 0,
+    val sent: Int = 0,
+    val delivered: Int = 0,
+    val pending: Int = 0,
+    val failed: Int = 0
 )
 
 data class SmsMessageReport(
@@ -77,7 +91,13 @@ data class SmsMessageReport(
     val delivered: Int = 0,
     val pending: Int = 0,
     val failed: Int = 0,
-    val messages: List<SmsMessageStatus> = emptyList()
+    val messages: List<SmsMessageStatus> = emptyList(),
+    val today: SmsMessagePeriod = SmsMessagePeriod(),
+    val week: SmsMessagePeriod = SmsMessagePeriod(),
+    val month: SmsMessagePeriod = SmsMessagePeriod(),
+    val lifetime: SmsMessagePeriod = SmsMessagePeriod(),
+    val historyTruncated: Boolean = false,
+    val detailRowsTruncated: Boolean = false
 )
 
 data class ServerSmsOutbound(
@@ -120,13 +140,13 @@ object SmsWalletSyncHelper {
      * can never be used by a client to credit its own wallet.
      */
     private val bundledPackages = listOf(
-        bundledPackage("starter", "Small & Medium Batches", "Starter", 100.0, 275),
-        bundledPackage("basic", "Small & Medium Batches", "Basic", 200.0, 560),
-        bundledPackage("standard", "Small & Medium Batches", "Standard", 500.0, 1_450),
-        bundledPackage("pro", "Large Coaching Centers", "Pro", 1_000.0, 3_000),
-        bundledPackage("premium", "Large Coaching Centers", "Premium", 2_000.0, 6_250),
-        bundledPackage("advanced", "Mega Coaching & Schools", "Advanced", 5_000.0, 16_500),
-        bundledPackage("enterprise", "Mega Coaching & Schools", "Enterprise", 10_000.0, 35_000)
+        bundledPackage("starter", "Small & Medium Batches", "Starter", 100.0, 265),
+        bundledPackage("basic", "Small & Medium Batches", "Basic", 200.0, 540),
+        bundledPackage("standard", "Small & Medium Batches", "Standard", 500.0, 1_385),
+        bundledPackage("pro", "Large Coaching Centers", "Pro", 1_000.0, 2_855),
+        bundledPackage("premium", "Large Coaching Centers", "Premium", 2_000.0, 5_880),
+        bundledPackage("advanced", "Mega Coaching & Schools", "Advanced", 5_000.0, 15_150),
+        bundledPackage("enterprise", "Mega Coaching & Schools", "Enterprise", 10_000.0, 31_250)
     )
 
     /** Immediate package display while the server refresh is loading. */
@@ -223,7 +243,13 @@ object SmsWalletSyncHelper {
             instituteId = null,
             values = mapOf(
                 "channel" to "carrier",
-                "messages" to messages.map { mapOf("recipient" to it.recipient, "purpose" to it.purpose) }
+                "messages" to messages.map {
+                    mapOf(
+                        "recipient" to it.recipient,
+                        "purpose" to it.purpose,
+                        "messageBody" to it.messageBody
+                    )
+                }
             ),
             operationId = operationId
         )
@@ -274,12 +300,20 @@ object SmsWalletSyncHelper {
         @Suppress("UNCHECKED_CAST")
         val messages = (payload["messages"] as? List<*>).orEmpty()
             .mapNotNull { (it as? Map<*, *>)?.toSmsMessageStatus() }
+        @Suppress("UNCHECKED_CAST")
+        val periods = payload["periods"] as? Map<*, *> ?: emptyMap<String, Any?>()
         return SmsMessageReport(
             sent = (counts["sent"] as? Number)?.toInt() ?: 0,
             delivered = (counts["delivered"] as? Number)?.toInt() ?: 0,
             pending = (counts["pending"] as? Number)?.toInt() ?: 0,
             failed = (counts["failed"] as? Number)?.toInt() ?: 0,
-            messages = messages
+            messages = messages,
+            today = periods.toSmsMessagePeriod("today"),
+            week = periods.toSmsMessagePeriod("week"),
+            month = periods.toSmsMessagePeriod("month"),
+            lifetime = periods.toSmsMessagePeriod("lifetime"),
+            historyTruncated = payload["historyTruncated"] as? Boolean ?: false,
+            detailRowsTruncated = payload["detailRowsTruncated"] as? Boolean ?: false
         )
     }
 
@@ -318,7 +352,7 @@ private fun bundledPackage(
     smsCount: Int
 ): SmsPackage {
     val chargePercent = 1.8
-    val chargeAmount = (baseAmount * chargePercent / 100.0).roundToInt().toDouble()
+    val chargeAmount = kotlin.math.round(baseAmount * chargePercent) / 100.0
     return SmsPackage(
         packageId = packageId,
         layer = layer,
@@ -367,7 +401,7 @@ private fun Map<*, *>.toServerSmsResult(): ServerSmsResult = ServerSmsResult(
     targetKey = this["targetKey"] as? String ?: "",
     status = this["status"] as? String ?: "failed",
     providerStatus = this["providerStatus"] as? String ?: "",
-    credits = (this["credits"] as? Number)?.toInt() ?: 1,
+    credits = (this["credits"] as? Number)?.toInt() ?: 0,
     failureReason = this["failureReason"] as? String ?: ""
 )
 
@@ -375,9 +409,25 @@ private fun Map<*, *>.toSmsMessageStatus(): SmsMessageStatus = SmsMessageStatus(
     messageId = this["messageId"] as? String ?: "",
     recipient = this["recipient"] as? String ?: "",
     purpose = this["purpose"] as? String ?: "",
+    messageBody = this["messageBody"] as? String ?: "",
     channel = this["channel"] as? String ?: "carrier",
     status = this["status"] as? String ?: "sent",
+    providerStatus = this["providerStatus"] as? String ?: "",
+    credits = (this["credits"] as? Number)?.toInt() ?: 1,
     createdAtMs = (this["createdAtMs"] as? Number)?.toLong() ?: 0L,
     deliveredAtMs = (this["deliveredAtMs"] as? Number)?.toLong() ?: 0L,
     failureReason = this["failureReason"] as? String ?: ""
 )
+
+private fun Map<*, *>.toSmsMessagePeriod(key: String): SmsMessagePeriod {
+    val value = this[key] as? Map<*, *> ?: emptyMap<String, Any?>()
+    fun int(name: String): Int = (value[name] as? Number)?.toInt() ?: 0
+    return SmsMessagePeriod(
+        total = int("total"),
+        credits = int("credits"),
+        sent = int("sent"),
+        delivered = int("delivered"),
+        pending = int("pending"),
+        failed = int("failed")
+    )
+}

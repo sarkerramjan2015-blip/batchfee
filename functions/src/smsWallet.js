@@ -69,7 +69,11 @@ const MAX_MY_REQUESTS = 20;
 const MAX_PLATFORM_REQUESTS = 100;
 const MAX_SMS_BATCH = 400;
 const MAX_SERVER_SMS_BATCH = 100;
-const MAX_SMS_REPORT = 50;
+// Owners receive the latest rows for browsing, while period summaries inspect
+// a bounded larger window. The response clearly tells the owner if an old,
+// unusually large history has been truncated.
+const MAX_SMS_REPORT_ROWS = 200;
+const MAX_SMS_REPORT_METRICS = 5000;
 const MAX_PLATFORM_SMS_EVENTS = 5000;
 const MAX_PLATFORM_SMS_TOPUPS = 100;
 
@@ -986,8 +990,14 @@ function publicSmsMessage(id, data) {
     messageId: id,
     recipient: typeof data.recipient === "string" ? data.recipient : "",
     purpose: typeof data.purpose === "string" ? data.purpose : "",
+    messageBody: typeof data.messageBody === "string" ? data.messageBody : "",
     channel: SMS_MESSAGE_CHANNELS.has(data.channel) ? data.channel : "carrier",
     status: SMS_MESSAGE_STATUSES.has(data.status) ? data.status : "sent",
+    providerStatus: typeof data.providerStatus === "string" ? data.providerStatus : "",
+    // Carrier hand-offs have no BatchFee credit debit; server rows carry the
+    // exact billable segment count. Legacy records without this field remain
+    // readable but are marked as zero known server credits.
+    credits: Number.isInteger(data.credits) && data.credits >= 0 ? data.credits : 0,
     createdAtMs: safeMillis(data.createdAtMs),
     updatedAtMs: safeMillis(data.updatedAtMs),
     deliveredAtMs: safeMillis(data.deliveredAtMs),
@@ -1014,6 +1024,7 @@ async function recordSmsBatch({ db, request, operationId, now }) {
   const rows = messages.map((message) => ({
     recipient: requiredString(message, "recipient", 24),
     purpose: optionalString(message, "purpose", 120),
+    messageBody: optionalString(message, "messageBody", 480),
   }));
 
   const collection = db.collection("institutes").doc(actor.instituteId).collection("sms_messages");
@@ -1031,8 +1042,10 @@ async function recordSmsBatch({ db, request, operationId, now }) {
         instituteId: actor.instituteId,
         recipient: row.recipient,
         purpose: row.purpose,
+        messageBody: row.messageBody,
         channel,
         status,
+        credits: 0,
         createdAtMs: now,
         updatedAtMs: now,
         deliveredAtMs: 0,
@@ -1220,6 +1233,7 @@ async function sendServerSmsBatch({ db, request, smsProvider, now = Date.now() }
       recipient: row.recipient,
       targetKey: row.targetKey,
       purpose: row.purpose,
+      messageBody: row.message,
       channel: "server",
       status: "pending",
       providerStatus: "RESERVED",
@@ -1295,22 +1309,52 @@ function createPlatformSmsTopupHandler({ db }) {
   return async (request) => recordPlatformSmsTopup({ db, request });
 }
 
-/** Status counts and the latest messages for the institute's own SMS report. */
+function emptySmsReportCounts() {
+  return { sent: 0, delivered: 0, pending: 0, failed: 0, total: 0, credits: 0 };
+}
+
+function addSmsToReportCounts(counts, data) {
+  const status = SMS_MESSAGE_STATUSES.has(data.status) ? data.status : "sent";
+  const credits = Number.isInteger(data.credits) && data.credits >= 0 ? data.credits : 0;
+  counts.total += 1;
+  counts.credits += credits;
+  counts[status] += 1;
+}
+
+/**
+ * Owner-scoped message history. The details list is intentionally capped to
+ * keep the app responsive; the same response exposes whether the historical
+ * statistics were capped, rather than silently presenting incomplete data.
+ */
 async function listSmsReport({ db, request }) {
   const actor = await resolveTenantActor(db, request.auth);
   const snapshot = await db.collection("institutes").doc(actor.instituteId)
     .collection("sms_messages")
     .orderBy("createdAtMs", "desc")
-    .limit(MAX_SMS_REPORT)
+    .limit(MAX_SMS_REPORT_METRICS + 1)
     .get();
-  const counts = { sent: 0, delivered: 0, pending: 0, failed: 0 };
-  for (const doc of snapshot.docs) {
-    const status = doc.get("status");
-    if (Object.prototype.hasOwnProperty.call(counts, status)) counts[status] += 1;
+  const hasMoreHistory = snapshot.size > MAX_SMS_REPORT_METRICS;
+  const history = snapshot.docs.slice(0, MAX_SMS_REPORT_METRICS);
+  const periods = {
+    today: emptySmsReportCounts(),
+    week: emptySmsReportCounts(),
+    month: emptySmsReportCounts(),
+    lifetime: emptySmsReportCounts(),
+  };
+  const now = Date.now();
+  for (const doc of history) {
+    const data = doc.data() || {};
+    for (const period of financialPeriodNames(safeMillis(data.createdAtMs), now)) {
+      addSmsToReportCounts(periods[period], data);
+    }
   }
   return {
-    counts,
-    messages: snapshot.docs.map((doc) => publicSmsMessage(doc.id, doc.data() || {})),
+    // Kept for older clients. New clients use the explicit period object.
+    counts: periods.lifetime,
+    periods,
+    historyTruncated: hasMoreHistory,
+    detailRowsTruncated: history.length > MAX_SMS_REPORT_ROWS,
+    messages: history.slice(0, MAX_SMS_REPORT_ROWS).map((doc) => publicSmsMessage(doc.id, doc.data() || {})),
   };
 }
 

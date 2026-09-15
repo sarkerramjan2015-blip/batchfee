@@ -480,14 +480,15 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
     }
 
     /** Fire-and-forget tracking for carrier SMS hand-offs; never blocks the send. */
-    fun recordCarrierSms(recipient: String, purpose: String) {
+    fun recordCarrierSms(recipient: String, purpose: String, messageBody: String = "") {
         viewModelScope.launch {
             runCatching {
                 com.batchfee.edu.data.firestore.SmsWalletSyncHelper.recordCarrierSmsBatch(
                     listOf(
                         com.batchfee.edu.data.firestore.SmsOutboundRecord(
                             recipient = recipient,
-                            purpose = purpose
+                            purpose = purpose,
+                            messageBody = messageBody
                         )
                     )
                 )
@@ -556,7 +557,8 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
                             listOf(
                                 com.batchfee.edu.data.firestore.SmsOutboundRecord(
                                     recipient = recipientDigits,
-                                    purpose = "Absent message · ${student.fullName}"
+                                    purpose = "Absent message · ${student.fullName}",
+                                    messageBody = cleanMessage
                                 )
                             )
                         )

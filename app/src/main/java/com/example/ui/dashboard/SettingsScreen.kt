@@ -25,10 +25,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.data.firestore.SmsMessageReport
+import com.batchfee.edu.data.firestore.SmsMessagePeriod
 import com.batchfee.edu.data.firestore.SmsMessageStatus
 import com.batchfee.edu.data.firestore.SmsPackage
 import com.batchfee.edu.data.firestore.SmsRechargeRequest
@@ -438,7 +441,7 @@ fun SettingsScreen(
                                 border = BorderStroke(1.dp, ElectricBlue),
                                 shape = RoundedCornerShape(10.dp)
                             ) {
-                                Text("SMS Report", color = ElectricBlue, fontWeight = FontWeight.Bold)
+                                Text("Bulk SMS History", color = ElectricBlue, fontWeight = FontWeight.Bold)
                             }
                         }
                         rechargeRequests.take(3).forEach { request ->
@@ -950,6 +953,8 @@ private fun SmsReportDialog(onDismiss: () -> Unit) {
     var report by remember { mutableStateOf<SmsMessageReport?>(null) }
     var loadError by remember { mutableStateOf<String?>(null) }
     var reloadKey by remember { mutableStateOf(0) }
+    var search by remember { mutableStateOf("") }
+    var selectedStatus by remember { mutableStateOf("all") }
     LaunchedEffect(reloadKey) {
         runCatching { SmsWalletSyncHelper.smsReport() }
             .onSuccess { report = it; loadError = null }
@@ -959,59 +964,143 @@ private fun SmsReportDialog(onDismiss: () -> Unit) {
             }
     }
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = CardBg,
-        title = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("SMS Report", color = TextWhite, fontWeight = FontWeight.Bold, fontSize = 17.sp)
-                    Text(
-                        "Sent vs delivered for the latest messages",
-                        color = TextMuted,
-                        fontSize = 10.sp
-                    )
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            modifier = Modifier.fillMaxWidth().heightIn(max = 760.dp),
+            shape = RoundedCornerShape(20.dp),
+            color = BgColor,
+            border = BorderStroke(1.dp, BorderSub)
+        ) {
+            Column(Modifier.padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.History, null, tint = Cyan, modifier = Modifier.size(23.dp))
+                    Spacer(Modifier.width(9.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("Bulk SMS History", color = TextWhite, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                        Text("Your institute's private SMS delivery record", color = TextMuted, fontSize = 10.sp)
+                    }
+                    TextButton(onClick = { reloadKey++ }) { Text("Refresh", color = Cyan, fontSize = 12.sp) }
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(34.dp)) {
+                        Icon(Icons.Filled.Close, "Close", tint = TextMuted, modifier = Modifier.size(20.dp))
+                    }
                 }
-                TextButton(onClick = { reloadKey++ }) { Text("Refresh", color = Cyan, fontSize = 12.sp) }
-            }
-        },
-        text = {
-            Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
-                loadError?.let { error ->
-                    Text(error, color = AccentRed, fontSize = 12.sp)
-                }
+                Spacer(Modifier.height(12.dp))
+                loadError?.let { error -> Text(error, color = AccentRed, fontSize = 12.sp) }
                 val data = report
                 if (data == null && loadError == null) {
-                    Text("Loading SMS report...", color = TextMuted, fontSize = 12.sp)
-                } else if (data != null) {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        SmsReportStat("Sent", data.sent, Color(0xFF3B82F6), Modifier.weight(1f))
-                        SmsReportStat("Delivered", data.delivered, Color(0xFF22C55E), Modifier.weight(1f))
-                        SmsReportStat("Pending", data.pending, Color(0xFFF59E0B), Modifier.weight(1f))
-                        SmsReportStat("Failed", data.failed, AccentRed, Modifier.weight(1f))
+                    Box(Modifier.fillMaxWidth().height(180.dp), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(color = Cyan, modifier = Modifier.size(28.dp), strokeWidth = 3.dp)
                     }
-                    Spacer(Modifier.height(8.dp))
+                } else if (data != null) {
+                    SmsHistoryPeriodGrid(data)
+                    Spacer(Modifier.height(10.dp))
                     Text(
-                        "Carrier sends are recorded as Sent once handed to your phone's SMS app. Delivered/Pending/Failed statuses apply to server sends.",
+                        "Counts are individual recipients. Server credits include multi-part Bangla/long messages; carrier rows are phone hand-offs only.",
                         color = TextMuted,
                         fontSize = 9.sp
                     )
                     Spacer(Modifier.height(8.dp))
-                    if (data.messages.isEmpty()) {
-                        Text("No SMS has been recorded yet.", color = TextMuted, fontSize = 12.sp)
-                    } else {
-                        data.messages.forEach { message ->
-                            Spacer(Modifier.height(6.dp))
-                            SmsReportRow(message)
+                    OutlinedTextField(
+                        value = search,
+                        onValueChange = { search = it },
+                        singleLine = true,
+                        leadingIcon = { Icon(Icons.Filled.Search, null, tint = Cyan) },
+                        placeholder = { Text("Search number, message or purpose", color = TextMuted) },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Cyan,
+                            unfocusedBorderColor = BorderSub,
+                            focusedTextColor = TextWhite,
+                            unfocusedTextColor = TextWhite
+                        )
+                    )
+                    Spacer(Modifier.height(7.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                        listOf("all", "delivered", "pending", "failed", "sent").forEach { status ->
+                            FilterChip(
+                                selected = selectedStatus == status,
+                                onClick = { selectedStatus = status },
+                                label = { Text(if (status == "all") "All" else status.replaceFirstChar { it.uppercase() }, fontSize = 9.sp) },
+                                modifier = Modifier.weight(1f),
+                                colors = FilterChipDefaults.filterChipColors(
+                                    containerColor = CardBg,
+                                    selectedContainerColor = Cyan.copy(alpha = 0.18f),
+                                    labelColor = TextMuted,
+                                    selectedLabelColor = Cyan
+                                )
+                            )
+                        }
+                    }
+                    val term = search.trim().lowercase()
+                    val filtered = data.messages.filter { message ->
+                        (selectedStatus == "all" || message.status == selectedStatus) &&
+                            (term.isBlank() || listOf(message.recipient, message.purpose, message.messageBody, message.status, message.failureReason)
+                                .any { it.lowercase().contains(term) })
+                    }
+                    Spacer(Modifier.height(9.dp))
+                    Text(
+                        "Messages · showing ${filtered.size} of ${data.messages.size}",
+                        color = TextWhite,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    if (data.detailRowsTruncated || data.historyTruncated) {
+                        Text(
+                            "Older rows are not displayed here. Period totals cover the latest stored history window.",
+                            color = Color(0xFFF59E0B),
+                            fontSize = 9.sp
+                        )
+                    }
+                    Spacer(Modifier.height(5.dp))
+                    Column(Modifier.fillMaxWidth().weight(1f, fill = false).verticalScroll(rememberScrollState())) {
+                        if (filtered.isEmpty()) {
+                            Text("No SMS matches this filter.", color = TextMuted, fontSize = 12.sp, modifier = Modifier.padding(vertical = 18.dp))
+                        } else {
+                            filtered.forEach { message ->
+                                SmsReportRow(message)
+                                Spacer(Modifier.height(7.dp))
+                            }
                         }
                     }
                 }
             }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text("Close", color = Cyan) }
         }
+    }
+}
+
+@Composable
+private fun SmsHistoryPeriodGrid(data: SmsMessageReport) {
+    val periods = listOf(
+        "Today" to data.today,
+        "Week" to data.week,
+        "Month" to data.month,
+        "Lifetime" to data.lifetime
     )
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        periods.chunked(2).forEach { row ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                row.forEach { (label, period) ->
+                    SmsHistoryPeriodCard(label, period, Modifier.weight(1f))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SmsHistoryPeriodCard(label: String, period: SmsMessagePeriod, modifier: Modifier = Modifier) {
+    Column(
+        modifier.clip(RoundedCornerShape(11.dp)).background(CardBg).padding(9.dp)
+    ) {
+        Text(label, color = TextMuted, fontSize = 9.sp)
+        Text("${period.total}", color = Cyan, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        Text("recipients · ${period.credits} credits", color = TextMuted, fontSize = 8.sp)
+        Text(
+            "D ${period.delivered} · P ${period.pending} · F ${period.failed}",
+            color = TextMuted,
+            fontSize = 8.sp
+        )
+    }
 }
 
 private fun friendlySmsError(error: Throwable, fallback: String): String {
@@ -1059,12 +1148,33 @@ private fun SmsReportRow(message: SmsMessageStatus) {
     ) {
         Column(Modifier.weight(1f)) {
             Text(message.purpose.ifBlank { message.recipient }, color = TextWhite, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+            val body = message.messageBody.trim()
+            if (body.isNotBlank()) {
+                Text(
+                    body,
+                    color = TextMuted,
+                    fontSize = 10.sp,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
             Text(
                 "${message.recipient} · ${message.channel.uppercase().replaceFirstChar { it.uppercase() }} · " +
                     SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault()).format(Date(message.createdAtMs)),
                 color = TextMuted,
                 fontSize = 9.sp
             )
+            if (message.failureReason.isNotBlank()) {
+                Text(
+                    "Reason: ${message.failureReason}",
+                    color = AccentRed,
+                    fontSize = 9.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            } else if (message.providerStatus.isNotBlank()) {
+                Text("Gateway: ${message.providerStatus}", color = TextMuted, fontSize = 8.sp)
+            }
         }
         Text(statusLabel, color = statusColor, fontSize = 10.sp, fontWeight = FontWeight.Bold)
     }

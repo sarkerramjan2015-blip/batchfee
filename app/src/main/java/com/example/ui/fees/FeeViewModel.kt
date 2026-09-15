@@ -409,6 +409,7 @@ class FeeViewModel(private val db: AppDatabase) : ViewModel() {
                             listOf(
                                 com.batchfee.edu.data.firestore.SmsOutboundRecord(
                                     recipient = phone.orEmpty().replace(Regex("[^0-9]"), ""),
+                                    messageBody = msg,
                                     purpose = "Due fee reminder · $studentName · $feePeriod"
                                 )
                             )
