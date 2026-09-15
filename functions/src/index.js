@@ -49,7 +49,7 @@ const { createSubscriptionBillingHandler } = require("./subscriptionBilling");
 const { createPlatformAdminHandler } = require("./platformAdmin");
 const { createNoticeCenterHandler } = require("./noticeCenter");
 const { createServerSmsHandler, createSmsWalletHandler } = require("./smsWallet");
-const { createSmsNetBdProvider } = require("./smsNetBdProvider");
+const { createZendSmsProvider } = require("./zendSmsProvider");
 const {
   activityActorLabel,
   resolveTenantActor,
@@ -111,7 +111,8 @@ const callableOptions = {
   enforceAppCheck: false,
 };
 const registrationRateLimitSecret = defineSecret("REGISTRATION_RATE_LIMIT_SECRET");
-const smsNetBdApiKey = defineSecret("SMS_NET_BD_API_KEY");
+const zendSmsApiKey = defineSecret("ZEND_SMS_API_KEY");
+const zendSmsSenderId = defineSecret("ZEND_SMS_SENDER_ID");
 
 const db = getFirestore();
 const adminAuth = getAuth();
@@ -2591,12 +2592,13 @@ exports.sendBulkSms = onCall(
     ...callableOptions,
     timeoutSeconds: 300,
     memory: "256MiB",
-    secrets: [smsNetBdApiKey],
+    secrets: [zendSmsApiKey, zendSmsSenderId],
   },
   guarded(createServerSmsHandler({
     db,
-    smsProvider: createSmsNetBdProvider({
-      apiKey: () => smsNetBdApiKey.value(),
+    smsProvider: createZendSmsProvider({
+      apiKey: () => zendSmsApiKey.value(),
+      senderId: () => zendSmsSenderId.value(),
     }),
   }), "server_sms_batch"),
 );
