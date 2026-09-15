@@ -4,6 +4,8 @@
 // Manager accessors and are deliberately kept out of URLs, message records,
 // error strings, and logs.
 const ENDPOINT = "https://api.zendsms.com/api/v1/send-sms";
+const BALANCE_ENDPOINT = "https://api.zendsms.com/api/v1/balance";
+const DLR_ENDPOINT_PREFIX = "https://api.zendsms.com/api/v1/dlr/";
 
 const KNOWN_FAILURES = new Map([
   ["2001", "The SMS provider rejected the API key."],
@@ -102,6 +104,27 @@ function parseProviderResponse(body) {
   };
 }
 
+function parsePayload(body) {
+  try {
+    const payload = JSON.parse(String(body || ""));
+    if (!payload || typeof payload !== "object" || typeof payload.success !== "boolean") {
+      throw new Error("invalid payload");
+    }
+    return payload;
+  } catch (_) {
+    throw new ZendSmsError("MALFORMED_RESPONSE", "The SMS provider returned an unreadable response.", { ambiguous: true });
+  }
+}
+
+function providerFailure(payload) {
+  const code = payload.code != null ? String(payload.code).slice(0, 32) : "REJECTED";
+  return new ZendSmsError(code, KNOWN_FAILURES.get(code) || stringValue(payload.message) || "The SMS provider rejected this request.");
+}
+
+function validMessageId(value) {
+  return typeof value === "string" && /^[A-Za-z0-9-]{16,128}$/.test(value);
+}
+
 function createZendSmsProvider({ apiKey, senderId, fetchImpl = globalThis.fetch, timeoutMs = 12_000 } = {}) {
   if (typeof fetchImpl !== "function") throw new TypeError("A fetch implementation is required.");
   return {
@@ -144,11 +167,61 @@ function createZendSmsProvider({ apiKey, senderId, fetchImpl = globalThis.fetch,
         clearTimeout(timer);
       }
     },
+    async getBalance() {
+      const key = secretValue(apiKey, "ZendSMS API key");
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const response = await fetchImpl(BALANCE_ENDPOINT, {
+          method: "GET",
+          headers: { accept: "application/json", authorization: `Bearer ${key}` },
+          signal: controller.signal,
+        });
+        const payload = parsePayload(await response.text());
+        if (!response.ok || payload.success !== true || String(payload.code) !== "1000") throw providerFailure(payload);
+        const balance = Number(payload.data && payload.data.balance);
+        if (!Number.isFinite(balance) || balance < 0) {
+          throw new ZendSmsError("MALFORMED_RESPONSE", "The SMS provider returned an invalid wallet balance.", { ambiguous: true });
+        }
+        return { balance, currency: stringValue(payload.data && payload.data.currency, 12) || "BDT" };
+      } catch (error) {
+        if (error instanceof ZendSmsError) throw error;
+        const timedOut = error && error.name === "AbortError";
+        throw new ZendSmsError(timedOut ? "TIMEOUT" : "NETWORK_ERROR", timedOut
+          ? "The SMS provider did not respond in time." : "Could not reach the SMS provider.", { ambiguous: true });
+      } finally { clearTimeout(timer); }
+    },
+    async getDeliveryStatus(messageId) {
+      if (!validMessageId(messageId)) throw new ZendSmsError("INVALID_MESSAGE_ID", "Invalid SMS provider message ID.");
+      const key = secretValue(apiKey, "ZendSMS API key");
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const response = await fetchImpl(`${DLR_ENDPOINT_PREFIX}${encodeURIComponent(messageId)}`, {
+          method: "GET",
+          headers: { accept: "application/json", authorization: `Bearer ${key}` },
+          signal: controller.signal,
+        });
+        const payload = parsePayload(await response.text());
+        if (!response.ok || payload.success !== true || String(payload.code) !== "1000") throw providerFailure(payload);
+        const data = payload.data && typeof payload.data === "object" ? payload.data : {};
+        const status = stringValue(data.status, 32).toUpperCase();
+        if (!status) throw new ZendSmsError("MALFORMED_RESPONSE", "The SMS provider returned an invalid delivery status.", { ambiguous: true });
+        return { messageId: stringValue(data.message_id, 128) || messageId, status, submittedAt: stringValue(data.submitted_at, 48), deliveredAt: stringValue(data.delivered_at, 48) };
+      } catch (error) {
+        if (error instanceof ZendSmsError) throw error;
+        const timedOut = error && error.name === "AbortError";
+        throw new ZendSmsError(timedOut ? "TIMEOUT" : "NETWORK_ERROR", timedOut
+          ? "The SMS provider did not respond in time." : "Could not reach the SMS provider.", { ambiguous: true });
+      } finally { clearTimeout(timer); }
+    },
   };
 }
 
 module.exports = {
   ENDPOINT,
+  BALANCE_ENDPOINT,
+  DLR_ENDPOINT_PREFIX,
   KNOWN_FAILURES,
   ZendSmsError,
   createZendSmsProvider,

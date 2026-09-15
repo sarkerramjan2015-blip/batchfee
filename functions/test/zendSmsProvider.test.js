@@ -6,6 +6,8 @@ const test = require("node:test");
 
 const {
   ENDPOINT,
+  BALANCE_ENDPOINT,
+  DLR_ENDPOINT_PREFIX,
   ZendSmsError,
   createZendSmsProvider,
   normalizeBangladeshPhone,
@@ -106,4 +108,29 @@ test("does not contact ZendSMS without a configured API key and sender ID", asyn
     (error) => error instanceof ZendSmsError && error.code === "NOT_CONFIGURED",
   );
   assert.equal(called, false);
+});
+
+test("reads the ZendSMS wallet and DLR using bearer authentication", async () => {
+  const apiKey = opaqueCredential();
+  const messageId = "6f1a2b3c-4d5e-6f70-8192-a3b4c5d6e7f8";
+  const requests = [];
+  const provider = createZendSmsProvider({
+    apiKey,
+    senderId: "8809612781000",
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      const body = url === BALANCE_ENDPOINT
+        ? { success: true, code: 1000, data: { balance: 115, currency: "BDT" } }
+        : { success: true, code: 1000, data: { message_id: messageId, status: "DELIVERED" } };
+      return { ok: true, status: 200, text: async () => JSON.stringify(body) };
+    },
+  });
+  assert.deepEqual(await provider.getBalance(), { balance: 115, currency: "BDT" });
+  assert.deepEqual(await provider.getDeliveryStatus(messageId), {
+    messageId, status: "DELIVERED", submittedAt: "", deliveredAt: "",
+  });
+  assert.equal(requests[0].url, BALANCE_ENDPOINT);
+  assert.equal(requests[1].url, `${DLR_ENDPOINT_PREFIX}${messageId}`);
+  assert.equal(requests.every(({ options }) => options.headers.authorization === `Bearer ${apiKey}`), true);
+  assert.equal(requests.every(({ options }) => !String(options.body || "").includes(apiKey)), true);
 });
