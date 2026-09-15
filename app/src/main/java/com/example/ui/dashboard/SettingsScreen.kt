@@ -395,7 +395,7 @@ fun SettingsScreen(
                                     Spacer(Modifier.width(10.dp))
                                     Column(horizontalAlignment = Alignment.End) {
                                         Text(
-                                            "BDT ${"%.0f".format(pkg.payableAmount)}",
+                                            "BDT ${formatSmsMoney(pkg.payableAmount)}",
                                             color = Color(0xFFF59E0B),
                                             fontSize = 12.sp,
                                             fontWeight = FontWeight.Bold
@@ -719,14 +719,14 @@ private fun SmsRechargeDialog(
                         fontWeight = FontWeight.Bold
                     )
                     Spacer(Modifier.height(8.dp))
-                    Text("Base amount: BDT ${"%.0f".format(pkg.baseAmount)}", color = TextMuted, fontSize = 12.sp)
+                    Text("Base amount: BDT ${formatSmsMoney(pkg.baseAmount)}", color = TextMuted, fontSize = 12.sp)
                     Text(
-                        "Charge (${pkg.chargePercent}%): BDT ${"%.0f".format(pkg.chargeAmount)}",
+                        "Charge (${pkg.chargePercent}%): BDT ${formatSmsMoney(pkg.chargeAmount)}",
                         color = TextMuted,
                         fontSize = 12.sp
                     )
                     Text(
-                        "Total payable: BDT ${"%.0f".format(pkg.payableAmount)}",
+                        "Total payable: BDT ${formatSmsMoney(pkg.payableAmount)}",
                         color = Color(0xFFF59E0B),
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold
@@ -778,7 +778,7 @@ private fun SmsRechargeDialog(
                         )
                     )
                     Text(
-                        "Pay exactly BDT ${"%.0f".format(pkg.payableAmount)}. This final package price includes the ${pkg.chargePercent}% processing charge; no extra amount is added in the app.",
+                        "Pay exactly BDT ${formatSmsMoney(pkg.payableAmount)}. This final package price includes the ${pkg.chargePercent}% processing charge; no extra amount is added in the app.",
                         color = TextMuted,
                         fontSize = 10.sp
                     )
@@ -940,6 +940,10 @@ private fun SmsPackageRow(pkg: SmsPackage, onClick: () -> Unit) {
 
 private fun SmsPackage.effectiveRatePaisa(): Double =
     if (smsCount > 0) payableAmount * 100.0 / smsCount else 0.0
+
+private fun formatSmsMoney(amount: Double): String =
+    if (amount == amount.toLong().toDouble()) amount.toLong().toString()
+    else "%.2f".format(amount).trimEnd('0').trimEnd('.')
 
 @Composable
 private fun SmsReportDialog(onDismiss: () -> Unit) {

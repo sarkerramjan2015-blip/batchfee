@@ -66,6 +66,8 @@ import com.batchfee.edu.data.models.SubscriptionRequest
 import com.batchfee.edu.data.repository.SafeDeletionRepository
 import com.batchfee.edu.data.repository.PermanentArchivePurgeRepository
 import com.batchfee.edu.data.repository.SmsRechargeAccounting
+import com.batchfee.edu.data.repository.SmsPlatformAnalytics
+import com.batchfee.edu.data.repository.SmsProfitPeriod
 import com.batchfee.edu.data.repository.SmsRechargeReviewRequest
 import com.batchfee.edu.data.repository.SubscriptionRepository
 import com.batchfee.edu.data.repository.PlatformAdminRepository
@@ -174,7 +176,7 @@ private fun slugifyPlanName(name: String): String = buildString {
 private fun formatMoneyValue(price: Double): String = if (price == price.toLong().toDouble()) {
     price.toLong().toString()
 } else {
-    "%.0f".format(price)
+    "%.2f".format(price).trimEnd('0').trimEnd('.')
 }
 
 private fun subscriptionOperationErrorMessage(error: Exception): String {
@@ -360,8 +362,14 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
     private val _smsAccounting = MutableStateFlow<SmsRechargeAccounting?>(null)
     val smsAccounting = _smsAccounting.asStateFlow()
 
+    private val _smsPlatformAnalytics = MutableStateFlow<SmsPlatformAnalytics?>(null)
+    val smsPlatformAnalytics = _smsPlatformAnalytics.asStateFlow()
+
     private val _reviewingSmsRequestIds = MutableStateFlow<Set<String>>(emptySet())
     val reviewingSmsRequestIds = _reviewingSmsRequestIds.asStateFlow()
+
+    private val _recordingCentralSmsTopup = MutableStateFlow(false)
+    val recordingCentralSmsTopup = _recordingCentralSmsTopup.asStateFlow()
 
     private val platformAdminRepository = PlatformAdminRepository()
 
@@ -713,6 +721,11 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
             try {
                 _smsRechargeRequests.value = platformAdminRepository.listSmsRechargeRequests()
                 _smsAccounting.value = runCatching { platformAdminRepository.smsAccounting() }.getOrNull()
+                _smsPlatformAnalytics.value = if (_platformRole.value == "root") {
+                    runCatching { platformAdminRepository.smsPlatformAnalytics() }.getOrNull()
+                } else {
+                    null
+                }
             } catch (e: Exception) {
                 _operationMsg.value = "SMS recharge list unavailable: ${e.message}"
                 FirebaseFailureReporter.recordException(e)
@@ -721,6 +734,35 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
     }
 
     fun refreshSmsRecharge() = loadSmsRecharge()
+
+    fun recordCentralSmsTopup(
+        supplier: String,
+        paidAmountBdt: Double,
+        purchasedSms: Int,
+        reference: String,
+        note: String
+    ) {
+        if (_recordingCentralSmsTopup.value) return
+        _recordingCentralSmsTopup.value = true
+        viewModelScope.launch {
+            try {
+                platformAdminRepository.recordCentralSmsTopup(
+                    supplier = supplier,
+                    paidAmountBdt = paidAmountBdt,
+                    purchasedSms = purchasedSms,
+                    reference = reference,
+                    note = note,
+                )
+                _operationMsg.value = "Central SMS top-up recorded"
+                loadSmsRecharge()
+            } catch (e: Exception) {
+                _operationMsg.value = "Central SMS top-up failed: ${e.message}"
+                FirebaseFailureReporter.recordException(e)
+            } finally {
+                _recordingCentralSmsTopup.value = false
+            }
+        }
+    }
 
     fun approveSmsRecharge(request: SmsRechargeReviewRequest, receivedAmount: Double, note: String? = null) {
         if (request.requestId in _reviewingSmsRequestIds.value) return
@@ -742,7 +784,7 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
                         it.copy(status = "approved", smsCount = credited, creditedSmsCount = credited, receivedAmount = receivedAmount)
                     } else it
                 }
-                _operationMsg.value = "Approved ${request.packageName}: ${if (receivedAmount < request.payableAmount) "partial " else ""}SMS credit applied for BDT ${"%.0f".format(receivedAmount)}"
+                _operationMsg.value = "Approved ${request.packageName}: ${if (receivedAmount < request.payableAmount) "partial " else ""}SMS credit applied for BDT ${formatMoneyValue(receivedAmount)}"
                 loadSmsRecharge()
             } catch (e: Exception) {
                 _operationMsg.value = "SMS approve failed: ${e.message}"
@@ -1901,7 +1943,9 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
     val approvingRequestIds by viewModel.approvingRequestIds.collectAsState()
     val smsRechargeRequests by viewModel.smsRechargeRequests.collectAsState()
     val smsAccounting by viewModel.smsAccounting.collectAsState()
+    val smsPlatformAnalytics by viewModel.smsPlatformAnalytics.collectAsState()
     val reviewingSmsRequestIds by viewModel.reviewingSmsRequestIds.collectAsState()
+    val recordingCentralSmsTopup by viewModel.recordingCentralSmsTopup.collectAsState()
     val managedUsers by viewModel.managedUsers.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val hasMoreInstitutes by viewModel.hasMoreInstitutes.collectAsState()
@@ -2202,10 +2246,13 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
                 SmsRechargeReviewSection(
                     requests = smsRechargeRequests,
                     accounting = smsAccounting,
+                    analytics = smsPlatformAnalytics,
                     reviewingRequestIds = reviewingSmsRequestIds,
+                    recordingCentralSmsTopup = recordingCentralSmsTopup,
                     institutes = institutes,
                     onLoaded = { viewModel.loadSmsRecharge() },
                     onRefresh = { viewModel.refreshSmsRecharge() },
+                    onRecordCentralTopup = viewModel::recordCentralSmsTopup,
                     onApprove = viewModel::approveSmsRecharge,
                     onReject = { request, note -> viewModel.rejectSmsRecharge(request, note) }
                 )
@@ -2836,10 +2883,13 @@ private fun SuperAdminTabBar(
 private fun SmsRechargeReviewSection(
     requests: List<SmsRechargeReviewRequest>,
     accounting: SmsRechargeAccounting?,
+    analytics: SmsPlatformAnalytics?,
     reviewingRequestIds: Set<String>,
+    recordingCentralSmsTopup: Boolean,
     institutes: List<InstituteCardData>,
     onLoaded: () -> Unit,
     onRefresh: () -> Unit,
+    onRecordCentralTopup: (String, Double, Int, String, String) -> Unit,
     onApprove: (SmsRechargeReviewRequest, Double, String?) -> Unit,
     onReject: (SmsRechargeReviewRequest, String?) -> Unit
 ) {
@@ -2848,6 +2898,12 @@ private fun SmsRechargeReviewSection(
     var approveTarget by remember { mutableStateOf<SmsRechargeReviewRequest?>(null) }
     var verifiedAmount by remember { mutableStateOf("") }
     var approveNote by remember { mutableStateOf("") }
+    var showCentralTopup by remember { mutableStateOf(false) }
+    var centralSupplier by remember { mutableStateOf("ZendSMS") }
+    var centralAmount by remember { mutableStateOf("") }
+    var centralSmsCount by remember { mutableStateOf("") }
+    var centralReference by remember { mutableStateOf("") }
+    var centralNote by remember { mutableStateOf("") }
     LaunchedEffect(Unit) { onLoaded() }
 
     Column {
@@ -2875,8 +2931,22 @@ private fun SmsRechargeReviewSection(
                     )
                 }
             }
-            TextButton(onClick = onRefresh) {
-                Text("Refresh", color = AccentCyan, fontSize = 12.sp)
+            Column(horizontalAlignment = Alignment.End) {
+                if (analytics != null) {
+                    TextButton(onClick = {
+                        centralSupplier = "ZendSMS"
+                        centralAmount = ""
+                        centralSmsCount = ""
+                        centralReference = ""
+                        centralNote = ""
+                        showCentralTopup = true
+                    }) {
+                        Text("Record stock", color = AccentGreen, fontSize = 11.sp)
+                    }
+                }
+                TextButton(onClick = onRefresh) {
+                    Text("Refresh", color = AccentCyan, fontSize = 12.sp)
+                }
             }
         }
 
@@ -2935,10 +3005,180 @@ private fun SmsRechargeReviewSection(
                     fontSize = 10.sp
                 )
                 Text(
-                    "Cost: BDT ${"%.0f".format(summary.totalCostTaka)} (${summary.smsUnitCostPaisa} poisha/SMS)",
+                    "Cost: BDT ${formatMoneyValue(summary.totalCostTaka)} (${summary.smsUnitCostPaisa}p + ${formatMoneyValue(summary.providerRechargeChargePercent)}% = ${formatMoneyValue(summary.providerEffectiveUnitCostPaisa)}p/SMS)",
                     color = TextMuted,
                     fontSize = 10.sp
                 )
+            }
+        }
+
+        analytics?.let { report ->
+            Spacer(Modifier.height(10.dp))
+            Card(
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = CardBg),
+                border = BorderStroke(1.dp, AccentCyan.copy(alpha = 0.42f))
+            ) {
+                Column(Modifier.padding(12.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.Analytics, null, tint = AccentCyan, modifier = Modifier.size(19.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Live SMS Control Center", color = TextWhite, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            Text("Zend wallet + recent delivery reconciliation", color = TextMuted, fontSize = 10.sp)
+                        }
+                        Text("LIVE", color = AccentGreen, fontWeight = FontWeight.Bold, fontSize = 10.sp)
+                    }
+
+                    Spacer(Modifier.height(10.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        CompactStat("Today", report.todaySms.toString(), AccentCyan, Icons.Filled.Today, Modifier.weight(1f))
+                        CompactStat("This week", report.weekSms.toString(), AccentGreen, Icons.Filled.DateRange, Modifier.weight(1f))
+                        CompactStat("This month", report.monthSms.toString(), AccentAmber, Icons.Filled.CalendarMonth, Modifier.weight(1f))
+                        CompactStat("Lifetime", report.lifetimeSms.toString(), AccentViolet, Icons.Filled.AllInclusive, Modifier.weight(1f))
+                    }
+
+                    Spacer(Modifier.height(12.dp))
+                    HorizontalDivider(color = BorderSub)
+                    Spacer(Modifier.height(9.dp))
+                    Text("Profit & loss — accrued", color = TextWhite, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                    Text(
+                        "Revenue collected − SMS procurement estimate. Zend: 25p VAT-included + 2% central top-up = 25.50p per SMS.",
+                        color = TextMuted,
+                        fontSize = 9.sp
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        CompactStat("Today profit", "BDT ${formatMoneyValue(report.profitToday.grossProfitBdt)}", AccentGreen, Icons.Filled.Today, Modifier.weight(1f))
+                        CompactStat("Week profit", "BDT ${formatMoneyValue(report.profitWeek.grossProfitBdt)}", AccentCyan, Icons.Filled.DateRange, Modifier.weight(1f))
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        CompactStat("Month profit", "BDT ${formatMoneyValue(report.profitMonth.grossProfitBdt)}", AccentAmber, Icons.Filled.CalendarMonth, Modifier.weight(1f))
+                        CompactStat("Lifetime profit", "BDT ${formatMoneyValue(report.profitLifetime.grossProfitBdt)}", AccentViolet, Icons.Filled.AllInclusive, Modifier.weight(1f))
+                    }
+                    Spacer(Modifier.height(7.dp))
+                    SmsProfitPeriodLine("Today", report.profitToday)
+                    SmsProfitPeriodLine("This week", report.profitWeek)
+                    SmsProfitPeriodLine("This month", report.profitMonth)
+                    SmsProfitPeriodLine("Lifetime", report.profitLifetime)
+
+                    Spacer(Modifier.height(10.dp))
+                    HorizontalDivider(color = BorderSub)
+                    Spacer(Modifier.height(9.dp))
+                    if (report.providerError.isNotBlank()) {
+                        Text("Zend wallet unavailable: ${report.providerError}", color = AccentRed, fontSize = 11.sp)
+                    } else {
+                        Text(
+                            "Zend wallet: ${report.providerCurrency} ${"%.2f".format(report.providerBalanceBdt ?: 0.0)}  |  Capacity: ${report.centralCapacitySms} SMS",
+                            color = TextWhite,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            "Provider cost: ${report.providerCostPaisa}p VAT-included + ${formatMoneyValue(report.providerRechargeChargePercent)}% top-up = ${formatMoneyValue(report.providerEffectiveCostPaisa)}p / SMS",
+                            color = TextMuted,
+                            fontSize = 10.sp
+                        )
+                        Text(
+                            "Recorded central purchases: ${report.centralTopupCount} | ${report.centralTopupSms} SMS | BDT ${"%.0f".format(report.centralTopupPaidBdt)}",
+                            color = TextMuted,
+                            fontSize = 10.sp
+                        )
+                        Spacer(Modifier.height(5.dp))
+                        if (report.reorderSms > 0) {
+                            Text(
+                                "Reorder now: ${report.reorderSms} SMS (about BDT ${"%.2f".format(report.reorderAmountBdt)}) to cover sold credits.",
+                                color = AccentRed,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 11.sp
+                            )
+                        } else {
+                            Text(
+                                "Central stock covers all ${report.outstandingSms} SMS credits already sold to institutes.",
+                                color = AccentGreen,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+
+                    Spacer(Modifier.height(10.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        CompactStat("Delivered", report.delivered.toString(), AccentGreen, Icons.Filled.CheckCircle, Modifier.weight(1f))
+                        CompactStat("Pending DLR", report.pending.toString(), AccentAmber, Icons.Filled.Schedule, Modifier.weight(1f))
+                        CompactStat("Failed", report.failed.toString(), AccentRed, Icons.Filled.ErrorOutline, Modifier.weight(1f))
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "Owner sales: ${report.buyerInstituteCount} institutes  |  ${report.soldSms} SMS sold  |  BDT ${"%.0f".format(report.collectedTaka)} collected",
+                        color = TextMuted,
+                        fontSize = 10.sp
+                    )
+                    if (report.dlrAttempted > 0) {
+                        Text(
+                            "DLR refresh checked ${report.dlrAttempted}; updated ${report.dlrUpdated}.",
+                            color = TextMuted,
+                            fontSize = 10.sp
+                        )
+                    }
+                    if (report.eventWindowTruncated) {
+                        Text("Recent delivery history is capped; wallet totals above remain authoritative.", color = AccentAmber, fontSize = 10.sp)
+                    }
+
+                    if (report.institutes.isNotEmpty()) {
+                        Spacer(Modifier.height(10.dp))
+                        HorizontalDivider(color = BorderSub)
+                        Spacer(Modifier.height(8.dp))
+                        Text("Top institute usage this month", color = TextWhite, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                        report.institutes.take(5).forEach { institute ->
+                            Spacer(Modifier.height(6.dp))
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        institute.instituteName.ifBlank { institute.instituteId },
+                                        color = TextWhite,
+                                        fontSize = 11.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        "Today ${institute.todaySms} | Week ${institute.weekSms} | Lifetime ${institute.lifetimeSms}",
+                                        color = TextMuted,
+                                        fontSize = 9.sp
+                                    )
+                                }
+                                Text(
+                                    "${institute.monthSms} SMS\nWallet ${institute.walletBalance}",
+                                    color = AccentCyan,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+                    }
+                    if (report.centralTopups.isNotEmpty()) {
+                        Spacer(Modifier.height(10.dp))
+                        HorizontalDivider(color = BorderSub)
+                        Spacer(Modifier.height(8.dp))
+                        Text("Latest central purchases", color = TextWhite, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                        report.centralTopups.take(3).forEach { topup ->
+                            Spacer(Modifier.height(5.dp))
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(topup.supplier, color = TextWhite, fontSize = 11.sp)
+                                    Text(topup.reference.ifBlank { "No reference" }, color = TextMuted, fontSize = 9.sp)
+                                }
+                                Text(
+                                    "${topup.purchasedSms} SMS\nBDT ${"%.0f".format(topup.paidAmountBdt)}",
+                                    color = AccentGreen,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -2969,7 +3209,7 @@ private fun SmsRechargeReviewSection(
                                     fontSize = 13.sp
                                 )
                                 Text(
-                                    "BDT ${"%.0f".format(request.payableAmount)} (incl. ${"%.0f".format(request.chargeAmount)} charge) · ${request.paymentMethod.uppercase().replaceFirstChar { it.uppercase() }} · ${request.senderPhone}",
+                                    "BDT ${formatMoneyValue(request.payableAmount)} (incl. ${formatMoneyValue(request.chargeAmount)} charge) · ${request.paymentMethod.uppercase().replaceFirstChar { it.uppercase() }} · ${request.senderPhone}",
                                     color = TextMuted,
                                     fontSize = 10.sp
                                 )
@@ -2986,7 +3226,7 @@ private fun SmsRechargeReviewSection(
                             Button(
                                 onClick = {
                                     approveTarget = request
-                                    verifiedAmount = "%.0f".format(request.payableAmount)
+                                    verifiedAmount = formatMoneyValue(request.payableAmount)
                                     approveNote = ""
                                 },
                                 enabled = !reviewing,
@@ -3032,7 +3272,7 @@ private fun SmsRechargeReviewSection(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        "Requested: ${target.requestedSmsCount} SMS credits · Due: BDT ${"%.0f".format(target.payableAmount)}",
+                        "Requested: ${target.requestedSmsCount} SMS credits · Due: BDT ${formatMoneyValue(target.payableAmount)}",
                         color = TextWhite,
                         fontSize = 12.sp
                     )
@@ -3091,6 +3331,82 @@ private fun SmsRechargeReviewSection(
         )
     }
 
+    if (showCentralTopup) {
+        val amount = centralAmount.toDoubleOrNull()
+        val smsCount = centralSmsCount.toIntOrNull()
+        val valid = centralSupplier.isNotBlank() && amount != null && amount > 0 && smsCount != null && smsCount > 0
+        AlertDialog(
+            onDismissRequest = { if (!recordingCentralSmsTopup) showCentralTopup = false },
+            containerColor = CardBg,
+            title = { Text("Record central SMS stock", color = TextWhite, fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Enter the final supplier payment after verification, including Zend's 2% recharge charge. This is central stock only; it never credits an institute wallet.", color = TextMuted, fontSize = 11.sp)
+                    OutlinedTextField(
+                        value = centralSupplier,
+                        onValueChange = { centralSupplier = it },
+                        label = { Text("Supplier", color = TextMuted) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = directoryFieldColors()
+                    )
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = centralAmount,
+                            onValueChange = { centralAmount = it },
+                            label = { Text("Final paid BDT (incl. 2%)", color = TextMuted) },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            modifier = Modifier.weight(1f),
+                            colors = directoryFieldColors()
+                        )
+                        OutlinedTextField(
+                            value = centralSmsCount,
+                            onValueChange = { centralSmsCount = it },
+                            label = { Text("SMS received", color = TextMuted) },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.weight(1f),
+                            colors = directoryFieldColors()
+                        )
+                    }
+                    OutlinedTextField(
+                        value = centralReference,
+                        onValueChange = { centralReference = it },
+                        label = { Text("Payment reference (optional)", color = TextMuted) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = directoryFieldColors()
+                    )
+                    OutlinedTextField(
+                        value = centralNote,
+                        onValueChange = { centralNote = it },
+                        label = { Text("Note (optional)", color = TextMuted) },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = directoryFieldColors()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (amount != null && smsCount != null) {
+                            onRecordCentralTopup(centralSupplier, amount, smsCount, centralReference, centralNote)
+                            showCentralTopup = false
+                        }
+                    },
+                    enabled = valid && !recordingCentralSmsTopup,
+                    colors = ButtonDefaults.buttonColors(containerColor = AccentGreen)
+                ) { Text(if (recordingCentralSmsTopup) "Recording..." else "Record top-up", color = BgColor) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCentralTopup = false }, enabled = !recordingCentralSmsTopup) {
+                    Text("Cancel", color = TextMuted)
+                }
+            }
+        )
+    }
+
     rejectTarget?.let { target ->
         AlertDialog(
             onDismissRequest = { rejectTarget = null },
@@ -3099,7 +3415,7 @@ private fun SmsRechargeReviewSection(
             text = {
                 Column {
                     Text(
-                        "${target.packageName} · ${target.smsCount} SMS · BDT ${"%.0f".format(target.payableAmount)}",
+                        "${target.packageName} · ${target.smsCount} SMS · BDT ${formatMoneyValue(target.payableAmount)}",
                         color = TextWhite,
                         fontSize = 12.sp
                     )
@@ -3130,6 +3446,35 @@ private fun SmsRechargeReviewSection(
             dismissButton = {
                 TextButton(onClick = { rejectTarget = null }) { Text("Cancel", color = TextMuted) }
             }
+        )
+    }
+}
+
+@Composable
+private fun SmsProfitPeriodLine(label: String, period: SmsProfitPeriod) {
+    Spacer(Modifier.height(4.dp))
+    Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(9.dp))
+            .background(BgColor.copy(alpha = 0.36f)).padding(horizontal = 9.dp, vertical = 6.dp)
+    ) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(label, color = TextWhite, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+            Text(
+                "Profit BDT ${formatMoneyValue(period.grossProfitBdt)}",
+                color = if (period.grossProfitBdt >= 0) AccentGreen else AccentRed,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+        Text(
+            "${period.creditedSms} SMS · Sales BDT ${formatMoneyValue(period.smsSalesBdt)} · Service BDT ${formatMoneyValue(period.serviceChargeBdt)} · Cost BDT ${formatMoneyValue(period.providerEstimatedCostBdt)}",
+            color = TextMuted,
+            fontSize = 9.sp
+        )
+        Text(
+            "Avg sale ${formatMoneyValue(period.averageSmsSaleRatePaisa)}p/SMS · Central top-up BDT ${formatMoneyValue(period.centralTopupSpendBdt)} (${period.centralTopupSms} SMS) · Cash after top-up BDT ${formatMoneyValue(period.cashNetAfterTopupsBdt)}",
+            color = TextMuted,
+            fontSize = 9.sp
         )
     }
 }
@@ -4079,10 +4424,13 @@ private fun PlatformMemberConsole(
                         SmsRechargeReviewSection(
                             requests = smsRechargeRequests,
                             accounting = null,
+                            analytics = null,
                             reviewingRequestIds = reviewingSmsRequestIds,
+                            recordingCentralSmsTopup = false,
                             institutes = institutes,
                             onLoaded = onSmsLoaded,
                             onRefresh = onSmsLoaded,
+                            onRecordCentralTopup = { _, _, _, _, _ -> },
                             onApprove = viewModel::approveSmsRecharge,
                             onReject = { request, note -> viewModel.rejectSmsRecharge(request, note) }
                         )

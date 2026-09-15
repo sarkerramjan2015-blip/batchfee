@@ -188,8 +188,83 @@ data class SmsRechargeAccounting(
     val totalUsedSms: Int,
     val outstandingBalance: Int,
     val smsUnitCostPaisa: Int,
+    val providerRechargeChargePercent: Double,
+    val providerEffectiveUnitCostPaisa: Double,
+    val smsSalesTaka: Double,
+    val serviceChargeTaka: Double,
     val totalCostTaka: Double,
     val profitTaka: Double
+)
+
+/** One financial period. Profit is accrued sales revenue less estimated SMS procurement cost.
+ * Cash net after top-ups is deliberately separate because a top-up buys future inventory. */
+data class SmsProfitPeriod(
+    val creditedSms: Int,
+    val smsSalesBdt: Double,
+    val serviceChargeBdt: Double,
+    val totalCollectedBdt: Double,
+    val providerEstimatedCostBdt: Double,
+    val grossProfitBdt: Double,
+    val centralTopupSpendBdt: Double,
+    val centralTopupSms: Int,
+    val cashNetAfterTopupsBdt: Double,
+    val averageSmsSaleRatePaisa: Double
+)
+
+/** Root-only, server-calculated SMS operations snapshot. Zend credentials never leave Cloud Functions. */
+data class SmsInstituteUsage(
+    val instituteId: String,
+    val instituteName: String,
+    val todaySms: Int,
+    val weekSms: Int,
+    val monthSms: Int,
+    val lifetimeSms: Int,
+    val walletBalance: Int
+)
+
+data class PlatformSmsTopup(
+    val topupId: String,
+    val supplier: String,
+    val paidAmountBdt: Double,
+    val purchasedSms: Int,
+    val reference: String,
+    val note: String,
+    val recordedAtMs: Long
+)
+
+data class SmsPlatformAnalytics(
+    val todaySms: Int,
+    val weekSms: Int,
+    val monthSms: Int,
+    val lifetimeSms: Int,
+    val delivered: Int,
+    val pending: Int,
+    val failed: Int,
+    val outstandingSms: Int,
+    val soldSms: Int,
+    val collectedTaka: Double,
+    val buyerInstituteCount: Int,
+    val providerBalanceBdt: Double?,
+    val providerCurrency: String,
+    val centralCapacitySms: Int,
+    val reorderSms: Int,
+    val reorderAmountBdt: Double,
+    val providerCostPaisa: Int,
+    val providerRechargeChargePercent: Double,
+    val providerEffectiveCostPaisa: Double,
+    val centralTopupCount: Int,
+    val centralTopupPaidBdt: Double,
+    val centralTopupSms: Int,
+    val centralTopups: List<PlatformSmsTopup>,
+    val providerError: String,
+    val dlrAttempted: Int,
+    val dlrUpdated: Int,
+    val eventWindowTruncated: Boolean,
+    val institutes: List<SmsInstituteUsage>,
+    val profitToday: SmsProfitPeriod,
+    val profitWeek: SmsProfitPeriod,
+    val profitMonth: SmsProfitPeriod,
+    val profitLifetime: SmsProfitPeriod
 )
 
 /** All privileged platform writes are routed to commitPlatformAdminOperation. */
@@ -488,9 +563,103 @@ class PlatformAdminRepository(
             totalUsedSms = data.number("totalUsedSms").toInt(),
             outstandingBalance = data.number("outstandingBalance").toInt(),
             smsUnitCostPaisa = data.number("smsUnitCostPaisa").toInt(),
+            providerRechargeChargePercent = data.number("providerRechargeChargePercent").toDouble(),
+            providerEffectiveUnitCostPaisa = data.number("providerEffectiveUnitCostPaisa").toDouble(),
+            smsSalesTaka = data.number("smsSalesTaka").toDouble(),
+            serviceChargeTaka = data.number("serviceChargeTaka").toDouble(),
             totalCostTaka = data.number("totalCostTaka").toDouble(),
             profitTaka = data.number("profitTaka").toDouble()
         )
+    }
+
+    /** Reads the live Zend wallet and reconciles a bounded set of pending DLRs server-side. */
+    suspend fun smsPlatformAnalytics(): SmsPlatformAnalytics = try {
+        val response = functions.getHttpsCallable("getPlatformSmsAnalytics").call(emptyMap<String, Any>()).await()
+        @Suppress("UNCHECKED_CAST")
+        val data = response.data as? Map<String, Any?> ?: error("Invalid SMS analytics response.")
+        @Suppress("UNCHECKED_CAST")
+        val institutes = (data["institutes"] as? List<*>).orEmpty()
+            .mapNotNull { (it as? Map<*, *>)?.toSmsInstituteUsage() }
+        @Suppress("UNCHECKED_CAST")
+        val dlr = data["dlrSync"] as? Map<*, *> ?: emptyMap<String, Any?>()
+        @Suppress("UNCHECKED_CAST")
+        val financials = data["financials"] as? Map<*, *> ?: emptyMap<String, Any?>()
+        SmsPlatformAnalytics(
+            todaySms = data.number("todaySms").toInt(),
+            weekSms = data.number("weekSms").toInt(),
+            monthSms = data.number("monthSms").toInt(),
+            lifetimeSms = data.number("lifetimeSms").toInt(),
+            delivered = data.number("delivered").toInt(),
+            pending = data.number("pending").toInt(),
+            failed = data.number("failed").toInt(),
+            outstandingSms = data.number("outstandingSms").toInt(),
+            soldSms = data.number("soldSms").toInt(),
+            collectedTaka = data.number("collectedTaka").toDouble(),
+            buyerInstituteCount = data.number("buyerInstituteCount").toInt(),
+            providerBalanceBdt = (data["providerBalanceBdt"] as? Number)?.toDouble(),
+            providerCurrency = data["providerCurrency"] as? String ?: "BDT",
+            centralCapacitySms = data.number("centralCapacitySms").toInt(),
+            reorderSms = data.number("reorderSms").toInt(),
+            reorderAmountBdt = data.number("reorderAmountBdt").toDouble(),
+            providerCostPaisa = data.number("providerCostPaisa").toInt(),
+            providerRechargeChargePercent = data.number("providerRechargeChargePercent").toDouble(),
+            providerEffectiveCostPaisa = data.number("providerEffectiveCostPaisa").toDouble(),
+            centralTopupCount = data.number("centralTopupCount").toInt(),
+            centralTopupPaidBdt = data.number("centralTopupPaidBdt").toDouble(),
+            centralTopupSms = data.number("centralTopupSms").toInt(),
+            centralTopups = (data["centralTopups"] as? List<*>).orEmpty()
+                .mapNotNull { (it as? Map<*, *>)?.toPlatformSmsTopup() },
+            providerError = data["providerError"] as? String ?: "",
+            dlrAttempted = (dlr["attempted"] as? Number)?.toInt() ?: 0,
+            dlrUpdated = (dlr["updated"] as? Number)?.toInt() ?: 0,
+            eventWindowTruncated = data["eventWindowTruncated"] as? Boolean ?: false,
+            institutes = institutes,
+            profitToday = financials.period("today"),
+            profitWeek = financials.period("week"),
+            profitMonth = financials.period("month"),
+            profitLifetime = financials.period("lifetime")
+        )
+    } catch (error: FirebaseFunctionsException) {
+        throw when (error.code) {
+            FirebaseFunctionsException.Code.PERMISSION_DENIED,
+            FirebaseFunctionsException.Code.UNAUTHENTICATED -> IllegalArgumentException(
+                error.message ?: "SMS analytics was rejected.", error
+            )
+            else -> error
+        }
+    }
+
+    /** Creates one immutable, verified central supplier-purchase ledger entry. */
+    suspend fun recordCentralSmsTopup(
+        supplier: String,
+        paidAmountBdt: Double,
+        purchasedSms: Int,
+        reference: String = "",
+        note: String = "",
+        operationId: String = UUID.randomUUID().toString()
+    ): PlatformSmsTopup = try {
+        val response = functions.getHttpsCallable("recordPlatformSmsTopup").call(mapOf(
+            "operationId" to operationId,
+            "supplier" to supplier.trim(),
+            "paidAmountBdt" to paidAmountBdt,
+            "purchasedSms" to purchasedSms,
+            "reference" to reference.trim(),
+            "note" to note.trim(),
+        )).await()
+        @Suppress("UNCHECKED_CAST")
+        val data = response.data as? Map<String, Any?> ?: error("Invalid SMS top-up response.")
+        val topup = data["topup"] as? Map<*, *> ?: error("SMS top-up was not returned.")
+        topup.toPlatformSmsTopup()
+    } catch (error: FirebaseFunctionsException) {
+        throw when (error.code) {
+            FirebaseFunctionsException.Code.INVALID_ARGUMENT,
+            FirebaseFunctionsException.Code.ALREADY_EXISTS,
+            FirebaseFunctionsException.Code.PERMISSION_DENIED,
+            FirebaseFunctionsException.Code.UNAUTHENTICATED -> IllegalArgumentException(
+                error.message ?: "SMS top-up was rejected.", error
+            )
+            else -> error
+        }
     }
 
     private suspend fun callSmsWallet(
@@ -671,5 +840,50 @@ private fun Map<*, *>.toSmsReviewRequest(): SmsRechargeReviewRequest {
         createdAtMs = (this["createdAtMs"] as? Number)?.toLong() ?: 0L,
         reviewedAtMs = (this["reviewedAtMs"] as? Number)?.toLong() ?: 0L,
         reviewerNote = string("reviewerNote")
+    )
+}
+
+private fun Map<*, *>.toSmsInstituteUsage(): SmsInstituteUsage {
+    fun string(key: String): String = this[key] as? String ?: ""
+    fun int(key: String): Int = (this[key] as? Number)?.toInt() ?: 0
+    return SmsInstituteUsage(
+        instituteId = string("instituteId"),
+        instituteName = string("instituteName"),
+        todaySms = int("todaySms"),
+        weekSms = int("weekSms"),
+        monthSms = int("monthSms"),
+        lifetimeSms = int("lifetimeSms"),
+        walletBalance = int("walletBalance")
+    )
+}
+
+private fun Map<*, *>.toPlatformSmsTopup(): PlatformSmsTopup {
+    fun string(key: String): String = this[key] as? String ?: ""
+    fun int(key: String): Int = (this[key] as? Number)?.toInt() ?: 0
+    return PlatformSmsTopup(
+        topupId = string("topupId"),
+        supplier = string("supplier"),
+        paidAmountBdt = (this["paidAmountBdt"] as? Number)?.toDouble() ?: 0.0,
+        purchasedSms = int("purchasedSms"),
+        reference = string("reference"),
+        note = string("note"),
+        recordedAtMs = (this["recordedAtMs"] as? Number)?.toLong() ?: 0L
+    )
+}
+
+private fun Map<*, *>.period(key: String): SmsProfitPeriod {
+    val value = this[key] as? Map<*, *> ?: emptyMap<String, Any?>()
+    fun number(name: String): Double = (value[name] as? Number)?.toDouble() ?: 0.0
+    return SmsProfitPeriod(
+        creditedSms = number("creditedSms").toInt(),
+        smsSalesBdt = number("smsSalesBdt"),
+        serviceChargeBdt = number("serviceChargeBdt"),
+        totalCollectedBdt = number("totalCollectedBdt"),
+        providerEstimatedCostBdt = number("providerEstimatedCostBdt"),
+        grossProfitBdt = number("grossProfitBdt"),
+        centralTopupSpendBdt = number("centralTopupSpendBdt"),
+        centralTopupSms = number("centralTopupSms").toInt(),
+        cashNetAfterTopupsBdt = number("cashNetAfterTopupsBdt"),
+        averageSmsSaleRatePaisa = number("averageSmsSaleRatePaisa")
     )
 }

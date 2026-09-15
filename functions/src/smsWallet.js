@@ -41,30 +41,37 @@ const WALLET_FIELDS = {
   sms_send_method: "carrier",
 };
 
-// Manual payment charge added on top of the package base amount.
+// BatchFee's service charge collected from an institute owner. This is shown
+// separately from the SMS sale rate so finance can reconcile both amounts.
 const SMS_RECHARGE_CHARGE_PERCENT = 1.8;
 
 // SMS_PACKAGES is the single authoritative price list. Clients never send
 // amounts; they send a package ID and the server quotes the price again.
 const SMS_PACKAGES = [
-  { id: "starter", layer: "Small & Medium Batches", name: "Starter", baseAmount: 100, smsCount: 275 },
-  { id: "basic", layer: "Small & Medium Batches", name: "Basic", baseAmount: 200, smsCount: 560 },
-  { id: "standard", layer: "Small & Medium Batches", name: "Standard", baseAmount: 500, smsCount: 1450 },
-  { id: "pro", layer: "Large Coaching Centers", name: "Pro", baseAmount: 1000, smsCount: 3000 },
-  { id: "premium", layer: "Large Coaching Centers", name: "Premium", baseAmount: 2000, smsCount: 6250 },
-  { id: "advanced", layer: "Mega Coaching & Schools", name: "Advanced", baseAmount: 5000, smsCount: 16500 },
-  { id: "enterprise", layer: "Mega Coaching & Schools", name: "Enterprise", baseAmount: 10000, smsCount: 35000 },
+  // Base selling rates run from BDT 0.38 down to BDT 0.32 per SMS.
+  // The 1.8% BatchFee service charge is added by rechargeQuote below.
+  { id: "starter", layer: "Small & Medium Batches", name: "Starter", baseAmount: 100, smsCount: 265 },
+  { id: "basic", layer: "Small & Medium Batches", name: "Basic", baseAmount: 200, smsCount: 540 },
+  { id: "standard", layer: "Small & Medium Batches", name: "Standard", baseAmount: 500, smsCount: 1385 },
+  { id: "pro", layer: "Large Coaching Centers", name: "Pro", baseAmount: 1000, smsCount: 2855 },
+  { id: "premium", layer: "Large Coaching Centers", name: "Premium", baseAmount: 2000, smsCount: 5880 },
+  { id: "advanced", layer: "Mega Coaching & Schools", name: "Advanced", baseAmount: 5000, smsCount: 15150 },
+  { id: "enterprise", layer: "Mega Coaching & Schools", name: "Enterprise", baseAmount: 10000, smsCount: 31250 },
 ];
 
-// What BatchFee itself pays the SMS gateway per message. Update this to the
-// real gateway rate; it is only used for the platform profit summary.
-const SMS_UNIT_COST_PAISA = 20;
+// ZendSMS's non-masking price is BDT 0.25 per segment (VAT included). The
+// provider also charges 2% when BatchFee recharges its central wallet. The
+// effective procurement cost therefore is BDT 0.255 per sellable SMS.
+const SMS_UNIT_COST_PAISA = 25;
+const SMS_PROVIDER_RECHARGE_CHARGE_PERCENT = 2;
 
 const MAX_MY_REQUESTS = 20;
 const MAX_PLATFORM_REQUESTS = 100;
 const MAX_SMS_BATCH = 400;
 const MAX_SERVER_SMS_BATCH = 100;
 const MAX_SMS_REPORT = 50;
+const MAX_PLATFORM_SMS_EVENTS = 5000;
+const MAX_PLATFORM_SMS_TOPUPS = 100;
 
 function requiredString(data, field, maxLength = 128) {
   const value = data && typeof data[field] === "string" ? data[field].trim() : "";
@@ -87,6 +94,14 @@ function verifiedReceivedAmount(data) {
     throw new HttpsError("invalid-argument", "Enter the verified received amount.");
   }
   return Math.round(value * 100) / 100;
+}
+
+function positiveWholeNumber(data, field, maximum = 100000000) {
+  const value = Number(data && data[field]);
+  if (!Number.isInteger(value) || value < 1 || value > maximum) {
+    throw new HttpsError("invalid-argument", `Enter a valid ${field}.`);
+  }
+  return value;
 }
 
 function validOperationId(value) {
@@ -151,7 +166,7 @@ function packageById(packageId) {
 }
 
 function rechargeQuote(pkg) {
-  const chargeAmount = Math.round(pkg.baseAmount * (SMS_RECHARGE_CHARGE_PERCENT / 100));
+  const chargeAmount = roundMoney(pkg.baseAmount * (SMS_RECHARGE_CHARGE_PERCENT / 100));
   return {
     packageId: pkg.id,
     layer: pkg.layer,
@@ -164,8 +179,131 @@ function rechargeQuote(pkg) {
   };
 }
 
+function roundMoney(value) {
+  return Math.round(Number(value) * 100) / 100;
+}
+
+function providerEffectiveCostPerSmsBdt() {
+  return (SMS_UNIT_COST_PAISA / 100) * (1 + SMS_PROVIDER_RECHARGE_CHARGE_PERCENT / 100);
+}
+
+function smsRatePaisa(amountBdt, smsCount) {
+  return smsCount > 0 ? roundMoney((amountBdt * 100) / smsCount) : 0;
+}
+
+/**
+ * Preserves the economics of each approved recharge. New approvals write this
+ * immutable snapshot; old records use the stored quote as a safe fallback.
+ */
+function rechargeFinancialSnapshot(data, creditedSmsCount, receivedAmount) {
+  const quotedBase = Number(data.baseAmount);
+  const quotedCharge = Number(data.chargeAmount);
+  const quotedPayable = Number(data.payableAmount);
+  const hasQuote = Number.isFinite(quotedBase) && quotedBase >= 0
+    && Number.isFinite(quotedCharge) && quotedCharge >= 0
+    && Number.isFinite(quotedPayable) && quotedPayable > 0;
+  const totalCollectedBdt = roundMoney(receivedAmount);
+  const serviceChargeBdt = hasQuote
+    ? roundMoney(totalCollectedBdt * (quotedCharge / quotedPayable))
+    : 0;
+  const smsSalesBdt = roundMoney(totalCollectedBdt - serviceChargeBdt);
+  const providerCostBdt = roundMoney(creditedSmsCount * providerEffectiveCostPerSmsBdt());
+  return {
+    totalCollectedBdt,
+    smsSalesBdt,
+    serviceChargeBdt,
+    providerCostBdt,
+    grossProfitBdt: roundMoney(totalCollectedBdt - providerCostBdt),
+    saleRatePaisa: smsRatePaisa(smsSalesBdt, creditedSmsCount),
+    providerBaseRatePaisa: SMS_UNIT_COST_PAISA,
+    providerRechargeChargePercent: SMS_PROVIDER_RECHARGE_CHARGE_PERCENT,
+    providerEffectiveRatePaisa: smsRatePaisa(providerCostBdt, creditedSmsCount),
+  };
+}
+
+function zeroFinancialPeriod() {
+  return {
+    creditedSms: 0,
+    smsSalesBdt: 0,
+    serviceChargeBdt: 0,
+    totalCollectedBdt: 0,
+    providerEstimatedCostBdt: 0,
+    grossProfitBdt: 0,
+    centralTopupSpendBdt: 0,
+    centralTopupSms: 0,
+  };
+}
+
+function addRechargeToFinancialPeriod(period, data) {
+  const creditedSms = Number.isInteger(data.creditedSmsCount) ? data.creditedSmsCount
+    : (Number.isInteger(data.smsCount) ? data.smsCount : 0);
+  const receivedAmount = Number.isFinite(data.receivedAmount) ? data.receivedAmount
+    : (Number.isFinite(data.payableAmount) ? data.payableAmount : 0);
+  const saved = data.financials && typeof data.financials === "object" ? data.financials : null;
+  const fallback = rechargeFinancialSnapshot(data, creditedSms, receivedAmount);
+  const value = (field) => saved && Number.isFinite(saved[field]) ? saved[field] : fallback[field];
+  period.creditedSms += creditedSms;
+  period.smsSalesBdt += value("smsSalesBdt");
+  period.serviceChargeBdt += value("serviceChargeBdt");
+  period.totalCollectedBdt += value("totalCollectedBdt");
+  period.providerEstimatedCostBdt += value("providerCostBdt");
+  period.grossProfitBdt += value("grossProfitBdt");
+}
+
+function addCentralTopupToFinancialPeriod(period, data) {
+  period.centralTopupSpendBdt += Number(data.paidAmountBdt) || 0;
+  period.centralTopupSms += Number.isInteger(data.purchasedSms) ? data.purchasedSms : 0;
+}
+
+function finaliseFinancialPeriod(period) {
+  const rounded = {};
+  for (const [key, value] of Object.entries(period)) {
+    rounded[key] = key.endsWith("Sms") ? value : roundMoney(value);
+  }
+  return {
+    ...rounded,
+    // Cash movement is informative, but not booked profit: a central top-up
+    // creates SMS inventory that may be sold in a later period.
+    cashNetAfterTopupsBdt: roundMoney(rounded.totalCollectedBdt - rounded.centralTopupSpendBdt),
+    averageSmsSaleRatePaisa: smsRatePaisa(rounded.smsSalesBdt, rounded.creditedSms),
+  };
+}
+
+function financialPeriodNames(occurredAtMs, now) {
+  const current = dhakaUsageKeys(now);
+  const occurred = dhakaUsageKeys(occurredAtMs);
+  const weekStart = new Date(`${current.dayKey}T00:00:00Z`);
+  weekStart.setUTCDate(weekStart.getUTCDate() - ((weekStart.getUTCDay() + 6) % 7));
+  const weekKey = weekStart.toISOString().slice(0, 10);
+  const periods = ["lifetime"];
+  if (occurred.dayKey === current.dayKey) periods.push("today");
+  if (occurred.dayKey >= weekKey && occurred.dayKey <= current.dayKey) periods.push("week");
+  if (occurred.monthKey === current.monthKey) periods.push("month");
+  return periods;
+}
+
 function publicPackage(pkg) {
   return rechargeQuote(pkg);
+}
+
+/**
+ * A submitted quote is immutable. Keeping it independent from the current
+ * rate card lets us change future package pricing without invalidating an
+ * owner's already-submitted payment request.
+ */
+function storedRechargeQuote(data) {
+  const smsCount = Number.isInteger(data.requestedSmsCount) ? data.requestedSmsCount : data.smsCount;
+  const baseAmount = Number(data.baseAmount);
+  const chargeAmount = Number(data.chargeAmount);
+  const payableAmount = Number(data.payableAmount);
+  const chargePercent = Number(data.chargePercent);
+  if (!Number.isInteger(smsCount) || smsCount < 1 || !Number.isFinite(baseAmount) || baseAmount <= 0
+    || !Number.isFinite(chargeAmount) || chargeAmount < 0 || !Number.isFinite(payableAmount) || payableAmount <= 0
+    || !Number.isFinite(chargePercent) || chargePercent < 0 || chargePercent > 100
+    || Math.abs(roundMoney(baseAmount + chargeAmount) - payableAmount) > 0.001) {
+    throw new HttpsError("failed-precondition", "This request has no valid server quote. Ask the owner to resubmit.");
+  }
+  return { smsCount, baseAmount, chargeAmount, payableAmount, chargePercent };
 }
 
 function publicRechargeRequest(id, data) {
@@ -464,12 +602,10 @@ async function reviewRechargeRequest({ db, request, operationId, now }) {
       throw new HttpsError("failed-precondition", "This recharge request was already reviewed.");
     }
 
-    // Re-quote the package server-side; a stale or forged amount is ignored.
-    const pkg = packageById(data.packageId);
-    const requestedSmsCount = Number.isInteger(data.requestedSmsCount) ? data.requestedSmsCount : data.smsCount;
-    if (!pkg || requestedSmsCount !== pkg.smsCount) {
-      throw new HttpsError("failed-precondition", "This request has no valid server quote. Ask the owner to resubmit.");
-    }
+    // Use the quote frozen at owner submission time, never the live rate card.
+    // This prevents a later price change from breaking an existing payment.
+    const quote = storedRechargeQuote(data);
+    const requestedSmsCount = quote.smsCount;
 
     const instituteRef = db.collection("institutes").doc(data.instituteId);
     const auditRef = instituteRef.collection("sms_wallet_audit").doc(operationId);
@@ -478,7 +614,6 @@ async function reviewRechargeRequest({ db, request, operationId, now }) {
     let receivedAmount = 0;
 
     if (decision === "approve" || decision === "approve_partial") {
-      const quote = rechargeQuote(pkg);
       receivedAmount = verifiedReceivedAmount(request.data);
       if (decision === "approve" && receivedAmount < quote.payableAmount) {
         throw new HttpsError("failed-precondition", "The verified payment is below the quoted amount. Use partial approval or reject it.");
@@ -491,6 +626,7 @@ async function reviewRechargeRequest({ db, request, operationId, now }) {
       if (!Number.isInteger(creditedSmsCount) || creditedSmsCount < 1 || creditedSmsCount > quote.smsCount) {
         throw new HttpsError("failed-precondition", "The verified payment is too small to credit an SMS segment.");
       }
+      const financials = rechargeFinancialSnapshot(data, creditedSmsCount, receivedAmount);
       const instituteSnap = await tx.get(instituteRef);
       if (!instituteSnap.exists) {
         throw new HttpsError("failed-precondition", "The institute account is not ready yet.");
@@ -509,6 +645,7 @@ async function reviewRechargeRequest({ db, request, operationId, now }) {
         requestedSmsCount,
         creditedSmsCount,
         receivedAmount,
+        financials,
       });
       tx.set(auditRef, {
         instituteId: data.instituteId,
@@ -520,6 +657,7 @@ async function reviewRechargeRequest({ db, request, operationId, now }) {
         creditedSmsCount,
         payableAmount: quote.payableAmount,
         receivedAmount,
+        financials,
         partialApproval: decision === "approve_partial",
         paymentMethod: data.paymentMethod,
         actorUid: reviewer.uid,
@@ -587,14 +725,22 @@ async function smsAccounting({ db, request }) {
     .get();
 
   let totalCollectedTaka = 0;
+  let smsSalesTaka = 0;
+  let serviceChargeTaka = 0;
   let totalCreditedSms = 0;
   let approvedCount = 0;
   for (const doc of approved.docs) {
     const data = doc.data() || {};
-    totalCollectedTaka += Number.isFinite(data.receivedAmount)
-      ? data.receivedAmount : (Number.isFinite(data.payableAmount) ? data.payableAmount : 0);
-    totalCreditedSms += Number.isInteger(data.creditedSmsCount)
+    const creditedSms = Number.isInteger(data.creditedSmsCount)
       ? data.creditedSmsCount : (Number.isInteger(data.smsCount) ? data.smsCount : 0);
+    const receivedAmount = Number.isFinite(data.receivedAmount)
+      ? data.receivedAmount : (Number.isFinite(data.payableAmount) ? data.payableAmount : 0);
+    const financials = rechargeFinancialSnapshot(data, creditedSms, receivedAmount);
+    const saved = data.financials && typeof data.financials === "object" ? data.financials : null;
+    totalCollectedTaka += saved && Number.isFinite(saved.totalCollectedBdt) ? saved.totalCollectedBdt : financials.totalCollectedBdt;
+    smsSalesTaka += saved && Number.isFinite(saved.smsSalesBdt) ? saved.smsSalesBdt : financials.smsSalesBdt;
+    serviceChargeTaka += saved && Number.isFinite(saved.serviceChargeBdt) ? saved.serviceChargeBdt : financials.serviceChargeBdt;
+    totalCreditedSms += creditedSms;
     approvedCount += 1;
   }
 
@@ -608,17 +754,230 @@ async function smsAccounting({ db, request }) {
   }
 
   const smsUnitCostPaisa = SMS_UNIT_COST_PAISA;
-  const totalCostTaka = (totalCreditedSms * smsUnitCostPaisa) / 100;
+  const providerEffectiveUnitCostPaisa = SMS_UNIT_COST_PAISA * (1 + SMS_PROVIDER_RECHARGE_CHARGE_PERCENT / 100);
+  const totalCostTaka = roundMoney(totalCreditedSms * providerEffectiveCostPerSmsBdt());
   return {
     rechargeRequestCount: approvedCount,
     pendingRequestCount: pending.size,
-    totalCollectedTaka,
+    totalCollectedTaka: roundMoney(totalCollectedTaka),
+    smsSalesTaka: roundMoney(smsSalesTaka),
+    serviceChargeTaka: roundMoney(serviceChargeTaka),
     totalCreditedSms,
     totalUsedSms,
     outstandingBalance,
     smsUnitCostPaisa,
+    providerRechargeChargePercent: SMS_PROVIDER_RECHARGE_CHARGE_PERCENT,
+    providerEffectiveUnitCostPaisa,
     totalCostTaka,
-    profitTaka: totalCollectedTaka - totalCostTaka,
+    profitTaka: roundMoney(totalCollectedTaka - totalCostTaka),
+  };
+}
+
+const MAX_PENDING_DLR_SYNC = 25;
+
+function publicPlatformSmsTopup(id, data) {
+  return {
+    topupId: id,
+    supplier: typeof data.supplier === "string" ? data.supplier : "",
+    paidAmountBdt: Number.isFinite(data.paidAmountBdt) ? data.paidAmountBdt : 0,
+    purchasedSms: Number.isInteger(data.purchasedSms) ? data.purchasedSms : 0,
+    reference: typeof data.reference === "string" ? data.reference : "",
+    note: typeof data.note === "string" ? data.note : "",
+    recordedByUid: typeof data.recordedByUid === "string" ? data.recordedByUid : "",
+    recordedAtMs: safeMillis(data.recordedAtMs),
+  };
+}
+
+/**
+ * Root records a verified central supplier purchase. Zend has no endpoint for
+ * lifetime purchase history, so this immutable ledger is the source of truth
+ * for central-procurement totals; it never changes the institute wallets.
+ */
+async function recordPlatformSmsTopup({ db, request, now = Date.now() }) {
+  const actor = await assertPlatformRole(db, request.auth, ["root"]);
+  const operationId = requiredString(request.data, "operationId", 128);
+  if (!validOperationId(operationId)) throw new HttpsError("invalid-argument", "Invalid SMS top-up operation.");
+  const supplier = requiredString(request.data, "supplier", 80);
+  const paidAmountBdt = verifiedReceivedAmount({ receivedAmount: request.data && request.data.paidAmountBdt });
+  const purchasedSms = positiveWholeNumber(request.data, "purchasedSms");
+  const reference = optionalString(request.data, "reference", 100);
+  const note = optionalString(request.data, "note", 300);
+  const payloadHash = createHash("sha256").update(JSON.stringify({ supplier, paidAmountBdt, purchasedSms, reference, note })).digest("hex");
+  const ref = db.collection("platform_sms_topups").doc(operationId);
+  const result = await db.runTransaction(async (tx) => {
+    const existing = await tx.get(ref);
+    if (existing.exists) {
+      if (existing.get("payloadHash") !== payloadHash || existing.get("recordedByUid") !== actor.uid) {
+        throw new HttpsError("already-exists", "This SMS top-up operation ID was already used with different data.");
+      }
+      return { replayed: true, topup: publicPlatformSmsTopup(operationId, existing.data() || {}) };
+    }
+    const data = {
+      supplier,
+      paidAmountBdt,
+      purchasedSms,
+      reference,
+      note,
+      payloadHash,
+      recordedByUid: actor.uid,
+      recordedAtMs: now,
+    };
+    tx.create(ref, data);
+    return { replayed: false, topup: publicPlatformSmsTopup(operationId, data) };
+  });
+  return result;
+}
+
+function zendDeliveryStatus(status) {
+  const value = typeof status === "string" ? status.trim().toUpperCase() : "";
+  if (value === "DELIVERED") return "delivered";
+  if (["FAILED", "UNDELIVERABLE", "EXPIRED", "REJECTED"].includes(value)) return "failed";
+  return "pending";
+}
+
+/**
+ * Reconcile a small, recent set of queued Zend messages whenever Root refreshes
+ * the control centre. A DLR failure is deliberately not refunded here: the
+ * gateway's charge/refund policy must remain the financial source of truth.
+ */
+async function syncPendingZendDelivery({ db, smsProvider, now }) {
+  if (!smsProvider || typeof smsProvider.getDeliveryStatus !== "function") {
+    return { attempted: 0, updated: 0 };
+  }
+  const pending = await db.collectionGroup("sms_messages")
+    .where("channel", "==", "server")
+    .where("status", "==", "pending")
+    .limit(MAX_PENDING_DLR_SYNC)
+    .get();
+  let attempted = 0;
+  let updated = 0;
+  await mapWithConcurrency(pending.docs, 4, async (doc) => {
+    const data = doc.data() || {};
+    const instituteId = typeof data.instituteId === "string" ? data.instituteId : "";
+    const providerMessageId = typeof data.providerMessageId === "string" ? data.providerMessageId : "";
+    if (!instituteId || !providerMessageId) return;
+    attempted += 1;
+    try {
+      const result = await smsProvider.getDeliveryStatus(providerMessageId);
+      const status = zendDeliveryStatus(result.status);
+      if (status === "pending") return;
+      const deliveredAtMs = result.deliveredAt ? Date.parse(result.deliveredAt) : now;
+      await updateSmsMessageStatus(db, instituteId, doc.id, status, {
+        now,
+        deliveredAtMs: Number.isFinite(deliveredAtMs) ? deliveredAtMs : now,
+        providerStatus: result.status,
+        failureReason: status === "failed" ? `Zend DLR: ${result.status}` : "",
+      });
+      updated += 1;
+    } catch (_) {
+      // A temporary DLR lookup failure must not make the whole dashboard fail.
+    }
+  });
+  return { attempted, updated };
+}
+
+/** Root-only, provider-backed operations view. Wallet totals are authoritative;
+ * message rows supply the weekly/DLR view and institute breakdowns. */
+async function platformSmsAnalytics({ db, request, smsProvider, now = Date.now() }) {
+  await assertPlatformRole(db, request.auth, ["root"]);
+  const dlrSync = await syncPendingZendDelivery({ db, smsProvider, now });
+  const [institutes, approved, events, centralTopups] = await Promise.all([
+    db.collection("institutes").get(),
+    db.collectionGroup("sms_recharge_requests").where("status", "==", "approved").get(),
+    db.collectionGroup("sms_messages").where("channel", "==", "server").orderBy("createdAtMs", "desc").limit(MAX_PLATFORM_SMS_EVENTS).get(),
+    db.collection("platform_sms_topups").orderBy("recordedAtMs", "desc").limit(MAX_PLATFORM_SMS_TOPUPS).get(),
+  ]);
+  const day = dhakaUsageKeys(now);
+  const weekStart = new Date(`${day.dayKey}T00:00:00Z`);
+  weekStart.setUTCDate(weekStart.getUTCDate() - ((weekStart.getUTCDay() + 6) % 7));
+  const weekKey = weekStart.toISOString().slice(0, 10);
+  const rows = new Map();
+  let lifetimeSms = 0, todaySms = 0, monthSms = 0, outstandingSms = 0;
+  for (const doc of institutes.docs) {
+    const data = doc.data() || {};
+    const wallet = walletDefaults(data, now);
+    lifetimeSms += wallet.total_sms_used;
+    todaySms += wallet.sms_used_today;
+    monthSms += wallet.sms_used_this_month;
+    outstandingSms += wallet.sms_balance;
+    rows.set(doc.id, {
+      instituteId: doc.id,
+      instituteName: typeof data.instituteName === "string" ? data.instituteName : doc.id,
+      todaySms: wallet.sms_used_today,
+      weekSms: 0,
+      monthSms: wallet.sms_used_this_month,
+      lifetimeSms: wallet.total_sms_used,
+      walletBalance: wallet.sms_balance,
+    });
+  }
+  let weekSms = 0, delivered = 0, pending = 0, failed = 0;
+  for (const doc of events.docs) {
+    const data = doc.data() || {}; const used = Number.isInteger(data.credits) ? data.credits : 1;
+    const id = typeof data.instituteId === "string" ? data.instituteId : "";
+    const row = rows.get(id) || { instituteId: id, instituteName: id || "Unknown institute", todaySms: 0, weekSms: 0, monthSms: 0, lifetimeSms: 0, walletBalance: 0 };
+    const keys = dhakaUsageKeys(safeMillis(data.createdAtMs));
+    if (keys.dayKey >= weekKey) { weekSms += used; row.weekSms += used; }
+    const status = data.status; if (status === "delivered") delivered += used; else if (status === "failed") failed += used; else pending += used;
+    rows.set(id, row);
+  }
+  const financialPeriods = {
+    today: zeroFinancialPeriod(),
+    week: zeroFinancialPeriod(),
+    month: zeroFinancialPeriod(),
+    lifetime: zeroFinancialPeriod(),
+  };
+  let soldSms = 0, collectedTaka = 0; const buyers = new Set();
+  for (const doc of approved.docs) {
+    const d = doc.data() || {};
+    const creditedSms = Number.isInteger(d.creditedSmsCount) ? d.creditedSmsCount : (d.smsCount || 0);
+    const receivedAmount = Number(d.receivedAmount ?? d.payableAmount) || 0;
+    soldSms += creditedSms;
+    collectedTaka += receivedAmount;
+    const approvedAtMs = safeMillis(d.reviewedAtMs) || safeMillis(d.createdAtMs);
+    for (const period of financialPeriodNames(approvedAtMs, now)) {
+      addRechargeToFinancialPeriod(financialPeriods[period], d);
+    }
+    if (typeof d.instituteId === "string" && d.instituteId) buyers.add(d.instituteId);
+  }
+  let providerBalance = null, providerError = "";
+  try { providerBalance = await smsProvider.getBalance(); } catch (e) { providerError = e && e.message ? e.message.slice(0, 120) : "Zend balance unavailable."; }
+  // The gateway balance is already loaded, so capacity uses its BDT 0.25
+  // consumption rate. A future top-up/reorder includes the separate 2% charge.
+  const centralCapacity = providerBalance ? Math.floor(providerBalance.balance * 100 / SMS_UNIT_COST_PAISA) : 0;
+  const reorderSms = providerBalance ? Math.max(0, outstandingSms - centralCapacity) : 0;
+  let centralTopupPaidBdt = 0;
+  let centralTopupSms = 0;
+  for (const doc of centralTopups.docs) {
+    const topup = doc.data() || {};
+    centralTopupPaidBdt += Number(topup.paidAmountBdt) || 0;
+    centralTopupSms += Number.isInteger(topup.purchasedSms) ? topup.purchasedSms : 0;
+    for (const period of financialPeriodNames(safeMillis(topup.recordedAtMs), now)) {
+      addCentralTopupToFinancialPeriod(financialPeriods[period], topup);
+    }
+  }
+  const financials = Object.fromEntries(
+    Object.entries(financialPeriods).map(([name, period]) => [name, finaliseFinancialPeriod(period)]),
+  );
+  return {
+    todaySms, weekSms, monthSms, lifetimeSms, delivered, pending, failed,
+    outstandingSms, soldSms, collectedTaka, buyerInstituteCount: buyers.size,
+    providerBalanceBdt: providerBalance ? providerBalance.balance : null,
+    providerCurrency: providerBalance ? providerBalance.currency : "BDT",
+    centralCapacitySms: centralCapacity,
+    reorderSms,
+    reorderAmountBdt: roundMoney(reorderSms * providerEffectiveCostPerSmsBdt()),
+    providerCostPaisa: SMS_UNIT_COST_PAISA,
+    providerRechargeChargePercent: SMS_PROVIDER_RECHARGE_CHARGE_PERCENT,
+    providerEffectiveCostPaisa: SMS_UNIT_COST_PAISA * (1 + SMS_PROVIDER_RECHARGE_CHARGE_PERCENT / 100),
+    centralTopupCount: centralTopups.size,
+    centralTopupPaidBdt,
+    centralTopupSms,
+    financials,
+    centralTopups: centralTopups.docs.slice(0, 10).map((doc) => publicPlatformSmsTopup(doc.id, doc.data() || {})),
+    providerError,
+    dlrSync,
+    eventWindowTruncated: events.size === MAX_PLATFORM_SMS_EVENTS,
+    institutes: [...rows.values()].sort((a, b) => b.monthSms - a.monthSms).slice(0, 20),
   };
 }
 
@@ -928,6 +1287,14 @@ function createServerSmsHandler({ db, smsProvider }) {
   return async (request) => sendServerSmsBatch({ db, request, smsProvider });
 }
 
+function createPlatformSmsAnalyticsHandler({ db, smsProvider }) {
+  return async (request) => platformSmsAnalytics({ db, request, smsProvider });
+}
+
+function createPlatformSmsTopupHandler({ db }) {
+  return async (request) => recordPlatformSmsTopup({ db, request });
+}
+
 /** Status counts and the latest messages for the institute's own SMS report. */
 async function listSmsReport({ db, request }) {
   const actor = await resolveTenantActor(db, request.auth);
@@ -960,6 +1327,7 @@ async function updateSmsMessageStatus(db, instituteId, messageId, status, option
   const patch = { status, updatedAtMs: now };
   if (status === "delivered") patch.deliveredAtMs = safeMillis(options.deliveredAtMs, now);
   if (status === "failed") patch.failureReason = optionalString({ failureReason: options.failureReason }, "failureReason", 240);
+  if (options.providerStatus != null) patch.providerStatus = optionalString({ providerStatus: options.providerStatus }, "providerStatus", 32);
   const ref = db.collection("institutes").doc(instituteId).collection("sms_messages").doc(messageId);
   await ref.update(patch);
 }
@@ -997,6 +1365,10 @@ module.exports = {
   MAX_SERVER_SMS_BATCH,
   WALLET_FIELDS,
   createServerSmsHandler,
+  createPlatformSmsAnalyticsHandler,
+  createPlatformSmsTopupHandler,
+  platformSmsAnalytics,
+  recordPlatformSmsTopup,
   createSmsWalletHandler,
   updateSmsMessageStatus,
   walletDefaults,

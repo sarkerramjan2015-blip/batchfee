@@ -48,7 +48,12 @@ const { buildRegistrationSlug, registrationFormUrl } = require("./registrationPr
 const { createSubscriptionBillingHandler } = require("./subscriptionBilling");
 const { createPlatformAdminHandler } = require("./platformAdmin");
 const { createNoticeCenterHandler } = require("./noticeCenter");
-const { createServerSmsHandler, createSmsWalletHandler } = require("./smsWallet");
+const {
+  createPlatformSmsAnalyticsHandler,
+  createPlatformSmsTopupHandler,
+  createServerSmsHandler,
+  createSmsWalletHandler,
+} = require("./smsWallet");
 const { createZendSmsProvider } = require("./zendSmsProvider");
 const {
   activityActorLabel,
@@ -2601,6 +2606,30 @@ exports.sendBulkSms = onCall(
       senderId: () => zendSmsSenderId.value(),
     }),
   }), "server_sms_batch"),
+);
+// Root-only dashboard. It owns the Zend credentials because it reads the
+// provider balance and reconciles trusted delivery reports; no client gets a
+// provider key or direct gateway access.
+exports.getPlatformSmsAnalytics = onCall(
+  {
+    ...callableOptions,
+    timeoutSeconds: 60,
+    memory: "256MiB",
+    secrets: [zendSmsApiKey, zendSmsSenderId],
+  },
+  guarded(createPlatformSmsAnalyticsHandler({
+    db,
+    smsProvider: createZendSmsProvider({
+      apiKey: () => zendSmsApiKey.value(),
+      senderId: () => zendSmsSenderId.value(),
+    }),
+  }), "platform_sms_analytics"),
+);
+// A separate root-only write endpoint keeps verified central SMS purchases
+// auditable without granting a client any direct provider access.
+exports.recordPlatformSmsTopup = onCall(
+  { ...callableOptions, timeoutSeconds: 60 },
+  guarded(createPlatformSmsTopupHandler({ db }), "platform_sms_topup"),
 );
 exports.commitSafeDeletion = onCall(
   { ...callableOptions, timeoutSeconds: 60 },

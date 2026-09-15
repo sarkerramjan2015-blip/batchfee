@@ -10,6 +10,8 @@ const {
   createServerSmsHandler,
   createSmsWalletHandler,
   dhakaUsageKeys,
+  platformSmsAnalytics,
+  recordPlatformSmsTopup,
   rechargeQuote,
   smsCreditCount,
   updateSmsMessageStatus,
@@ -299,25 +301,27 @@ test("unauthenticated and unknown-institute requests fail closed", async () => {
   );
 });
 
-test("the seven package quotes apply the 1.8% charge and round to whole taka", () => {
+test("the seven package quotes keep base SMS rates within 32-38 poisha and add the exact 1.8% charge", () => {
   assert.equal(SMS_PACKAGES.length, 7);
   assert.equal(SMS_RECHARGE_CHARGE_PERCENT, 1.8);
   const expected = [
-    ["starter", 100, 275, 102],
-    ["basic", 200, 560, 204],
-    ["standard", 500, 1450, 509],
-    ["pro", 1000, 3000, 1018],
-    ["premium", 2000, 6250, 2036],
-    ["advanced", 5000, 16500, 5090],
-    ["enterprise", 10000, 35000, 10180],
+    ["starter", 100, 265, 101.8],
+    ["basic", 200, 540, 203.6],
+    ["standard", 500, 1385, 509],
+    ["pro", 1000, 2855, 1018],
+    ["premium", 2000, 5880, 2036],
+    ["advanced", 5000, 15150, 5090],
+    ["enterprise", 10000, 31250, 10180],
   ];
   for (const [id, baseAmount, smsCount, payable] of expected) {
     const quote = rechargeQuote(SMS_PACKAGES.find((pkg) => pkg.id === id));
     assert.equal(quote.baseAmount, baseAmount);
     assert.equal(quote.smsCount, smsCount);
     assert.equal(quote.payableAmount, payable);
-    assert.equal(quote.chargeAmount, payable - baseAmount);
+    assert.equal(quote.chargeAmount, Math.round((payable - baseAmount) * 100) / 100);
     assert.equal(quote.chargePercent, 1.8);
+    assert.ok((quote.baseAmount * 100) / quote.smsCount >= 32);
+    assert.ok((quote.baseAmount * 100) / quote.smsCount <= 38);
   }
 });
 
@@ -347,8 +351,8 @@ test("submit_recharge_request is owner-only, server-quoted, and idempotent", asy
 
   const first = await handler(request);
   assert.equal(first.request.status, "pending");
-  assert.equal(first.request.payableAmount, 102);
-  assert.equal(first.request.smsCount, 275);
+  assert.equal(first.request.payableAmount, 101.8);
+  assert.equal(first.request.smsCount, 265);
   assert.equal(first.request.paymentMethod, "bkash");
 
   const stored = db.documents.get("institutes/i/sms_recharge_requests/recharge-submit-0001");
@@ -377,28 +381,67 @@ test("review approval credits the wallet once, writes audit and activity, and re
 
   const review = {
     auth: { uid: "root" },
-    data: { action: "review_recharge_request", operationId: "review-approve-0001", instituteId: "i", requestId: "recharge-submit-0001", decision: "approve", receivedAmount: 102, note: "" },
+    data: { action: "review_recharge_request", operationId: "review-approve-0001", instituteId: "i", requestId: "recharge-submit-0001", decision: "approve", receivedAmount: 101.8, note: "" },
   };
   const approved = await handler(review);
   assert.equal(approved.request.status, "approved");
 
   const institute = db.documents.get("institutes/i");
-  assert.equal(institute.sms_balance, 275);
-  assert.equal(institute.total_sms_purchased, 275);
+  assert.equal(institute.sms_balance, 265);
+  assert.equal(institute.total_sms_purchased, 265);
 
   const audit = db.documents.get("institutes/i/sms_wallet_audit/review-approve-0001");
   assert.equal(audit.action, "recharge_approved");
-  assert.equal(audit.smsCount, 275);
-  assert.equal(audit.payableAmount, 102);
+  assert.equal(audit.smsCount, 265);
+  assert.equal(audit.payableAmount, 101.8);
 
   const activity = db.documents.get("institutes/i/platform_activity_events/review-approve-0001");
   assert.equal(activity.action, "sms_recharge_approved");
-  assert.equal(activity.summary.includes("275 SMS"), true);
+  assert.equal(activity.summary.includes("265 SMS"), true);
 
   // Replaying the same review must not double-credit the wallet.
   await handler(review);
+  assert.equal(db.documents.get("institutes/i").sms_balance, 265);
+  assert.equal(db.documents.get("institutes/i").total_sms_purchased, 265);
+});
+
+test("a rate-card update never invalidates an already submitted server quote", async () => {
+  const db = seededDb();
+  db.documents.set("institutes/i/sms_recharge_requests/legacy-pending-quote", {
+    instituteId: "i",
+    status: "pending",
+    packageId: "starter",
+    packageName: "Starter",
+    layer: "Small & Medium Batches",
+    // This was the previous server-issued quote. Today's Starter package has
+    // a different SMS count, but this owner must still receive the quote they paid for.
+    smsCount: 275,
+    requestedSmsCount: 275,
+    creditedSmsCount: 0,
+    baseAmount: 100,
+    chargePercent: 1.8,
+    chargeAmount: 2,
+    payableAmount: 102,
+    paymentMethod: "bkash",
+    senderPhone: "01711111111",
+    createdAtMs: 100,
+  });
+
+  const result = await handlerFor(db)({
+    auth: { uid: "root" },
+    data: {
+      action: "review_recharge_request",
+      operationId: "approve-legacy-quote-001",
+      instituteId: "i",
+      requestId: "legacy-pending-quote",
+      decision: "approve",
+      receivedAmount: 102,
+    },
+  });
+
+  assert.equal(result.request.status, "approved");
+  assert.equal(result.request.creditedSmsCount, 275);
   assert.equal(db.documents.get("institutes/i").sms_balance, 275);
-  assert.equal(db.documents.get("institutes/i").total_sms_purchased, 275);
 });
 
 test("billing role can review but support cannot", async () => {
@@ -408,11 +451,11 @@ test("billing role can review but support cannot", async () => {
 
   const billingReview = {
     auth: { uid: "billing" },
-    data: { action: "review_recharge_request", operationId: "review-billing-0001", instituteId: "i", requestId: "recharge-submit-0001", decision: "approve", receivedAmount: 204, note: "" },
+    data: { action: "review_recharge_request", operationId: "review-billing-0001", instituteId: "i", requestId: "recharge-submit-0001", decision: "approve", receivedAmount: 203.6, note: "" },
   };
   const result = await handler(billingReview);
   assert.equal(result.request.status, "approved");
-  assert.equal(db.documents.get("institutes/i").sms_balance, 560);
+  assert.equal(db.documents.get("institutes/i").sms_balance, 540);
 
   await assert.rejects(
     handler({ auth: { uid: "support" }, data: { action: "review_recharge_request", operationId: "review-support-0001", instituteId: "i", requestId: "recharge-submit-0001", decision: "reject", note: "" } }),
@@ -439,15 +482,15 @@ test("partial approval credits only the server-calculated portion of a short pay
     },
   });
 
-  // Standard quote is BDT 509 for 1,450 credits: floor(450 / 509 * 1450) = 1,281.
+  // Standard quote is BDT 509 for 1,385 credits: floor(450 / 509 * 1385) = 1,224.
   assert.equal(result.request.status, "approved");
-  assert.equal(result.request.requestedSmsCount, 1450);
-  assert.equal(result.request.creditedSmsCount, 1281);
-  assert.equal(result.request.smsCount, 1281);
-  assert.equal(db.documents.get("institutes/i").sms_balance, 1281);
+  assert.equal(result.request.requestedSmsCount, 1385);
+  assert.equal(result.request.creditedSmsCount, 1224);
+  assert.equal(result.request.smsCount, 1224);
+  assert.equal(db.documents.get("institutes/i").sms_balance, 1224);
   const stored = db.documents.get("institutes/i/sms_recharge_requests/recharge-submit-partial");
   assert.equal(stored.receivedAmount, 450);
-  assert.equal(stored.creditedSmsCount, 1281);
+  assert.equal(stored.creditedSmsCount, 1224);
 
 });
 
@@ -490,13 +533,128 @@ test("sms_accounting aggregates collected, credited, used, cost, and profit", as
   assert.equal(accounting.totalCreditedSms, 1725);
   assert.equal(accounting.totalUsedSms, 125);
   assert.equal(accounting.outstandingBalance, 60);
-  assert.equal(accounting.totalCostTaka, 345);
-  assert.equal(accounting.profitTaka, 266);
+  assert.equal(accounting.totalCostTaka, 439.88);
+  assert.equal(accounting.profitTaka, 171.12);
 
   await assert.rejects(
     handler({ auth: { uid: "billing" }, data: { action: "sms_accounting", operationId: "accounting-0000002" } }),
     /platform access/i,
   );
+});
+
+test("platform SMS analytics reconciles DLR and separates owner liability from Zend balance", async () => {
+  const db = seededDb();
+  const now = Date.UTC(2026, 8, 15, 4, 0, 0);
+  const keys = dhakaUsageKeys(now);
+  db.documents.set("institutes/i", {
+    ...db.documents.get("institutes/i"),
+    sms_balance: 5, total_sms_used: 8, sms_used_today: 2, sms_usage_day_key: keys.dayKey,
+    sms_used_this_month: 2, sms_usage_month_key: keys.monthKey,
+  });
+  db.documents.set("institutes/j", {
+    ...db.documents.get("institutes/j"),
+    sms_balance: 3, total_sms_used: 4, sms_used_today: 1, sms_usage_day_key: keys.dayKey,
+    sms_used_this_month: 1, sms_usage_month_key: keys.monthKey,
+  });
+  db.documents.set("institutes/i/sms_recharge_requests/paid-a", {
+    instituteId: "i", status: "approved", creditedSmsCount: 6, receivedAmount: 3.5,
+  });
+  db.documents.set("institutes/j/sms_recharge_requests/paid-b", {
+    instituteId: "j", status: "approved", creditedSmsCount: 4, receivedAmount: 2.5,
+  });
+  db.documents.set("institutes/i/sms_messages/pending-a", {
+    instituteId: "i", channel: "server", status: "pending", credits: 2,
+    providerMessageId: "11111111-1111-1111-1111-111111111111", createdAtMs: now,
+  });
+  db.documents.set("institutes/j/sms_messages/delivered-b", {
+    instituteId: "j", channel: "server", status: "delivered", credits: 1, createdAtMs: now,
+  });
+  db.documents.set("institutes/j/sms_messages/failed-c", {
+    instituteId: "j", channel: "server", status: "failed", credits: 1, createdAtMs: now,
+  });
+
+  const analytics = await platformSmsAnalytics({
+    db,
+    request: { auth: { uid: "root" } },
+    now,
+    smsProvider: {
+      getBalance: async () => ({ balance: 1.25, currency: "BDT" }),
+      getDeliveryStatus: async () => ({ status: "DELIVERED", deliveredAt: "2026-09-15T04:01:00Z" }),
+    },
+  });
+
+  assert.equal(analytics.todaySms, 3);
+  assert.equal(analytics.weekSms, 4);
+  assert.equal(analytics.monthSms, 3);
+  assert.equal(analytics.lifetimeSms, 12);
+  assert.equal(analytics.delivered, 3);
+  assert.equal(analytics.failed, 1);
+  assert.equal(analytics.pending, 0);
+  assert.equal(analytics.soldSms, 10);
+  assert.equal(analytics.collectedTaka, 6);
+  assert.equal(analytics.buyerInstituteCount, 2);
+  assert.equal(analytics.outstandingSms, 8);
+  assert.equal(analytics.providerBalanceBdt, 1.25);
+  assert.equal(analytics.centralCapacitySms, 5);
+  assert.equal(analytics.reorderSms, 3);
+  assert.equal(analytics.reorderAmountBdt, 0.77);
+  assert.equal(analytics.financials.lifetime.providerEstimatedCostBdt, 2.55);
+  assert.equal(analytics.financials.lifetime.grossProfitBdt, 3.45);
+  assert.deepEqual(analytics.dlrSync, { attempted: 1, updated: 1 });
+  assert.equal(db.documents.get("institutes/i/sms_messages/pending-a").status, "delivered");
+  assert.equal(analytics.institutes.find((row) => row.instituteId === "i").lifetimeSms, 8);
+
+  await assert.rejects(
+    platformSmsAnalytics({ db, request: { auth: { uid: "billing" } }, now, smsProvider: {} }),
+    /platform access/i,
+  );
+});
+
+test("root records an immutable, idempotent central SMS top-up ledger", async () => {
+  const db = seededDb();
+  const request = {
+    auth: { uid: "root" },
+    data: {
+      operationId: "central-topup-000001",
+      supplier: "ZendSMS",
+      paidAmountBdt: 2500,
+      purchasedSms: 10000,
+      reference: "TXN-1234",
+      note: "September stock",
+    },
+  };
+  const first = await recordPlatformSmsTopup({ db, request, now: 1000 });
+  assert.equal(first.replayed, false);
+  assert.equal(first.topup.purchasedSms, 10000);
+  assert.equal(first.topup.paidAmountBdt, 2500);
+  const replay = await recordPlatformSmsTopup({ db, request, now: 2000 });
+  assert.equal(replay.replayed, true);
+  assert.equal(replay.topup.recordedAtMs, 1000);
+  assert.equal([...db.documents.keys()].filter((path) => path.startsWith("platform_sms_topups/")).length, 1);
+
+  await assert.rejects(
+    recordPlatformSmsTopup({
+      db,
+      request: { ...request, data: { ...request.data, paidAmountBdt: 2400 } },
+      now: 3000,
+    }),
+    /already used with different data/i,
+  );
+  await assert.rejects(
+    recordPlatformSmsTopup({ db, request: { ...request, auth: { uid: "billing" } }, now: 3000 }),
+    /platform access/i,
+  );
+
+  const report = await platformSmsAnalytics({
+    db,
+    request: { auth: { uid: "root" } },
+    now: 4000,
+    smsProvider: { getBalance: async () => ({ balance: 0, currency: "BDT" }) },
+  });
+  assert.equal(report.centralTopupCount, 1);
+  assert.equal(report.centralTopupPaidBdt, 2500);
+  assert.equal(report.centralTopupSms, 10000);
+  assert.equal(report.centralTopups[0].supplier, "ZendSMS");
 });
 
 test("list_my_recharge_requests returns only the institute's own history", async () => {
