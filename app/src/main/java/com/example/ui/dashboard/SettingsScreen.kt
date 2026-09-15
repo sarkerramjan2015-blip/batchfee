@@ -685,6 +685,8 @@ private fun SmsRechargeDialog(
         text = {
             Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
                 val pkg = selected
+                SmsBillingGuideCard()
+                Spacer(Modifier.height(10.dp))
                 if (pkg == null) {
                     loadError?.let { error ->
                         Text(error, color = AccentRed, fontSize = 12.sp)
@@ -830,6 +832,73 @@ private fun SmsRechargeDialog(
         },
         dismissButton = null
     )
+}
+
+/**
+ * Keeps the SMS segment rules beside the recharge packages so an institute
+ * owner can estimate usage before purchasing credits. A billable SMS segment
+ * always consumes one wallet credit, including a short final segment.
+ */
+@Composable
+private fun SmsBillingGuideCard() {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF0B1B2E)),
+        border = BorderStroke(1.dp, Cyan.copy(alpha = 0.42f))
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 11.dp),
+            verticalArrangement = Arrangement.spacedBy(7.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.Sms, contentDescription = null, tint = Cyan, modifier = Modifier.size(17.dp))
+                Spacer(Modifier.width(7.dp))
+                Text("SMS চার্জ কীভাবে হিসাব হয়", color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.weight(1f))
+                Text("৳0.32 / SMS", color = Cyan, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            }
+            Text(
+                "প্রতি billable SMS segment-এর রেট ৳0.32। শেষ অংশ ছোট হলেও পুরো ১টি SMS হিসাব হবে।",
+                color = TextMuted,
+                fontSize = 10.sp
+            )
+            SmsSegmentRule("English", "160 অক্ষর পর্যন্ত 1 SMS · এরপর প্রতি অংশে 153 অক্ষর")
+            SmsSegmentRule("বাংলা / Emoji", "70 অক্ষর পর্যন্ত 1 SMS · এরপর প্রতি অংশে 67 অক্ষর")
+            HorizontalDivider(color = BorderSub.copy(alpha = 0.8f))
+            Text(
+                "হিসাব: অংশসংখ্যা × প্রাপক × ৳0.32",
+                color = TextWhite,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium
+            )
+            Text(
+                "উদাহরণ: 2 অংশ × 10 জন = 20 SMS × ৳0.32 = ৳6.40",
+                color = Cyan,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Medium
+            )
+            Text(
+                "Package-এর final payable amount আলাদাভাবে দেখানো আছে।",
+                color = TextMuted,
+                fontSize = 9.sp
+            )
+        }
+    }
+}
+
+@Composable
+private fun SmsSegmentRule(label: String, detail: String) {
+    Row(verticalAlignment = Alignment.Top) {
+        Text(
+            label,
+            color = Color(0xFFF59E0B),
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.width(96.dp)
+        )
+        Text(detail, color = TextMuted, fontSize = 10.sp, modifier = Modifier.weight(1f))
+    }
 }
 
 @Composable
