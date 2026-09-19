@@ -32,11 +32,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.batchfee.edu.data.repository.QuestionBankFoundation
 import com.batchfee.edu.data.repository.QuestionBankFoundationRepository
+import com.batchfee.edu.data.repository.QuestionGenerationPreview
+import com.batchfee.edu.data.repository.QuestionGenerationRepository
+import com.batchfee.edu.data.repository.QuestionGenerationSetup
 import com.batchfee.edu.domain.SessionManager
 import com.google.mlkit.vision.documentscanner.GmsDocumentScannerOptions
 import com.google.mlkit.vision.documentscanner.GmsDocumentScanning
 import com.google.mlkit.vision.documentscanner.GmsDocumentScanningResult
 import kotlinx.coroutines.launch
+import java.util.UUID
 
 private val BankBg = Color(0xFF07111F)
 private val BankCard = Color(0xFF0F172A)
@@ -52,24 +56,35 @@ fun QuestionBankFoundationScreen(onBack: () -> Unit) {
     val activity = remember(context) { context.findActivity() }
     val instituteId by SessionManager.currentInstituteId.collectAsState()
     val repository = remember { QuestionBankFoundationRepository() }
+    val generationRepository = remember { QuestionGenerationRepository() }
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
 
     var foundation by remember { mutableStateOf<QuestionBankFoundation?>(null) }
     var loading by remember { mutableStateOf(true) }
     var accepting by remember { mutableStateOf(false) }
+    var generating by remember { mutableStateOf(false) }
+    var preview by remember { mutableStateOf<QuestionGenerationPreview?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var reloadKey by remember { mutableIntStateOf(0) }
 
     var examName by rememberSaveable { mutableStateOf("") }
     var totalMarks by rememberSaveable { mutableStateOf("") }
     var durationMinutes by rememberSaveable { mutableStateOf("") }
+    var questionCount by rememberSaveable { mutableStateOf("5") }
     var className by rememberSaveable { mutableStateOf("") }
     var subject by rememberSaveable { mutableStateOf("") }
     var chapter by rememberSaveable { mutableStateOf("") }
     var questionType by rememberSaveable { mutableStateOf("mcq") }
     var scannedPages by rememberSaveable { mutableStateOf(arrayListOf<String>()) }
     var launchingScanner by remember { mutableStateOf(false) }
+    var generationOperationId by rememberSaveable { mutableStateOf(UUID.randomUUID().toString()) }
+
+    fun resetGeneration() {
+        preview = null
+        error = null
+        generationOperationId = UUID.randomUUID().toString()
+    }
 
     val scannerOptions = remember {
         GmsDocumentScannerOptions.Builder()
@@ -89,6 +104,7 @@ fun QuestionBankFoundationScreen(onBack: () -> Unit) {
             scannedPages = ArrayList(
                 scan?.pages.orEmpty().take(2).map { page -> page.imageUri.toString() }
             )
+            resetGeneration()
         }
     }
 
@@ -106,8 +122,10 @@ fun QuestionBankFoundationScreen(onBack: () -> Unit) {
         loading = false
     }
 
-    val canContinue = examName.isNotBlank() && totalMarks.toIntOrNull()?.let { it > 0 } == true &&
-        durationMinutes.toIntOrNull()?.let { it > 0 } == true && className.isNotBlank() &&
+    val canContinue = !generating && foundation?.aiTncAccepted == true &&
+        examName.isNotBlank() && totalMarks.toIntOrNull()?.let { it in 1..1000 } == true &&
+        durationMinutes.toIntOrNull()?.let { it in 1..1440 } == true &&
+        questionCount.toIntOrNull()?.let { it in 1..30 } == true && className.isNotBlank() &&
         subject.isNotBlank() && chapter.isNotBlank() && scannedPages.isNotEmpty()
 
     Scaffold(
@@ -148,21 +166,23 @@ fun QuestionBankFoundationScreen(onBack: () -> Unit) {
             else -> ExamSetupContent(
                 modifier = Modifier.padding(padding),
                 examName = examName,
-                onExamNameChange = { examName = it.take(120) },
+                onExamNameChange = { examName = it.take(120); resetGeneration() },
                 totalMarks = totalMarks,
-                onTotalMarksChange = { totalMarks = it.filter(Char::isDigit).take(4) },
+                onTotalMarksChange = { totalMarks = it.filter(Char::isDigit).take(4); resetGeneration() },
                 durationMinutes = durationMinutes,
-                onDurationChange = { durationMinutes = it.filter(Char::isDigit).take(4) },
+                onDurationChange = { durationMinutes = it.filter(Char::isDigit).take(4); resetGeneration() },
+                questionCount = questionCount,
+                onQuestionCountChange = { questionCount = it.filter(Char::isDigit).take(2); resetGeneration() },
                 className = className,
-                onClassNameChange = { className = it.take(80) },
+                onClassNameChange = { className = it.take(80); resetGeneration() },
                 subject = subject,
-                onSubjectChange = { subject = it.take(120) },
+                onSubjectChange = { subject = it.take(120); resetGeneration() },
                 chapter = chapter,
-                onChapterChange = { chapter = it.take(160) },
+                onChapterChange = { chapter = it.take(160); resetGeneration() },
                 questionType = questionType,
-                onQuestionTypeChange = { questionType = it },
+                onQuestionTypeChange = { questionType = it; resetGeneration() },
                 scannedPages = scannedPages,
-                launchingScanner = launchingScanner,
+                launchingScanner = launchingScanner || generating,
                 onScan = {
                     val host = activity
                     if (host == null) {
@@ -179,14 +199,41 @@ fun QuestionBankFoundationScreen(onBack: () -> Unit) {
                             }
                     }
                 },
-                onClearScans = { scannedPages = arrayListOf() },
+                onClearScans = { scannedPages = arrayListOf(); resetGeneration() },
                 error = error,
                 canContinue = canContinue,
+                generating = generating,
+                preview = preview,
                 onContinue = {
-                    scope.launch {
-                        snackbar.showSnackbar("Setup ready. Secure AI generation will be connected in Phase 2.")
+                    val id = instituteId
+                    if (id != null && canContinue) {
+                        val requestedOperationId = generationOperationId
+                        generating = true
+                        error = null
+                        scope.launch {
+                            runCatching {
+                                generationRepository.generate(
+                                    context = context,
+                                    instituteId = id,
+                                    setup = QuestionGenerationSetup(
+                                        examName.trim(), totalMarks.toInt(), durationMinutes.toInt(),
+                                        className.trim(), subject.trim(), chapter.trim(),
+                                        questionType, questionCount.toInt(),
+                                    ),
+                                    pageUris = scannedPages,
+                                    operationId = requestedOperationId,
+                                )
+                            }.onSuccess { if (generationOperationId == requestedOperationId) preview = it }
+                                .onFailure {
+                                    if (generationOperationId == requestedOperationId) {
+                                        error = it.message ?: "Could not generate questions. Try again."
+                                    }
+                                }
+                            generating = false
+                        }
                     }
                 },
+                onNewAttempt = { resetGeneration(); error = null },
             )
         }
     }
@@ -270,6 +317,8 @@ private fun ExamSetupContent(
     onTotalMarksChange: (String) -> Unit,
     durationMinutes: String,
     onDurationChange: (String) -> Unit,
+    questionCount: String,
+    onQuestionCountChange: (String) -> Unit,
     className: String,
     onClassNameChange: (String) -> Unit,
     subject: String,
@@ -284,7 +333,10 @@ private fun ExamSetupContent(
     onClearScans: () -> Unit,
     error: String?,
     canContinue: Boolean,
+    generating: Boolean,
+    preview: QuestionGenerationPreview?,
     onContinue: () -> Unit,
+    onNewAttempt: () -> Unit,
 ) {
     Column(
         modifier.fillMaxSize().verticalScroll(rememberScrollState())
@@ -313,6 +365,7 @@ private fun ExamSetupContent(
                     durationMinutes, onDurationChange, "Time (minutes)", Modifier.weight(1f), KeyboardType.Number
                 )
             }
+            BankTextField(questionCount, onQuestionCountChange, "Questions (1–30)", Modifier.fillMaxWidth(), KeyboardType.Number)
         }
 
         BankSection {
@@ -394,6 +447,9 @@ private fun ExamSetupContent(
         }
 
         error?.let { Text(it, color = Color(0xFFFCA5A5), fontSize = 13.sp) }
+        if (error != null && !generating) {
+            TextButton(onClick = onNewAttempt) { Text("Start a new attempt", color = BankCyan) }
+        }
         Button(
             onClick = onContinue,
             enabled = canContinue,
@@ -404,12 +460,33 @@ private fun ExamSetupContent(
                 disabledContainerColor = BankBorder,
                 disabledContentColor = BankMuted,
             ),
-        ) { Text("Continue", fontWeight = FontWeight.Bold) }
+        ) {
+            if (generating) {
+                CircularProgressIndicator(Modifier.size(20.dp), color = BankBg, strokeWidth = 2.dp)
+                Spacer(Modifier.width(10.dp))
+            }
+            Text(if (generating) "Generating questions..." else "Generate questions", fontWeight = FontWeight.Bold)
+        }
         Text(
-            "Scanned pages remain on this device in Phase 1. Secure upload and AI processing will be connected in Phase 2.",
+            "Phase 2 preview only: no wallet debit or saved question yet. Review every AI answer before using it. Up to 5 previews per user daily.",
             color = BankMuted,
             fontSize = 12.sp,
         )
+        preview?.let { result ->
+            BankSection {
+                Text("Generated preview · ${result.questions.size} questions", color = BankText, fontWeight = FontWeight.Bold)
+                Text("Read-only in Phase 2. Editing, selection and final saving come in Phase 3.", color = BankMuted, fontSize = 12.sp)
+            }
+            result.questions.forEachIndexed { index, question ->
+                BankSection {
+                    Text("${index + 1}. ${question.questionText}", color = BankText, fontWeight = FontWeight.SemiBold)
+                    question.options.forEach { option -> Text("• $option", color = BankMuted) }
+                    Text("Answer: ${question.correctAnswer}", color = BankCyan)
+                    if (question.explanation.isNotBlank()) Text(question.explanation, color = BankMuted, fontSize = 13.sp)
+                    Text("${question.difficulty} · ${question.marks} mark(s)", color = BankMuted, fontSize = 12.sp)
+                }
+            }
+        }
         Spacer(Modifier.height(20.dp))
     }
 }

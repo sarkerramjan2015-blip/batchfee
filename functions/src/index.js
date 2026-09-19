@@ -8,6 +8,7 @@ const { getAuth } = require("firebase-admin/auth");
 const { FieldPath, FieldValue, getFirestore } = require("firebase-admin/firestore");
 const { getMessaging } = require("firebase-admin/messaging");
 const { getStorage } = require("firebase-admin/storage");
+const { GoogleGenAI } = require("@google/genai");
 const { logger } = require("firebase-functions");
 const { defineSecret } = require("firebase-functions/params");
 const { HttpsError, onCall, onRequest } = require("firebase-functions/v2/https");
@@ -53,6 +54,9 @@ const {
   createAnonymousQuestionSyncHandler,
   createQuestionBankFoundationHandler,
 } = require("./questionBankFoundation");
+const {
+  createQuestionGenerationHandler,
+} = require("./questionGeneration");
 const {
   createPlatformSmsAnalyticsHandler,
   createPlatformSmsTopupHandler,
@@ -124,6 +128,7 @@ const callableOptions = {
 const registrationRateLimitSecret = defineSecret("REGISTRATION_RATE_LIMIT_SECRET");
 const zendSmsApiKey = defineSecret("ZEND_SMS_API_KEY");
 const zendSmsSenderId = defineSecret("ZEND_SMS_SENDER_ID");
+const batchfeeGeminiApiKey = defineSecret("BATCHFEE_GEMINI_API_KEY");
 
 const db = getFirestore();
 const adminAuth = getAuth();
@@ -158,6 +163,15 @@ const questionBankFoundationHandler = createQuestionBankFoundationHandler({
   authorize: assertCanManageTenantResource,
 });
 const anonymousQuestionSyncHandler = createAnonymousQuestionSyncHandler({ db });
+const questionGenerationHandler = createQuestionGenerationHandler({
+  db,
+  authorize: assertCanManageTenantResource,
+  ai: () => {
+    const apiKey = batchfeeGeminiApiKey.value();
+    if (!apiKey) throw new HttpsError("failed-precondition", "Gemini service is not configured.");
+    return new GoogleGenAI({ apiKey });
+  },
+});
 
 function requireString(data, field, maxLength = 128) {
   const value = data && typeof data[field] === "string" ? data[field].trim() : "";
@@ -2606,6 +2620,20 @@ exports.commitNoticeCenterOperation = onCall(
 exports.questionBankFoundation = onCall(
   callableOptions,
   guarded(questionBankFoundationHandler),
+);
+// Phase 2 is a bounded preview. It never debits a wallet or finalizes a question.
+// Its Gemini API key is a server-only Secret Manager binding. Validated JPEG
+// bytes are sent inline; no source page is stored or exposed through a URL.
+exports.generateExamQuestions = onCall(
+  {
+    ...callableOptions,
+    timeoutSeconds: 300,
+    memory: "1GiB",
+    maxInstances: 2,
+    concurrency: 1,
+    secrets: [batchfeeGeminiApiKey],
+  },
+  guarded(questionGenerationHandler, "question_generation"),
 );
 // Multi-tenant SMS wallet reads and the owner-only send-method setting. Wallet
 // counters are server-authoritative and can never be forged by a client.
