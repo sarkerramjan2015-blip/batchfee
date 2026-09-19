@@ -25,14 +25,15 @@ class QuestionFinalizationRepository(
         questions: List<ReviewableQuestion>,
         operationId: String = UUID.randomUUID().toString(),
     ): QuestionFinalizationResult {
-        require(questions.isNotEmpty()) { "Select at least one valid question." }
+        val selectedQuestions = questions.filter { it.selected }
+        require(selectedQuestions.isNotEmpty()) { "Select at least one valid question." }
         val response = functions.getHttpsCallable("finalizeExamQuestions").call(
             mapOf(
                 "instituteId" to instituteId,
                 "generationOperationId" to generationOperationId,
                 "operationId" to operationId,
                 "questionType" to questionType,
-                "questions" to questions.filter { it.selected }.map { question ->
+                "questions" to selectedQuestions.map { question ->
                     mapOf(
                         "sourceQuestionId" to question.sourceQuestionId,
                         "questionText" to question.questionText.trim(),

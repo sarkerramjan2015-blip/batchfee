@@ -12,6 +12,7 @@ import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 data class GeneratedQuestionPreview(
+    val sourceQuestionId: String,
     val questionText: String,
     val options: List<String>,
     val correctAnswer: String,
@@ -76,9 +77,10 @@ class QuestionGenerationRepository(
                 "sourcePages" to sourcePages,
             )).await()
         val body = response.data as? Map<*, *> ?: error("Invalid AI generation response.")
-        val questions = (body["questions"] as? List<*>)?.map { raw ->
+        val questions = (body["questions"] as? List<*>)?.mapIndexed { index, raw ->
             val item = raw as? Map<*, *> ?: error("Invalid question in response.")
             GeneratedQuestionPreview(
+                sourceQuestionId = item["id"] as? String ?: "generated_${(index + 1).toString().padStart(2, '0')}",
                 questionText = item["questionText"] as? String ?: error("Missing question text."),
                 options = (item["options"] as? List<*>)?.mapNotNull { it as? String }.orEmpty(),
                 correctAnswer = item["correctAnswer"] as? String ?: error("Missing model answer."),

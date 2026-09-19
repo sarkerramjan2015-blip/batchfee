@@ -58,7 +58,7 @@ object QuestionReviewPolicy {
 }
 
 fun GeneratedQuestionPreview.toReviewable(index: Int): ReviewableQuestion = ReviewableQuestion(
-    sourceQuestionId = "generated_${(index + 1).toString().padStart(2, '0')}",
+    sourceQuestionId = sourceQuestionId.ifBlank { "generated_${(index + 1).toString().padStart(2, '0')}" },
     questionText = questionText,
     options = if (options.isEmpty()) emptyList() else options.take(4),
     correctAnswer = correctAnswer,
