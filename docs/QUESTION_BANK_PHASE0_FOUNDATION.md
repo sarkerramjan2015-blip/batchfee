@@ -1,12 +1,12 @@
 # Question bank — Phase 0 foundation
 
-Status: implemented in code; backend callable and Firestore rules still require deployment. No question generation, upload, wallet top-up or charge is enabled by this phase.
+Status: Phase 0 is deployed and Phase 1 exam setup/document scanning is implemented in the Android client. No AI generation, upload, wallet top-up or charge is enabled yet.
 
 ## Product boundary
 
-The first question bank is private to each institute. A teacher can later choose individual questions for central review only after personally enabling a versioned contribution preference. Enabling the preference alone never copies a question. Central publication will require a separate per-question submission and curator approval in a later phase.
+The institute question bank remains private. The first time an owner or authorized teacher opens the AI generator, a versioned one-time T&C dialog explains that finalized questions can be copied anonymously for research and global question-bank moderation. Consent is personal to the authenticated actor. A finalized question is eligible for automatic backend sync only when its creator accepted the current policy.
 
-The preference is per authenticated user and institute, starts off, can be revoked, and is stored by a callable with an immutable event for each change. An older policy version is treated as off. The owner cannot opt in for a teacher. `manage_exams` is required for staff; owner and institute admin retain exam access under the existing role model. Students have no question-bank access.
+Consent starts off and is stored by a callable with an immutable acceptance event. An older policy version is treated as unaccepted and must be shown again. The owner cannot accept for a teacher. `manage_exams` is required for staff; owner and institute admin retain exam access under the existing role model. Students have no question-bank access.
 
 ## Canonical academic taxonomy (schema v1)
 
@@ -23,8 +23,8 @@ These are server-returned schema values, not client-supplied authority. A future
 
 ## Content and source policy
 
-- Show the contribution terms before enabling the preference. Require a positive rights acknowledgement, and record the exact policy version and server timestamp.
-- Keep manual and AI-assisted drafts private. Future central submission is an explicit action for each selected question, followed by curation.
+- Show the T&C before opening the generator. Record a positive rights acknowledgement, exact policy version and server timestamp.
+- Keep drafts private. Only a `finalized` question created by an actor with current consent can enter the server-only pending moderation queue.
 - Accept only original work or material the contributor has permission to share. Do not put student names, phone numbers, answer scripts or other personal data into a question or source scan.
 - A scan of a book page is an input for drafting, not a permission to publish that page or reproduce its questions centrally. Later upload flow must use protected Storage objects, no public download token, size/type/page limits and a verified retention/deletion job.
 - A future withdrawal stops new central submissions. Handling of already published question revisions or printed papers needs a separately reviewed policy before the curation phase.
@@ -39,13 +39,14 @@ The existing broad institute rule explicitly excludes the reserved paths below. 
 | `institutes/{id}/question_bank/{questionId}` | Private institute draft/reviewed questions (future phase) |
 | `institutes/{id}/question_generation_jobs/{jobId}` | AI job state and cost audit (future phase) |
 | `institutes/{id}/question_sources/{sourceId}` | Protected scan metadata and retention state (future phase) |
-| `institutes/{id}/question_contribution_consents/{uid}` | Current personal preference (Phase 0 callable) |
-| `institutes/{id}/question_contribution_consent_events/{operationId}` | Immutable preference history (Phase 0 callable) |
+| `institutes/{id}/question_contribution_consents/{uid}` | Current personal versioned T&C consent |
+| `institutes/{id}/question_contribution_consent_events/{operationId}` | Immutable acceptance history |
 | `institutes/{id}/question_bank_wallet/{walletId}` | Separate AI credit balance (future phase) |
 | `institutes/{id}/question_bank_wallet_ledger/{entryId}` | Server-only immutable credit ledger (future phase) |
+| `global_pending_review/{hash}` | Anonymous, allow-listed finalized content awaiting moderation |
 | `global_question_bank/{questionId}` | Curator-approved central asset (future phase) |
 
-The Phase 0 callable is `questionBankFoundation` in `asia-south1`. It supports `get_foundation` and `set_contribution_preference`. It does not expose content or payment operations. Android reaches the preference page from Exams & Results.
+The callable is `questionBankFoundation` in `asia-south1`. It supports `get_foundation` and `accept_ai_tnc`. `syncFinalizedQuestionToGlobalPending` uses a strict allow-list and a hashed idempotent destination ID; institute name, teacher name/UID, institute ID and source URLs are not copied. Android reaches the generator from Exams & Results.
 
 ## AI wallet rules before charging is enabled
 
@@ -55,8 +56,8 @@ For a later paid phase: represent money as integer poisha, quote on the server, 
 
 ## Phase 0 exit checks
 
-- Existing exam screens still compile and the new preference page loads only for an authorized institute actor.
-- Consent is off by default, rights acknowledgement is mandatory to enable it, and revocation is available.
-- Retried operation IDs cannot change their actor, institute or choice.
+- Existing exam screens still compile and the AI generator loads only for an authorized institute actor.
+- Consent is off by default and the rights acknowledgement is mandatory.
+- Retried operation IDs cannot change their actor or institute.
 - Firestore rules deny direct client access to private questions, consent history, AI wallet and central bank, including through the generic tenant wildcard.
 - No AI request or wallet deduction can be made through this phase.

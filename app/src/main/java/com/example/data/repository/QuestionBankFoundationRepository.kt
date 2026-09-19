@@ -6,9 +6,10 @@ import java.util.UUID
 
 data class QuestionBankFoundation(
     val policyVersion: String,
-    val contributionEnabled: Boolean,
+    val aiTncAccepted: Boolean,
     val terms: List<String>,
     val questionTypes: List<String>,
+    val automaticAnonymousSync: Boolean,
     val aiBillingEnabled: Boolean,
 )
 
@@ -19,33 +20,31 @@ class QuestionBankFoundationRepository(
     suspend fun load(instituteId: String): QuestionBankFoundation =
         call(mapOf("action" to "get_foundation", "instituteId" to instituteId))
 
-    suspend fun setContributionPreference(
+    suspend fun acceptAiTerms(
         instituteId: String,
         policyVersion: String,
-        enabled: Boolean,
-        confirmedRights: Boolean,
     ): QuestionBankFoundation = call(
         mapOf(
-            "action" to "set_contribution_preference",
+            "action" to "accept_ai_tnc",
             "instituteId" to instituteId,
             "operationId" to UUID.randomUUID().toString(),
             "policyVersion" to policyVersion,
-            "enabled" to enabled,
-            "confirmedRights" to confirmedRights,
+            "confirmedRights" to true,
         )
     )
 
     private suspend fun call(values: Map<String, Any>): QuestionBankFoundation {
         val response = functions.getHttpsCallable("questionBankFoundation").call(values).await()
         val body = response.data as? Map<*, *> ?: error("Invalid question bank response.")
-        val contribution = body["contribution"] as? Map<*, *> ?: error("Missing contribution policy.")
+        val aiTerms = body["aiTerms"] as? Map<*, *> ?: error("Missing AI terms.")
         val taxonomy = body["taxonomy"] as? Map<*, *> ?: error("Missing question taxonomy.")
         val billing = body["aiBilling"] as? Map<*, *> ?: error("Missing AI billing policy.")
         return QuestionBankFoundation(
-            policyVersion = contribution["policyVersion"] as? String ?: error("Missing policy version."),
-            contributionEnabled = contribution["enabled"] as? Boolean ?: false,
-            terms = (contribution["terms"] as? List<*>)?.mapNotNull { it as? String }.orEmpty(),
+            policyVersion = aiTerms["policyVersion"] as? String ?: error("Missing policy version."),
+            aiTncAccepted = aiTerms["accepted"] as? Boolean ?: false,
+            terms = (aiTerms["terms"] as? List<*>)?.mapNotNull { it as? String }.orEmpty(),
             questionTypes = (taxonomy["questionTypes"] as? List<*>)?.mapNotNull { it as? String }.orEmpty(),
+            automaticAnonymousSync = aiTerms["automaticAnonymousSync"] as? Boolean ?: false,
             aiBillingEnabled = billing["enabled"] as? Boolean ?: false,
         )
     }

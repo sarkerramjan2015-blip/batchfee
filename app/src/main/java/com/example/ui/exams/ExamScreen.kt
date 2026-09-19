@@ -168,8 +168,8 @@ fun ExamListScreen(
                     Icon(Icons.Filled.LibraryBooks, null, tint = Cyan, modifier = Modifier.size(28.dp))
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
-                        Text("Question Bank", color = TextWhite, fontWeight = FontWeight.Bold)
-                        Text("Private content and contribution settings", color = TextMuted, fontSize = 12.sp)
+                        Text("AI Question Generator", color = TextWhite, fontWeight = FontWeight.Bold)
+                        Text("Create questions from up to 2 scanned pages", color = TextMuted, fontSize = 12.sp)
                     }
                     Icon(Icons.Filled.ChevronRight, null, tint = Cyan)
                 }

@@ -515,6 +515,9 @@ service cloud.firestore {
     match /global_question_bank/{document=**} {
       allow read, write: if false;
     }
+    match /global_pending_review/{document=**} {
+      allow read, write: if false;
+    }
 
     match /institutes/{instituteId}/staffs/{staffId} {
       allow read: if (isActiveStaff(instituteId) && request.auth.uid == staffId)

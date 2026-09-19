@@ -1308,6 +1308,7 @@ describe("question-bank phase 0 boundary", { concurrency: false }, () => {
         await setDoc(tenantDoc(db, OWNER_A, name, "sample"), { private: true });
       }
       await setDoc(doc(db, "global_question_bank", "sample"), { reviewed: true });
+      await setDoc(doc(db, "global_pending_review", "sample"), { reviewed: false });
     });
     for (const db of [authDb(OWNER_A), authDb(OWNER_B), authDb("staff-manage-a"), authDb(ADMIN)]) {
       for (const name of tenantCollections) {
@@ -1318,6 +1319,9 @@ describe("question-bank phase 0 boundary", { concurrency: false }, () => {
       const global = doc(db, "global_question_bank", "sample");
       await assertFails(getDoc(global));
       await assertFails(setDoc(global, { forged: true }));
+      const pending = doc(db, "global_pending_review", "sample");
+      await assertFails(getDoc(pending));
+      await assertFails(setDoc(pending, { forged: true }));
     }
   });
 });

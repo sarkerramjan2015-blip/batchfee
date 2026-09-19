@@ -49,7 +49,10 @@ const { buildRegistrationSlug, registrationFormUrl } = require("./registrationPr
 const { createSubscriptionBillingHandler } = require("./subscriptionBilling");
 const { createPlatformAdminHandler } = require("./platformAdmin");
 const { createNoticeCenterHandler } = require("./noticeCenter");
-const { createQuestionBankFoundationHandler } = require("./questionBankFoundation");
+const {
+  createAnonymousQuestionSyncHandler,
+  createQuestionBankFoundationHandler,
+} = require("./questionBankFoundation");
 const {
   createPlatformSmsAnalyticsHandler,
   createPlatformSmsTopupHandler,
@@ -154,6 +157,7 @@ const questionBankFoundationHandler = createQuestionBankFoundationHandler({
   db,
   authorize: assertCanManageTenantResource,
 });
+const anonymousQuestionSyncHandler = createAnonymousQuestionSyncHandler({ db });
 
 function requireString(data, field, maxLength = 128) {
   const value = data && typeof data[field] === "string" ? data[field].trim() : "";
@@ -2503,6 +2507,14 @@ exports.reconcileBatchOperationalSummary = onDocumentWritten(
 exports.reconcileStaffOperationalSummary = onDocumentWritten(
   { region: REGION, document: "institutes/{instituteId}/staffs/{entityId}", memory: "256MiB" },
   tenantOperationalSummaryHandler,
+);
+exports.syncFinalizedQuestionToGlobalPending = onDocumentWritten(
+  {
+    region: REGION,
+    document: "institutes/{instituteId}/question_bank/{questionId}",
+    memory: "256MiB",
+  },
+  anonymousQuestionSyncHandler,
 );
 exports.repairSubscriptionEntitlements = onCall(
   { ...callableOptions, timeoutSeconds: 540 },

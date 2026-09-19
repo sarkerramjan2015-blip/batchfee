@@ -175,6 +175,7 @@ secrets {
 dependencies {
   implementation("com.google.android.play:app-update:2.1.0")
   implementation("com.google.android.play:app-update-ktx:2.1.0")
+  implementation("com.google.android.gms:play-services-mlkit-document-scanner:16.0.0")
   implementation(platform(libs.androidx.compose.bom))
   implementation(platform(libs.firebase.bom))
   implementation(libs.firebase.analytics)
