@@ -49,6 +49,7 @@ const { buildRegistrationSlug, registrationFormUrl } = require("./registrationPr
 const { createSubscriptionBillingHandler } = require("./subscriptionBilling");
 const { createPlatformAdminHandler } = require("./platformAdmin");
 const { createNoticeCenterHandler } = require("./noticeCenter");
+const { createQuestionBankFoundationHandler } = require("./questionBankFoundation");
 const {
   createPlatformSmsAnalyticsHandler,
   createPlatformSmsTopupHandler,
@@ -149,6 +150,10 @@ const publicRegistrationHandler = createPublicRegistrationHandler({
   rateLimitSecret: registrationRateLimitSecret,
 });
 const tenantOperationalSummaryHandler = createTenantOperationalSummaryHandler({ db });
+const questionBankFoundationHandler = createQuestionBankFoundationHandler({
+  db,
+  authorize: assertCanManageTenantResource,
+});
 
 function requireString(data, field, maxLength = 128) {
   const value = data && typeof data[field] === "string" ? data[field].trim() : "";
@@ -2585,6 +2590,10 @@ exports.commitPlatformAdminOperation = onCall(
 exports.commitNoticeCenterOperation = onCall(
   { ...callableOptions, timeoutSeconds: 60 },
   guarded(createNoticeCenterHandler({ db, messaging })),
+);
+exports.questionBankFoundation = onCall(
+  callableOptions,
+  guarded(questionBankFoundationHandler),
 );
 // Multi-tenant SMS wallet reads and the owner-only send-method setting. Wallet
 // counters are server-authoritative and can never be forged by a client.

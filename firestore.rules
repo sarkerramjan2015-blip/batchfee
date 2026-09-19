@@ -474,7 +474,46 @@ service cloud.firestore {
         && collection != 'sms_wallet_audit'
         && collection != 'sms_recharge_requests'
         && collection != 'sms_messages'
+        && collection != 'question_bank'
+        && collection != 'question_generation_jobs'
+        && collection != 'question_sources'
+        && collection != 'question_contribution_consents'
+        && collection != 'question_contribution_consent_events'
+        && collection != 'question_bank_wallet'
+        && collection != 'question_bank_wallet_ledger'
         && (isSuperAdmin() || isActiveInstitutePrincipal(instituteId));
+    }
+
+    // Phase 0 question-bank boundary. The institute's draft questions, source
+    // metadata, personal contribution preference and future AI money ledger
+    // are not writable through the generic tenant rule. Future phases must
+    // expose narrowly authorized server operations before using these paths.
+    match /institutes/{instituteId}/question_bank/{document=**} {
+      allow read, write: if false;
+    }
+    match /institutes/{instituteId}/question_generation_jobs/{document=**} {
+      allow read, write: if false;
+    }
+    match /institutes/{instituteId}/question_sources/{document=**} {
+      allow read, write: if false;
+    }
+    match /institutes/{instituteId}/question_contribution_consents/{document=**} {
+      allow read, write: if false;
+    }
+    match /institutes/{instituteId}/question_contribution_consent_events/{document=**} {
+      allow read, write: if false;
+    }
+    match /institutes/{instituteId}/question_bank_wallet/{document=**} {
+      allow read, write: if false;
+    }
+    match /institutes/{instituteId}/question_bank_wallet_ledger/{document=**} {
+      allow read, write: if false;
+    }
+
+    // Only a future curation callable may publish reviewed contributions.
+    // Never let a teacher or owner insert directly into the global asset.
+    match /global_question_bank/{document=**} {
+      allow read, write: if false;
     }
 
     match /institutes/{instituteId}/staffs/{staffId} {

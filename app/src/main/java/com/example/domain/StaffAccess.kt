@@ -114,6 +114,7 @@ object AccessControl {
         "AddExpenseRoute" to setOf(StaffPermissions.MANAGE_EXPENSES),
         "ExpenseReportRoute" to setOf(StaffPermissions.MANAGE_EXPENSES, StaffPermissions.VIEW_REPORTS),
         "ExamsRoute" to setOf(StaffPermissions.MANAGE_EXAMS),
+        "QuestionBankFoundationRoute" to setOf(StaffPermissions.MANAGE_EXAMS),
         "CreateExamRoute" to setOf(StaffPermissions.MANAGE_EXAMS),
         "ExamDetailRoute" to setOf(StaffPermissions.MANAGE_EXAMS),
         "AddResultRoute" to setOf(StaffPermissions.MANAGE_EXAMS),

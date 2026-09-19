@@ -1294,3 +1294,30 @@ describe("P0-10 notice centre and product-feedback boundary", { concurrency: fal
     }
   });
 });
+
+describe("question-bank phase 0 boundary", { concurrency: false }, () => {
+  test("private content, consent, AI wallet and global bank are callable-only", async () => {
+    const tenantCollections = [
+      "question_bank", "question_generation_jobs", "question_sources",
+      "question_contribution_consents", "question_contribution_consent_events",
+      "question_bank_wallet", "question_bank_wallet_ledger",
+    ];
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const db = context.firestore();
+      for (const name of tenantCollections) {
+        await setDoc(tenantDoc(db, OWNER_A, name, "sample"), { private: true });
+      }
+      await setDoc(doc(db, "global_question_bank", "sample"), { reviewed: true });
+    });
+    for (const db of [authDb(OWNER_A), authDb(OWNER_B), authDb("staff-manage-a"), authDb(ADMIN)]) {
+      for (const name of tenantCollections) {
+        const reference = tenantDoc(db, OWNER_A, name, "sample");
+        await assertFails(getDoc(reference));
+        await assertFails(setDoc(reference, { forged: true }));
+      }
+      const global = doc(db, "global_question_bank", "sample");
+      await assertFails(getDoc(global));
+      await assertFails(setDoc(global, { forged: true }));
+    }
+  });
+});

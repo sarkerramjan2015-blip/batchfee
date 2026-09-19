@@ -99,6 +99,7 @@ fun ExamListScreen(
     onNavigateToDetail: (String) -> Unit,
     onNavigateToPricing: () -> Unit,
     onOpenFinalExams: () -> Unit = {},
+    onOpenQuestionBank: () -> Unit = {},
     onCreateFinalExam: () -> Unit = {}
 ) {
     val viewModel: ExamViewModel = viewModel(factory = ExamViewModelFactory(db))
@@ -153,6 +154,24 @@ fun ExamListScreen(
                         Text("Multi-subject exams with approval workflow", color = TextMuted, fontSize = 12.sp)
                     }
                     Icon(Icons.Filled.ChevronRight, null, tint = AccentViolet)
+                }
+            }
+
+            Card(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 2.dp)
+                    .clickable(onClick = onOpenQuestionBank),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = CardBg),
+                border = BorderStroke(1.dp, Cyan.copy(alpha = 0.45f))
+            ) {
+                Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.LibraryBooks, null, tint = Cyan, modifier = Modifier.size(28.dp))
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("Question Bank", color = TextWhite, fontWeight = FontWeight.Bold)
+                        Text("Private content and contribution settings", color = TextMuted, fontSize = 12.sp)
+                    }
+                    Icon(Icons.Filled.ChevronRight, null, tint = Cyan)
                 }
             }
 
