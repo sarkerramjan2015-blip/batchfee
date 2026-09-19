@@ -2,6 +2,7 @@ package com.batchfee.edu.ui.studentapp
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -59,7 +60,7 @@ data class PaymentReceipt(val id: String, val amount: Double, val dateMs: Long, 
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun StudentFeeScreen(onBack: () -> Unit, onOpenDocuments: () -> Unit) {
+fun StudentFeeScreen(onBack: () -> Unit, onOpenDocuments: () -> Unit, onPayOnline: (String) -> Unit) {
     val sid by StudentSessionManager.studentId.collectAsState()
     val iid by StudentSessionManager.instituteId.collectAsState()
     val studentId = sid.orEmpty()
@@ -69,6 +70,7 @@ fun StudentFeeScreen(onBack: () -> Unit, onOpenDocuments: () -> Unit) {
     var billingEnrollments by remember(studentId, instituteId) { mutableStateOf<List<StudentBillingEnrollment>>(emptyList()) }
     var billingBatches by remember(studentId, instituteId) { mutableStateOf<Map<String, StudentBillingBatch>>(emptyMap()) }
     var studentAdmissionDateMs by remember(studentId, instituteId) { mutableLongStateOf(0L) }
+    var creditBalance by remember(studentId, instituteId) { mutableDoubleStateOf(0.0) }
     var receipts by remember(studentId, instituteId) { mutableStateOf<List<PaymentReceipt>>(emptyList()) }
     var totalAmount by remember(studentId) { mutableStateOf(0.0) }
     var totalPaid by remember(studentId) { mutableStateOf(0.0) }
@@ -205,6 +207,7 @@ fun StudentFeeScreen(onBack: () -> Unit, onOpenDocuments: () -> Unit) {
                 reportListenerError(error)
                 if (error != null) return@addSnapshotListener
                 studentAdmissionDateMs = (doc?.get("admissionDateMs") as? Number)?.toLong() ?: 0L
+                creditBalance = (doc?.get("creditBalance") as? Number)?.toDouble() ?: 0.0
             }
         listeners += fs.collection("institutes").document(instituteId).collection("batch_students")
             .whereEqualTo("studentId", studentId)
@@ -309,6 +312,19 @@ fun StudentFeeScreen(onBack: () -> Unit, onOpenDocuments: () -> Unit) {
                         Text("Your fee overview", color = FsWhite, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                         Text(if (totalDue > 0) "Payment due" else "All clear", color = if (totalDue > 0) FsRed else FsGreen, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     }
+                    if (creditBalance > 0.0) {
+                        Spacer(Modifier.height(8.dp))
+                        Row(
+                            Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(FsGreen.copy(alpha = 0.12f)).padding(horizontal = 10.dp, vertical = 7.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(Icons.Filled.AccountBalanceWallet, null, tint = FsGreen, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Credit balance", color = FsMuted, fontSize = 11.sp)
+                            Spacer(Modifier.weight(1f))
+                            Text("৳${"%,.2f".format(creditBalance)}", color = FsGreen, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
                     Spacer(Modifier.height(13.dp))
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                     FeeS("Total", "৳${"%,.0f".format(totalAmount)}", FsCyan)
@@ -325,27 +341,41 @@ fun StudentFeeScreen(onBack: () -> Unit, onOpenDocuments: () -> Unit) {
                 items(fees) { fee ->
                     val due = fee.dueAmount
                     val expanded = selectedFeeId == fee.id
+                    val isMonthly = MonthlyDueCalculator.isMonthlyFeeType(fee.feeType.orEmpty())
                     Card(Modifier.fillMaxWidth().clickable { selectedFeeId = if (expanded) null else fee.id }, shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = if (due > 0) FsCard else FsGreen.copy(alpha = 0.08f)), border = BorderStroke(1.dp, FsStroke)) {
-                        Row(Modifier.padding(16.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text(fee.description, color = FsWhite, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                                fee.monthYear?.let { Text(it, color = FsMuted, fontSize = 12.sp) }
-                                fee.dueDateMs?.takeIf { it > 0L }?.let {
-                                    Text("Due ${SimpleDateFormat("dd MMM", Locale.getDefault()).format(Date(it))}", color = FsDim, fontSize = 11.sp)
+                        Column {
+                            Row(Modifier.padding(16.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(fee.description, color = FsWhite, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                    fee.monthYear?.let { Text(it, color = FsMuted, fontSize = 12.sp) }
+                                    fee.dueDateMs?.takeIf { it > 0L }?.let {
+                                        Text("Due ${SimpleDateFormat("dd MMM", Locale.getDefault()).format(Date(it))}", color = FsDim, fontSize = 11.sp)
+                                    }
+                                    if (due > 0) Text("Due: ৳${"%,.0f".format(due)}", color = FsRed, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                    else Text("Paid ✓", color = FsGreen, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                                 }
-                                if (due > 0) Text("Due: ৳${"%,.0f".format(due)}", color = FsRed, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                                else Text("Paid ✓", color = FsGreen, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                Text("৳${"%,.0f".format(fee.totalAmount)}", color = FsWhite, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                                Spacer(Modifier.width(8.dp))
+                                Icon(Icons.Filled.ChevronRight, null, tint = FsDim, modifier = Modifier.size(20.dp))
                             }
-                            Text("৳${"%,.0f".format(fee.totalAmount)}", color = FsWhite, fontWeight = FontWeight.Bold, fontSize = 17.sp)
-                            Spacer(Modifier.width(8.dp))
-                            Icon(Icons.Filled.ChevronRight, null, tint = FsDim, modifier = Modifier.size(20.dp))
-                        }
-                        if (expanded && fee.paidAmount > 0) {
-                            HorizontalDivider(color = FsStroke, modifier = Modifier.padding(horizontal = 16.dp))
-                            Column(Modifier.padding(16.dp)) {
-                                Text("Payment Details", color = FsCyan, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                                Spacer(Modifier.height(6.dp))
-                                Text("Amount Paid: ৳${"%,.0f".format(fee.paidAmount)}", color = FsWhite, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                            if (due > 0 && isMonthly) {
+                                Box(
+                                    Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 12.dp).height(40.dp)
+                                        .clip(RoundedCornerShape(12.dp)).background(FsCyan.copy(alpha = 0.16f))
+                                        .border(1.dp, FsCyan.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
+                                        .clickable { onPayOnline(fee.monthYear.orEmpty()) },
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Text("Pay Online", color = FsCyan, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                            if (expanded && fee.paidAmount > 0) {
+                                HorizontalDivider(color = FsStroke, modifier = Modifier.padding(horizontal = 16.dp))
+                                Column(Modifier.padding(16.dp)) {
+                                    Text("Payment Details", color = FsCyan, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                    Spacer(Modifier.height(6.dp))
+                                    Text("Amount Paid: ৳${"%,.0f".format(fee.paidAmount)}", color = FsWhite, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                }
                             }
                         }
                     }

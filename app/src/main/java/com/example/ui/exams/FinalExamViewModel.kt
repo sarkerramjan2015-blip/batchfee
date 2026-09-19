@@ -5,11 +5,15 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.batchfee.edu.data.audit.StaffActivityLogger
 import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.data.firestore.FinalExamSyncHelper
+import com.batchfee.edu.data.firestore.FinalResultSyncRow
 import com.batchfee.edu.data.models.FinalExamEntity
 import com.batchfee.edu.data.models.FinalExamMarksEntity
 import com.batchfee.edu.data.models.FinalExamSubjectEntity
 import com.batchfee.edu.data.models.StudentEntity
 import com.batchfee.edu.domain.SessionManager
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.ListenerRegistration
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -36,6 +40,58 @@ data class FinalResultRow(
     val meritPosition: Int
 )
 
+/** Per-subject class performance, worst-first. */
+data class SubjectStat(
+    val subjectId: String,
+    val name: String,
+    val fullMarks: Double,
+    val passMarks: Double,
+    val averagePct: Double,
+    val passRatePct: Double,
+    val highest: Double,
+    val lowest: Double,
+    val failCount: Int,
+    val studentCount: Int
+)
+
+data class WeakSubjectLine(
+    val subjectName: String,
+    val obtained: Double,
+    val passMarks: Double
+)
+
+data class WeakStudentRow(
+    val student: StudentEntity,
+    val failedSubjects: List<WeakSubjectLine>,
+    val belowAverage: Boolean,
+    val overallPct: Double,
+    val meritPosition: Int
+)
+
+data class VersionSubject(val subjectId: String, val name: String, val fullMarks: Double, val passMarks: Double)
+
+data class VersionResultRow(
+    val studentId: String,
+    val studentName: String,
+    val meritPosition: Int,
+    val totalMarks: Double,
+    val fullMarks: Double,
+    val percentage: Double,
+    val gpa: Double,
+    val grade: String,
+    val passed: Boolean,
+    val subjectMarks: Map<String, Double> // subjectId -> totalMarks
+)
+
+data class FinalResultVersion(
+    val version: Int,
+    val createdAtMs: Long,
+    val changedByName: String?,
+    val description: String?,
+    val subjects: List<VersionSubject>,
+    val results: List<VersionResultRow>
+)
+
 class FinalExamViewModel(private val db: AppDatabase) : ViewModel() {
 
     private val _exams = MutableStateFlow<List<FinalExamEntity>>(emptyList())
@@ -52,6 +108,17 @@ class FinalExamViewModel(private val db: AppDatabase) : ViewModel() {
 
     private val _results = MutableStateFlow<List<FinalResultRow>>(emptyList())
     val results: StateFlow<List<FinalResultRow>> = _results.asStateFlow()
+
+    private val _subjectStats = MutableStateFlow<List<SubjectStat>>(emptyList())
+    val subjectStats: StateFlow<List<SubjectStat>> = _subjectStats.asStateFlow()
+
+    private val _weakStudents = MutableStateFlow<List<WeakStudentRow>>(emptyList())
+    val weakStudents: StateFlow<List<WeakStudentRow>> = _weakStudents.asStateFlow()
+
+    private val _versions = MutableStateFlow<List<FinalResultVersion>>(emptyList())
+    val versions: StateFlow<List<FinalResultVersion>> = _versions.asStateFlow()
+
+    private var versionsRegistration: ListenerRegistration? = null
 
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
@@ -78,11 +145,15 @@ class FinalExamViewModel(private val db: AppDatabase) : ViewModel() {
             launch {
                 db.finalExamDao().getFinalExam(examId, instId).collect { exam ->
                     _selectedExam.value = exam
+                    loadVersions()
                 }
             }
             launch {
                 db.finalExamDao().getSubjects(examId).collect { subjects ->
                     _subjects.value = subjects.map { it.toView() }
+                    // Marks may have emitted before subjects loaded — re-run the
+                    // computation so the results screen never shows a stale empty list.
+                    if (_marks.value.isNotEmpty()) recomputeResults(_marks.value)
                 }
             }
             launch {
@@ -93,6 +164,61 @@ class FinalExamViewModel(private val db: AppDatabase) : ViewModel() {
             }
             _isLoading.value = false
         }
+    }
+
+    /** Listens to the immutable version snapshots of this exam's published results. */
+    fun loadVersions() {
+        if (versionsRegistration != null) return
+        val exam = _selectedExam.value ?: return
+        versionsRegistration = FirebaseFirestore.getInstance()
+            .collection("institutes").document(exam.instituteId)
+            .collection("final_result_versions")
+            .whereEqualTo("examId", exam.id)
+            .addSnapshotListener { snap, _ ->
+                _versions.value = snap?.documents?.mapNotNull { doc ->
+                    val version = (doc.get("version") as? Number)?.toInt() ?: return@mapNotNull null
+                    FinalResultVersion(
+                        version = version,
+                        createdAtMs = (doc.get("createdAtMs") as? Number)?.toLong() ?: 0L,
+                        changedByName = doc.getString("changedByName"),
+                        description = doc.getString("description"),
+                        subjects = (doc.get("subjects") as? List<*>)?.mapNotNull { raw ->
+                            val map = raw as? Map<*, *> ?: return@mapNotNull null
+                            VersionSubject(
+                                subjectId = map["subjectId"] as? String ?: "",
+                                name = map["name"] as? String ?: "Subject",
+                                fullMarks = (map["fullMarks"] as? Number)?.toDouble() ?: 0.0,
+                                passMarks = (map["passMarks"] as? Number)?.toDouble() ?: 0.0
+                            )
+                        }.orEmpty(),
+                        results = (doc.get("results") as? List<*>)?.mapNotNull { raw ->
+                            val map = raw as? Map<*, *> ?: return@mapNotNull null
+                            val subjectMarks = (map["subjectMarks"] as? Map<*, *>)?.mapNotNull { (key, value) ->
+                                val inner = value as? Map<*, *> ?: return@mapNotNull null
+                                (inner["totalMarks"] as? Number)?.toDouble()?.let { key.toString() to it }
+                            }?.toMap().orEmpty()
+                            VersionResultRow(
+                                studentId = map["studentId"] as? String ?: return@mapNotNull null,
+                                studentName = map["studentName"] as? String ?: "Student",
+                                meritPosition = (map["meritPosition"] as? Number)?.toInt() ?: 0,
+                                totalMarks = (map["totalMarks"] as? Number)?.toDouble() ?: 0.0,
+                                fullMarks = (map["fullMarks"] as? Number)?.toDouble() ?: 0.0,
+                                percentage = (map["percentage"] as? Number)?.toDouble() ?: 0.0,
+                                gpa = (map["gpa"] as? Number)?.toDouble() ?: 0.0,
+                                grade = map["grade"] as? String ?: "",
+                                passed = map["passed"] as? Boolean ?: false,
+                                subjectMarks = subjectMarks
+                            )
+                        }.orEmpty()
+                    )
+                }.orEmpty().sortedByDescending { it.version }
+            }
+    }
+
+    override fun onCleared() {
+        versionsRegistration?.remove()
+        versionsRegistration = null
+        super.onCleared()
     }
 
     fun createExam(
@@ -401,6 +527,22 @@ class FinalExamViewModel(private val db: AppDatabase) : ViewModel() {
                         )
                     )
                 } catch (_: Exception) { }
+                // Post-publish correction: bump the version and push a fresh snapshot.
+                val exam = _selectedExam.value
+                if (exam != null && exam.status == "published") {
+                    try {
+                        val subjects = db.finalExamDao().getSubjectsOnce(exam.id)
+                        val rows = computeRows(exam, subjects.map { it.toView() }, db.finalExamDao().getMarksOnce(exam.id))
+                        val nextVersion = FinalExamSyncHelper.currentVersion(exam.id, exam.instituteId) + 1
+                        val studentName = rows.firstOrNull { it.student.id == studentId }?.student?.fullName ?: studentId
+                        pushResultsToCloud(
+                            exam, subjects, rows, nextVersion,
+                            "Marks corrected: ${subject.subjectName} — $studentName"
+                        )
+                    } catch (_: Exception) {
+                        // Local correction stands; a re-sync from the results screen retries the push.
+                    }
+                }
                 onSuccess()
             } catch (e: Exception) {
                 onError(e.message ?: "Failed to edit marks.")
@@ -423,8 +565,19 @@ class FinalExamViewModel(private val db: AppDatabase) : ViewModel() {
                     onError("No marks entered yet.")
                     return@launch
                 }
+                val subjects = db.finalExamDao().getSubjectsOnce(exam.id)
+                val rows = computeRows(exam, subjects.map { it.toView() }, db.finalExamDao().getMarksOnce(exam.id))
+                if (rows.isEmpty()) {
+                    onError("Results are incomplete — every student needs approved marks for every subject.")
+                    return@launch
+                }
                 val now = System.currentTimeMillis()
+                val publishedExam = exam.copy(status = "published", publishedAtMs = now, updatedAtMs = now)
                 db.finalExamDao().updateFinalExamStatus(exam.id, exam.instituteId, "published", now, now)
+                pushResultsToCloud(publishedExam, subjects, rows, 1, "Results published")
+                StaffActivityLogger.logCompletedAction(
+                    db, "final_exam_published", "final_exams", "Published results for ${exam.examName}"
+                )
                 onSuccess()
             } catch (e: Exception) {
                 onError(e.message ?: "Failed to publish exam.")
@@ -432,41 +585,168 @@ class FinalExamViewModel(private val db: AppDatabase) : ViewModel() {
         }
     }
 
+    /** Owner-only: hides published results from students. Marks stay intact. */
+    fun unpublishExam(onSuccess: () -> Unit, onError: (String) -> Unit) {
+        if (!SessionManager.isAdmin()) { onError("Only the institute owner can unpublish results."); return }
+        val exam = _selectedExam.value ?: run { onError("No exam selected."); return }
+        if (exam.status != "published") { onError("This exam is not published."); return }
+        viewModelScope.launch {
+            try {
+                val now = System.currentTimeMillis()
+                db.finalExamDao().updateFinalExamStatus(exam.id, exam.instituteId, "completed", null, now)
+                StaffActivityLogger.logCompletedAction(
+                    db, "final_exam_unpublished", "final_exams", "Unpublished results for ${exam.examName}"
+                )
+                try {
+                    val subjects = db.finalExamDao().getSubjectsOnce(exam.id)
+                    FinalExamSyncHelper.unpublish(exam, subjects)
+                } catch (e: Exception) {
+                    onError("Unpublished locally, but cloud sync failed: ${e.message ?: "unknown error"}")
+                    return@launch
+                }
+                onSuccess()
+            } catch (e: Exception) {
+                onError(e.message ?: "Failed to unpublish exam.")
+            }
+        }
+    }
+
+    /** Re-pushes published results without bumping the version (used as a retry / refresh). */
+    fun syncPublishedToCloud(onSuccess: () -> Unit, onError: (String) -> Unit) {
+        val exam = _selectedExam.value ?: run { onError("No exam selected."); return }
+        if (exam.status != "published") { onError("This exam is not published."); return }
+        viewModelScope.launch {
+            try {
+                val subjects = db.finalExamDao().getSubjectsOnce(exam.id)
+                val rows = computeRows(exam, subjects.map { it.toView() }, db.finalExamDao().getMarksOnce(exam.id))
+                val version = FinalExamSyncHelper.currentVersion(exam.id, exam.instituteId)
+                pushResultsToCloud(exam, subjects, rows, version, "Results re-synced")
+                onSuccess()
+            } catch (e: Exception) {
+                onError(e.message ?: "Failed to sync results.")
+            }
+        }
+    }
+
+    private suspend fun pushResultsToCloud(
+        exam: FinalExamEntity,
+        subjects: List<FinalExamSubjectEntity>,
+        rows: List<FinalResultRow>,
+        version: Int,
+        description: String
+    ) {
+        val batchName = db.batchDao().getBatchesByInstituteOnce(exam.instituteId)
+            .find { it.id == exam.batchId }?.name ?: "Batch"
+        val syncRows = rows.map { row ->
+            FinalResultSyncRow(
+                studentId = row.student.id,
+                studentName = row.student.fullName,
+                meritPosition = row.meritPosition,
+                totalMarks = row.totalMarks,
+                fullMarks = row.fullMarks,
+                percentage = row.percentage,
+                gpa = row.gpa,
+                grade = row.grade,
+                passed = row.passed,
+                subjectMarks = row.subjectMarks.mapValues { it.value.totalMarks }
+            )
+        }
+        FinalExamSyncHelper.pushPublishedResults(
+            db = db,
+            exam = exam,
+            subjects = subjects,
+            rows = syncRows,
+            batchName = batchName,
+            version = version,
+            versionDescription = description,
+            changedByUserId = SessionManager.currentUserId.value,
+            changedByName = "Institute Owner"
+        )
+    }
+
     private fun recomputeResults(marks: List<FinalExamMarksEntity>) {
         val exam = _selectedExam.value ?: return
-        val instId = exam.instituteId
         val subjectViews = _subjects.value
-        val subjectMap = subjectViews.associateBy { it.subject.id }
         viewModelScope.launch {
-            val students = db.batchStudentDao().getStudentsForBatchOnce(exam.batchId, exam.instituteId)
-                .filter { it.status == "active" }
-            val byStudent = marks.groupBy { it.studentId }
-            val rows = students.mapNotNull { student ->
-                val studentMarks = byStudent[student.id] ?: emptyList()
-                val approved = studentMarks.filter { it.status == "approved" }
-                // All subjects must have approved marks for a complete result
-                val complete = subjectMap.keys.all { subjectId -> approved.any { it.subjectId == subjectId } }
-                if (!complete || approved.isEmpty()) return@mapNotNull null
-                val total = approved.sumOf { it.totalMarks }
-                val full = subjectViews.sumOf { it.subject.fullMarks }
-                val passed = approved.all { it.totalMarks >= (subjectMap[it.subjectId]?.subject?.passMarks ?: 0.0) }
-                val pct = if (full > 0) (total / full) * 100 else 0.0
-                val (gpa, grade) = gpaAndGrade(pct, passed)
-                FinalResultRow(
-                    student = student,
-                    subjectMarks = approved.associateBy { it.subjectId },
-                    totalMarks = total,
-                    fullMarks = full,
-                    percentage = pct,
-                    gpa = gpa,
-                    grade = grade,
-                    passed = passed,
-                    meritPosition = 0
-                )
-            }.sortedByDescending { it.totalMarks }
-            val ranked = rows.mapIndexed { index, row -> row.copy(meritPosition = index + 1) }
-            _results.value = ranked
+            _results.value = computeRows(exam, subjectViews, marks)
+            computeAnalytics(_results.value, subjectViews)
         }
+    }
+
+    /** Builds ranked result rows; students without complete approved marks are excluded. */
+    private suspend fun computeRows(
+        exam: FinalExamEntity,
+        subjectViews: List<FinalSubjectView>,
+        marks: List<FinalExamMarksEntity>
+    ): List<FinalResultRow> {
+        val subjectMap = subjectViews.associateBy { it.subject.id }
+        val students = db.batchStudentDao().getStudentsForBatchOnce(exam.batchId, exam.instituteId)
+            .filter { it.status == "active" }
+        val byStudent = marks.groupBy { it.studentId }
+        val rows = students.mapNotNull { student ->
+            val studentMarks = byStudent[student.id] ?: emptyList()
+            val approved = studentMarks.filter { it.status == "approved" }
+            // All subjects must have approved marks for a complete result
+            val complete = subjectMap.keys.all { subjectId -> approved.any { it.subjectId == subjectId } }
+            if (!complete || approved.isEmpty()) return@mapNotNull null
+            val total = approved.sumOf { it.totalMarks }
+            val full = subjectViews.sumOf { it.subject.fullMarks }
+            val passed = approved.all { it.totalMarks >= (subjectMap[it.subjectId]?.subject?.passMarks ?: 0.0) }
+            val pct = if (full > 0) (total / full) * 100 else 0.0
+            val (gpa, grade) = gpaAndGrade(pct, passed)
+            FinalResultRow(
+                student = student,
+                subjectMarks = approved.associateBy { it.subjectId },
+                totalMarks = total,
+                fullMarks = full,
+                percentage = pct,
+                gpa = gpa,
+                grade = grade,
+                passed = passed,
+                meritPosition = 0
+            )
+        }.sortedByDescending { it.totalMarks }
+        return rows.mapIndexed { index, row -> row.copy(meritPosition = index + 1) }
+    }
+
+    /** Subject-wise class performance (worst-first) and weak-student list. */
+    private fun computeAnalytics(rows: List<FinalResultRow>, subjectViews: List<FinalSubjectView>) {
+        val subjectMap = subjectViews.associateBy { it.subject.id }
+        _subjectStats.value = subjectViews.map { view ->
+            val subject = view.subject
+            val obtained = rows.map { it.subjectMarks[subject.id]?.totalMarks ?: 0.0 }
+            val pctList = obtained.map { if (subject.fullMarks > 0) (it / subject.fullMarks) * 100 else 0.0 }
+            val passCount = obtained.count { it >= subject.passMarks }
+            SubjectStat(
+                subjectId = subject.id,
+                name = subject.subjectName,
+                fullMarks = subject.fullMarks,
+                passMarks = subject.passMarks,
+                averagePct = if (pctList.isEmpty()) 0.0 else pctList.average(),
+                passRatePct = if (pctList.isEmpty()) 0.0 else (passCount.toDouble() / pctList.size) * 100,
+                highest = obtained.maxOrNull() ?: 0.0,
+                lowest = obtained.minOrNull() ?: 0.0,
+                failCount = obtained.size - passCount,
+                studentCount = obtained.size
+            )
+        }.sortedBy { it.averagePct }
+        val classAverage = if (rows.isEmpty()) 0.0 else rows.map { it.percentage }.average()
+        _weakStudents.value = rows.mapNotNull { row ->
+            val failed = row.subjectMarks.values.mapNotNull { marks ->
+                val subject = subjectMap[marks.subjectId]?.subject ?: return@mapNotNull null
+                if (marks.totalMarks < subject.passMarks) {
+                    WeakSubjectLine(subject.subjectName, marks.totalMarks, subject.passMarks)
+                } else null
+            }
+            if (failed.isEmpty() && row.percentage >= classAverage) return@mapNotNull null
+            WeakStudentRow(
+                student = row.student,
+                failedSubjects = failed,
+                belowAverage = row.percentage < classAverage,
+                overallPct = row.percentage,
+                meritPosition = row.meritPosition
+            )
+        }.sortedWith(compareBy({ it.failedSubjects.isEmpty() }, { it.overallPct }))
     }
 
     private fun gpaAndGrade(percentage: Double, passed: Boolean): Pair<Double, String> {

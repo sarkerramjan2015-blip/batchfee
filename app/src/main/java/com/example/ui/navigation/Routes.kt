@@ -49,6 +49,8 @@ object BillingRoute
 @Serializable object DueFeesRoute
 @Serializable data class ReceiptDetailRoute(val paymentId: String)
 @Serializable object UnifiedCollectRoute
+@Serializable object PaymentRequestReviewRoute
+@Serializable object PaymentSettingsRoute
 
 @Serializable data class ReportsRoute(val period: String = "today")
 @Serializable object ReminderTemplatesRoute

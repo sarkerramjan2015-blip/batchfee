@@ -493,6 +493,57 @@ class FeeCollectionRepository(
         }
     }
 
+    /**
+     * Reviews a guardian-submitted online payment request through the trusted
+     * ledger. Approve carries the same grouped monthly allocations as
+     * [collectGroupedMonthlyPayment]; reject/correction move no money.
+     */
+    suspend fun reviewPaymentRequest(
+        instituteId: String,
+        requestId: String,
+        decision: String,
+        allocations: List<GroupedMonthlyCollectionAllocation> = emptyList(),
+        approvedAmount: Double? = null,
+        reviewNote: String? = null,
+        receiptText: String? = null,
+        now: Long = System.currentTimeMillis(),
+        operationId: String = UUID.randomUUID().toString()
+    ): FinancialOperationResult {
+        require(decision in setOf("approve", "reject", "correction")) {
+            "Review decision must be approve, reject, or correction."
+        }
+        if (decision == "approve") {
+            require(allocations.isNotEmpty()) { "Approving needs at least one monthly allocation." }
+            require(allocations.all { it.amount > 0.0 }) { "Every allocation must collect an amount." }
+        }
+        var request: Map<String, Any?> = baseRequest(operationId, instituteId, "review_payment_request") + mapOf(
+            "requestId" to requestId,
+            "decision" to decision,
+            "reviewNote" to reviewNote
+        )
+        if (decision == "approve") {
+            request = request + mapOf(
+                "approvedAmount" to approvedAmount,
+                "receiptText" to receiptText,
+                "allocations" to allocations.map { allocation ->
+                    mapOf(
+                        "feeId" to allocation.feeId,
+                        "batchId" to allocation.batchId,
+                        "feePeriod" to allocation.feePeriod,
+                        "feeType" to allocation.feeType,
+                        "sourceId" to allocation.sourceId,
+                        "dueDateMs" to allocation.dueDateMs,
+                        "baseAmount" to allocation.baseAmount,
+                        "discountAmount" to allocation.discountAmount,
+                        "lateFeeAmount" to allocation.lateFeeAmount,
+                        "amount" to allocation.amount
+                    )
+                }
+            )
+        }
+        return execute(request = request, queuedAtMs = now)
+    }
+
     private suspend fun execute(
         request: Map<String, Any?>,
         queuedAtMs: Long
@@ -632,7 +683,8 @@ class FeeCollectionRepository(
         if (action !in setOf(
                 "set_custom_monthly_fee",
                 "update_student_admission_date",
-                "reconcile_invalid_monthly_fees"
+                "reconcile_invalid_monthly_fees",
+                "review_payment_request"
             )) {
             check(result.fees.isNotEmpty()) { "Ledger response must contain a canonical fee." }
         }
@@ -665,6 +717,19 @@ class FeeCollectionRepository(
                 check(result.deletedPaymentIds.isEmpty() && result.deletedReceiptIds.isEmpty())
                 check(result.payments.map { it.feeId }.toSet().size == result.payments.size)
                 check(result.payments.map { it.receiptNumber }.toSet() == setOf(result.receipts.single().receiptNumber))
+            }
+            "review_payment_request" -> {
+                val wasApprove = request["decision"] == "approve"
+                if (wasApprove) {
+                    check(result.fees.isNotEmpty() && result.payments.isNotEmpty())
+                    check(result.receipts.size == 1 && result.reversals.isEmpty())
+                    check(result.deletedPaymentIds.isEmpty() && result.deletedReceiptIds.isEmpty())
+                    check(result.payments.map { it.feeId }.toSet().size == result.payments.size)
+                    check(result.payments.map { it.receiptNumber }.toSet() == setOf(result.receipts.single().receiptNumber))
+                } else {
+                    check(result.fees.isEmpty() && result.payments.isEmpty() && result.receipts.isEmpty())
+                    check(result.reversals.isEmpty() && result.deletedPaymentIds.isEmpty() && result.deletedReceiptIds.isEmpty())
+                }
             }
             "reverse_payment" -> {
                 check(result.payments.size == 1 && result.receipts.isEmpty() && result.reversals.size == 1)
@@ -717,7 +782,7 @@ class FeeCollectionRepository(
             val paymentFee = feesById[payment.feeId]
                 ?: error("Ledger response payment references an unknown fee.")
             check(payment.studentId == paymentFee.studentId)
-            if (action == "collect_grouped_payment") {
+            if (action == "collect_grouped_payment" || action == "review_payment_request") {
                 check(payment.operationId?.startsWith("$operationId:") == true && payment.status == "completed")
             } else if (action !in setOf("reverse_payment", "owner_edit_payment", "owner_edit_grouped_payment")) {
                 check(payment.operationId == operationId && payment.status == "completed")

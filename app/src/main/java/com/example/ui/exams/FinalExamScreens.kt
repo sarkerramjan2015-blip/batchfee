@@ -12,6 +12,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -47,6 +48,8 @@ import com.batchfee.edu.data.models.FinalExamSubjectEntity
 import com.batchfee.edu.data.models.StaffEntity
 import com.batchfee.edu.data.models.StudentEntity
 import com.batchfee.edu.domain.SessionManager
+import com.example.domain.BulkMessageController
+import com.batchfee.edu.ui.components.buildWhatsAppUrl
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -964,6 +967,37 @@ fun FinalExamDetailScreen(
                             Text("Publish", color = AccentGreen, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                         }
                     }
+                    if (isOwner && exam?.status == "published") {
+                        var showUnpublishConfirm by remember { mutableStateOf(false) }
+                        TextButton(onClick = { showUnpublishConfirm = true }) {
+                            Text("Unpublish", color = AccentRed, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        }
+                        if (showUnpublishConfirm) {
+                            AlertDialog(
+                                onDismissRequest = { showUnpublishConfirm = false },
+                                title = { Text("Unpublish results?", color = TextWhite, fontWeight = FontWeight.Bold) },
+                                text = { Text("Students will no longer see these results. Marks stay saved and you can publish again anytime.", color = TextMuted, fontSize = 13.sp) },
+                                confirmButton = {
+                                    Button(
+                                        onClick = {
+                                            showUnpublishConfirm = false
+                                            viewModel.unpublishExam(
+                                                onSuccess = { scope.launch { snackbarHostState.showSnackbar("Results unpublished.") } },
+                                                onError = { scope.launch { snackbarHostState.showSnackbar(it) } }
+                                            )
+                                        },
+                                        colors = ButtonDefaults.buttonColors(containerColor = AccentRed),
+                                        shape = RoundedCornerShape(10.dp)
+                                    ) { Text("Unpublish", color = Color.White, fontWeight = FontWeight.Bold) }
+                                },
+                                dismissButton = {
+                                    TextButton(onClick = { showUnpublishConfirm = false }) { Text("Keep Published", color = TextMuted) }
+                                },
+                                containerColor = CardBg,
+                                shape = RoundedCornerShape(16.dp)
+                            )
+                        }
+                    }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = BgColor)
             )
@@ -1596,12 +1630,72 @@ fun FinalExamResultsScreen(db: AppDatabase, examId: String, onBack: () -> Unit) 
     val exam by viewModel.selectedExam.collectAsState()
     val subjects by viewModel.subjects.collectAsState()
     val results by viewModel.results.collectAsState()
+    val subjectStats by viewModel.subjectStats.collectAsState()
+    val weakStudents by viewModel.weakStudents.collectAsState()
+    val versions by viewModel.versions.collectAsState()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
 
     var selectedStudent by remember { mutableStateOf<FinalResultRow?>(null) }
     var showShareSheet by remember { mutableStateOf(false) }
+    var activeTab by remember { mutableStateOf(0) }
+    var topFilter by remember { mutableStateOf<Int?>(null) }
+    var guardianRow by remember { mutableStateOf<FinalResultRow?>(null) }
+    var versionDialog by remember { mutableStateOf<FinalResultVersion?>(null) }
+    val bulkController = remember { BulkMessageController(scope, db, SessionManager.currentInstituteId.value) }
+    val bulkState by bulkController.state.collectAsState()
+
+    fun startBulkSend(channel: String, delayMs: Long) {
+        val targets = results.map { row ->
+            BulkMessageController.BulkTarget(
+                key = row.student.id,
+                name = row.student.fullName,
+                phone = guardianPhone(row.student)
+            )
+        }
+        if (targets.isEmpty()) {
+            scope.launch { snackbarHostState.showSnackbar("No results to send.") }
+            return
+        }
+        val started = bulkController.start(
+            targets = targets,
+            channel = channel,
+            delayMs = delayMs,
+            messageBuilder = { target ->
+                val row = results.firstOrNull { it.student.id == target.key }
+                if (row == null) "" else buildFinalResultSms(row, exam?.examName ?: "Final Exam")
+            },
+            launcher = { target, body ->
+                if (channel == "whatsapp") {
+                    runCatching {
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(buildWhatsAppUrl(target.phone, body))))
+                    }.isSuccess
+                } else {
+                    runCatching {
+                        context.startActivity(
+                            Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${target.phone?.filter(Char::isDigit).orEmpty()}"))
+                                .apply { putExtra("sms_body", body) }
+                        )
+                    }.isSuccess
+                }
+            }
+        )
+        if (!started) scope.launch { snackbarHostState.showSnackbar("Sending is already in progress.") }
+    }
+
+    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            when (event) {
+                androidx.lifecycle.Lifecycle.Event.ON_PAUSE -> bulkController.onPaused()
+                androidx.lifecycle.Lifecycle.Event.ON_RESUME -> bulkController.onResumed()
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     LaunchedEffect(examId) { viewModel.loadExam(examId) }
 
@@ -1629,6 +1723,14 @@ fun FinalExamResultsScreen(db: AppDatabase, examId: String, onBack: () -> Unit) 
                 title = { Text("Final Results", color = TextWhite, fontWeight = FontWeight.Bold, fontSize = 20.sp) },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = TextWhite) } },
                 actions = {
+                    if (exam?.status == "published") {
+                        IconButton(onClick = {
+                            viewModel.syncPublishedToCloud(
+                                onSuccess = { scope.launch { snackbarHostState.showSnackbar("Results synced.") } },
+                                onError = { scope.launch { snackbarHostState.showSnackbar(it) } }
+                            )
+                        }) { Icon(Icons.Filled.Sync, "Sync results", tint = Cyan) }
+                    }
                     IconButton(onClick = { showShareSheet = true }) { Icon(Icons.Filled.Share, "Share", tint = Cyan) }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = BgColor)
@@ -1639,60 +1741,375 @@ fun FinalExamResultsScreen(db: AppDatabase, examId: String, onBack: () -> Unit) 
             Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState())
                 .padding(horizontal = 14.dp, vertical = 8.dp)
         ) {
-            // Merit list header
-            Card(
-                Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(14.dp),
-                colors = CardDefaults.cardColors(containerColor = CardBg),
-                border = BorderStroke(1.dp, BorderSub)
+            if (bulkState.totalCount > 0) {
+                Card(
+                    Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = CardHi),
+                    border = BorderStroke(1.dp, AccentAmber.copy(alpha = 0.5f))
+                ) {
+                    Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Bulk send in progress", color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            Text(
+                                "Sent ${bulkState.sentCount} of ${bulkState.totalCount} • ${bulkState.failedCount} failed",
+                                color = TextMuted, fontSize = 11.sp
+                            )
+                        }
+                        if (bulkState.active) {
+                            TextButton(onClick = { bulkController.cancel() }) { Text("Cancel", color = AccentRed, fontSize = 12.sp) }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+            }
+
+            // Tab row
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                Column(Modifier.padding(14.dp)) {
-                    Text("Merit List — ${exam?.examName ?: ""}", color = TextWhite, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                    Text("$batchName • ${results.size} students", color = TextMuted, fontSize = 12.sp)
+                listOf("Merit", "Subjects", "Weak", "History").forEachIndexed { index, label ->
+                    Box(
+                        Modifier.clip(RoundedCornerShape(10.dp))
+                            .background(if (activeTab == index) Cyan else CardBg)
+                            .border(1.dp, if (activeTab == index) Cyan else BorderSub, RoundedCornerShape(10.dp))
+                            .clickable { activeTab = index }
+                            .padding(horizontal = 14.dp, vertical = 7.dp)
+                    ) {
+                        Text(label, color = if (activeTab == index) BgColor else TextMuted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
                 }
             }
             Spacer(Modifier.height(10.dp))
 
-            results.forEach { row ->
-                val gradeColor = when (row.grade) {
-                    "A+", "A" -> AccentGreen
-                    "A-", "B" -> AccentAmber
-                    "F" -> AccentRed
-                    else -> TextMuted
-                }
-                Card(
-                    Modifier.fillMaxWidth().clickable { selectedStudent = row },
-                    shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(containerColor = if (row.meritPosition == 1) CardHi else CardBgAlt),
-                    border = BorderStroke(1.dp, if (row.meritPosition == 1) AccentAmber.copy(alpha = 0.6f) else BorderSub)
-                ) {
-                    Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            Modifier.size(34.dp).clip(CircleShape).background(Brush.linearGradient(listOf(ElectricBlue, Cyan))),
-                            contentAlignment = Alignment.Center
+            when (activeTab) {
+                0 -> {
+                    // ── Merit tab ──
+                    Card(
+                        Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(14.dp),
+                        colors = CardDefaults.cardColors(containerColor = CardBg),
+                        border = BorderStroke(1.dp, BorderSub)
+                    ) {
+                        Column(Modifier.padding(14.dp)) {
+                            Text("Merit List — ${exam?.examName ?: ""}", color = TextWhite, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                            Text("$batchName • ${results.size} students", color = TextMuted, fontSize = 12.sp)
+                            Spacer(Modifier.height(8.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                listOf<Pair<String, Int?>>("All" to null, "Top 3" to 3, "Top 5" to 5, "Top 10" to 10).forEach { (label, limit) ->
+                                    val selected = topFilter == limit
+                                    Box(
+                                        Modifier.clip(RoundedCornerShape(8.dp))
+                                            .background(if (selected) AccentAmber.copy(alpha = 0.2f) else CardBgAlt)
+                                            .border(1.dp, if (selected) AccentAmber else BorderSub, RoundedCornerShape(8.dp))
+                                            .clickable { topFilter = limit }
+                                            .padding(horizontal = 10.dp, vertical = 5.dp)
+                                    ) {
+                                        Text(label, color = if (selected) AccentAmber else TextMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(10.dp))
+
+                    val visibleRows = if (topFilter != null) results.take(topFilter!!) else results
+                    visibleRows.forEach { row ->
+                        val gradeColor = when (row.grade) {
+                            "A+", "A" -> AccentGreen
+                            "A-", "B" -> AccentAmber
+                            "F" -> AccentRed
+                            else -> TextMuted
+                        }
+                        Card(
+                            Modifier.fillMaxWidth().clickable { selectedStudent = row },
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = if (row.meritPosition == 1) CardHi else CardBgAlt),
+                            border = BorderStroke(1.dp, if (row.meritPosition == 1) AccentAmber.copy(alpha = 0.6f) else BorderSub)
                         ) {
-                            Text("#${row.meritPosition}", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    Modifier.size(34.dp).clip(CircleShape).background(Brush.linearGradient(listOf(ElectricBlue, Cyan))),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text("#${row.meritPosition}", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                }
+                                Spacer(Modifier.width(10.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(row.student.fullName, color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text("${formatMarks(row.totalMarks)} / ${formatMarks(row.fullMarks)} • GPA ${"%.2f".format(row.gpa)}", color = TextMuted, fontSize = 11.sp)
+                                }
+                                Column(horizontalAlignment = Alignment.End) {
+                                    Text(row.grade, color = gradeColor, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                    Text(if (row.passed) "PASS" else "FAIL", color = if (row.passed) AccentGreen else AccentRed, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                }
+                                IconButton(onClick = { guardianRow = row }, modifier = Modifier.size(30.dp)) {
+                                    Icon(Icons.Filled.Chat, "Send to guardian", tint = WAGreen, modifier = Modifier.size(17.dp))
+                                }
+                                IconButton(onClick = { guardianRow = row }, modifier = Modifier.size(30.dp)) {
+                                    Icon(Icons.Filled.Sms, "SMS to guardian", tint = Cyan, modifier = Modifier.size(17.dp))
+                                }
+                            }
                         }
-                        Spacer(Modifier.width(10.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(row.student.fullName, color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text("${formatMarks(row.totalMarks)} / ${formatMarks(row.fullMarks)} • GPA ${"%.2f".format(row.gpa)}", color = TextMuted, fontSize = 11.sp)
-                        }
-                        Column(horizontalAlignment = Alignment.End) {
-                            Text(row.grade, color = gradeColor, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                            Text(if (row.passed) "PASS" else "FAIL", color = if (row.passed) AccentGreen else AccentRed, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(6.dp))
+                    }
+
+                    if (results.isEmpty()) {
+                        Box(Modifier.fillMaxWidth().padding(vertical = 40.dp), contentAlignment = Alignment.Center) {
+                            Text("Results will appear once all subject marks are approved.", color = TextMuted, fontSize = 13.sp, textAlign = TextAlign.Center)
                         }
                     }
                 }
-                Spacer(Modifier.height(6.dp))
-            }
-
-            if (results.isEmpty()) {
-                Box(Modifier.fillMaxWidth().padding(vertical = 40.dp), contentAlignment = Alignment.Center) {
-                    Text("Results will appear once all subject marks are approved.", color = TextMuted, fontSize = 13.sp, textAlign = TextAlign.Center)
+                1 -> {
+                    // ── Subjects tab ──
+                    if (subjectStats.isEmpty()) {
+                        Box(Modifier.fillMaxWidth().padding(vertical = 40.dp), contentAlignment = Alignment.Center) {
+                            Text("Subject analytics appear once results are complete.", color = TextMuted, fontSize = 13.sp, textAlign = TextAlign.Center)
+                        }
+                    }
+                    subjectStats.forEach { stat ->
+                        val accent = when {
+                            stat.averagePct >= 70 -> AccentGreen
+                            stat.averagePct >= 40 -> AccentAmber
+                            else -> AccentRed
+                        }
+                        Card(
+                            Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = CardBg),
+                            border = BorderStroke(1.dp, BorderSub)
+                        ) {
+                            Column(Modifier.padding(12.dp)) {
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                    Text(stat.name, color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text("${"%.1f".format(stat.averagePct)}% avg", color = accent, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                }
+                                Spacer(Modifier.height(8.dp))
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    StatMini("Pass rate", "${"%.0f".format(stat.passRatePct)}%", TextMuted)
+                                    StatMini("Highest", formatMarks(stat.highest), AccentGreen)
+                                    StatMini("Lowest", formatMarks(stat.lowest), AccentAmber)
+                                    StatMini("Failed", "${stat.failCount}", if (stat.failCount > 0) AccentRed else TextMuted)
+                                }
+                                Text(
+                                    "Pass mark ${formatMarks(stat.passMarks)} / ${formatMarks(stat.fullMarks)} • ${stat.studentCount} students",
+                                    color = TextMuted, fontSize = 10.sp
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                    }
+                }
+                2 -> {
+                    // ── Weak tab ──
+                    val failed = weakStudents.filter { it.failedSubjects.isNotEmpty() }
+                    val belowAvg = weakStudents.filter { it.belowAverage && it.failedSubjects.isEmpty() }
+                    Text("Failed students (${failed.size})", color = AccentRed, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(6.dp))
+                    if (failed.isEmpty()) {
+                        Text("No student failed — great job!", color = TextMuted, fontSize = 12.sp)
+                    }
+                    failed.forEach { row ->
+                        Card(
+                            Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = CardBg),
+                            border = BorderStroke(1.dp, AccentRed.copy(alpha = 0.4f))
+                        ) {
+                            Column(Modifier.padding(12.dp)) {
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                    Text(row.student.fullName, color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text("#${row.meritPosition} • ${"%.1f".format(row.overallPct)}%", color = TextMuted, fontSize = 11.sp)
+                                }
+                                Spacer(Modifier.height(6.dp))
+                                row.failedSubjects.forEach { line ->
+                                    Text(
+                                        "${line.subjectName}: ${formatMarks(line.obtained)} — need ${formatMarks(line.passMarks)}",
+                                        color = AccentRed, fontSize = 12.sp
+                                    )
+                                }
+                            }
+                        }
+                        Spacer(Modifier.height(6.dp))
+                    }
+                    Spacer(Modifier.height(14.dp))
+                    Text("Below class average (${belowAvg.size})", color = AccentAmber, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(6.dp))
+                    if (belowAvg.isEmpty()) {
+                        Text("Everyone is at or above the class average.", color = TextMuted, fontSize = 12.sp)
+                    }
+                    belowAvg.forEach { row ->
+                        Card(
+                            Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = CardBg),
+                            border = BorderStroke(1.dp, AccentAmber.copy(alpha = 0.4f))
+                        ) {
+                            Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(row.student.fullName, color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text("Overall ${"%.1f".format(row.overallPct)}% — below class average", color = TextMuted, fontSize = 11.sp)
+                                }
+                                Text("#${row.meritPosition}", color = AccentAmber, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                        Spacer(Modifier.height(6.dp))
+                    }
+                }
+                else -> {
+                    // ── History tab ──
+                    if (versions.isEmpty()) {
+                        Box(Modifier.fillMaxWidth().padding(vertical = 40.dp), contentAlignment = Alignment.Center) {
+                            Text("No versions yet. Version snapshots appear after results are published or corrected.", color = TextMuted, fontSize = 13.sp, textAlign = TextAlign.Center)
+                        }
+                    }
+                    versions.forEach { version ->
+                        Card(
+                            Modifier.fillMaxWidth().clickable { versionDialog = version },
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = CardBg),
+                            border = BorderStroke(1.dp, BorderSub)
+                        ) {
+                            Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    Modifier.size(34.dp).clip(RoundedCornerShape(8.dp)).background(AccentAmber.copy(alpha = 0.15f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text("v${version.version}", color = AccentAmber, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                }
+                                Spacer(Modifier.width(10.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(version.description ?: "Results published", color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    val dateText = SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault()).format(Date(version.createdAtMs))
+                                    Text("$dateText • ${version.changedByName ?: "Owner"}", color = TextMuted, fontSize = 11.sp)
+                                }
+                                Icon(Icons.Filled.ChevronRight, null, tint = TextMuted, modifier = Modifier.size(18.dp))
+                            }
+                        }
+                        Spacer(Modifier.height(6.dp))
+                    }
                 }
             }
             Spacer(Modifier.height(20.dp))
+        }
+    }
+
+    // Guardian send dialog
+    if (guardianRow != null && exam != null) {
+        val row = guardianRow!!
+        val examEntity = exam!!
+        val phone = guardianPhone(row.student)
+        val message = buildFinalResultSms(row, examEntity.examName)
+        Dialog(onDismissRequest = { guardianRow = null }) {
+            Card(
+                Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = CardBg),
+                border = BorderStroke(1.dp, BorderSub)
+            ) {
+                Column(Modifier.padding(18.dp)) {
+                    Text("Send Result — ${row.student.fullName}", color = TextWhite, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        "Guardian: ${row.student.guardianName?.takeIf { it.isNotBlank() } ?: "—"} • ${phone ?: "no phone"}",
+                        color = TextMuted, fontSize = 12.sp
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Box(
+                        Modifier.fillMaxWidth().height(46.dp).clip(RoundedCornerShape(12.dp)).background(WAGreen.copy(alpha = 0.15f))
+                            .border(1.dp, WAGreen.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
+                            .clickable {
+                                guardianRow = null
+                                runCatching {
+                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(buildWhatsAppUrl(phone, message))))
+                                }
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("Send WhatsApp", color = WAGreen, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Box(
+                        Modifier.fillMaxWidth().height(46.dp).clip(RoundedCornerShape(12.dp)).background(Cyan.copy(alpha = 0.15f))
+                            .border(1.dp, Cyan.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
+                            .clickable {
+                                guardianRow = null
+                                runCatching {
+                                    context.startActivity(
+                                        Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${phone?.filter(Char::isDigit).orEmpty()}"))
+                                            .apply { putExtra("sms_body", message) }
+                                    )
+                                }
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("Send SMS", color = Cyan, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    TextButton(onClick = { guardianRow = null }, modifier = Modifier.fillMaxWidth()) { Text("Cancel", color = TextMuted) }
+                }
+            }
+        }
+    }
+
+    // Version snapshot dialog
+    val versionToShow = versionDialog
+    if (versionToShow != null) {
+        val version = versionToShow
+        var expandedStudent by remember { mutableStateOf<String?>(null) }
+        Dialog(onDismissRequest = { versionDialog = null }) {
+            Card(
+                Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = CardBg),
+                border = BorderStroke(1.dp, BorderSub)
+            ) {
+                Column(Modifier.padding(16.dp)) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Version ${version.version}", color = AccentAmber, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                            val dateText = SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault()).format(Date(version.createdAtMs))
+                            Text("$dateText • ${version.changedByName ?: "Owner"}", color = TextMuted, fontSize = 11.sp)
+                            Text(version.description ?: "", color = TextMuted, fontSize = 11.sp)
+                        }
+                        IconButton(onClick = { versionDialog = null }) { Icon(Icons.Filled.Close, "Close", tint = AccentRed) }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    HorizontalDivider(color = BorderSub)
+                    Spacer(Modifier.height(8.dp))
+                    version.results.sortedBy { it.meritPosition }.forEach { result ->
+                        val isExpanded = expandedStudent == result.studentId
+                        Card(
+                            Modifier.fillMaxWidth().clickable { expandedStudent = if (isExpanded) null else result.studentId },
+                            shape = RoundedCornerShape(10.dp),
+                            colors = CardDefaults.cardColors(containerColor = CardBgAlt),
+                            border = BorderStroke(1.dp, BorderSub)
+                        ) {
+                            Column(Modifier.padding(10.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("#${result.meritPosition}", color = AccentAmber, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(result.studentName, color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text("${formatMarks(result.totalMarks)}/${formatMarks(result.fullMarks)} • ${result.grade}", color = Cyan, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(if (result.passed) "PASS" else "FAIL", color = if (result.passed) AccentGreen else AccentRed, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                }
+                                if (isExpanded) {
+                                    Spacer(Modifier.height(6.dp))
+                                    version.subjects.forEach { subject ->
+                                        val obtained = result.subjectMarks[subject.subjectId] ?: 0.0
+                                        Text(
+                                            "${subject.name}: ${formatMarks(obtained)} / ${formatMarks(subject.fullMarks)}",
+                                            color = TextMuted, fontSize = 11.sp
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        Spacer(Modifier.height(5.dp))
+                    }
+                }
+            }
         }
     }
 
@@ -1862,6 +2279,30 @@ fun FinalExamResultsScreen(db: AppDatabase, examId: String, onBack: () -> Unit) 
                         Text("Merit List (Text)", color = Cyan, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                     }
                     Spacer(Modifier.height(8.dp))
+                    Box(
+                        Modifier.fillMaxWidth().height(46.dp).clip(RoundedCornerShape(12.dp)).background(WAGreen.copy(alpha = 0.15f))
+                            .border(1.dp, WAGreen.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
+                            .clickable {
+                                showShareSheet = false
+                                startBulkSend("whatsapp", 2500)
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("Send Result WhatsApp (Bulk)", color = WAGreen, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Box(
+                        Modifier.fillMaxWidth().height(46.dp).clip(RoundedCornerShape(12.dp)).background(Cyan.copy(alpha = 0.15f))
+                            .border(1.dp, Cyan.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
+                            .clickable {
+                                showShareSheet = false
+                                startBulkSend("sms", 2500)
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("Send Result SMS (Bulk)", color = Cyan, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Spacer(Modifier.height(8.dp))
                     TextButton(onClick = { showShareSheet = false }, modifier = Modifier.fillMaxWidth()) { Text("Cancel", color = TextMuted) }
                 }
             }
@@ -1870,6 +2311,23 @@ fun FinalExamResultsScreen(db: AppDatabase, examId: String, onBack: () -> Unit) 
 }
 
 // ── Result card + PDF generation (plain Canvas) ────────────────
+@Composable
+private fun StatMini(label: String, value: String, valueColor: Color) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(value, color = valueColor, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        Text(label, color = TextMuted, fontSize = 9.sp)
+    }
+}
+
+/** Guardian-first phone fallback: send to the guardian when a guardian phone exists. */
+private fun guardianPhone(student: StudentEntity): String? =
+    student.guardianPhone?.trim()?.takeIf { it.isNotBlank() }
+        ?: student.phone?.trim()?.takeIf { it.isNotBlank() }
+
+/** Short per-student result message — deliberately concise for SMS/WhatsApp. */
+private fun buildFinalResultSms(row: FinalResultRow, examName: String): String =
+    "$examName: ${row.student.fullName} scored ${formatMarks(row.totalMarks)}/${formatMarks(row.fullMarks)} (${"%.1f".format(row.percentage)}%), Grade ${row.grade}, Merit #${row.meritPosition}. ${if (row.passed) "PASS" else "FAIL"}"
+
 private fun finalComment(row: FinalResultRow): String = when {
     row.meritPosition == 1 -> "Outstanding performance — top of the class!"
     row.grade in listOf("A+", "A") -> "Excellent result. Keep up the great work!"

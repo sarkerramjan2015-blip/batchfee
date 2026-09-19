@@ -1325,3 +1325,206 @@ describe("question-bank phase 0 boundary", { concurrency: false }, () => {
     }
   });
 });
+
+describe("final exam results, visibility and version history", { concurrency: false }, () => {
+  function studentClaims(instituteId, studentId) {
+    return {
+      student: true,
+      instituteId,
+      studentId,
+      studentSessionExpiresAt: Date.now() + 3_600_000,
+    };
+  }
+
+  function finalResultDoc(studentId, extra = {}) {
+    return {
+      instituteId: OWNER_A,
+      finalExamId: "final-exam-a",
+      examName: "Annual Examination",
+      batchId: "batch-a",
+      studentId,
+      totalMarks: 480,
+      fullMarks: 600,
+      percentage: 80,
+      gpa: 5.0,
+      grade: "A+",
+      passed: true,
+      meritPosition: 1,
+      totalStudents: 40,
+      published: true,
+      subjectMarks: [
+        { name: "Bangla", fullMarks: 100, passMarks: 33, totalMarks: 85, passed: true },
+      ],
+      ...extra,
+    };
+  }
+
+  test("owner publishes final exam, per-student results and v1 snapshot in one batch", async () => {
+    const db = authDb(OWNER_A);
+    const batch = writeBatch(db);
+    batch.set(tenantDoc(db, OWNER_A, "final_exams", "final-exam-a"), {
+      instituteId: OWNER_A, examName: "Annual Examination", batchId: "batch-a",
+      status: "published", publishedAtMs: Date.now(), totalStudents: 2, version: 1,
+    });
+    batch.set(tenantDoc(db, OWNER_A, "final_results", "final-exam-a_student-doc-a1"), finalResultDoc("student-doc-a1"));
+    batch.set(tenantDoc(db, OWNER_A, "final_results", "final-exam-a_student-doc-a2"), finalResultDoc("student-doc-a2", { meritPosition: 2, gpa: 4.0, grade: "A" }));
+    batch.set(tenantDoc(db, OWNER_A, "final_result_versions", "final-exam-a_v1"), {
+      instituteId: OWNER_A, examId: "final-exam-a", version: 1,
+      description: "Results published", results: [{ studentId: "student-doc-a1", studentName: "Linked Student A1" }],
+    });
+    await assertSucceeds(batch.commit());
+  });
+
+  test("staff with manage_exams can write final results but cannot forge version history", async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await updateDoc(tenantDoc(context.firestore(), OWNER_A, "staffs", "staff-manage-a"), { permissions: "manage_exams" });
+    });
+    const db = authDb("staff-manage-a");
+    await assertSucceeds(setDoc(tenantDoc(db, OWNER_A, "final_results", "staff-result"), finalResultDoc("student-doc-a1")));
+    await assertFails(setDoc(tenantDoc(db, OWNER_A, "final_result_versions", "staff-forged-version"), {
+      instituteId: OWNER_A, examId: "final-exam-a", version: 99,
+    }));
+  });
+
+  test("staff without manage_exams and other institutes cannot write final results", async () => {
+    await assertFails(setDoc(tenantDoc(authDb("staff-none-a"), OWNER_A, "final_results", "forbidden"), finalResultDoc("student-doc-a1")));
+    await assertFails(setDoc(tenantDoc(authDb(OWNER_B), OWNER_A, "final_results", "cross-institute"), finalResultDoc("student-doc-a1")));
+  });
+
+  test("linked student reads only its own published final result", async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const db = context.firestore();
+      await setDoc(tenantDoc(db, OWNER_A, "final_results", "final-exam-a_student-doc-a1"), finalResultDoc("student-doc-a1"));
+      await setDoc(tenantDoc(db, OWNER_A, "final_results", "final-exam-a_student-doc-a2"), finalResultDoc("student-doc-a2"));
+      await setDoc(tenantDoc(db, OWNER_A, "final_results", "final-exam-a_student-doc-a1-unpublished"), finalResultDoc("student-doc-a1", { published: false }));
+    });
+    const studentDb = authDb("student-uid-a1", "student-uid-a1@example.test", studentClaims(OWNER_A, "student-doc-a1"));
+    await assertSucceeds(getDoc(tenantDoc(studentDb, OWNER_A, "final_results", "final-exam-a_student-doc-a1")));
+    await assertFails(getDoc(tenantDoc(studentDb, OWNER_A, "final_results", "final-exam-a_student-doc-a2")));
+    await assertSucceeds(getDoc(tenantDoc(studentDb, OWNER_A, "final_results", "final-exam-a_student-doc-a1-unpublished")));
+    await assertFails(getDoc(tenantDoc(studentDb, OWNER_A, "final_result_versions", "final-exam-a_v1")));
+    await assertFails(getDoc(tenantDoc(studentDb, OWNER_B, "final_results", "final-exam-b_student-doc-b1")));
+  });
+
+  test("view_reports staff can read final results and history", async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const db = context.firestore();
+      await setDoc(tenantDoc(db, OWNER_A, "final_results", "final-exam-a_student-doc-a1"), finalResultDoc("student-doc-a1"));
+      await setDoc(tenantDoc(db, OWNER_A, "final_result_versions", "final-exam-a_v1"), { instituteId: OWNER_A, examId: "final-exam-a", version: 1 });
+      await updateDoc(tenantDoc(db, OWNER_A, "staffs", "staff-view-a"), { permissions: "view_reports" });
+    });
+    const db = authDb("staff-view-a");
+    await assertSucceeds(getDoc(tenantDoc(db, OWNER_A, "final_results", "final-exam-a_student-doc-a1")));
+    await assertSucceeds(getDoc(tenantDoc(db, OWNER_A, "final_result_versions", "final-exam-a_v1")));
+    await assertFails(setDoc(tenantDoc(db, OWNER_A, "final_result_versions", "staff-version"), { version: 2 }));
+  });
+});
+
+describe("online payment request boundary", { concurrency: false }, () => {
+  function studentClaims(instituteId, studentId) {
+    return {
+      student: true,
+      instituteId,
+      studentId,
+      studentSessionExpiresAt: Date.now() + 3_600_000,
+    };
+  }
+
+  function validRequest(overrides = {}) {
+    return {
+      instituteId: OWNER_A,
+      studentId: "student-doc-a1",
+      studentName: "Linked Student A1",
+      amount: 500,
+      months: ["Sep 2026"],
+      transactionId: "TXN-ABC-123",
+      method: "bkash",
+      senderNumber: "+8801700000001",
+      paymentDateMs: Date.now(),
+      note: null,
+      screenshotRef: null,
+      status: "pending",
+      submittedAtMs: Date.now(),
+      updatedAtMs: Date.now(),
+      ...overrides,
+    };
+  }
+
+  test("student submits a valid own payment request and edits it", async () => {
+    const db = authDb("student-uid-a1", "student-uid-a1@example.test", studentClaims(OWNER_A, "student-doc-a1"));
+    const ref = tenantDoc(db, OWNER_A, "payment_requests", "request-a1-1");
+    await assertSucceeds(setDoc(ref, validRequest()));
+    await assertSucceeds(updateDoc(ref, { amount: 450, updatedAtMs: Date.now() }));
+    await assertSucceeds(updateDoc(ref, { status: "cancelled", updatedAtMs: Date.now() }));
+  });
+
+  test("student cannot forge request fields, another student, or an approved status", async () => {
+    const db = authDb("student-uid-a1", "student-uid-a1@example.test", studentClaims(OWNER_A, "student-doc-a1"));
+
+    await assertFails(setDoc(tenantDoc(db, OWNER_A, "payment_requests", "other-student"), validRequest({ studentId: "student-doc-a2" })));
+    await assertFails(setDoc(tenantDoc(db, OWNER_B, "payment_requests", "cross-institute"), validRequest({ instituteId: OWNER_B })));
+    await assertFails(setDoc(tenantDoc(db, OWNER_A, "payment_requests", "approved-status"), validRequest({ status: "approved" })));
+    await assertFails(setDoc(tenantDoc(db, OWNER_A, "payment_requests", "zero-amount"), validRequest({ amount: 0 })));
+    await assertFails(setDoc(tenantDoc(db, OWNER_A, "payment_requests", "bad-method"), validRequest({ method: "paypal" })));
+    await assertFails(setDoc(tenantDoc(db, OWNER_A, "payment_requests", "extra-field"), { ...validRequest(), forged: true }));
+
+    const pendingRef = tenantDoc(db, OWNER_A, "payment_requests", "pending-to-approve");
+    await assertSucceeds(setDoc(pendingRef, validRequest()));
+    await assertFails(updateDoc(pendingRef, { status: "approved", updatedAtMs: Date.now() }));
+
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(tenantDoc(context.firestore(), OWNER_A, "payment_requests", "already-approved"), {
+        ...validRequest(), status: "approved",
+      });
+    });
+    await assertFails(updateDoc(tenantDoc(db, OWNER_A, "payment_requests", "already-approved"), {
+      amount: 1, updatedAtMs: Date.now(),
+    }));
+  });
+
+  test("owner and fee staff read requests; other staff and tenants cannot", async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const seed = context.firestore();
+      await setDoc(tenantDoc(seed, OWNER_A, "payment_requests", "visible-request"), validRequest());
+      await updateDoc(tenantDoc(seed, OWNER_A, "staffs", "staff-manage-a"), { permissions: "collect_fee,manage_student" });
+    });
+    await assertSucceeds(getDoc(tenantDoc(authDb(OWNER_A), OWNER_A, "payment_requests", "visible-request")));
+    await assertSucceeds(getDoc(tenantDoc(authDb("staff-manage-a"), OWNER_A, "payment_requests", "visible-request")));
+    await assertFails(getDoc(tenantDoc(authDb("staff-none-a"), OWNER_A, "payment_requests", "visible-request")));
+    await assertFails(getDoc(tenantDoc(authDb(OWNER_B), OWNER_A, "payment_requests", "visible-request")));
+    await assertFails(setDoc(tenantDoc(authDb(OWNER_A), OWNER_A, "payment_requests", "owner-cannot-create"), validRequest()));
+  });
+
+  test("payment settings are owner-written and readable by students", async () => {
+    const settings = {
+      methods: { bkash: { number: "+8801700000000", active: true } },
+      instructions: "Send money first.",
+      qrAssetRef: null,
+      allowPartialPayments: true,
+      updatedAtMs: Date.now(),
+    };
+    const ownerDb = authDb(OWNER_A);
+    await assertSucceeds(setDoc(tenantDoc(ownerDb, OWNER_A, "payment_settings", "config"), settings));
+    await assertFails(setDoc(tenantDoc(authDb("staff-manage-a"), OWNER_A, "payment_settings", "config"), settings));
+
+    const studentDb = authDb("student-uid-a1", "student-uid-a1@example.test", studentClaims(OWNER_A, "student-doc-a1"));
+    await assertSucceeds(getDoc(tenantDoc(studentDb, OWNER_A, "payment_settings", "config")));
+    await assertFails(setDoc(tenantDoc(studentDb, OWNER_A, "payment_settings", "config"), settings));
+  });
+
+  test("superadmin reads the platform-wide request trail and audit stays server-only", async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const seed = context.firestore();
+      await setDoc(tenantDoc(seed, OWNER_A, "payment_requests", "trail-a"), validRequest());
+      await setDoc(tenantDoc(seed, OWNER_B, "payment_requests", "trail-b"), validRequest({ instituteId: OWNER_B, studentId: "student-doc-b1", studentName: "Linked Student B1" }));
+    });
+    const adminDb = authDb(ADMIN);
+    const trail = await assertSucceeds(getDocs(collectionGroup(adminDb, "payment_requests")));
+    assert.equal(trail.size, 2);
+    await assertFails(getDocs(collectionGroup(authDb(OWNER_A), "payment_requests")));
+
+    for (const db of [authDb(OWNER_A), authDb(ADMIN)]) {
+      await assertFails(setDoc(tenantDoc(db, OWNER_A, "payment_request_audit", "forged"), { decision: "approve" }));
+    }
+  });
+});

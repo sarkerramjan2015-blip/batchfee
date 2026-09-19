@@ -372,6 +372,36 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
         }
     }
 
+    fun unpublishResults(examId: String, onSuccess: () -> Unit, onError: (String) -> Unit = {}) {
+        val instId = SessionManager.currentInstituteId.value ?: return
+        val results = _studentResults.value.filter { it.result != null }
+        if (results.isEmpty()) { onError("No results to unpublish."); return }
+        if (results.any { it.result!!.examId != examId || it.result!!.instituteId != instId }) {
+            onError("Exam selection changed. Refresh and retry."); return
+        }
+        val mutationKey = "$instId:$examId"
+        if (!synchronized(resultMutationsInProgress) { resultMutationsInProgress.add(mutationKey) }) {
+            onError("Results are already being saved for this exam."); return
+        }
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    val updates = results.map { it.result!!.copy(published = false, updatedAtMs = System.currentTimeMillis()) }
+                    com.batchfee.edu.data.firestore.AtomicBulkSync.results(db, updates)
+                }
+                loadExamDetails(examId)
+                StaffActivityLogger.logCompletedAction(
+                    db, "exam_results_unpublished", "exams", "Unpublished exam results"
+                )
+                onSuccess()
+            } catch (e: Exception) {
+                onError(examOperationErrorMessage(e, "Failed to unpublish"))
+            } finally {
+                synchronized(resultMutationsInProgress) { resultMutationsInProgress.remove(mutationKey) }
+            }
+        }
+    }
+
     fun updateSingleResult(
         examId: String,
         studentId: String,

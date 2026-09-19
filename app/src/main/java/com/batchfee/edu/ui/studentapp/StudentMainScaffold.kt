@@ -140,7 +140,16 @@ fun StudentMainScaffold(onLogout: () -> Unit) {
             composable("student_fees") {
                 StudentFeeScreen(
                     onBack = { navController.popBackStack() },
-                    onOpenDocuments = { navController.navigate("student_documents") }
+                    onOpenDocuments = { navController.navigate("student_documents") },
+                    onPayOnline = { month ->
+                        navController.navigate("student_pay?month=${android.net.Uri.encode(month)}")
+                    }
+                )
+            }
+            composable("student_pay?month={month}") { backStackEntry ->
+                StudentPaymentRequestScreen(
+                    preselectedMonth = backStackEntry.arguments?.getString("month"),
+                    onBack = { navController.popBackStack() }
                 )
             }
             composable("student_attendance") { StudentAttendanceScreen(onBack = { navController.popBackStack() }) }

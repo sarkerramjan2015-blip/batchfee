@@ -30,7 +30,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.batchfee.edu.data.database.AppDatabase
+import com.batchfee.edu.domain.SessionManager
 import com.example.ui.components.SingleSmsDeliveryDialog
+import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.launch
 
 // ── Premium palette ───────────────────────────────────────────
@@ -63,7 +65,8 @@ fun FeeDashboardScreen(
     onBack: () -> Unit,
     onNavigateDueFees: () -> Unit,
     onCreateFee: () -> Unit,
-    onCollectPayment: (String) -> Unit
+    onCollectPayment: (String) -> Unit,
+    onNavigatePaymentRequests: () -> Unit
 ) {
     val viewModel: FeeViewModel = viewModel(factory = FeeViewModelFactory(db))
     val totalDueAmount by viewModel.totalDueAmount.collectAsState()
@@ -73,6 +76,20 @@ fun FeeDashboardScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var smsDueTarget by remember { mutableStateOf<SmsDueTarget?>(null) }
+    var pendingRequests by remember { mutableStateOf(0) }
+    val instituteId = SessionManager.currentInstituteId.value.orEmpty()
+
+    DisposableEffect(instituteId) {
+        if (instituteId.isBlank()) { onDispose { }; return@DisposableEffect onDispose { } }
+        val listener = FirebaseFirestore.getInstance()
+            .collection("institutes").document(instituteId)
+            .collection("payment_requests")
+            .whereEqualTo("status", "pending")
+            .addSnapshotListener { snap, _ ->
+                pendingRequests = snap?.documents?.size ?: 0
+            }
+        onDispose { listener.remove() }
+    }
 
     Scaffold(
         containerColor = BgColor,
@@ -82,6 +99,20 @@ fun FeeDashboardScreen(
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = TextWhite)
+                    }
+                },
+                actions = {
+                    Box {
+                        IconButton(onClick = onNavigatePaymentRequests) {
+                            Icon(Icons.Filled.MarkEmailUnread, contentDescription = "Payment requests", tint = Cyan)
+                        }
+                        if (pendingRequests > 0) {
+                            Badge(
+                                containerColor = AccentRed,
+                                contentColor = Color.White,
+                                modifier = Modifier.align(Alignment.TopEnd).offset(x = (-4).dp, y = 4.dp)
+                            ) { Text("$pendingRequests", fontSize = 9.sp) }
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = BgColor)

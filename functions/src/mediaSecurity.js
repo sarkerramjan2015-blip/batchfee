@@ -79,7 +79,8 @@ function staffCanReadStudent(staff) {
 function assertCanUpload(principal, purpose, subjectId, actorUid) {
   if (principal.kind === "super" || principal.kind === "principal") return;
   if (principal.kind === "student") {
-    if (purpose === "student_photo" && subjectId === principal.studentId) return;
+    if ((purpose === "student_photo" || purpose === "payment_proof") &&
+        subjectId === principal.studentId) return;
     throw new HttpsError("permission-denied", "Student media upload is not allowed.");
   }
   if (purpose === "student_photo" && staffHas(principal.staff, "manage_student")) return;
@@ -314,8 +315,12 @@ function createMediaSecurityHandlers({ db, bucket }) {
 
     let allowed = principal.kind === "super" || principal.kind === "principal";
     if (!allowed && principal.kind === "staff") {
-      if (asset.purpose === "institute_logo") allowed = true;
+      if (asset.purpose === "institute_logo" || asset.purpose === "payment_qr") allowed = true;
       if (asset.purpose === "student_photo") allowed = staffCanReadStudent(principal.staff);
+      if (asset.purpose === "payment_proof") {
+        allowed = staffHas(principal.staff, "collect_fee") ||
+          staffHas(principal.staff, "view_fee_summary");
+      }
       if (asset.purpose === "staff_photo") {
         allowed = asset.subjectId === request.auth.uid || staffHas(principal.staff, "manage_staff");
         if (!allowed) {
@@ -327,7 +332,7 @@ function createMediaSecurityHandlers({ db, bucket }) {
       }
     }
     if (!allowed && principal.kind === "student") {
-      if (asset.purpose === "institute_logo") {
+      if (asset.purpose === "institute_logo" || asset.purpose === "payment_qr") {
         allowed = true;
       } else if (asset.purpose === "student_photo") {
         const studentSnap = await principal.instituteRef.collection("students")
@@ -335,6 +340,8 @@ function createMediaSecurityHandlers({ db, bucket }) {
         allowed = asset.subjectId === principal.studentId &&
           studentSnap.exists && active(studentSnap.data()) &&
           studentSnap.get("photoUri") === reference;
+      } else if (asset.purpose === "payment_proof") {
+        allowed = asset.subjectId === principal.studentId;
       }
     }
     if (!allowed) throw new HttpsError("permission-denied", "Media access is not allowed.");

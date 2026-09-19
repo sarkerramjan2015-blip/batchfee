@@ -476,11 +476,15 @@ service cloud.firestore {
         && collection != 'sms_messages'
         && collection != 'question_bank'
         && collection != 'question_generation_jobs'
+        && collection != 'question_finalization_operations'
         && collection != 'question_sources'
         && collection != 'question_contribution_consents'
         && collection != 'question_contribution_consent_events'
         && collection != 'question_bank_wallet'
         && collection != 'question_bank_wallet_ledger'
+        && collection != 'payment_settings'
+        && collection != 'payment_requests'
+        && collection != 'payment_request_audit'
         && (isSuperAdmin() || isActiveInstitutePrincipal(instituteId));
     }
 
@@ -492,6 +496,9 @@ service cloud.firestore {
       allow read, write: if false;
     }
     match /institutes/{instituteId}/question_generation_jobs/{document=**} {
+      allow read, write: if false;
+    }
+    match /institutes/{instituteId}/question_finalization_operations/{document=**} {
       allow read, write: if false;
     }
     match /institutes/{instituteId}/question_sources/{document=**} {
@@ -780,6 +787,92 @@ service cloud.firestore {
             || hasStaffPermission(instituteId, 'view_reports')));
       allow write: if isActiveInstitutePrincipal(instituteId)
         || hasStaffPermission(instituteId, 'manage_exams');
+    }
+
+    match /institutes/{instituteId}/final_exams/{docId} {
+      allow read: if (isStudentAuthRequest() && isStudentOf(instituteId))
+        || (!isStudentAuthRequest()
+          && (isActiveInstitutePrincipal(instituteId)
+            || hasStaffPermission(instituteId, 'manage_exams')
+            || hasStaffPermission(instituteId, 'view_reports')));
+      allow write: if isActiveInstitutePrincipal(instituteId)
+        || hasStaffPermission(instituteId, 'manage_exams');
+    }
+
+    match /institutes/{instituteId}/final_results/{docId} {
+      allow read: if isStudentRecordOwner(instituteId, resource.data.studentId)
+        || (!isStudentAuthRequest()
+          && (isActiveInstitutePrincipal(instituteId)
+            || hasStaffPermission(instituteId, 'manage_exams')
+            || hasStaffPermission(instituteId, 'view_reports')));
+      allow write: if isActiveInstitutePrincipal(instituteId)
+        || hasStaffPermission(instituteId, 'manage_exams');
+    }
+
+    match /institutes/{instituteId}/final_result_versions/{docId} {
+      allow read: if isActiveInstitutePrincipal(instituteId)
+        || hasStaffPermission(instituteId, 'manage_exams')
+        || hasStaffPermission(instituteId, 'view_reports');
+      allow write: if isActiveInstitutePrincipal(instituteId);
+    }
+
+    match /institutes/{instituteId}/payment_settings/{docId} {
+      allow read: if (isStudentAuthRequest() && isStudentOf(instituteId))
+        || (!isStudentAuthRequest()
+          && (isActiveInstitutePrincipal(instituteId)
+            || hasStaffPermission(instituteId, 'collect_fee')
+            || hasStaffPermission(instituteId, 'view_fee_summary')));
+      allow write: if isActiveInstitutePrincipal(instituteId)
+        && request.resource.data.keys().hasOnly([
+          'methods', 'instructions', 'qrAssetRef', 'allowPartialPayments', 'updatedAtMs'
+        ])
+        && request.resource.data.allowPartialPayments is bool;
+    }
+
+    match /institutes/{instituteId}/payment_requests/{requestId} {
+      function studentCanEditRequest() {
+        return isStudentRecordOwner(instituteId, resource.data.studentId)
+          && resource.data.status in ['pending', 'correction_requested'];
+      }
+      allow create: if isStudentRecordOwner(instituteId, request.resource.data.studentId)
+        && request.resource.data.instituteId == instituteId
+        && request.resource.data.keys().hasOnly([
+          'instituteId', 'studentId', 'studentName', 'amount', 'months', 'transactionId',
+          'method', 'senderNumber', 'paymentDateMs', 'note', 'screenshotRef',
+          'status', 'submittedAtMs', 'updatedAtMs'
+        ])
+        && request.resource.data.status == 'pending'
+        && request.resource.data.amount is number
+        && request.resource.data.amount > 0
+        && request.resource.data.transactionId is string
+        && request.resource.data.transactionId.size() <= 128
+        && request.resource.data.method in ['bkash', 'nagad', 'rocket', 'bank']
+        && request.resource.data.months is list
+        && request.resource.data.months.size() > 0;
+      allow update: if studentCanEditRequest()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'amount', 'months', 'transactionId', 'method', 'senderNumber',
+          'paymentDateMs', 'note', 'screenshotRef', 'status', 'updatedAtMs'
+        ])
+        && request.resource.data.status in ['pending', 'cancelled'];
+      allow read: if isStudentRecordOwner(instituteId, resource.data.studentId)
+        || (!isStudentAuthRequest()
+          && (isActiveInstitutePrincipal(instituteId)
+            || hasStaffPermission(instituteId, 'collect_fee')
+            || hasStaffPermission(instituteId, 'view_fee_summary')));
+      allow delete: if false;
+    }
+
+    match /institutes/{instituteId}/payment_request_audit/{auditId} {
+      allow read: if isActiveInstitutePrincipal(instituteId)
+        || hasStaffPermission(instituteId, 'collect_fee')
+        || hasStaffPermission(instituteId, 'view_fee_summary');
+      allow write: if false;
+    }
+
+    // Super Admin loads the online-payment request trail across every institute.
+    match /{path=**}/payment_requests/{requestId} {
+      allow read: if isPlatformDataReader();
     }
 
     match /institutes/{instituteId}/expenses/{expenseId} {

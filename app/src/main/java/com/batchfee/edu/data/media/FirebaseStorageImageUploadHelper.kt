@@ -51,6 +51,28 @@ object FirebaseStorageImageUploadHelper {
         replacesReference: String? = null
     ): String = uploadImage(context, sourceUri, ImagePolicy.STAFF_PHOTO, subjectId, replacesReference)
 
+    /** Owner uploads the payment QR shown to guardians on the payment-request screen. */
+    suspend fun uploadPaymentQr(
+        context: Context,
+        sourceUri: Uri,
+        replacesReference: String? = null
+    ): String = uploadImage(context, sourceUri, ImagePolicy.PAYMENT_QR, null, replacesReference)
+
+    /**
+     * Guardian uploads the payment screenshot. Runs under the student session,
+     * so the institute ID comes from the student session rather than the owner session.
+     */
+    suspend fun uploadPaymentProof(
+        context: Context,
+        sourceUri: Uri,
+        subjectId: String,
+        instituteId: String,
+        replacesReference: String? = null
+    ): String = uploadImage(
+        context, sourceUri, ImagePolicy.PAYMENT_PROOF, subjectId, replacesReference,
+        instituteIdOverride = instituteId,
+    )
+
     fun isManagedReference(value: String?): Boolean =
         value?.startsWith(MANAGED_REFERENCE_PREFIX) == true
 
@@ -142,11 +164,13 @@ object FirebaseStorageImageUploadHelper {
         sourceUri: Uri,
         policy: ImagePolicy,
         subjectId: String?,
-        replacesReference: String?
+        replacesReference: String?,
+        instituteIdOverride: String? = null
     ): String {
         val source = sourceUri.toString()
         if (isExistingCloudReference(source)) return source
-        val instituteId = SessionManager.currentInstituteId.value
+        val instituteId = instituteIdOverride
+            ?: SessionManager.currentInstituteId.value
             ?: throw IllegalStateException("Institute session was not found.")
         val imageBytes = withContext(Dispatchers.IO) {
             optimizeToJpeg(context, sourceUri, policy)
@@ -218,10 +242,14 @@ object FirebaseStorageImageUploadHelper {
             working.recycle()
             working = orientationCorrected
         }
-        val square = centerCropAndResize(working, policy.maxDimension)
-        if (square !== working) {
+        val resized = if (policy.square) {
+            centerCropAndResize(working, policy.maxDimension)
+        } else {
+            resizeToFit(working, policy.maxDimension)
+        }
+        if (resized !== working) {
             working.recycle()
-            working = square
+            working = resized
         }
         if (working.hasAlpha()) {
             val withWhiteBackground = Bitmap.createBitmap(
@@ -284,6 +312,19 @@ object FirebaseStorageImageUploadHelper {
         }
     }
 
+    /** Fits a screenshot-style image into maxDimension while preserving its aspect ratio. */
+    private fun resizeToFit(bitmap: Bitmap, maxDimension: Int): Bitmap {
+        if (bitmap.width <= maxDimension && bitmap.height <= maxDimension) return bitmap
+        val scale = minOf(maxDimension.toFloat() / bitmap.width, maxDimension.toFloat() / bitmap.height)
+        val target = Bitmap.createScaledBitmap(
+            bitmap,
+            (bitmap.width * scale).toInt().coerceAtLeast(1),
+            (bitmap.height * scale).toInt().coerceAtLeast(1),
+            true,
+        )
+        return target.also { if (target !== bitmap) bitmap.recycle() }
+    }
+
     private fun openSourceStream(context: Context, sourceUri: Uri) = when (sourceUri.scheme) {
         ContentResolver.SCHEME_FILE -> sourceUri.path
             ?.let(::File)
@@ -328,10 +369,13 @@ object FirebaseStorageImageUploadHelper {
     private enum class ImagePolicy(
         val maxDimension: Int,
         val targetBytes: Int,
-        val purpose: String
+        val purpose: String,
+        val square: Boolean = true
     ) {
         INSTITUTE_LOGO(maxDimension = PROFILE_IMAGE_SIZE, targetBytes = 180 * 1024, purpose = "institute_logo"),
         STUDENT_PHOTO(maxDimension = PROFILE_IMAGE_SIZE, targetBytes = 160 * 1024, purpose = "student_photo"),
-        STAFF_PHOTO(maxDimension = PROFILE_IMAGE_SIZE, targetBytes = 160 * 1024, purpose = "staff_photo")
+        STAFF_PHOTO(maxDimension = PROFILE_IMAGE_SIZE, targetBytes = 160 * 1024, purpose = "staff_photo"),
+        PAYMENT_QR(maxDimension = 512, targetBytes = 400 * 1024, purpose = "payment_qr", square = false),
+        PAYMENT_PROOF(maxDimension = 1024, targetBytes = 900 * 1024, purpose = "payment_proof", square = false)
     }
 }

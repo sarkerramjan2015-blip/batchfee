@@ -676,7 +676,8 @@ fun ExamDetailScreen(db: AppDatabase, examId: String, onBack: () -> Unit, onEdit
                 BulkMessageController.BulkTarget(
                     key = item.student.id,
                     name = item.student.fullName,
-                    phone = item.student.phone
+                    phone = item.student.guardianPhone?.trim()?.takeIf { it.isNotBlank() }
+                        ?: item.student.phone?.trim()?.takeIf { it.isNotBlank() }
                 )
             }
         if (targets.isEmpty()) {
@@ -829,18 +830,33 @@ fun ExamDetailScreen(db: AppDatabase, examId: String, onBack: () -> Unit, onEdit
                 // ── Results / Mark Entry ────────────────
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Text(if (hasResults) "Results" else "Mark Entry", color = TextWhite, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                    if (canPublish) {
-                        Button(
-                            onClick = {
-                                viewModel.publishResults(examId,
-                                    onSuccess = { scope.launch { snackbarHostState.showSnackbar("Results published!") } },
-                                    onError = { scope.launch { snackbarHostState.showSnackbar(it) } }
-                                )
-                            },
-                            shape = RoundedCornerShape(10.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = AccentGreen),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                        ) { Text("Publish", fontSize = 12.sp, color = Color.White) }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        if (canPublish) {
+                            Button(
+                                onClick = {
+                                    viewModel.publishResults(examId,
+                                        onSuccess = { scope.launch { snackbarHostState.showSnackbar("Results published!") } },
+                                        onError = { scope.launch { snackbarHostState.showSnackbar(it) } }
+                                    )
+                                },
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = AccentGreen),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                            ) { Text("Publish", fontSize = 12.sp, color = Color.White) }
+                        }
+                        if (studentResults.any { it.result?.published == true }) {
+                            Button(
+                                onClick = {
+                                    viewModel.unpublishResults(examId,
+                                        onSuccess = { scope.launch { snackbarHostState.showSnackbar("Results unpublished — students can no longer see them.") } },
+                                        onError = { scope.launch { snackbarHostState.showSnackbar(it) } }
+                                    )
+                                },
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = AccentRed),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                            ) { Text("Unpublish", fontSize = 12.sp, color = Color.White) }
+                        }
                     }
                 }
                 Spacer(Modifier.height(8.dp))

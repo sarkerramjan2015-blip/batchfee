@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.batchfee.edu.domain.StudentSessionManager
@@ -56,6 +57,29 @@ private data class StudentExamInfo(
     val totalMarks: Double
 )
 
+data class FinalSubjectMarks(
+    val name: String,
+    val obtained: Double,
+    val fullMarks: Double,
+    val passed: Boolean
+)
+
+data class FinalResultInfo(
+    val id: String,
+    val examId: String?,
+    val examName: String,
+    val examDateMs: Long?,
+    val totalMarks: Double,
+    val fullMarks: Double,
+    val percentage: Double,
+    val gpa: Double,
+    val grade: String?,
+    val passed: Boolean,
+    val rank: Int?,
+    val totalStudents: Int?,
+    val subjects: List<FinalSubjectMarks>
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun StudentResultScreen(onBack: () -> Unit, onOpenDocuments: () -> Unit) {
@@ -64,6 +88,7 @@ fun StudentResultScreen(onBack: () -> Unit, onOpenDocuments: () -> Unit) {
     val studentId = sid.orEmpty()
     val instituteId = iid.orEmpty()
     var resultSource by remember(studentId, instituteId) { mutableStateOf<List<ResultCardInfo>>(emptyList()) }
+    var finalSource by remember(studentId, instituteId) { mutableStateOf<List<FinalResultInfo>>(emptyList()) }
     var examsById by remember(instituteId) { mutableStateOf<Map<String, StudentExamInfo>>(emptyMap()) }
     var loading by remember(studentId, instituteId) { mutableStateOf(true) }
     var syncError by remember(studentId, instituteId) { mutableStateOf<String?>(null) }
@@ -127,7 +152,47 @@ fun StudentResultScreen(onBack: () -> Unit, onOpenDocuments: () -> Unit) {
                     }.orEmpty()
                 }
             }
-        onDispose { listener.remove(); examListener.remove() }
+        val finalListener = FirebaseFirestore.getInstance()
+            .collection("institutes").document(instituteId)
+            .collection("final_results").whereEqualTo("studentId", studentId)
+            .addSnapshotListener { snap, error ->
+                if (error != null) {
+                    // Permission denied on this collection only hides final-exam cards;
+                    // the regular results screen must keep working.
+                    if (error.code != FirebaseFirestoreException.Code.PERMISSION_DENIED) loading = false
+                    return@addSnapshotListener
+                }
+                finalSource = snap?.documents
+                    ?.filter { it.getBoolean("published") == true }
+                    ?.mapNotNull { doc ->
+                        val subjectList = (doc.get("subjectMarks") as? List<*>).orEmpty().mapNotNull { raw ->
+                            val map = raw as? Map<*, *> ?: return@mapNotNull null
+                            FinalSubjectMarks(
+                                name = map["name"] as? String ?: "Subject",
+                                obtained = (map["totalMarks"] as? Number)?.toDouble() ?: 0.0,
+                                fullMarks = (map["fullMarks"] as? Number)?.toDouble() ?: 0.0,
+                                passed = map["passed"] as? Boolean ?: false
+                            )
+                        }
+                        FinalResultInfo(
+                            id = doc.id,
+                            examId = doc.getString("finalExamId"),
+                            examName = doc.getString("examName") ?: "Final Exam",
+                            examDateMs = (doc.get("publishedAtMs") as? Number)?.toLong(),
+                            totalMarks = (doc.get("totalMarks") as? Number)?.toDouble() ?: 0.0,
+                            fullMarks = (doc.get("fullMarks") as? Number)?.toDouble() ?: 0.0,
+                            percentage = (doc.get("percentage") as? Number)?.toDouble() ?: 0.0,
+                            gpa = (doc.get("gpa") as? Number)?.toDouble() ?: 0.0,
+                            grade = doc.getString("grade"),
+                            passed = doc.getBoolean("passed") == true,
+                            rank = (doc.get("meritPosition") as? Number)?.toInt(),
+                            totalStudents = (doc.get("totalStudents") as? Number)?.toInt(),
+                            subjects = subjectList
+                        )
+                    }.orEmpty()
+                loading = false
+            }
+        onDispose { listener.remove(); examListener.remove(); finalListener.remove() }
         }
     }
 
@@ -144,6 +209,8 @@ fun StudentResultScreen(onBack: () -> Unit, onOpenDocuments: () -> Unit) {
         )
     }.sortedByDescending { it.examDateMs ?: 0L }
 
+    val finalResults = finalSource.sortedByDescending { it.examDateMs ?: 0L }
+
     Scaffold(
         containerColor = RsBg,
         topBar = {
@@ -156,7 +223,7 @@ fun StudentResultScreen(onBack: () -> Unit, onOpenDocuments: () -> Unit) {
         }
     ) { padding ->
         if (loading) Box(Modifier.fillMaxSize().padding(padding).background(RsBg), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = RsCyan) }
-        else if (results.isEmpty()) Box(Modifier.fillMaxSize().padding(padding).background(RsBg), contentAlignment = Alignment.Center) {
+        else if (results.isEmpty() && finalResults.isEmpty()) Box(Modifier.fillMaxSize().padding(padding).background(RsBg), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 syncError?.let { Text(it, color = RsAmber, fontSize = 12.sp) }
                 Text("No published results yet.", color = RsMuted)
@@ -211,6 +278,55 @@ fun StudentResultScreen(onBack: () -> Unit, onOpenDocuments: () -> Unit) {
                             Icon(Icons.Filled.PictureAsPdf, null, modifier = Modifier.size(17.dp))
                             Spacer(Modifier.width(8.dp))
                             Text("Open Result Card", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+            if (finalResults.isNotEmpty()) {
+                item {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.WorkspacePremium, null, tint = RsAmber, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Final Exams", color = RsWhite, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    }
+                }
+                items(finalResults) { r ->
+                    Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = RsCard), border = BorderStroke(1.dp, RsStroke)) {
+                        Column(Modifier.padding(16.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(Modifier.size(44.dp).clip(RoundedCornerShape(14.dp)).background(RsCyan.copy(alpha = 0.15f)), contentAlignment = Alignment.Center) {
+                                    Icon(Icons.Filled.School, null, tint = RsCyan, modifier = Modifier.size(22.dp))
+                                }
+                                Spacer(Modifier.width(14.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(r.examName, color = RsWhite, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                    r.examDateMs?.let { Text(df.format(Date(it)), color = RsMuted, fontSize = 11.sp) }
+                                }
+                                r.grade?.let {
+                                    Box(Modifier.clip(RoundedCornerShape(10.dp)).background(RsCyan.copy(alpha = 0.2f)).padding(horizontal = 14.dp, vertical = 8.dp)) {
+                                        Text(it, color = RsCyan, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
+                                    }
+                                }
+                            }
+                            Spacer(Modifier.height(14.dp))
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                                RStat("Marks", "${"%.0f".format(r.totalMarks)}/${"%.0f".format(r.fullMarks)}")
+                                RStat("GPA", "%.2f".format(r.gpa))
+                                RStat("Result", if (r.passed) "Pass" else "Fail")
+                                r.rank?.let { RStat("Rank", "#$it of ${r.totalStudents ?: "?"}") }
+                            }
+                            Spacer(Modifier.height(14.dp))
+                            r.subjects.forEach { subject ->
+                                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(RsCard.copy(alpha = 0.4f)).padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Text(subject.name, color = RsWhite, fontSize = 12.sp, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(
+                                        "${"%.0f".format(subject.obtained)}/${"%.0f".format(subject.fullMarks)}",
+                                        color = if (subject.passed) RsGreen else RsAmber,
+                                        fontSize = 12.sp, fontWeight = FontWeight.Bold
+                                    )
+                                }
+                                Spacer(Modifier.height(4.dp))
+                            }
                         }
                     }
                 }

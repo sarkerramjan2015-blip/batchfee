@@ -111,6 +111,8 @@ fun SettingsScreen(
                     HorizontalDivider(color = BorderSub)
                     SettingsRow("Student Registration", Icons.Filled.PersonAdd, onClick = { onNavigate("StudentRegistrationRoute") })
                     HorizontalDivider(color = BorderSub)
+                    SettingsRow("Online Payments", Icons.Filled.AccountBalanceWallet, onClick = { onNavigate("PaymentSettingsRoute") })
+                    HorizontalDivider(color = BorderSub)
                     SettingsRow("Export All Data", Icons.Filled.FileDownload, onClick = {
                         showExportDialog = true
                     })

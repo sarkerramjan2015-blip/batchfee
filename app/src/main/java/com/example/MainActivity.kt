@@ -550,6 +550,8 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
                             "DueFeesRoute" -> navController.navigate(DueFeesRoute)
                             "CreateFeeRoute" -> navController.navigate(CreateFeeRoute)
                             "UnifiedCollectRoute" -> navController.navigate(UnifiedCollectRoute)
+                            "PaymentRequestReviewRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.PaymentRequestReviewRoute)
+                            "PaymentSettingsRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.PaymentSettingsRoute)
                             "AttendanceRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.AttendanceRoute)
                             "AttendanceReportRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.AttendanceReportRoute)
                             "ReportsRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.ReportsRoute)
@@ -696,8 +698,24 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
                 onBack = { navController.popBackStack() },
                 onNavigateDueFees = { navController.navigate(UnifiedCollectRoute) },
                 onCreateFee = { navController.navigate(CreateFeeRoute) },
-                onCollectPayment = { feeId -> navController.navigate(CollectPaymentRoute(feeId)) }
+                onCollectPayment = { feeId -> navController.navigate(CollectPaymentRoute(feeId)) },
+                onNavigatePaymentRequests = { navController.navigate(PaymentRequestReviewRoute) }
             )
+        }
+
+        composable<PaymentRequestReviewRoute> {
+            com.batchfee.edu.ui.fees.PaymentRequestReviewScreen(
+                db = appDb,
+                onBack = { navController.popBackStack() },
+                onNavigateReceipt = { paymentId ->
+                    navController.popBackStack()
+                    navController.navigate(ReceiptDetailRoute(paymentId))
+                }
+            )
+        }
+
+        composable<PaymentSettingsRoute> {
+            com.batchfee.edu.ui.fees.PaymentSettingsScreen(db = appDb, onBack = { navController.popBackStack() })
         }
         
         composable<CreateFeeRoute> {
@@ -1065,6 +1083,7 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
                         "ReminderTemplatesRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.ReminderTemplatesRoute)
                         "BackupRestoreRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.BackupRestoreRoute)
                         "StudentRegistrationRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.StudentRegistrationRoute)
+                        "PaymentSettingsRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.PaymentSettingsRoute)
                     }
                 }
             )

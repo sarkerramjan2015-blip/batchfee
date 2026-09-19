@@ -94,6 +94,8 @@ object AccessControl {
         "UnifiedCollectRoute" to setOf(StaffPermissions.COLLECT_FEE),
         "CollectPaymentRoute" to setOf(StaffPermissions.COLLECT_FEE),
         "ReceiptDetailRoute" to setOf(StaffPermissions.COLLECT_FEE),
+        "PaymentRequestReviewRoute" to setOf(StaffPermissions.VIEW_FEE_SUMMARY, StaffPermissions.COLLECT_FEE),
+        "PaymentSettingsRoute" to setOf(StaffPermissions.COLLECT_FEE),
         "AttendanceRoute" to setOf(StaffPermissions.TAKE_ATTENDANCE),
         "TakeAttendanceRoute" to setOf(StaffPermissions.TAKE_ATTENDANCE),
         "AttendanceReportRoute" to setOf(StaffPermissions.VIEW_ATTENDANCE_REPORTS, StaffPermissions.VIEW_REPORTS),

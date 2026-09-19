@@ -8,6 +8,8 @@ const PURPOSES = Object.freeze({
   institute_logo: { private: false, maxBytes: 600 * 1024 },
   student_photo: { private: true, maxBytes: 400 * 1024 },
   staff_photo: { private: true, maxBytes: 400 * 1024 },
+  payment_qr: { private: false, maxBytes: 600 * 1024 },
+  payment_proof: { private: true, maxBytes: 1024 * 1024 },
 });
 
 function requiredString(data, field, maxLength) {
@@ -57,8 +59,8 @@ function canonicalUploadRequest(data) {
   if (!/^[A-Za-z0-9_-]{16,64}$/.test(operationId)) throw new Error("Invalid operationId.");
   const subjectId = optionalString(data, "subjectId", 128);
   if (subjectId && subjectId.includes("/")) throw new Error("Invalid subjectId.");
-  if (purpose === "student_photo" && !subjectId) {
-    throw new Error("Student photo ownership is required.");
+  if ((purpose === "student_photo" || purpose === "payment_proof") && !subjectId) {
+    throw new Error("Upload ownership is required.");
   }
   const replacesReference = optionalString(data, "replacesReference", 512);
   if (replacesReference && !parseMediaReference(replacesReference) &&

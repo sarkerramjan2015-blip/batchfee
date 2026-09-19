@@ -54,7 +54,10 @@ object CoreDataSyncCoordinator {
                 )
             }
             if (plan.syncEnquiries) EnquirySyncHelper.syncAllFromFirestore(db, instituteId)
-            if (plan.syncExams) ExamSyncHelper.syncAllFromFirestore(db, instituteId)
+            if (plan.syncExams) {
+                ExamSyncHelper.syncAllFromFirestore(db, instituteId)
+                FinalExamSyncHelper.syncPublishedStatusFromCloud(db, instituteId)
+            }
             if (plan.syncExpenses) {
                 ExpenseSyncHelper.syncAllFromFirestore(db, instituteId)
                 OtherIncomeSyncHelper.syncAllFromFirestore(db, instituteId)

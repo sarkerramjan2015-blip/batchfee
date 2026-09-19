@@ -53,6 +53,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import androidx.core.content.FileProvider
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -2258,6 +2259,10 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
                     onApprove = viewModel::approveSmsRecharge,
                     onReject = { request, note -> viewModel.rejectSmsRecharge(request, note) }
                 )
+            }
+
+            item {
+                PaymentRequestTrailSection()
             }
 
             item {
@@ -7377,5 +7382,217 @@ private fun BroadcastSection(
                 shape = RoundedCornerShape(16.dp)
             )
         }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  Online Payment Request Trail (platform-wide, read-only)
+// ═══════════════════════════════════════════════════════════════
+private data class TrailRequestRow(
+    val id: String,
+    val instituteId: String,
+    val studentId: String,
+    val studentName: String,
+    val amount: Double,
+    val months: List<String>,
+    val transactionId: String,
+    val method: String,
+    val status: String,
+    val submittedAtMs: Long?,
+    val reviewedAtMs: Long?,
+    val reviewNote: String?,
+    val receiptNumber: String?,
+    val creditApplied: Double?
+)
+
+@Composable
+private fun PaymentRequestTrailSection() {
+    var rows by remember { mutableStateOf<List<TrailRequestRow>>(emptyList()) }
+    var filter by remember { mutableStateOf("all") }
+    var selected by remember { mutableStateOf<TrailRequestRow?>(null) }
+    val df = remember { java.text.SimpleDateFormat("dd MMM yyyy, hh:mm a", java.util.Locale.getDefault()) }
+
+    DisposableEffect(Unit) {
+        val listener = FirebaseFirestore.getInstance()
+            .collectionGroup("payment_requests")
+            .addSnapshotListener { snap, _ ->
+                rows = snap?.documents?.mapNotNull { doc ->
+                    TrailRequestRow(
+                        id = doc.id,
+                        instituteId = doc.getString("instituteId").orEmpty(),
+                        studentId = doc.getString("studentId").orEmpty(),
+                        studentName = doc.getString("studentName") ?: "Student",
+                        amount = (doc.get("amount") as? Number)?.toDouble() ?: 0.0,
+                        months = (doc.get("months") as? List<*>)?.mapNotNull { it as? String }.orEmpty(),
+                        transactionId = doc.getString("transactionId").orEmpty(),
+                        method = doc.getString("method") ?: "bkash",
+                        status = doc.getString("status") ?: "pending",
+                        submittedAtMs = (doc.get("submittedAtMs") as? Number)?.toLong(),
+                        reviewedAtMs = (doc.get("reviewedAtMs") as? Number)?.toLong(),
+                        reviewNote = doc.getString("reviewNote"),
+                        receiptNumber = doc.getString("receiptNumber"),
+                        creditApplied = (doc.get("creditApplied") as? Number)?.toDouble()
+                    )
+                }.orEmpty().sortedByDescending { it.submittedAtMs ?: 0L }
+            }
+        onDispose { listener.remove() }
+    }
+
+    val pendingCount = rows.count { it.status == "pending" }
+    val approvedCount = rows.count { it.status == "approved" }
+    val approvedVolume = rows.filter { it.status == "approved" }.sumOf { it.amount }
+    val visible = when (filter) {
+        "pending" -> rows.filter { it.status == "pending" }
+        "approved" -> rows.filter { it.status == "approved" }
+        "reviewed" -> rows.filter { it.status != "pending" }
+        else -> rows
+    }.take(30)
+
+    Column {
+        Spacer(Modifier.height(12.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier.size(30.dp).clip(RoundedCornerShape(9.dp)).background(AccentCyan.copy(alpha = 0.14f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Filled.AccountBalanceWallet, null, tint = AccentCyan, modifier = Modifier.size(16.dp))
+            }
+            Spacer(Modifier.width(8.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Online Payment Trail", color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Text("Guardian payment requests across every institute", color = TextMuted, fontSize = 10.sp)
+            }
+            Surface(shape = RoundedCornerShape(7.dp), color = AccentAmber.copy(alpha = 0.14f)) {
+                Text("$pendingCount pending", color = AccentAmber, fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp))
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            listOf("all" to "All", "pending" to "Pending", "approved" to "Approved", "reviewed" to "Reviewed").forEach { (value, label) ->
+                val active = filter == value
+                Box(
+                    Modifier.clip(RoundedCornerShape(9.dp))
+                        .background(if (active) AccentCyan.copy(alpha = 0.16f) else CardBg)
+                        .border(1.dp, if (active) AccentCyan else BorderSub, RoundedCornerShape(9.dp))
+                        .clickable { filter = value }
+                        .padding(horizontal = 11.dp, vertical = 5.dp)
+                ) {
+                    Text(label, color = if (active) AccentCyan else TextMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+
+        Card(
+            Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(containerColor = CardBg),
+            border = BorderStroke(1.dp, BorderSub)
+        ) {
+            Column(Modifier.padding(12.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                    TrailStat("Pending", "$pendingCount", AccentAmber)
+                    TrailStat("Approved", "$approvedCount", AccentGreen)
+                    TrailStat("Approved volume", "৳${"%,.0f".format(approvedVolume)}", AccentCyan)
+                }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+
+        if (visible.isEmpty()) {
+            Card(
+                Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = CardBg),
+                border = BorderStroke(1.dp, BorderSub)
+            ) {
+                Text("No payment requests match this filter yet.", color = TextMuted, fontSize = 12.sp, modifier = Modifier.padding(13.dp))
+            }
+        } else {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                visible.forEach { request ->
+                    val statusColor = when (request.status) {
+                        "approved" -> AccentGreen
+                        "rejected" -> AccentRed
+                        "correction_requested" -> AccentViolet
+                        "cancelled" -> TextMuted
+                        else -> AccentAmber
+                    }
+                    Card(
+                        Modifier.fillMaxWidth().clickable { selected = request },
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = CardBg),
+                        border = BorderStroke(1.dp, BorderSub)
+                    ) {
+                        Column(Modifier.padding(11.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("${request.studentName} • ${request.instituteId}", color = TextWhite, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(
+                                        "৳${"%.0f".format(request.amount)} • ${request.months.joinToString(", ")} • ${request.method.uppercase()}",
+                                        color = TextMuted, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                                Box(Modifier.clip(RoundedCornerShape(999.dp)).background(statusColor.copy(alpha = 0.15f)).padding(horizontal = 9.dp, vertical = 3.dp)) {
+                                    Text(request.status, color = statusColor, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    selected?.let { request ->
+        Dialog(onDismissRequest = { selected = null }) {
+            Card(
+                Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = CardBg),
+                border = BorderStroke(1.dp, BorderSub)
+            ) {
+                Column(Modifier.padding(16.dp)) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(request.studentName, color = TextWhite, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                            Text("Institute: ${request.instituteId}", color = TextMuted, fontSize = 11.sp)
+                        }
+                        IconButton(onClick = { selected = null }) { Icon(Icons.Filled.Close, "Close", tint = AccentRed) }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    HorizontalDivider(color = BorderSub)
+                    Spacer(Modifier.height(8.dp))
+                    TrailRow("Student ID", request.studentId)
+                    TrailRow("Amount", "৳${"%.2f".format(request.amount)}")
+                    TrailRow("Months", request.months.joinToString(", "))
+                    TrailRow("Method", request.method.uppercase())
+                    TrailRow("Transaction ID", request.transactionId)
+                    TrailRow("Status", request.status)
+                    request.submittedAtMs?.let { TrailRow("Submitted", df.format(java.util.Date(it))) }
+                    request.reviewedAtMs?.let { TrailRow("Reviewed", df.format(java.util.Date(it))) }
+                    request.receiptNumber?.let { TrailRow("Receipt", it) }
+                    request.creditApplied?.let { TrailRow("Credit applied", "৳${"%.2f".format(it)}") }
+                    request.reviewNote?.let { TrailRow("Review note", it) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TrailStat(label: String, value: String, color: Color) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(value, color = color, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+        Text(label, color = TextMuted, fontSize = 9.sp)
+    }
+}
+
+@Composable
+private fun TrailRow(label: String, value: String) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+        Text(label, color = TextMuted, fontSize = 11.sp, modifier = Modifier.width(110.dp))
+        Text(value, color = TextWhite, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
     }
 }
