@@ -1,0 +1,216 @@
+"use strict";
+
+const { HttpsError } = require("firebase-functions/v2/https");
+const { CONTRIBUTION_POLICY_VERSION, QUESTION_SCHEMA_VERSION } = require("./questionBankFoundation");
+
+const PROPOSED_RATE_POISHA = Object.freeze({
+  mcq: 25,
+  short: 50,
+  creative: 75,
+});
+
+function cleanString(value, maxLength) {
+  return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
+}
+
+function validId(value) {
+  return typeof value === "string" && /^[A-Za-z0-9_-]{8,80}$/.test(value);
+}
+
+function requiredId(value, label) {
+  if (!validId(value)) throw new HttpsError("invalid-argument", `Invalid ${label}.`);
+  return value;
+}
+
+function requiredString(value, label, maxLength) {
+  const result = cleanString(value, maxLength);
+  if (!result) throw new HttpsError("invalid-argument", `Invalid ${label}.`);
+  return result;
+}
+
+function proposedCostPoisha(questionType, count) {
+  const rate = PROPOSED_RATE_POISHA[questionType];
+  if (!rate) throw new HttpsError("invalid-argument", "Unsupported question type.");
+  return rate * count;
+}
+
+function normalizeQuestion(raw, questionType) {
+  const sourceQuestionId = requiredId(raw && raw.sourceQuestionId, "source question");
+  const questionText = requiredString(raw && raw.questionText, "question text", 8000);
+  const correctAnswer = requiredString(raw && raw.correctAnswer, "correct answer", 2000);
+  const explanation = cleanString(raw && raw.explanation, 4000);
+  const difficulty = requiredString(raw && raw.difficulty, "difficulty", 20).toLowerCase();
+  if (!["easy", "medium", "hard"].includes(difficulty)) {
+    throw new HttpsError("invalid-argument", "Unsupported difficulty.");
+  }
+  const marks = Number(raw && raw.marks);
+  if (!Number.isSafeInteger(marks) || marks < 1 || marks > 100) {
+    throw new HttpsError("invalid-argument", "Marks must be between 1 and 100.");
+  }
+  const options = Array.isArray(raw && raw.options) ? raw.options.map((option) =>
+    requiredString(option, "option", 1000)) : [];
+  if (questionType === "mcq") {
+    if (options.length !== 4 || new Set(options).size !== 4 || !options.includes(correctAnswer)) {
+      throw new HttpsError("invalid-argument", "Every MCQ needs four distinct options and a matching answer.");
+    }
+  } else if (options.length) {
+    throw new HttpsError("invalid-argument", "Only MCQs can contain options.");
+  }
+  return { sourceQuestionId, questionText, options, correctAnswer, explanation, difficulty, marks };
+}
+
+function canonicalFinalizationRequest(data) {
+  const instituteId = requiredId(data && data.instituteId, "institute");
+  const generationOperationId = requiredId(data && data.generationOperationId, "generation operation");
+  const operationId = requiredId(data && data.operationId, "finalization operation");
+  const questionType = requiredString(data && data.questionType, "question type", 20).toLowerCase();
+  if (!Object.hasOwn(PROPOSED_RATE_POISHA, questionType)) {
+    throw new HttpsError("invalid-argument", "Unsupported question type.");
+  }
+  if (!Array.isArray(data && data.questions) || data.questions.length < 1 || data.questions.length > 30) {
+    throw new HttpsError("invalid-argument", "Select between one and 30 questions.");
+  }
+  const questions = data.questions.map((item) => normalizeQuestion(item, questionType));
+  if (new Set(questions.map((question) => question.sourceQuestionId)).size !== questions.length) {
+    throw new HttpsError("invalid-argument", "A generated question can only be finalized once.");
+  }
+  return {
+    instituteId,
+    generationOperationId,
+    operationId,
+    questionType,
+    questions,
+    costPoisha: proposedCostPoisha(questionType, questions.length),
+  };
+}
+
+function finalizedQuestionId(operationId, sourceQuestionId) {
+  return `finalized_${operationId}_${sourceQuestionId}`;
+}
+
+/**
+ * Saves teacher-reviewed questions to the private bank atomically and lets the
+ * existing document trigger anonymously enqueue them for Super Admin review.
+ * Pricing is quoted in integer poisha, but intentionally never debited while
+ * aiBilling is not configured. Wallet charging stays a separate audited phase.
+ */
+function createQuestionFinalizationHandler({ db, authorize, now = Date.now }) {
+  return async function finalizeExamQuestions(request) {
+    const uid = request.auth && request.auth.uid;
+    if (!uid) throw new HttpsError("unauthenticated", "Sign in is required.");
+    const input = canonicalFinalizationRequest(request.data || {});
+    await authorize(request.auth, input.instituteId, "manage_exams", true);
+
+    const instituteRef = db.collection("institutes").doc(input.instituteId);
+    const generationRef = instituteRef.collection("question_generation_jobs").doc(input.generationOperationId);
+    const consentRef = instituteRef.collection("question_contribution_consents").doc(uid);
+    const finalizationRef = instituteRef.collection("question_finalization_operations").doc(input.operationId);
+
+    return db.runTransaction(async (tx) => {
+      const [generationSnap, consentSnap, finalizationSnap] = await Promise.all([
+        tx.get(generationRef), tx.get(consentRef), tx.get(finalizationRef),
+      ]);
+      if (finalizationSnap.exists) {
+        const saved = finalizationSnap.data();
+        if (saved.actorUid !== uid || saved.instituteId !== input.instituteId ||
+            saved.generationOperationId !== input.generationOperationId) {
+          throw new HttpsError("already-exists", "Finalization operation belongs to another request.");
+        }
+        return saved.result;
+      }
+      if (!generationSnap.exists || generationSnap.get("actorUid") !== uid ||
+          generationSnap.get("status") !== "complete") {
+        throw new HttpsError("failed-precondition", "Generate a completed preview before finalizing.");
+      }
+      if (generationSnap.get("finalizationOperationId")) {
+        throw new HttpsError("failed-precondition", "This preview was already finalized.");
+      }
+      const consent = consentSnap.exists ? consentSnap.data() : null;
+      if (!consent || consent.aiTncAccepted !== true || consent.policyVersion !== CONTRIBUTION_POLICY_VERSION) {
+        throw new HttpsError("failed-precondition", "Review and accept the current AI contribution terms first.");
+      }
+      if (generationSnap.get("questionType") !== input.questionType) {
+        throw new HttpsError("invalid-argument", "Question type does not match this preview.");
+      }
+      const setup = generationSnap.get("setup");
+      const generated = generationSnap.get("result") && generationSnap.get("result").questions;
+      if (!setup || !Array.isArray(generated)) {
+        throw new HttpsError("failed-precondition", "This preview is missing required setup information. Generate it again.");
+      }
+      const generatedIds = new Set(generated.map((question) => question && question.id).filter(Boolean));
+      if (input.questions.some((question) => !generatedIds.has(question.sourceQuestionId))) {
+        throw new HttpsError("invalid-argument", "A selected question is not part of this preview.");
+      }
+      const totalMarks = input.questions.reduce((sum, question) => sum + question.marks, 0);
+      if (!Number.isSafeInteger(setup.totalMarks) || totalMarks > setup.totalMarks) {
+        throw new HttpsError("invalid-argument", "Selected question marks exceed the exam total.");
+      }
+
+      const timestamp = now();
+      const result = {
+        operationId: input.operationId,
+        questionCount: input.questions.length,
+        costPoisha: input.costPoisha,
+        // This is deliberately explicit: no money is removed in an unconfigured phase.
+        billingStatus: "pricing_not_configured_no_debit",
+      };
+      input.questions.forEach((question) => {
+        const questionRef = instituteRef.collection("question_bank")
+          .doc(finalizedQuestionId(input.operationId, question.sourceQuestionId));
+        tx.create(questionRef, {
+          schemaVersion: QUESTION_SCHEMA_VERSION,
+          status: "finalized",
+          reviewStatus: "teacher_reviewed",
+          sourceType: "ai_assisted",
+          generationOperationId: input.generationOperationId,
+          finalizationOperationId: input.operationId,
+          sourceQuestionId: question.sourceQuestionId,
+          createdBy: uid,
+          createdAtMs: timestamp,
+          finalizedAtMs: timestamp,
+          updatedAtMs: timestamp,
+          examName: setup.examName,
+          curriculum: "",
+          syllabusYear: "",
+          className: setup.className,
+          subject: setup.subject,
+          chapter: setup.chapter,
+          topic: "",
+          language: setup.language || "bn",
+          type: input.questionType,
+          ...question,
+          pricing: {
+            currency: "BDT",
+            quotedCostPoisha: PROPOSED_RATE_POISHA[input.questionType],
+            billingStatus: result.billingStatus,
+          },
+        });
+      });
+      tx.update(generationRef, {
+        finalizationOperationId: input.operationId,
+        finalizedAtMs: timestamp,
+        updatedAtMs: timestamp,
+      });
+      tx.create(finalizationRef, {
+        schemaVersion: QUESTION_SCHEMA_VERSION,
+        instituteId: input.instituteId,
+        actorUid: uid,
+        generationOperationId: input.generationOperationId,
+        operationId: input.operationId,
+        questionCount: input.questions.length,
+        costPoisha: input.costPoisha,
+        billingStatus: result.billingStatus,
+        createdAtMs: timestamp,
+        result,
+      });
+      return result;
+    });
+  };
+}
+
+module.exports = {
+  PROPOSED_RATE_POISHA,
+  canonicalFinalizationRequest,
+  proposedCostPoisha,
+  createQuestionFinalizationHandler,
+};

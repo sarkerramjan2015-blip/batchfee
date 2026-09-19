@@ -58,6 +58,9 @@ const {
   createQuestionGenerationHandler,
 } = require("./questionGeneration");
 const {
+  createQuestionFinalizationHandler,
+} = require("./questionFinalization");
+const {
   createPlatformSmsAnalyticsHandler,
   createPlatformSmsTopupHandler,
   createServerSmsHandler,
@@ -171,6 +174,10 @@ const questionGenerationHandler = createQuestionGenerationHandler({
     if (!apiKey) throw new HttpsError("failed-precondition", "Gemini service is not configured.");
     return new GoogleGenAI({ apiKey });
   },
+});
+const questionFinalizationHandler = createQuestionFinalizationHandler({
+  db,
+  authorize: assertCanManageTenantResource,
 });
 
 function requireString(data, field, maxLength = 128) {
@@ -2634,6 +2641,14 @@ exports.generateExamQuestions = onCall(
     secrets: [batchfeeGeminiApiKey],
   },
   guarded(questionGenerationHandler, "question_generation"),
+);
+// Phase 3 saves teacher-reviewed questions only after server-side ownership and
+// content validation. The private-bank write triggers anonymous moderation sync.
+// It quotes the proposed per-question price but cannot debit a wallet until the
+// separate, approved question-wallet phase is configured.
+exports.finalizeExamQuestions = onCall(
+  { ...callableOptions, timeoutSeconds: 60, memory: "512MiB" },
+  guarded(questionFinalizationHandler, "question_finalization"),
 );
 // Multi-tenant SMS wallet reads and the owner-only send-method setting. Wallet
 // counters are server-authoritative and can never be forged by a client.

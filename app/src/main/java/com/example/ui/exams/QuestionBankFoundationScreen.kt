@@ -9,6 +9,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -35,6 +37,11 @@ import com.batchfee.edu.data.repository.QuestionBankFoundationRepository
 import com.batchfee.edu.data.repository.QuestionGenerationPreview
 import com.batchfee.edu.data.repository.QuestionGenerationRepository
 import com.batchfee.edu.data.repository.QuestionGenerationSetup
+import com.batchfee.edu.data.repository.QuestionFinalizationRepository
+import com.batchfee.edu.data.repository.QuestionFinalizationResult
+import com.batchfee.edu.data.repository.QuestionReviewPolicy
+import com.batchfee.edu.data.repository.ReviewableQuestion
+import com.batchfee.edu.data.repository.toReviewable
 import com.batchfee.edu.domain.SessionManager
 import com.google.mlkit.vision.documentscanner.GmsDocumentScannerOptions
 import com.google.mlkit.vision.documentscanner.GmsDocumentScanning
@@ -57,6 +64,7 @@ fun QuestionBankFoundationScreen(onBack: () -> Unit) {
     val instituteId by SessionManager.currentInstituteId.collectAsState()
     val repository = remember { QuestionBankFoundationRepository() }
     val generationRepository = remember { QuestionGenerationRepository() }
+    val finalizationRepository = remember { QuestionFinalizationRepository() }
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
 
@@ -64,7 +72,10 @@ fun QuestionBankFoundationScreen(onBack: () -> Unit) {
     var loading by remember { mutableStateOf(true) }
     var accepting by remember { mutableStateOf(false) }
     var generating by remember { mutableStateOf(false) }
+    var finalizing by remember { mutableStateOf(false) }
     var preview by remember { mutableStateOf<QuestionGenerationPreview?>(null) }
+    var reviewQuestions by remember { mutableStateOf<List<ReviewableQuestion>>(emptyList()) }
+    var finalizationResult by remember { mutableStateOf<QuestionFinalizationResult?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var reloadKey by remember { mutableIntStateOf(0) }
 
@@ -79,11 +90,15 @@ fun QuestionBankFoundationScreen(onBack: () -> Unit) {
     var scannedPages by rememberSaveable { mutableStateOf(arrayListOf<String>()) }
     var launchingScanner by remember { mutableStateOf(false) }
     var generationOperationId by rememberSaveable { mutableStateOf(UUID.randomUUID().toString()) }
+    var finalizationOperationId by rememberSaveable { mutableStateOf(UUID.randomUUID().toString()) }
 
     fun resetGeneration() {
         preview = null
+        reviewQuestions = emptyList()
+        finalizationResult = null
         error = null
         generationOperationId = UUID.randomUUID().toString()
+        finalizationOperationId = UUID.randomUUID().toString()
     }
 
     val scannerOptions = remember {
@@ -127,6 +142,12 @@ fun QuestionBankFoundationScreen(onBack: () -> Unit) {
         durationMinutes.toIntOrNull()?.let { it in 1..1440 } == true &&
         questionCount.toIntOrNull()?.let { it in 1..30 } == true && className.isNotBlank() &&
         subject.isNotBlank() && chapter.isNotBlank() && scannedPages.isNotEmpty()
+    val reviewing = preview != null && reviewQuestions.isNotEmpty()
+    val selectedQuestions = reviewQuestions.filter { it.selected }
+    val selectedValidation = selectedQuestions.map { QuestionReviewPolicy.validate(questionType, it) }
+    val firstValidationError = selectedValidation.firstOrNull { !it.isValid }?.message
+    val selectedMarks = selectedQuestions.sumOf { it.marks }
+    val proposedCostPoisha = QuestionReviewPolicy.totalPricePoisha(questionType, reviewQuestions)
 
     Scaffold(
         containerColor = BankBg,
@@ -136,16 +157,58 @@ fun QuestionBankFoundationScreen(onBack: () -> Unit) {
                 title = {
                     Column {
                         Text("AI Question Generator", color = BankText, fontWeight = FontWeight.Bold)
-                        Text("Exam setup", color = BankMuted, fontSize = 12.sp)
+                        Text(if (reviewing) "Review & edit" else "Exam setup", color = BankMuted, fontSize = 12.sp)
                     }
                 },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    IconButton(onClick = { if (reviewing) resetGeneration() else onBack() }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = BankText)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = BankBg),
             )
+        },
+        bottomBar = {
+            if (reviewing) {
+                ReviewCostBar(
+                    selectedCount = selectedQuestions.size,
+                    selectedMarks = selectedMarks,
+                    totalMarks = totalMarks.toIntOrNull() ?: 0,
+                    costPoisha = proposedCostPoisha,
+                    billingEnabled = foundation?.aiBillingEnabled == true,
+                    finalizing = finalizing,
+                    validationError = firstValidationError,
+                    onFinalize = {
+                        val id = instituteId
+                        val currentPreview = preview
+                        when {
+                            selectedQuestions.isEmpty() -> error = "Select at least one question to finalize."
+                            firstValidationError != null -> error = firstValidationError
+                            selectedMarks > (totalMarks.toIntOrNull() ?: 0) -> {
+                                error = "Selected question marks exceed the exam total."
+                            }
+                            id == null || currentPreview == null -> error = "Question preview is no longer available. Generate it again."
+                            else -> {
+                                finalizing = true
+                                error = null
+                                scope.launch {
+                                    runCatching {
+                                        finalizationRepository.finalize(
+                                            instituteId = id,
+                                            generationOperationId = currentPreview.operationId,
+                                            questionType = questionType,
+                                            questions = reviewQuestions,
+                                            operationId = finalizationOperationId,
+                                        )
+                                    }.onSuccess { finalizationResult = it }
+                                        .onFailure { error = it.message ?: "Could not finalize questions. Try again." }
+                                    finalizing = false
+                                }
+                            }
+                        }
+                    },
+                )
+            }
         },
     ) { padding ->
         when {
@@ -162,6 +225,26 @@ fun QuestionBankFoundationScreen(onBack: () -> Unit) {
                     OutlinedButton(onClick = { reloadKey++ }) { Text("Retry") }
                 }
             }
+
+            reviewing -> QuestionReviewContent(
+                modifier = Modifier.padding(padding),
+                questions = reviewQuestions,
+                questionType = questionType,
+                totalMarks = totalMarks.toIntOrNull() ?: 0,
+                model = preview?.model.orEmpty(),
+                error = error,
+                onUpdate = { sourceId, transform ->
+                    reviewQuestions = reviewQuestions.map { question ->
+                        if (question.sourceQuestionId == sourceId) transform(question) else question
+                    }
+                    error = null
+                },
+                onSelectAll = { selected ->
+                    reviewQuestions = reviewQuestions.map { it.copy(selected = selected) }
+                    error = null
+                },
+                onEditSetup = { resetGeneration() },
+            )
 
             else -> ExamSetupContent(
                 modifier = Modifier.padding(padding),
@@ -223,7 +306,15 @@ fun QuestionBankFoundationScreen(onBack: () -> Unit) {
                                     pageUris = scannedPages,
                                     operationId = requestedOperationId,
                                 )
-                            }.onSuccess { if (generationOperationId == requestedOperationId) preview = it }
+                            }.onSuccess { result ->
+                                if (generationOperationId == requestedOperationId) {
+                                    preview = result
+                                    reviewQuestions = result.questions.mapIndexed { index, question ->
+                                        question.toReviewable(index)
+                                    }
+                                    finalizationOperationId = UUID.randomUUID().toString()
+                                }
+                            }
                                 .onFailure {
                                     if (generationOperationId == requestedOperationId) {
                                         error = it.message ?: "Could not generate questions. Try again."
@@ -258,6 +349,14 @@ fun QuestionBankFoundationScreen(onBack: () -> Unit) {
                     }
                 }
             },
+        )
+    }
+
+    finalizationResult?.let { result ->
+        FinalizationSuccessDialog(
+            result = result,
+            onCreateAnother = { resetGeneration() },
+            onBackToExams = { resetGeneration(); onBack() },
         )
     }
 }
@@ -492,12 +591,306 @@ private fun ExamSetupContent(
 }
 
 @Composable
+private fun QuestionReviewContent(
+    modifier: Modifier,
+    questions: List<ReviewableQuestion>,
+    questionType: String,
+    totalMarks: Int,
+    model: String,
+    error: String?,
+    onUpdate: (String, (ReviewableQuestion) -> ReviewableQuestion) -> Unit,
+    onSelectAll: (Boolean) -> Unit,
+    onEditSetup: () -> Unit,
+) {
+    val selectedCount = questions.count { it.selected }
+    LazyColumn(
+        modifier = modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        item {
+            BankSection {
+                Text("Review before finalizing", color = BankText, fontWeight = FontWeight.Bold)
+                Text(
+                    "Edit anything the AI misunderstood, then keep only the questions you want to use.",
+                    color = BankMuted,
+                    fontSize = 13.sp,
+                )
+                Text(
+                    "$selectedCount of ${questions.size} selected · ${questionTypeLabel(questionType)} · ${if (model.isBlank()) "AI" else model}",
+                    color = BankCyan,
+                    fontSize = 12.sp,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { onSelectAll(true) }, modifier = Modifier.weight(1f)) {
+                        Text("Select all")
+                    }
+                    OutlinedButton(onClick = { onSelectAll(false) }, modifier = Modifier.weight(1f)) {
+                        Text("Clear all")
+                    }
+                }
+                TextButton(onClick = onEditSetup, modifier = Modifier.align(Alignment.End)) {
+                    Text("Discard and edit setup", color = BankCyan)
+                }
+            }
+        }
+        error?.let { message ->
+            item {
+                Text(message, color = Color(0xFFFCA5A5), fontSize = 13.sp)
+            }
+        }
+        if (totalMarks > 0) {
+            item {
+                Text(
+                    "Selected marks must not exceed the exam total of $totalMarks.",
+                    color = BankMuted,
+                    fontSize = 12.sp,
+                )
+            }
+        }
+        itemsIndexed(questions, key = { _, question -> question.sourceQuestionId }) { index, question ->
+            ReviewQuestionCard(
+                index = index + 1,
+                question = question,
+                questionType = questionType,
+                onUpdate = { transform -> onUpdate(question.sourceQuestionId, transform) },
+            )
+        }
+        item { Spacer(Modifier.height(18.dp)) }
+    }
+}
+
+@Composable
+private fun ReviewQuestionCard(
+    index: Int,
+    question: ReviewableQuestion,
+    questionType: String,
+    onUpdate: ((ReviewableQuestion) -> ReviewableQuestion) -> Unit,
+) {
+    val validation = QuestionReviewPolicy.validate(questionType, question)
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (question.selected) BankCard else BankCard.copy(alpha = 0.62f),
+        ),
+        border = BorderStroke(1.dp, if (question.selected) BankCyan.copy(alpha = 0.55f) else BankBorder),
+    ) {
+        Column(
+            Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(
+                    checked = question.selected,
+                    onCheckedChange = { selected -> onUpdate { it.copy(selected = selected) } },
+                    colors = CheckboxDefaults.colors(checkedColor = BankCyan, checkmarkColor = BankBg),
+                )
+                Column(Modifier.weight(1f)) {
+                    Text("Question $index", color = BankText, fontWeight = FontWeight.Bold)
+                    Text(questionTypeLabel(questionType), color = BankMuted, fontSize = 12.sp)
+                }
+                Text("${question.marks} mark${if (question.marks == 1) "" else "s"}", color = BankCyan, fontSize = 12.sp)
+            }
+            BankMultilineField(
+                value = question.questionText,
+                onValueChange = { value -> onUpdate { it.copy(questionText = value.take(8_000)) } },
+                label = "Question text",
+                enabled = question.selected,
+            )
+            if (questionType == "mcq") {
+                question.options.forEachIndexed { optionIndex, option ->
+                    BankTextField(
+                        value = option,
+                        onValueChange = { value ->
+                            onUpdate {
+                                val next = it.options.toMutableList()
+                                if (optionIndex in next.indices) next[optionIndex] = value.take(1_000)
+                                it.copy(options = next)
+                            }
+                        },
+                        label = "Option ${('A'.code + optionIndex).toChar()}",
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = question.selected,
+                    )
+                }
+            }
+            BankMultilineField(
+                value = question.correctAnswer,
+                onValueChange = { value -> onUpdate { it.copy(correctAnswer = value.take(2_000)) } },
+                label = if (questionType == "mcq") "Correct option (must match exactly)" else "Model answer",
+                enabled = question.selected,
+            )
+            BankMultilineField(
+                value = question.explanation,
+                onValueChange = { value -> onUpdate { it.copy(explanation = value.take(4_000)) } },
+                label = "Explanation (optional)",
+                enabled = question.selected,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                BankTextField(
+                    value = question.marks.toString(),
+                    onValueChange = { value ->
+                        value.toIntOrNull()?.let { marks -> onUpdate { it.copy(marks = marks.coerceIn(1, 100)) } }
+                    },
+                    label = "Marks",
+                    modifier = Modifier.weight(0.34f),
+                    keyboardType = KeyboardType.Number,
+                    enabled = question.selected,
+                )
+                Column(Modifier.weight(0.66f)) {
+                    Text("Difficulty", color = BankMuted, fontSize = 12.sp)
+                    Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                        listOf("easy", "medium", "hard").forEach { difficulty ->
+                            FilterChip(
+                                selected = question.difficulty == difficulty,
+                                onClick = { onUpdate { it.copy(difficulty = difficulty) } },
+                                enabled = question.selected,
+                                label = { Text(difficulty.replaceFirstChar(Char::uppercase), fontSize = 11.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = BankCyan.copy(alpha = 0.18f),
+                                    selectedLabelColor = BankCyan,
+                                    labelColor = BankMuted,
+                                ),
+                            )
+                        }
+                    }
+                }
+            }
+            if (question.selected && !validation.isValid) {
+                Text(validation.message.orEmpty(), color = Color(0xFFFCA5A5), fontSize = 12.sp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReviewCostBar(
+    selectedCount: Int,
+    selectedMarks: Int,
+    totalMarks: Int,
+    costPoisha: Int,
+    billingEnabled: Boolean,
+    finalizing: Boolean,
+    validationError: String?,
+    onFinalize: () -> Unit,
+) {
+    Surface(color = BankCard, tonalElevation = 8.dp, shadowElevation = 12.dp) {
+        Column(
+            Modifier.navigationBarsPadding().padding(horizontal = 20.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(7.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Proposed cost · ${bdtFromPoisha(costPoisha)}", color = BankText, fontWeight = FontWeight.Bold)
+                    Text(
+                        "$selectedCount selected · $selectedMarks/${totalMarks.coerceAtLeast(0)} marks",
+                        color = BankMuted,
+                        fontSize = 12.sp,
+                    )
+                }
+                Button(
+                    onClick = onFinalize,
+                    enabled = !finalizing && selectedCount > 0 && validationError == null &&
+                        (totalMarks <= 0 || selectedMarks <= totalMarks),
+                    colors = ButtonDefaults.buttonColors(containerColor = BankCyan, contentColor = BankBg),
+                ) {
+                    if (finalizing) {
+                        CircularProgressIndicator(Modifier.size(18.dp), color = BankBg, strokeWidth = 2.dp)
+                        Spacer(Modifier.width(8.dp))
+                    }
+                    Text(if (finalizing) "Saving..." else "Finalize")
+                }
+            }
+            Text(
+                if (billingEnabled) "Final server quote and wallet debit will be shown before completing."
+                else "Pricing is an estimate only. This build has no question-wallet debit configured.",
+                color = if (billingEnabled) BankMuted else Color(0xFFFBBF24),
+                fontSize = 11.sp,
+            )
+        }
+    }
+}
+
+@Composable
+private fun FinalizationSuccessDialog(
+    result: QuestionFinalizationResult,
+    onCreateAnother: () -> Unit,
+    onBackToExams: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = {},
+        containerColor = BankCard,
+        title = { Text("Questions finalized", color = BankText, fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("${result.questionCount} reviewed question(s) are now in your private question bank.", color = BankText)
+                Text("Proposed cost: ${bdtFromPoisha(result.costPoisha)}", color = BankCyan, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "No wallet debit was made because question-bank billing is not configured yet. Consented content will be queued anonymously for Super Admin moderation.",
+                    color = BankMuted,
+                    fontSize = 13.sp,
+                )
+            }
+        },
+        dismissButton = { TextButton(onClick = onCreateAnother) { Text("Create another") } },
+        confirmButton = {
+            Button(
+                onClick = onBackToExams,
+                colors = ButtonDefaults.buttonColors(containerColor = BankCyan, contentColor = BankBg),
+            ) { Text("Back to exams") }
+        },
+    )
+}
+
+private fun questionTypeLabel(questionType: String): String = when (questionType) {
+    "mcq" -> "MCQ"
+    "short" -> "Short question"
+    "creative" -> "Creative question"
+    else -> questionType
+}
+
+private fun bdtFromPoisha(value: Int): String {
+    val whole = value / 100
+    val fraction = (value % 100).toString().padStart(2, '0')
+    return "BDT $whole.$fraction"
+}
+
+@Composable
+private fun BankMultilineField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    enabled: Boolean = true,
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        label = { Text(label) },
+        modifier = Modifier.fillMaxWidth(),
+        minLines = 2,
+        maxLines = 8,
+        enabled = enabled,
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedTextColor = BankText,
+            unfocusedTextColor = BankText,
+            focusedBorderColor = BankCyan,
+            unfocusedBorderColor = BankBorder,
+            focusedLabelColor = BankCyan,
+            unfocusedLabelColor = BankMuted,
+            cursorColor = BankCyan,
+        ),
+    )
+}
+
+@Composable
 private fun BankTextField(
     value: String,
     onValueChange: (String) -> Unit,
     label: String,
     modifier: Modifier,
     keyboardType: KeyboardType = KeyboardType.Text,
+    enabled: Boolean = true,
 ) {
     OutlinedTextField(
         value = value,
@@ -505,6 +898,7 @@ private fun BankTextField(
         label = { Text(label) },
         modifier = modifier,
         singleLine = true,
+        enabled = enabled,
         keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
         colors = OutlinedTextFieldDefaults.colors(
             focusedTextColor = BankText,

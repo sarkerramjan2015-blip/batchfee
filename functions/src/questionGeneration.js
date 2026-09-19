@@ -304,6 +304,18 @@ function createQuestionGenerationHandler({
         apiBackend: "gemini_developer_api",
         questionType: input.questionType,
         questionCount: input.questionCount,
+        // Retain the bounded academic setup, but never the source image bytes.
+        // Phase 3 finalization reads this server-authored metadata instead of
+        // trusting a client to label its finalized questions.
+        setup: {
+          examName: input.examName,
+          totalMarks: input.totalMarks,
+          durationMinutes: input.durationMinutes,
+          className: input.className,
+          subject: input.subject,
+          chapter: input.chapter,
+          language: input.language,
+        },
         sourcePageCount: input.sourcePages.length,
         billingStatus: "phase2_preview_no_wallet_charge",
         status: "processing",
