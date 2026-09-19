@@ -8,6 +8,7 @@ const {
   SMS_SEND_METHODS,
   WALLET_FIELDS,
   createServerSmsHandler,
+  createTenantSmsDeliveryRefreshHandler,
   createSmsWalletHandler,
   dhakaUsageKeys,
   platformSmsAnalytics,
@@ -160,12 +161,16 @@ function seededDb() {
   });
 }
 
-function handlerFor(db) {
-  return createSmsWalletHandler({ db });
+function handlerFor(db, smsProvider) {
+  return createSmsWalletHandler({ db, smsProvider });
 }
 
 function serverHandlerFor(db, smsProvider) {
   return createServerSmsHandler({ db, smsProvider });
+}
+
+function tenantDlrHandlerFor(db, smsProvider) {
+  return createTenantSmsDeliveryRefreshHandler({ db, smsProvider });
 }
 
 test("sms wallet exposes only carrier and server methods with safe defaults", () => {
@@ -180,7 +185,7 @@ test("sms wallet exposes only carrier and server methods with safe defaults", ()
     sms_usage_day_key: keys.dayKey,
     sms_used_this_month: 0,
     sms_usage_month_key: keys.monthKey,
-    sms_send_method: "carrier",
+    sms_send_method: "server",
   });
   assert.deepEqual(WALLET_FIELDS, {
     sms_balance: 0,
@@ -190,7 +195,7 @@ test("sms wallet exposes only carrier and server methods with safe defaults", ()
     sms_usage_day_key: "",
     sms_used_this_month: 0,
     sms_usage_month_key: "",
-    sms_send_method: "carrier",
+    sms_send_method: "server",
   });
 });
 
@@ -221,10 +226,10 @@ test("get_wallet initializes missing fields with defaults and preserves existing
   const first = await handler({ auth: { uid: "owner" }, data: { action: "get_wallet", operationId: "wallet-get-00000001" } });
   assert.deepEqual(first, {
     smsBalance: 0, totalSmsPurchased: 0, totalSmsUsed: 0,
-    smsUsedToday: 0, smsUsedThisMonth: 0, smsSendMethod: "carrier",
+    smsUsedToday: 0, smsUsedThisMonth: 0, smsSendMethod: "server",
   });
   assert.equal(db.documents.get("institutes/i").sms_balance, 0);
-  assert.equal(db.documents.get("institutes/i").sms_send_method, "carrier");
+  assert.equal(db.documents.get("institutes/i").sms_send_method, "server");
 
   db.documents.get("institutes/i").sms_balance = 42;
   db.documents.get("institutes/i").total_sms_purchased = 100;
@@ -232,7 +237,7 @@ test("get_wallet initializes missing fields with defaults and preserves existing
   const second = await handler({ auth: { uid: "owner" }, data: { action: "get_wallet", operationId: "wallet-get-00000002" } });
   assert.deepEqual(second, {
     smsBalance: 42, totalSmsPurchased: 100, totalSmsUsed: 58,
-    smsUsedToday: 0, smsUsedThisMonth: 0, smsSendMethod: "carrier",
+    smsUsedToday: 0, smsUsedThisMonth: 0, smsSendMethod: "server",
   });
 });
 
@@ -241,13 +246,13 @@ test("staff can read the wallet but cannot change the send method", async () => 
   const handler = handlerFor(db);
 
   const wallet = await handler({ auth: { uid: "staff" }, data: { action: "get_wallet", operationId: "wallet-get-00000003" } });
-  assert.equal(wallet.smsSendMethod, "carrier");
+  assert.equal(wallet.smsSendMethod, "server");
 
   await assert.rejects(
     handler({ auth: { uid: "staff" }, data: { action: "set_send_method", smsSendMethod: "server", operationId: "wallet-set-00000003" } }),
     /owner/i,
   );
-  assert.equal(db.documents.get("institutes/i").sms_send_method, "carrier");
+  assert.equal(db.documents.get("institutes/i").sms_send_method, "server");
 });
 
 test("set_send_method validates the value and writes one audited change", async () => {
@@ -259,14 +264,14 @@ test("set_send_method validates the value and writes one audited change", async 
     /carrier or server/i,
   );
 
-  const result = await handler({ auth: { uid: "owner" }, data: { action: "set_send_method", smsSendMethod: "server", operationId: "wallet-set-00000005" } });
-  assert.equal(result.smsSendMethod, "server");
-  assert.equal(db.documents.get("institutes/i").sms_send_method, "server");
+  const result = await handler({ auth: { uid: "owner" }, data: { action: "set_send_method", smsSendMethod: "carrier", operationId: "wallet-set-00000005" } });
+  assert.equal(result.smsSendMethod, "carrier");
+  assert.equal(db.documents.get("institutes/i").sms_send_method, "carrier");
 
   const audit = db.documents.get("institutes/i/sms_wallet_audit/wallet-set-00000005");
   assert.equal(audit.action, "set_send_method");
-  assert.equal(audit.before, "carrier");
-  assert.equal(audit.after, "server");
+  assert.equal(audit.before, "server");
+  assert.equal(audit.after, "carrier");
   assert.equal(audit.actorUid, "owner");
   assert.equal(audit.operationId, "wallet-set-00000005");
 });
@@ -274,15 +279,15 @@ test("set_send_method validates the value and writes one audited change", async 
 test("replaying the same set_send_method operation does not duplicate the audit row", async () => {
   const db = seededDb();
   const handler = handlerFor(db);
-  const request = { auth: { uid: "owner" }, data: { action: "set_send_method", smsSendMethod: "server", operationId: "wallet-set-replay-01" } };
+  const request = { auth: { uid: "owner" }, data: { action: "set_send_method", smsSendMethod: "carrier", operationId: "wallet-set-replay-01" } };
 
   const first = await handler(request);
   const replay = await handler(request);
   assert.deepEqual(replay, first);
   assert.equal([...db.documents.keys()].filter((key) => key.includes("/sms_wallet_audit/")).length, 1);
 
-  const back = await handler({ auth: { uid: "owner" }, data: { action: "set_send_method", smsSendMethod: "carrier", operationId: "wallet-set-back-0001" } });
-  assert.equal(back.smsSendMethod, "carrier");
+  const back = await handler({ auth: { uid: "owner" }, data: { action: "set_send_method", smsSendMethod: "server", operationId: "wallet-set-back-0001" } });
+  assert.equal(back.smsSendMethod, "server");
   assert.equal([...db.documents.keys()].filter((key) => key.includes("/sms_wallet_audit/")).length, 2);
 });
 
@@ -548,12 +553,12 @@ test("platform SMS analytics reconciles DLR and separates owner liability from Z
   const keys = dhakaUsageKeys(now);
   db.documents.set("institutes/i", {
     ...db.documents.get("institutes/i"),
-    sms_balance: 5, total_sms_used: 8, sms_used_today: 2, sms_usage_day_key: keys.dayKey,
+    sms_balance: 5, total_sms_purchased: 13, total_sms_used: 8, sms_used_today: 2, sms_usage_day_key: keys.dayKey,
     sms_used_this_month: 2, sms_usage_month_key: keys.monthKey,
   });
   db.documents.set("institutes/j", {
     ...db.documents.get("institutes/j"),
-    sms_balance: 3, total_sms_used: 4, sms_used_today: 1, sms_usage_day_key: keys.dayKey,
+    sms_balance: 3, total_sms_purchased: 7, total_sms_used: 4, sms_used_today: 1, sms_usage_day_key: keys.dayKey,
     sms_used_this_month: 1, sms_usage_month_key: keys.monthKey,
   });
   db.documents.set("institutes/i/sms_recharge_requests/paid-a", {
@@ -603,11 +608,56 @@ test("platform SMS analytics reconciles DLR and separates owner liability from Z
   assert.deepEqual(analytics.dlrSync, { attempted: 1, updated: 1 });
   assert.equal(db.documents.get("institutes/i/sms_messages/pending-a").status, "delivered");
   assert.equal(analytics.institutes.find((row) => row.instituteId === "i").lifetimeSms, 8);
+  assert.equal(analytics.institutes.find((row) => row.instituteId === "i").totalSmsPurchased, 13);
+  assert.equal(analytics.institutes.find((row) => row.instituteId === "j").walletBalance, 3);
+  assert.equal(analytics.recentMessages.length, 3);
+  assert.equal(analytics.recentMessages.find((row) => row.messageId === "pending-a").status, "delivered");
 
   await assert.rejects(
     platformSmsAnalytics({ db, request: { auth: { uid: "billing" } }, now, smsProvider: {} }),
     /platform access/i,
   );
+});
+
+test("institute History refresh reconciles only that institute's pending DLR rows", async () => {
+  const db = seededDb();
+  const now = Date.UTC(2026, 8, 16, 1, 0, 0);
+  db.documents.set("institutes/i/sms_messages/pending-owner", {
+    instituteId: "i", channel: "server", status: "pending", credits: 1,
+    providerMessageId: "11111111-1111-1111-1111-111111111111", createdAtMs: now,
+  });
+  db.documents.set("institutes/j/sms_messages/pending-other", {
+    instituteId: "j", channel: "server", status: "pending", credits: 1,
+    providerMessageId: "22222222-2222-2222-2222-222222222222", createdAtMs: now,
+  });
+  const handler = tenantDlrHandlerFor(db, {
+    getDeliveryStatus: async () => ({ status: "DELIVERED", deliveredAt: "2026-09-16T01:02:00Z" }),
+  });
+
+  const result = await handler({ auth: { uid: "owner" }, data: {} });
+  assert.deepEqual(result, { attempted: 1, updated: 1 });
+  assert.equal(db.documents.get("institutes/i/sms_messages/pending-owner").status, "delivered");
+  assert.equal(db.documents.get("institutes/j/sms_messages/pending-other").status, "pending");
+});
+
+test("the existing report action refreshes DLR for older app builds", async () => {
+  const db = seededDb();
+  const now = Date.UTC(2026, 8, 16, 2, 0, 0);
+  db.documents.set("institutes/i/sms_messages/pending-report", {
+    instituteId: "i", channel: "server", status: "pending", credits: 1,
+    providerMessageId: "33333333-3333-3333-3333-333333333333", createdAtMs: now,
+  });
+  const handler = handlerFor(db, {
+    getDeliveryStatus: async () => ({ status: "DELIVERED", deliveredAt: "2026-09-16T02:01:00Z" }),
+  });
+
+  const report = await handler({
+    auth: { uid: "owner" },
+    data: { action: "list_sms_report", operationId: "refresh-history-00001" },
+  });
+  assert.equal(report.counts.delivered, 1);
+  assert.equal(report.counts.pending, 0);
+  assert.equal(db.documents.get("institutes/i/sms_messages/pending-report").status, "delivered");
 });
 
 test("root records an immutable, idempotent central SMS top-up ledger", async () => {

@@ -276,6 +276,7 @@ fun PricingScreen(
     var submitError by remember { mutableStateOf<String?>(null) }
     var selectedPlanId by remember { mutableStateOf<String?>(null) }
     var corporateStudentLimitInput by remember { mutableStateOf("") }
+    var corporateDurationIndex by remember { mutableIntStateOf(0) }
     var showPaymentDialog by remember { mutableStateOf(false) }
     var showPaymentConfirmation by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
@@ -423,6 +424,15 @@ fun PricingScreen(
             }
             Spacer(Modifier.height(8.dp))
 
+            val corporateStudentLimit = corporateStudentLimitInput.toIntOrNull()
+            val corporateEligible = activeStudentCount >= CORPORATE_MIN_STUDENTS
+            val corporateCapacityValid = corporateStudentLimit != null &&
+                corporateStudentLimit >= CORPORATE_MIN_STUDENTS &&
+                corporateStudentLimit >= activeStudentCount
+            val corporateDurationMonths = listOf(1, 6, 12)[corporateDurationIndex]
+            val corporateTotal = corporateStudentLimit?.takeIf { corporateCapacityValid }
+                ?.let { corporateOfferTotal(it, corporateDurationMonths) }
+
             LazyRow(
                 contentPadding = PaddingValues(horizontal = 18.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -460,17 +470,31 @@ fun PricingScreen(
                         )
                     }
                 }
+                item {
+                    CorporateOfferCard(
+                        activeStudentCount = activeStudentCount,
+                        studentCapacityInput = corporateStudentLimitInput,
+                        onStudentCapacityChange = { corporateStudentLimitInput = it },
+                        durationIndex = corporateDurationIndex,
+                        onDurationSelected = { corporateDurationIndex = it },
+                        isEligible = corporateEligible,
+                        isCapacityValid = corporateCapacityValid,
+                        total = corporateTotal,
+                        onChoose = {
+                            selectedPlanId = CORPORATE_PLAN_ID
+                            senderPhone = ""
+                            senderPhoneError = null
+                            submitSuccess = false
+                            submitError = null
+                            showPaymentConfirmation = false
+                            showPaymentDialog = true
+                        }
+                    )
+                }
             }
 
-            val corporateStudentLimit = corporateStudentLimitInput.toIntOrNull()
-            val corporateEligible = activeStudentCount >= CORPORATE_MIN_STUDENTS
-            val corporateCapacityValid = corporateStudentLimit != null &&
-                corporateStudentLimit >= CORPORATE_MIN_STUDENTS &&
-                corporateStudentLimit >= activeStudentCount
-            val corporateDurationMonths = viewModel.billingMonths()
-            val corporateTotal = corporateStudentLimit?.takeIf { corporateCapacityValid }
-                ?.let { corporateOfferTotal(it, corporateDurationMonths) }
-
+            // Replaced by the premium corporate card in the same horizontal plan series above.
+            if (false) {
             Spacer(Modifier.height(16.dp))
             Column(
                 modifier = Modifier
@@ -533,6 +557,7 @@ fun PricingScreen(
                     enabled = corporateEligible && corporateCapacityValid,
                     colors = ButtonDefaults.buttonColors(containerColor = Cyan, disabledContainerColor = CardBg)
                 ) { Text("Choose Corporate Offer", color = if (corporateCapacityValid) BgColor else TextMuted, fontWeight = FontWeight.Bold) }
+            }
             }
 
             if (plans.isEmpty()) {
@@ -647,8 +672,16 @@ fun PricingScreen(
                     isCorporateOffer && selectedCorporateLimit != null
                 ) BatchFeePlan(CORPORATE_PLAN_ID, "Corporate Offer", selectedCorporateLimit,
                     "$selectedCorporateLimit Students", CORPORATE_RATE_PER_STUDENT_MONTH_BDT) else return@Scaffold
-                val selBilling = remember(selectedDuration) { viewModel.billingLabel() }
-                val durationMonths = when (selectedDuration) { 0 -> 1; 1 -> 6; 2 -> 12; else -> 1 }
+                val selBilling = if (isCorporateOffer) {
+                    listOf("1 Month", "6 Months", "12 Months")[corporateDurationIndex]
+                } else {
+                    remember(selectedDuration) { viewModel.billingLabel() }
+                }
+                val durationMonths = if (isCorporateOffer) {
+                    listOf(1, 6, 12)[corporateDurationIndex]
+                } else {
+                    when (selectedDuration) { 0 -> 1; 1 -> 6; 2 -> 12; else -> 1 }
+                }
                 val selPrice = if (isCorporateOffer) {
                     corporateOfferTotal(selectedCorporateLimit ?: return@Scaffold, durationMonths)
                 } else remember(selectedDuration) { viewModel.priceFor(selPlan) }
@@ -783,9 +816,13 @@ fun PricingScreen(
             }
 
             if (showPaymentConfirmation && selectedPlanId != null) {
-                val durationMonths = when (selectedDuration) { 0 -> 1; 1 -> 6; 2 -> 12; else -> 1 }
                 val selectedCorporateLimit = corporateStudentLimitInput.toIntOrNull()
                 val isCorporateOffer = selectedPlanId == CORPORATE_PLAN_ID
+                val durationMonths = if (isCorporateOffer) {
+                    listOf(1, 6, 12)[corporateDurationIndex]
+                } else {
+                    when (selectedDuration) { 0 -> 1; 1 -> 6; 2 -> 12; else -> 1 }
+                }
                 val selPlan = plans.find { it.id == selectedPlanId } ?: if (
                     isCorporateOffer && selectedCorporateLimit != null
                 ) BatchFeePlan(CORPORATE_PLAN_ID, "Corporate Offer", selectedCorporateLimit,
@@ -1199,6 +1236,157 @@ private fun PlanCard(
                     color = if (hasProminentCta && isEligible) Color.White else TextMuted,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.SemiBold
+                )
+            }
+        }
+    }
+}
+
+/** Premium, configurable plan card kept in the same swipeable catalogue as every other plan. */
+@Composable
+private fun CorporateOfferCard(
+    activeStudentCount: Int,
+    studentCapacityInput: String,
+    onStudentCapacityChange: (String) -> Unit,
+    durationIndex: Int,
+    onDurationSelected: (Int) -> Unit,
+    isEligible: Boolean,
+    isCapacityValid: Boolean,
+    total: Double?,
+    onChoose: () -> Unit
+) {
+    val shape = RoundedCornerShape(18.dp)
+    val durationLabels = listOf("1 Month", "6 Months", "12 Months")
+    val durationMonths = listOf(1, 6, 12)[durationIndex]
+    val message = when {
+        !isEligible -> "Available from 501 active students"
+        studentCapacityInput.isBlank() -> "Enter your student capacity"
+        !isCapacityValid -> "Capacity must cover all active students"
+        else -> "$durationMonths month${if (durationMonths > 1) "s" else ""} total: BDT ${"%.2f".format(total)}"
+    }
+
+    Box(
+        modifier = Modifier
+            .width(232.dp)
+            .clip(shape)
+            .background(
+                Brush.verticalGradient(
+                    listOf(Color(0xFF25133F), Color(0xFF10273A), Color(0xFF091827))
+                )
+            )
+            .border(
+                1.5.dp,
+                Brush.verticalGradient(listOf(Color(0xFFFBBF24), Color(0xFFA855F7), Cyan)),
+                shape
+            )
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(88.dp)
+                .background(
+                    Brush.linearGradient(
+                        listOf(Color(0x33FBBF24), Color(0x22A855F7), Color.Transparent)
+                    )
+                )
+        )
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                Box(
+                    Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Brush.horizontalGradient(listOf(Color(0xFFF59E0B), Color(0xFFA855F7))))
+                        .padding(horizontal = 10.dp, vertical = 3.dp)
+                ) {
+                    Text("ELITE CUSTOM", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier
+                        .size(36.dp)
+                        .clip(RoundedCornerShape(11.dp))
+                        .background(Color(0x22FBBF24)),
+                    contentAlignment = Alignment.Center
+                ) { Icon(Icons.Filled.Business, null, tint = Color(0xFFFBBF24), modifier = Modifier.size(20.dp)) }
+                Spacer(Modifier.width(9.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Corporate Offer", color = TextWhite, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                    Text("501+ student institutes", color = Color(0xFFFDE68A), fontSize = 10.sp)
+                }
+            }
+            Text("BDT 1.50", color = Color(0xFFFBBF24), fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            Text("per student / month", color = TextMuted, fontSize = 10.sp)
+
+            OutlinedTextField(
+                value = studentCapacityInput,
+                onValueChange = { value ->
+                    if (value.length <= 6 && value.all(Char::isDigit)) onStudentCapacityChange(value)
+                },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = isEligible,
+                singleLine = true,
+                label = { Text("Student capacity", fontSize = 10.sp) },
+                placeholder = { Text("Min. ${maxOf(activeStudentCount, CORPORATE_MIN_STUDENTS)}", fontSize = 10.sp) },
+                leadingIcon = { Icon(Icons.Filled.Groups, null, tint = Color(0xFFFBBF24), modifier = Modifier.size(17.dp)) },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = TextWhite,
+                    unfocusedTextColor = TextWhite,
+                    focusedBorderColor = Color(0xFFFBBF24),
+                    unfocusedBorderColor = Color(0xFF6D4C8D),
+                    focusedContainerColor = Color(0x221A1030),
+                    unfocusedContainerColor = Color(0x221A1030),
+                    disabledTextColor = TextMuted,
+                    disabledBorderColor = BorderSub
+                )
+            )
+
+            Text("Select duration", color = TextMuted, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color(0x33201038))
+                    .border(1.dp, Color(0x556D4C8D), RoundedCornerShape(10.dp))
+                    .padding(3.dp)
+            ) {
+                durationLabels.forEachIndexed { index, label ->
+                    val selected = durationIndex == index
+                    Box(
+                        Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(7.dp))
+                            .background(if (selected) Color(0xFF7C3AED) else Color.Transparent)
+                            .clickable(enabled = isEligible) { onDurationSelected(index) }
+                            .padding(vertical = 6.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(label.substringBefore(" "), color = if (selected) Color.White else TextMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+            Text(message, color = if (isCapacityValid) Color(0xFFFDE68A) else TextMuted, fontSize = 10.sp)
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(44.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(
+                        if (isEligible && isCapacityValid) {
+                            Brush.horizontalGradient(listOf(Color(0xFFF59E0B), Color(0xFFA855F7)))
+                        } else {
+                            Brush.horizontalGradient(listOf(CardBgAlt, CardBg))
+                        }
+                    )
+                    .then(if (isEligible && isCapacityValid) Modifier.clickable(onClick = onChoose) else Modifier),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    if (isEligible && isCapacityValid) "Choose Corporate" else "Corporate Plan",
+                    color = if (isEligible && isCapacityValid) Color.White else TextMuted,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
                 )
             }
         }

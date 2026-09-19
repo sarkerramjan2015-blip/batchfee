@@ -65,6 +65,7 @@ class BulkMessageController(
     private var messageBuilder: (BulkTarget) -> String = { "" }
     private var launcher: (BulkTarget, String) -> Boolean = { _, _ -> false }
     private var serverOperationId = UUID.randomUUID().toString()
+    private var smsMethodOverride: String? = null
 
     val isRunning: Boolean get() = queueJob?.isActive == true
 
@@ -73,7 +74,8 @@ class BulkMessageController(
         channel: String,
         delayMs: Long,
         messageBuilder: (BulkTarget) -> String,
-        launcher: (BulkTarget, String) -> Boolean
+        launcher: (BulkTarget, String) -> Boolean,
+        smsMethodOverride: String? = null
     ): Boolean {
         if (isRunning || targets.isEmpty()) return false
         this.channel = channel
@@ -81,6 +83,7 @@ class BulkMessageController(
         this.messageBuilder = messageBuilder
         this.launcher = launcher
         this.serverOperationId = UUID.randomUUID().toString()
+        this.smsMethodOverride = smsMethodOverride
         this.pausedSinceLaunch = false
         val items = targets.map { BulkQueueItem(it) }
         _state.value = BulkQueueState(items = items, phase = Phase.RUNNING)
@@ -89,9 +92,14 @@ class BulkMessageController(
     }
 
     private suspend fun process(items: List<BulkQueueItem>) {
+        // An explicit per-send choice from the SMS delivery chooser (for example
+        // the owner's one-send "Phone SMS" fallback) wins over the institute's
+        // saved method; otherwise the saved automatic preference applies.
         val useServerSms = channel == "sms" && runCatching {
             val instId = instituteId.orEmpty()
-            instId.isNotBlank() && SmsWalletSyncHelper.ensureWalletInitialized(instId).smsSendMethod == SmsWalletState.METHOD_SERVER
+            val method = smsMethodOverride
+                ?: SmsWalletSyncHelper.ensureWalletInitialized(instId).smsSendMethod
+            instId.isNotBlank() && method == SmsWalletState.METHOD_SERVER
         }.getOrDefault(false)
         if (useServerSms) {
             processServer(items)

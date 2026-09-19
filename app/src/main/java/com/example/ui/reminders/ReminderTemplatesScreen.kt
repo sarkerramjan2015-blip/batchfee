@@ -52,9 +52,19 @@ private val connectedReminderTemplates = listOf(
         listOf("{guardianName}", "{studentName}", "{studentCode}", "{batchName}", "{date}", "{instituteName}", "{instituteContact}")
     ),
     ReminderTemplateSpec(
+        "AttendanceUpdate", "Attendance update", "Send for present, late, leave or other attendance status",
+        "Attendance → send message", Icons.Filled.FactCheck, ReBlue,
+        listOf("{guardianName}", "{studentName}", "{studentCode}", "{attendanceStatus}", "{batchName}", "{date}", "{instituteName}", "{instituteContact}")
+    ),
+    ReminderTemplateSpec(
         "DueFee", "Due fee reminder", "Send for unpaid or overdue fees",
         "Fees & batch due list", Icons.Filled.Payments, ReCyan,
         listOf("{guardianName}", "{studentName}", "{amount}", "{period}", "{date}", "{instituteName}", "{instituteContact}")
+    ),
+    ReminderTemplateSpec(
+        "PaymentConfirmation", "Payment receipt", "Send after a fee payment is collected",
+        "Fee collection & payment history", Icons.Filled.ReceiptLong, ReGreen,
+        listOf("{guardianName}", "{studentName}", "{amount}", "{dueAmount}", "{period}", "{receiptNumber}", "{paymentMethod}", "{instituteName}", "{instituteContact}")
     ),
     ReminderTemplateSpec(
         "Birthday", "Birthday greeting", "Send on a student's birthday",
@@ -67,6 +77,11 @@ private val connectedReminderTemplates = listOf(
         listOf("{guardianName}", "{studentName}", "{examName}", "{marks}", "{grade}", "{position}", "{instituteName}", "{instituteContact}")
     ),
     ReminderTemplateSpec(
+        "MeritListPublished", "Merit list published", "Send the exam merit list to guardians",
+        "Exam results → share merit list", Icons.Filled.Leaderboard, ReBlue,
+        listOf("{examName}", "{meritList}", "{instituteName}", "{instituteContact}")
+    ),
+    ReminderTemplateSpec(
         "EnquiryFollowUp", "Enquiry follow-up", "Send to a prospective student or guardian",
         "Enquiries", Icons.Filled.SupportAgent, ReGreen,
         listOf("{guardianName}", "{studentName}", "{instituteName}", "{instituteContact}")
@@ -75,6 +90,11 @@ private val connectedReminderTemplates = listOf(
         "WelcomeMessage", "Admission welcome", "Send after a student is admitted",
         "Student admission & profile", Icons.Filled.WavingHand, ReGreen,
         listOf("{guardianName}", "{studentName}", "{studentCode}", "{className}", "{instituteName}", "{instituteContact}")
+    ),
+    ReminderTemplateSpec(
+        "StaffCredentials", "Staff login details", "Share a new staff member's app login details",
+        "Staff → share credentials", Icons.Filled.Badge, ReGreen,
+        listOf("{staffName}", "{staffCode}", "{password}", "{staffRole}", "{appLink}", "{instituteName}")
     ),
 )
 
@@ -110,14 +130,14 @@ fun ReminderTemplatesScreen(db: AppDatabase, onBack: () -> Unit) {
                         }
                         Spacer(Modifier.width(11.dp))
                         Column {
-                            Text("Messages that work automatically", color = ReWhite, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                            Text("Edit one template for each feature. Your saved text is used there automatically.", color = ReMuted, fontSize = 11.sp)
+                            Text("SMS templates for every fixed workflow", color = ReWhite, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                            Text("Customize each automatic or transactional SMS. One-off manual SMS stays fully editable while sending.", color = ReMuted, fontSize = 11.sp)
                         }
                     }
                 }
             }
             Spacer(Modifier.height(16.dp))
-            Text("Message templates", color = ReMuted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            Text("${connectedReminderTemplates.size} SMS templates", color = ReMuted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(8.dp))
             connectedReminderTemplates.forEach { spec ->
                 val existing = templates.firstOrNull { it.type == spec.type }
@@ -275,6 +295,17 @@ private fun templatePreviewValues(type: String): Map<String, String> {
         "position" to "2",
         "marks" to "87 / 100",
         "examName" to "Monthly Exam",
+        "meritList" to "1. Rahim Ahmed - 87 (A+)\n2. Nusrat Jahan - 84 (A)",
+        "attendanceStatus" to "arrived late",
+        "receiptNumber" to "REC-00000125",
+        "dueAmount" to "0",
+        "paymentMethod" to "CASH",
+        "staffName" to "Sadia Rahman",
+        "staffCode" to "STF-1025",
+        "password" to "••••••••",
+        "staffRole" to "Teacher",
+        "appLink" to "batchfee.app",
+        "message" to "Tomorrow's class will start at 4:00 PM.",
     )
     return common
 }

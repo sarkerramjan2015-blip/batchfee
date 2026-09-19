@@ -41,6 +41,8 @@ import com.batchfee.edu.data.models.StudentEntity
 import com.batchfee.edu.domain.SessionManager
 import com.batchfee.edu.domain.appendInstituteSignature
 import com.batchfee.edu.domain.loadInstituteSignature
+import com.example.ui.components.SingleSmsDeliveryDialog
+import kotlinx.coroutines.launch
 import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
@@ -389,6 +391,7 @@ fun BirthdayReminderScreen(db: AppDatabase, onBack: () -> Unit, onNavigateToPric
     }
 
     var wishDialogTarget by remember { mutableStateOf<StudentEntity?>(null) }
+    var smsDialogTarget by remember { mutableStateOf<StudentEntity?>(null) }
 
     Scaffold(
         containerColor = BgColor,
@@ -561,23 +564,7 @@ fun BirthdayReminderScreen(db: AppDatabase, onBack: () -> Unit, onNavigateToPric
                         color = ElectricBlue,
                         onClick = {
                             wishDialogTarget = null
-                            val msg = birthdayMessage(student.fullName)
-                            val phone = student.phone?.takeIf { it.isNotBlank() }
-                            try {
-                                val intent = Intent(Intent.ACTION_SENDTO).apply {
-                                    data = Uri.parse("smsto:${phone ?: ""}")
-                                    putExtra("sms_body", msg)
-                                }
-                                context.startActivity(intent)
-                            } catch (_: Exception) {
-                                context.startActivity(Intent.createChooser(
-                                    Intent(Intent.ACTION_SEND).apply {
-                                        type = "text/plain"
-                                        putExtra(Intent.EXTRA_TEXT, msg)
-                                    },
-                                    "Share via"
-                                ))
-                            }
+                            smsDialogTarget = student
                         }
                     )
 
@@ -591,6 +578,23 @@ fun BirthdayReminderScreen(db: AppDatabase, onBack: () -> Unit, onNavigateToPric
                 }
             }
         }
+    }
+
+    smsDialogTarget?.let { student ->
+        SingleSmsDeliveryDialog(
+            title = "Birthday SMS",
+            recipientName = student.fullName,
+            recipientPhone = student.phone,
+            message = birthdayMessage(student.fullName),
+            purpose = "Birthday wish · ${student.fullName}",
+            onManualSend = { phone, body ->
+                context.startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:$phone")).apply {
+                    putExtra("sms_body", body)
+                })
+            },
+            onDismiss = { smsDialogTarget = null },
+            onFinished = { status -> scope.launch { snackbarHostState.showSnackbar(status) } }
+        )
     }
 }
 

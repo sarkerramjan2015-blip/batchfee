@@ -40,6 +40,12 @@ data class GroupedFeeCollectionResult(
     val payments: List<PaymentEntity>
 )
 
+/** A corrected amount for one existing line in a grouped monthly receipt. */
+data class GroupedPaymentCorrectionAllocation(
+    val paymentId: String,
+    val amount: Double
+)
+
 data class CustomMonthlyFeeUpdateResult(
     val customMonthlyFeeAmount: Double?,
     val customFeeReason: String?,
@@ -422,6 +428,44 @@ class FeeCollectionRepository(
         return FeeCollectionResult(payment.id, receipt.receiptNumber, fee)
     }
 
+    /**
+     * Corrects every allocation that belongs to one grouped monthly receipt.
+     * A grouped receipt deliberately cannot use [ownerEditPayment], because
+     * that would change just one month and leave its receipt header stale.
+     */
+    suspend fun ownerEditGroupedPayment(
+        receiptNumber: String,
+        instituteId: String,
+        allocations: List<GroupedPaymentCorrectionAllocation>,
+        paymentMethod: String,
+        paymentDateMs: Long,
+        note: String?,
+        reason: String,
+        now: Long = System.currentTimeMillis(),
+        operationId: String = UUID.randomUUID().toString()
+    ): FinancialOperationResult {
+        require(receiptNumber.isNotBlank()) { "A receipt number is required." }
+        require(allocations.size >= 2) { "A grouped receipt needs at least two payment lines." }
+        require(allocations.map { it.paymentId }.toSet().size == allocations.size) {
+            "Each grouped payment line must be included once."
+        }
+        require(allocations.all { it.amount > 0.0 }) { "Every grouped allocation must collect an amount." }
+        require(reason.trim().length >= 3) { "A correction reason is required." }
+        return execute(
+            request = baseRequest(operationId, instituteId, "owner_edit_grouped_payment") + mapOf(
+                "receiptNumber" to receiptNumber,
+                "allocations" to allocations.map { allocation ->
+                    mapOf("paymentId" to allocation.paymentId, "amount" to allocation.amount)
+                },
+                "paymentMethod" to paymentMethod,
+                "paymentDateMs" to paymentDateMs,
+                "note" to note,
+                "reason" to reason.trim()
+            ),
+            queuedAtMs = now
+        )
+    }
+
     suspend fun ownerDeletePayment(
         paymentId: String,
         instituteId: String,
@@ -630,6 +674,16 @@ class FeeCollectionRepository(
                 check(result.fees.size in 1..2 && result.payments.size == 1 && result.receipts.size == 1)
                 check(result.reversals.isEmpty() && result.deletedPaymentIds.isEmpty() && result.deletedReceiptIds.isEmpty())
             }
+            "owner_edit_grouped_payment" -> {
+                val allocations = request["allocations"] as? List<*> ?: emptyList<Any>()
+                check(allocations.size >= 2)
+                check(result.fees.size == allocations.size && result.payments.size == allocations.size)
+                check(result.receipts.size == 1 && result.reversals.isEmpty())
+                check(result.deletedPaymentIds.isEmpty() && result.deletedReceiptIds.isEmpty())
+                check(result.payments.map { it.id }.toSet().size == allocations.size)
+                check(result.payments.map { it.feeId }.toSet().size == allocations.size)
+                check(result.payments.map { it.receiptNumber }.toSet() == setOf(request["receiptNumber"] as String))
+            }
             "owner_delete_payment" -> {
                 check(result.fees.size == 1 && result.payments.isEmpty() && result.receipts.isEmpty())
                 check(result.reversals.isEmpty() && result.deletedPaymentIds == listOf(request["paymentId"] as String))
@@ -665,7 +719,7 @@ class FeeCollectionRepository(
             check(payment.studentId == paymentFee.studentId)
             if (action == "collect_grouped_payment") {
                 check(payment.operationId?.startsWith("$operationId:") == true && payment.status == "completed")
-            } else if (action !in setOf("reverse_payment", "owner_edit_payment")) {
+            } else if (action !in setOf("reverse_payment", "owner_edit_payment", "owner_edit_grouped_payment")) {
                 check(payment.operationId == operationId && payment.status == "completed")
             }
         }
@@ -674,7 +728,7 @@ class FeeCollectionRepository(
                 ?: error("Ledger response receipt references an unknown payment.")
             val receiptFee = feesById[receipt.feeId]
                 ?: error("Ledger response receipt references an unknown fee.")
-            check((action == "owner_edit_payment" || receipt.operationId == operationId) &&
+            check((action in setOf("owner_edit_payment", "owner_edit_grouped_payment") || receipt.operationId == operationId) &&
                 receipt.paymentId == payment.id &&
                 receipt.feeId == payment.feeId &&
                 receipt.studentId == receiptFee.studentId &&

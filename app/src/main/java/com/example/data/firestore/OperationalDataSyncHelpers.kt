@@ -1028,6 +1028,19 @@ object ExpenseSyncHelper {
         }
     }
 
+    /**
+     * Permanently removes an expense from the institute's cloud collection.
+     * Realtime listeners then mirror the deletion into every signed-in device.
+     */
+    suspend fun deleteExpense(expenseId: String, instituteId: String) = withContext(Dispatchers.IO) {
+        try {
+            instituteCollection(instituteId, COLLECTION).document(expenseId).delete().await()
+        } catch (e: Exception) {
+            recordException(e)
+            rethrowUnlessAccessDenied(e)
+        }
+    }
+
     suspend fun syncAllFromFirestore(db: AppDatabase, instituteId: String) = withContext(Dispatchers.IO) {
         try {
             instituteCollection(instituteId, COLLECTION).get().await().documents.mapNotNull { doc ->

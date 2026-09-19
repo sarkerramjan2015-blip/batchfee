@@ -52,6 +52,7 @@ import java.util.Locale
         com.batchfee.edu.data.models.SalaryEntity::class,
         com.batchfee.edu.data.models.TeachingSessionEntity::class,
         com.batchfee.edu.data.models.ExpenseEntity::class,
+        com.batchfee.edu.data.models.OtherIncomeEntity::class,
         com.batchfee.edu.data.models.ExamEntity::class,
         com.batchfee.edu.data.models.ResultEntity::class,
         com.batchfee.edu.data.models.AuditLogEntity::class,
@@ -69,7 +70,7 @@ import java.util.Locale
         com.batchfee.edu.data.models.CustomRoutineEntity::class,
         com.batchfee.edu.data.models.CustomRoutineEntryEntity::class
     ],
-    version = 46,
+    version = 47,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -93,6 +94,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun salaryDao(): com.batchfee.edu.data.dao.SalaryDao
     abstract fun teachingSessionDao(): com.batchfee.edu.data.dao.TeachingSessionDao
     abstract fun expenseDao(): com.batchfee.edu.data.dao.ExpenseDao
+    abstract fun otherIncomeDao(): com.batchfee.edu.data.dao.OtherIncomeDao
     abstract fun examDao(): com.batchfee.edu.data.dao.ExamDao
     abstract fun resultDao(): com.batchfee.edu.data.dao.ResultDao
     abstract fun auditLogDao(): com.batchfee.edu.data.dao.AuditLogDao
@@ -692,6 +694,13 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        internal val MIGRATION_46_47 = object : androidx.room.migration.Migration(46, 47) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS other_income (id TEXT NOT NULL, instituteId TEXT NOT NULL, category TEXT NOT NULL, title TEXT NOT NULL, amount REAL NOT NULL, incomeDateMs INTEGER NOT NULL, paymentMethod TEXT, note TEXT, createdByUserId TEXT NOT NULL, createdAtMs INTEGER NOT NULL, updatedAtMs INTEGER NOT NULL, archivedAtMs INTEGER, PRIMARY KEY(id))")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_other_income_instituteId_archivedAtMs_incomeDateMs ON other_income(instituteId, archivedAtMs, incomeDateMs)")
+            }
+        }
+
         fun getDatabase(context: Context, scope: CoroutineScope): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val builder = Room.databaseBuilder(
@@ -701,7 +710,7 @@ abstract class AppDatabase : RoomDatabase() {
                 )
                 .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_18_19, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33, MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36, MIGRATION_36_37, MIGRATION_37_38, MIGRATION_38_39, MIGRATION_39_40, MIGRATION_40_41)
 
-                builder.addMigrations(MIGRATION_41_42, MIGRATION_42_43, MIGRATION_43_44, MIGRATION_44_45, MIGRATION_45_46)
+                builder.addMigrations(MIGRATION_41_42, MIGRATION_42_43, MIGRATION_43_44, MIGRATION_44_45, MIGRATION_45_46, MIGRATION_46_47)
                 if (BuildConfig.DEBUG) {
                     builder.fallbackToDestructiveMigration()
                 }

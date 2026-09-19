@@ -1,5 +1,8 @@
 package com.batchfee.edu.ui.fees
 
+import android.content.Intent
+import android.net.Uri
+import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -27,6 +30,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.batchfee.edu.data.database.AppDatabase
+import com.example.ui.components.SingleSmsDeliveryDialog
+import kotlinx.coroutines.launch
 
 // ── Premium palette ───────────────────────────────────────────
 private val BgColor      = Color(0xFF07111F)
@@ -66,6 +71,8 @@ fun FeeDashboardScreen(
     val monthWiseDues by viewModel.monthWiseDues.collectAsState()
     val totalCollected by viewModel.totalCollected.collectAsState()
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var smsDueTarget by remember { mutableStateOf<SmsDueTarget?>(null) }
 
     Scaffold(
         containerColor = BgColor,
@@ -308,14 +315,16 @@ fun FeeDashboardScreen(
                                 // SMS button
                                 OutlinedButton(
                                     onClick = {
-                                        viewModel.sendDueNotification(
-                                            context = context,
-                                            studentName = first.studentName,
-                                            phone = first.studentPhone,
-                                            dueAmount = totalDueForStudent,
-                                            feePeriod = "multiple periods",
-                                            channel = "sms"
-                                        )
+                                        scope.launch {
+                                            val msg = viewModel.buildDueNotificationText(
+                                                studentName = first.studentName,
+                                                dueAmount = totalDueForStudent,
+                                                feePeriod = "multiple periods"
+                                            )
+                                            smsDueTarget = msg?.let {
+                                                SmsDueTarget(first.studentName, first.studentPhone, it)
+                                            }
+                                        }
                                     },
                                     modifier = Modifier.weight(1f).height(38.dp),
                                     shape = RoundedCornerShape(10.dp),
@@ -475,5 +484,27 @@ fun FeeDashboardScreen(
             Spacer(Modifier.height(24.dp))
         }
     }
+
+    // Single-student due reminder follows the same Automatic (default) →
+    // Manual/Semi-automatic chooser as bulk and every other SMS path.
+    smsDueTarget?.let { target ->
+        SingleSmsDeliveryDialog(
+            title = "Due Fee Reminder",
+            recipientName = target.name,
+            recipientPhone = target.phone,
+            message = target.message,
+            purpose = "Due fee reminder · ${target.name}",
+            onManualSend = { phone, body ->
+                context.startActivity(
+                    Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:$phone")).apply {
+                        putExtra("sms_body", body)
+                    }
+                )
+            },
+            onDismiss = { smsDueTarget = null },
+            onFinished = { status -> Toast.makeText(context, status, Toast.LENGTH_SHORT).show() }
+        )
+    }
 }
 
+private data class SmsDueTarget(val name: String, val phone: String?, val message: String)

@@ -92,6 +92,7 @@ import com.batchfee.edu.data.media.FirebaseStorageImageUploadHelper
 import com.batchfee.edu.domain.SessionManager
 import com.batchfee.edu.domain.StudentIdGenerator
 import com.batchfee.edu.ui.components.COUNTRY_CODES
+import com.example.ui.components.SingleSmsDeliveryDialog
 import com.batchfee.edu.ui.components.SquarePhotoCropDialog
 import com.batchfee.edu.ui.components.buildWhatsAppUrl
 import kotlinx.coroutines.Dispatchers
@@ -162,6 +163,7 @@ fun AddEditStudentScreen(
     var welcomeTemplate by remember { mutableStateOf<String?>(null) }
     var welcomeMessage by remember { mutableStateOf<String?>(null) }
     var welcomeRecipient by remember { mutableStateOf("") }
+    var showWelcomeSmsChooser by remember { mutableStateOf(false) }
     val saveScope = rememberCoroutineScope()
 
     var isAppAccessEnabled by remember { mutableStateOf(false) }
@@ -777,12 +779,30 @@ fun AddEditStudentScreen(
                 if (welcomeRecipient.isBlank()) {
                     Toast.makeText(context, "Student phone number is unavailable.", Toast.LENGTH_SHORT).show()
                 } else {
-                    context.startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${Uri.encode(welcomeRecipient)}")).apply {
-                        putExtra("sms_body", message)
-                    })
-                    welcomeMessage = null
-                    onBack()
+                    showWelcomeSmsChooser = true
                 }
+            }
+        )
+    }
+
+    // Welcome SMS follows the same Automatic (default) → Manual fallback chooser.
+    if (showWelcomeSmsChooser && welcomeMessage != null) {
+        SingleSmsDeliveryDialog(
+            title = "Welcome SMS",
+            recipientName = fullName.trim(),
+            recipientPhone = welcomeRecipient,
+            message = welcomeMessage!!,
+            purpose = "New student welcome · ${fullName.trim()}",
+            onManualSend = { phone, body ->
+                context.startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:$phone")).apply {
+                    putExtra("sms_body", body)
+                })
+            },
+            onDismiss = { showWelcomeSmsChooser = false },
+            onFinished = {
+                showWelcomeSmsChooser = false
+                welcomeMessage = null
+                onBack()
             }
         )
     }

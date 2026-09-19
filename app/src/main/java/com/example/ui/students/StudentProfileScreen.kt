@@ -60,6 +60,7 @@ import com.batchfee.edu.domain.loadInstituteSignature
 import com.batchfee.edu.domain.MonthlyDueCalculator
 import com.batchfee.edu.domain.SessionManager
 import com.batchfee.edu.domain.isCourseBatch
+import com.example.ui.components.SingleSmsDeliveryDialog
 import com.batchfee.edu.ui.components.buildWhatsAppUrl
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -139,6 +140,7 @@ fun StudentProfileScreen(
     var showStudentMenu by remember { mutableStateOf(false) }
     var showMessageDialog by remember { mutableStateOf(false) }
     var directMessage by remember { mutableStateOf("") }
+    var smsDeliveryTarget by remember { mutableStateOf<StudentSmsTarget?>(null) }
     var pendingConfirmAction by remember { mutableStateOf<StudentMenuConfirmAction?>(null) }
     var isDeletingStudent by remember { mutableStateOf(false) }
     var isUpdatingStudentStatus by remember { mutableStateOf(false) }
@@ -2094,13 +2096,35 @@ fun StudentProfileScreen(
                     },
                     onDismiss = { showMessageDialog = false },
                     onSendSms = {
-                        sendStudentMessage(context, s.phone, directMessage, instituteSignature, useWhatsApp = false)
+                        smsDeliveryTarget = StudentSmsTarget(
+                            name = s.fullName,
+                            phone = s.phone,
+                            message = appendInstituteSignature(directMessage.trim(), instituteSignature)
+                        )
                         showMessageDialog = false
                     },
                     onSendWhatsApp = {
-                        sendStudentMessage(context, s.phone, directMessage, instituteSignature, useWhatsApp = true)
+                        sendStudentMessage(context, s.phone, directMessage, instituteSignature)
                         showMessageDialog = false
                     }
+                )
+            }
+
+            // Direct SMS follows the shared Automatic (default) → Manual fallback chooser.
+            smsDeliveryTarget?.let { target ->
+                SingleSmsDeliveryDialog(
+                    title = "Student Message",
+                    recipientName = target.name,
+                    recipientPhone = target.phone,
+                    message = target.message,
+                    purpose = "Direct message · ${target.name}",
+                    onManualSend = { phone, body ->
+                        context.startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:$phone")).apply {
+                            putExtra("sms_body", body)
+                        })
+                    },
+                    onDismiss = { smsDeliveryTarget = null },
+                    onFinished = { status -> Toast.makeText(context, status, Toast.LENGTH_SHORT).show() }
                 )
             }
 
@@ -2791,23 +2815,17 @@ private fun printStudentText(context: android.content.Context, title: String, te
     webView.loadDataWithBaseURL(null, html, "text/html", "UTF-8", null)
 }
 
+private data class StudentSmsTarget(val name: String, val phone: String?, val message: String)
+
+/** WhatsApp-only hand-off; SMS goes through SingleSmsDeliveryDialog. */
 private fun sendStudentMessage(
     context: android.content.Context,
     phone: String?,
     message: String,
-    instituteSignature: String,
-    useWhatsApp: Boolean
+    instituteSignature: String
 ) {
     val body = appendInstituteSignature(message.trim(), instituteSignature)
-    if (useWhatsApp) {
-        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(buildWhatsAppUrl(phone, body))))
-    } else {
-        val cleanPhone = phone?.filter(Char::isDigit).orEmpty()
-        val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:$cleanPhone")).apply {
-            putExtra("sms_body", body)
-        }
-        context.startActivity(intent)
-    }
+    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(buildWhatsAppUrl(phone, body))))
 }
 
 private fun buildStudentReportText(
@@ -3271,18 +3289,47 @@ private fun CustomMonthlyFeeDialogV18(
     }
     var amountText by remember { mutableStateOf("") }
     var reasonText by remember { mutableStateOf("") }
+    var reasonDetail by remember { mutableStateOf("") }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var isSaving by remember { mutableStateOf(false) }
     var confirmation by remember { mutableStateOf<Confirmation?>(null) }
+    // Keep the saved audit reason in English so reports stay consistent across
+    // institutes, while the surrounding financial UI is Bangla-first.
     val templates = remember {
-        listOf("Sibling discount", "Financial hardship", "Merit scholarship", "Staff family", "Special offer", "Other adjustment")
+        listOf(
+            "Sibling discount",
+            "Early payment discount",
+            "Promotional offer",
+            "Returning student discount",
+            "Referral discount",
+            "Group enrollment discount",
+            "Financial assistance",
+            "Need-based support",
+            "Temporary hardship",
+            "Merit scholarship",
+            "Scholarship renewal",
+            "Staff family benefit",
+            "Course change adjustment",
+            "Partial month adjustment",
+            "Fee correction",
+            "Management approval",
+            "Special offer",
+            "Other adjustment"
+        )
     }
 
     LaunchedEffect(selectedEnrollment?.id) {
         amountText = selectedEnrollment?.customMonthlyFeeAmount?.let { amount ->
             if (amount % 1.0 == 0.0) amount.toLong().toString() else amount.toString()
         }.orEmpty()
-        reasonText = selectedEnrollment?.customFeeReason.orEmpty()
+        val savedReason = selectedEnrollment?.customFeeReason.orEmpty()
+        val matchedTemplate = templates.firstOrNull { savedReason.startsWith(it, ignoreCase = true) }
+        reasonText = matchedTemplate.orEmpty()
+        reasonDetail = when {
+            matchedTemplate == null -> savedReason
+            savedReason.length == matchedTemplate.length -> ""
+            else -> savedReason.removePrefix(matchedTemplate).trimStart(' ', '—', '-', ':')
+        }
         effectiveChoice = "NEXT"
         errorMessage = null
         confirmation = null
@@ -3295,24 +3342,24 @@ private fun CustomMonthlyFeeDialogV18(
             customFeeEffectiveFromPeriod = pending.enrollment.customFeeEffectiveFromPeriod,
             customFeePolicyTimeline = pending.enrollment.customFeePolicyTimeline
         ) ?: pending.batch.monthlyFeeAmount
-        val targetLabel = pending.amount?.let { "BDT ${it.toLong()}" } ?: "the batch fee (BDT ${pending.batch.monthlyFeeAmount.toLong()})"
+        val targetLabel = pending.amount?.let { "BDT ${it.toLong()}" } ?: "ব্যাচের নির্ধারিত ফি (BDT ${pending.batch.monthlyFeeAmount.toLong()})"
         AlertDialog(
             onDismissRequest = { if (!isSaving) confirmation = null },
             containerColor = CardBg,
             icon = { Icon(Icons.Filled.Verified, contentDescription = null, tint = Cyan) },
-            title = { Text("Confirm fee change", color = TextWhite, fontWeight = FontWeight.Bold) },
+            title = { Text("ফি পরিবর্তন নিশ্চিত করুন", color = TextWhite, fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                    Text("Batch: ${pending.batch.name}", color = TextWhite, fontWeight = FontWeight.SemiBold)
-                    Text("Current applicable fee: BDT ${previousAmount.toLong()}", color = TextMuted)
-                    Text("New fee: $targetLabel", color = AccentAmber, fontWeight = FontWeight.Bold)
-                    Text("Effective from: ${pending.effectivePeriod}", color = Cyan, fontWeight = FontWeight.SemiBold)
+                    Text("ব্যাচ: ${pending.batch.name}", color = TextWhite, fontWeight = FontWeight.SemiBold)
+                    Text("বর্তমান প্রযোজ্য ফি: BDT ${previousAmount.toLong()}", color = TextMuted)
+                    Text("নতুন ফি: $targetLabel", color = AccentAmber, fontWeight = FontWeight.Bold)
+                    Text("কার্যকর হবে: ${pending.effectivePeriod}", color = Cyan, fontWeight = FontWeight.SemiBold)
                     Text(
-                        "Previous months, completed payments and receipts will remain unchanged.",
+                        "আগের মাস, সম্পন্ন পেমেন্ট ও রসিদ অপরিবর্তিত থাকবে।",
                         color = TextMuted,
                         fontSize = 12.sp
                     )
-                    pending.reason?.let { Text("Reason: $it", color = TextMuted, fontSize = 12.sp) }
+                    pending.reason?.let { Text("কারণ: $it", color = TextMuted, fontSize = 12.sp) }
                     errorMessage?.let { Text(it, color = DangerRed, fontSize = 12.sp) }
                 }
             },
@@ -3337,12 +3384,12 @@ private fun CustomMonthlyFeeDialogV18(
                     colors = ButtonDefaults.buttonColors(containerColor = ElectricBlue)
                 ) {
                     if (isSaving) CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
-                    else Text("Confirm & Save", fontWeight = FontWeight.Bold)
+                    else Text("নিশ্চিত করুন", fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { confirmation = null }, enabled = !isSaving) {
-                    Text("Back", color = TextMuted)
+                    Text("ফিরে যান", color = TextMuted)
                 }
             }
         )
@@ -3353,42 +3400,68 @@ private fun CustomMonthlyFeeDialogV18(
         onDismissRequest = { if (!isSaving) onDismiss() },
         containerColor = CardBg,
         icon = { Icon(Icons.Filled.Payments, contentDescription = null, tint = Cyan, modifier = Modifier.size(28.dp)) },
-        title = { Text("Set Monthly Fee", color = TextWhite, fontWeight = FontWeight.Bold) },
+        title = { Text("মাসিক ফি নির্ধারণ করুন", color = TextWhite, fontWeight = FontWeight.Bold) },
         text = {
             Column(
                 modifier = Modifier.fillMaxWidth().heightIn(max = 520.dp).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 if (monthlyEnrollments.size > 1) {
-                    Text("Select batch", color = TextMuted, fontSize = 12.sp)
+                    Text("ব্যাচ নির্বাচন করুন", color = TextMuted, fontSize = 12.sp)
                     monthlyEnrollments.forEach { enrollment ->
                         val batch = batches.firstOrNull { it.id == enrollment.batchId }
                         FilterChip(
                             selected = enrollment.id == selectedEnrollmentId,
                             onClick = { selectedEnrollmentId = enrollment.id },
-                            label = { Text(batch?.name ?: "Batch", maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                            label = { Text(batch?.name ?: "ব্যাচ", maxLines = 1, overflow = TextOverflow.Ellipsis) }
                         )
                     }
                 }
                 if (selectedEnrollment == null || selectedBatch == null) {
-                    Text("No active monthly batch is available for this student.", color = DangerRed)
+                    Text("এই শিক্ষার্থীর জন্য কোনো সক্রিয় মাসিক ব্যাচ পাওয়া যায়নি।", color = DangerRed)
                 } else {
-                    Text("${selectedBatch.name} · Batch fee BDT ${selectedBatch.monthlyFeeAmount.toLong()}", color = TextMuted, fontSize = 12.sp)
+                    Text("${selectedBatch.name} • নির্ধারিত ফি: BDT ${selectedBatch.monthlyFeeAmount.toLong()}/মাস", color = TextMuted, fontSize = 12.sp)
                     OutlinedTextField(
                         value = amountText,
                         onValueChange = { amountText = it; errorMessage = null },
-                        label = { Text("Custom monthly fee (BDT)") },
-                        placeholder = { Text("e.g. 700") },
+                        label = { Text("নতুন মাসিক ফি (BDT)") },
+                        placeholder = { Text("যেমন: 700") },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         modifier = Modifier.fillMaxWidth(),
                         colors = darkFieldColors()
                     )
-                    Text("Effective from", color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    val enteredAmount = amountText.trim().toDoubleOrNull()?.takeIf { it > 0.0 }
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        color = Cyan.copy(alpha = 0.08f),
+                        border = BorderStroke(1.dp, Cyan.copy(alpha = 0.22f))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text("বর্তমান ফি", color = TextMuted, fontSize = 11.sp)
+                                Text("BDT ${selectedBatch.monthlyFeeAmount.toLong()}", color = TextWhite, fontWeight = FontWeight.SemiBold)
+                            }
+                            Column(horizontalAlignment = Alignment.End) {
+                                Text("নতুন ফি", color = TextMuted, fontSize = 11.sp)
+                                Text(
+                                    enteredAmount?.let { "BDT ${it.toLong()}" } ?: "ফি লিখুন",
+                                    color = if (enteredAmount != null) Cyan else TextMuted,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                    Text("কার্যকর হবে", color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                     listOf(
-                        "CURRENT" to "Current month — $currentPeriod",
-                        "NEXT" to "Next month — $nextPeriod",
-                        "FUTURE" to "Choose future month"
+                        "CURRENT" to "চলতি মাস — $currentPeriod",
+                        "NEXT" to "পরের মাস — $nextPeriod",
+                        "FUTURE" to "ভবিষ্যতের মাস নির্বাচন করুন"
                     ).forEach { (choice, label) ->
                         FilterChip(
                             selected = effectiveChoice == choice,
@@ -3400,7 +3473,7 @@ private fun CustomMonthlyFeeDialogV18(
                     if (effectiveChoice == "FUTURE") {
                         Box(Modifier.fillMaxWidth()) {
                             OutlinedButton(onClick = { futureExpanded = true }, modifier = Modifier.fillMaxWidth()) {
-                                Text(futurePeriod.ifBlank { "Select month" })
+                                Text(futurePeriod.ifBlank { "মাস নির্বাচন করুন" })
                             }
                             DropdownMenu(expanded = futureExpanded, onDismissRequest = { futureExpanded = false }) {
                                 futurePeriods.forEach { period ->
@@ -3412,29 +3485,44 @@ private fun CustomMonthlyFeeDialogV18(
                             }
                         }
                     }
-                    Text("Reason", color = TextMuted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Text("ফি পরিবর্তনের কারণ", color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    Text("একটি কারণ নির্বাচন করুন", color = TextMuted, fontSize = 11.sp)
                     templates.chunked(2).forEach { row ->
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                             row.forEach { template ->
                                 FilterChip(
                                     selected = reasonText.equals(template, ignoreCase = true),
                                     onClick = { reasonText = template; errorMessage = null },
-                                    label = { Text(template, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 11.sp) },
-                                    modifier = Modifier.weight(1f)
+                                    label = {
+                                        Text(
+                                            text = if (reasonText.equals(template, ignoreCase = true)) "✓ $template" else template,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            fontSize = 11.sp
+                                        )
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = Cyan.copy(alpha = 0.18f),
+                                        selectedLabelColor = Cyan,
+                                        containerColor = CardBgAlt,
+                                        labelColor = TextMuted
+                                    )
                                 )
                             }
                         }
                     }
                     OutlinedTextField(
-                        value = reasonText,
-                        onValueChange = { reasonText = it.take(120); errorMessage = null },
-                        label = { Text("Reason details") },
+                        value = reasonDetail,
+                        onValueChange = { reasonDetail = it.take(90); errorMessage = null },
+                        label = { Text("অতিরিক্ত নোট (ঐচ্ছিক)") },
+                        placeholder = { Text("প্রয়োজনে সংক্ষিপ্ত বিবরণ লিখুন") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                         colors = darkFieldColors()
                     )
                     Text(
-                        "Past months cannot be changed. A paid or partially paid selected month will be rejected safely.",
+                        "আগের মাস পরিবর্তন করা যাবে না। পেইড বা আংশিক পেইড মাসে পরিবর্তন নিরাপদভাবে বাতিল হবে।",
                         color = TextMuted,
                         fontSize = 11.sp
                     )
@@ -3450,15 +3538,23 @@ private fun CustomMonthlyFeeDialogV18(
                     val batch = selectedBatch ?: return@Button
                     val amount = amountText.trim().toDoubleOrNull()
                     when {
-                        amount == null || amount <= 0.0 -> errorMessage = "Enter a valid monthly fee."
-                        amount >= batch.monthlyFeeAmount -> errorMessage = "Enter a reduced fee, or choose Use batch fee."
-                        reasonText.trim().length < 3 -> errorMessage = "Choose or write a reason for the reduced fee."
-                        selectedEffectivePeriod.isBlank() -> errorMessage = "Select when the fee should start."
-                        else -> confirmation = Confirmation(enrollment, batch, amount, reasonText.trim(), selectedEffectivePeriod)
+                        amount == null || amount <= 0.0 -> errorMessage = "সঠিক মাসিক ফি লিখুন।"
+                        amount >= batch.monthlyFeeAmount -> errorMessage = "নির্ধারিত ফি-এর চেয়ে কম পরিমাণ দিন, অথবা ব্যাচের ফি ব্যবহার করুন।"
+                        reasonText.isBlank() -> errorMessage = "ফি পরিবর্তনের একটি কারণ নির্বাচন করুন।"
+                        selectedEffectivePeriod.isBlank() -> errorMessage = "কোন মাস থেকে ফি কার্যকর হবে তা নির্বাচন করুন।"
+                        else -> confirmation = Confirmation(
+                            enrollment = enrollment,
+                            batch = batch,
+                            amount = amount,
+                            reason = listOf(reasonText.trim(), reasonDetail.trim().takeIf { it.isNotBlank() })
+                                .filterNotNull()
+                                .joinToString(" — "),
+                            effectivePeriod = selectedEffectivePeriod
+                        )
                     }
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = ElectricBlue)
-            ) { Text("Review change", fontWeight = FontWeight.Bold) }
+            ) { Text("পরিবর্তন পর্যালোচনা করুন", fontWeight = FontWeight.Bold) }
         },
         dismissButton = {
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -3474,9 +3570,9 @@ private fun CustomMonthlyFeeDialogV18(
                             null,
                             selectedEffectivePeriod
                         )
-                    }) { Text("Use batch fee", color = AccentAmber) }
+                    }) { Text("ব্যাচের ফি ব্যবহার করুন", color = AccentAmber) }
                 }
-                TextButton(onClick = onDismiss) { Text("Cancel", color = TextMuted) }
+                TextButton(onClick = onDismiss) { Text("বাতিল", color = TextMuted) }
             }
         }
     )
@@ -3818,19 +3914,37 @@ private fun ReportActionRow(
     body: String,
     instituteSignature: String
 ) {
+    var showReportSms by remember { mutableStateOf(false) }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
         ReportActionButton(Icons.Filled.Share, "Share", Modifier.weight(1f)) {
             shareStudentText(context, title, body)
         }
         ReportActionButton(Icons.Filled.Whatsapp, "WhatsApp", Modifier.weight(1f)) {
-            sendStudentMessage(context, phone, body, instituteSignature, useWhatsApp = true)
+            sendStudentMessage(context, phone, body, instituteSignature)
         }
         ReportActionButton(Icons.Filled.Sms, "SMS", Modifier.weight(1f)) {
-            sendStudentMessage(context, phone, body, instituteSignature, useWhatsApp = false)
+            showReportSms = true
         }
         ReportActionButton(Icons.Filled.Print, "Print", Modifier.weight(1f)) {
             printStudentText(context, title, body)
         }
+    }
+    // Report SMS uses the shared Automatic (default) → Manual fallback chooser.
+    if (showReportSms) {
+        SingleSmsDeliveryDialog(
+            title = "Student Report SMS",
+            recipientName = title,
+            recipientPhone = phone,
+            message = appendInstituteSignature(body.trim(), instituteSignature),
+            purpose = "Student report · $title",
+            onManualSend = { p, msg ->
+                context.startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:$p")).apply {
+                    putExtra("sms_body", msg)
+                })
+            },
+            onDismiss = { showReportSms = false },
+            onFinished = { status -> Toast.makeText(context, status, Toast.LENGTH_SHORT).show() }
+        )
     }
 }
 

@@ -65,6 +65,89 @@ class ExpenseViewModel(private val db: AppDatabase) : ViewModel() {
         _summary.value = ExpenseSummary(today, month, lifetime)
     }
 
+    /** Loads one expense for the edit screen. */
+    suspend fun getExpense(expenseId: String): ExpenseEntity? = withContext(Dispatchers.IO) {
+        val instId = SessionManager.currentInstituteId.value ?: return@withContext null
+        db.expenseDao().getExpenseById(expenseId, instId)
+    }
+
+    /**
+     * Edits an existing expense in place. The original id, institute, creator
+     * and creation timestamp are preserved; only editable fields change.
+     */
+    fun updateExpense(
+        expenseId: String,
+        title: String, category: String, amount: Double, expenseDateMs: Long,
+        paymentMethod: String?, description: String?,
+        onSuccess: () -> Unit, onError: (String) -> Unit = {}
+    ) {
+        val instId = SessionManager.currentInstituteId.value
+        if (instId == null) { onError("No institute selected. Please log in again."); return }
+        if (title.isBlank()) { onError("Title is required."); return }
+        if (category.isBlank()) { onError("Category is required."); return }
+        if (amount <= 0) { onError("Amount must be greater than 0."); return }
+        val mutationKey = "update:$expenseId"
+        if (!synchronized(mutationsInProgress) { mutationsInProgress.add(mutationKey) }) {
+            onError("This expense is already being saved.")
+            return
+        }
+        viewModelScope.launch {
+            try {
+                val existing = withContext(Dispatchers.IO) { db.expenseDao().getExpenseById(expenseId, instId) }
+                    ?: run { onError("This expense no longer exists."); return@launch }
+                val updated = existing.copy(
+                    title = title.trim(),
+                    category = category,
+                    amount = amount,
+                    expenseDateMs = expenseDateMs,
+                    paymentMethod = paymentMethod?.trim()?.takeIf { it.isNotEmpty() },
+                    description = description?.trim()?.takeIf { it.isNotEmpty() },
+                    updatedAtMs = System.currentTimeMillis()
+                )
+                withContext(Dispatchers.IO) {
+                    ExpenseSyncHelper.upsertExpense(updated)
+                    db.expenseDao().updateExpense(updated)
+                }
+                StaffActivityLogger.logCompletedAction(
+                    db, "expense_updated", "expenses", "Updated expense ${updated.title} · BDT ${amount.toLong()}"
+                )
+                onSuccess()
+            } catch (e: Exception) {
+                onError("Failed to update: ${e.message}")
+            } finally {
+                synchronized(mutationsInProgress) { mutationsInProgress.remove(mutationKey) }
+            }
+        }
+    }
+
+    /** Permanently deletes an expense locally and from the institute cloud collection. */
+    fun deleteExpense(
+        expense: ExpenseEntity,
+        onSuccess: () -> Unit, onError: (String) -> Unit = {}
+    ) {
+        val mutationKey = "delete:${expense.id}"
+        if (!synchronized(mutationsInProgress) { mutationsInProgress.add(mutationKey) }) {
+            onError("This expense is already being deleted.")
+            return
+        }
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    ExpenseSyncHelper.deleteExpense(expense.id, expense.instituteId)
+                    db.expenseDao().deleteExpense(expense.instituteId, expense.id)
+                }
+                StaffActivityLogger.logCompletedAction(
+                    db, "expense_deleted", "expenses", "Deleted expense ${expense.title} · BDT ${expense.amount.toLong()}"
+                )
+                onSuccess()
+            } catch (e: Exception) {
+                onError("Failed to delete: ${e.message}")
+            } finally {
+                synchronized(mutationsInProgress) { mutationsInProgress.remove(mutationKey) }
+            }
+        }
+    }
+
     fun addExpense(
         title: String, category: String, amount: Double, expenseDateMs: Long,
         paymentMethod: String?, description: String?,

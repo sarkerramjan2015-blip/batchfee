@@ -2443,7 +2443,7 @@ private fun AddNewMenuPanel(
         listOf(
             AddMenuOption("Student", "Create a new student profile", Icons.Filled.School, "AddStudentRoute"),
             AddMenuOption("Staff", "Add a teacher or staff member", Icons.Filled.PersonAddAlt1, "AddStaffRoute"),
-            AddMenuOption("Batch", "Create a batch and class schedule", Icons.Filled.Groups, "AddBatchRoute"),
+            AddMenuOption("Batch or Class", "Create a batch or class schedule", Icons.Filled.Groups, "AddBatchRoute"),
             AddMenuOption("Exams", "Schedule an exam or result entry", Icons.Filled.Assignment, "CreateExamRoute"),
             AddMenuOption("Expense", "Record an institute expense", Icons.Filled.ReceiptLong, "AddExpenseRoute"),
             AddMenuOption("Collection Fee", "Collect student fee payment", Icons.Filled.Payments, "UnifiedCollectRoute")

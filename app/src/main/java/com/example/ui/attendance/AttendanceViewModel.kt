@@ -26,6 +26,7 @@ import java.text.SimpleDateFormat
 import java.util.*
 
 private const val ATTENDANCE_ABSENT_TEMPLATE_TYPE = "AttendanceAbsent"
+private const val ATTENDANCE_UPDATE_TEMPLATE_TYPE = "AttendanceUpdate"
 private val DEFAULT_ATTENDANCE_ABSENT_TEMPLATE = """
     Dear Guardian,
 
@@ -129,6 +130,9 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
 
     private val _absentMessageTemplate = MutableStateFlow(DEFAULT_ATTENDANCE_ABSENT_TEMPLATE)
     val absentMessageTemplate = _absentMessageTemplate.asStateFlow()
+    private val _attendanceUpdateTemplate = MutableStateFlow(
+        com.example.domain.MessageTemplateStore.defaultFor(ATTENDANCE_UPDATE_TEMPLATE_TYPE).orEmpty()
+    )
     private val _instituteName = MutableStateFlow("BatchFee")
     private val _instituteContact = MutableStateFlow("")
 
@@ -220,26 +224,30 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
                 .getTemplateByTypeOnce(instituteId, ATTENDANCE_ABSENT_TEMPLATE_TYPE)
             if (existing != null) {
                 _absentMessageTemplate.value = existing.messageTemplate
-                return@launch
+            } else {
+                val defaultTemplate = ReminderTemplateEntity(
+                    id = "attendance_absent_$instituteId",
+                    instituteId = instituteId,
+                    title = "Attendance: Student Absent",
+                    type = ATTENDANCE_ABSENT_TEMPLATE_TYPE,
+                    messageTemplate = DEFAULT_ATTENDANCE_ABSENT_TEMPLATE,
+                    isDefault = true,
+                    createdAtMs = System.currentTimeMillis(),
+                    updatedAtMs = System.currentTimeMillis()
+                )
+                db.reminderTemplateDao().insertTemplate(defaultTemplate)
+                _absentMessageTemplate.value = defaultTemplate.messageTemplate
+                try {
+                    ReminderTemplateSyncHelper.upsertTemplate(defaultTemplate)
+                } catch (_: Exception) {
+                    // The local template is still usable and will be refreshed when cloud sync succeeds.
+                }
             }
-
-            val defaultTemplate = ReminderTemplateEntity(
-                id = "attendance_absent_$instituteId",
-                instituteId = instituteId,
-                title = "Attendance: Student Absent",
-                type = ATTENDANCE_ABSENT_TEMPLATE_TYPE,
-                messageTemplate = DEFAULT_ATTENDANCE_ABSENT_TEMPLATE,
-                isDefault = true,
-                createdAtMs = System.currentTimeMillis(),
-                updatedAtMs = System.currentTimeMillis()
-            )
-            db.reminderTemplateDao().insertTemplate(defaultTemplate)
-            _absentMessageTemplate.value = defaultTemplate.messageTemplate
-            try {
-                ReminderTemplateSyncHelper.upsertTemplate(defaultTemplate)
-            } catch (_: Exception) {
-                // The local template is still usable and will be refreshed when cloud sync succeeds.
-            }
+            _attendanceUpdateTemplate.value = db.reminderTemplateDao()
+                .getTemplateByTypeOnce(instituteId, ATTENDANCE_UPDATE_TEMPLATE_TYPE)
+                ?.messageTemplate
+                ?.takeIf { it.isNotBlank() }
+                ?: com.example.domain.MessageTemplateStore.defaultFor(ATTENDANCE_UPDATE_TEMPLATE_TYPE).orEmpty()
         }
     }
 
@@ -297,15 +305,10 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
                 "instituteName" to _instituteName.value,
                 "instituteContact" to _instituteContact.value
             )
-            val template = """
-                Dear Guardian,
-
-                {studentName} ({studentCode}) $statusText at {batchName} on {date}.
-
-                - {instituteName}
-                Contact: {instituteContact}
-            """.trimIndent()
-            return com.example.domain.MessageTemplateStore.apply(template, values)
+            return com.example.domain.MessageTemplateStore.apply(
+                _attendanceUpdateTemplate.value,
+                values + ("attendanceStatus" to statusText)
+            )
         }
         val replacements = mapOf(
             "guardianName" to "Guardian",
@@ -537,31 +540,12 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
                         val url = "https://wa.me/$recipientDigits?text=$encoded"
                         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
                     }
-                    "sms" -> context.startActivity(
-                        Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:$recipientPhone")).apply {
-                            putExtra("sms_body", cleanMessage)
-                        }
-                    )
                     else -> {
+                        // Single SMS now goes through the shared automatic/manual
+                        // chooser (SingleSmsDeliveryDialog), never a direct composer.
                         removeSendingId(student.id)
                         onError("Unsupported message channel.")
                         return@launch
-                    }
-                }
-
-                if (channel == "sms") {
-                    // Carrier hand-off is recorded as sent; delivery confirmation
-                    // belongs to the phone's own SMS app and cannot be observed.
-                    runCatching {
-                        com.batchfee.edu.data.firestore.SmsWalletSyncHelper.recordCarrierSmsBatch(
-                            listOf(
-                                com.batchfee.edu.data.firestore.SmsOutboundRecord(
-                                    recipient = recipientDigits,
-                                    purpose = "Absent message · ${student.fullName}",
-                                    messageBody = cleanMessage
-                                )
-                            )
-                        )
                     }
                 }
 
@@ -584,27 +568,6 @@ class AttendanceViewModel(private val db: AppDatabase) : ViewModel() {
                 removeSendingId(student.id)
                 onError("Could not open $channel. Please check that the app is installed.")
             }
-        }
-    }
-
-    fun sendAllAbsentMessages(context: Context, batchId: String, dateMs: Long, channel: String, onComplete: () -> Unit) {
-        val absentRecords = _attendanceRecords.value.values.filter { it.status == "absent" }
-        if (absentRecords.isEmpty()) { onComplete(); return }
-        val total = absentRecords.size
-        val completed = java.util.concurrent.atomic.AtomicInteger(0)
-        absentRecords.forEach { record ->
-            val student = _students.value.find { it.id == record.studentId } ?: run { completed.incrementAndGet(); return@forEach }
-            val batchName = _currentBatch.value?.name ?: ""
-            sendAttendanceMessage(
-                context = context,
-                student = student,
-                batchId = batchId,
-                dateMs = dateMs,
-                channel = channel,
-                messageText = buildAttendanceMessage(student, batchName, dateMs, "absent"),
-                onSent = { if (completed.incrementAndGet() >= total) onComplete() },
-                onError = { if (completed.incrementAndGet() >= total) onComplete() }
-            )
         }
     }
 

@@ -271,12 +271,6 @@ fun DueFeeListScreen(db: AppDatabase, onBack: () -> Unit) {
         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/?text=$encoded")))
     }
 
-    fun openSms(body: String) {
-        context.startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:")).apply {
-            putExtra("sms_body", appendInstituteSignature(body, instituteSignature))
-        })
-    }
-
     fun sendReminder(group: DueStudentGroup, channel: String) {
         val periods = group.items.joinToString(", ") { it.feePeriod }.ifBlank { "fee period" }
         viewModel.sendDueNotification(
@@ -321,7 +315,7 @@ fun DueFeeListScreen(db: AppDatabase, onBack: () -> Unit) {
         return if (customNote.isBlank()) base.trim() else "$customNote\n\n$base".trim()
     }
 
-    fun startBulkSend(channel: String, delayMs: Long, recipientIds: Set<String> = selectedIds) {
+    fun startBulkSend(channel: String, delayMs: Long, recipientIds: Set<String> = selectedIds, smsMethod: String? = null) {
         val targets = filteredDetails
             .filter { it.studentId in recipientIds }
             .map { group ->
@@ -360,14 +354,15 @@ fun DueFeeListScreen(db: AppDatabase, onBack: () -> Unit) {
                         )
                     }.isSuccess
                 }
-            }
+            },
+            smsMethodOverride = smsMethod
         )
         if (!started) {
             scope.launch { snackbarHostState.showSnackbar("Sending is already in progress.") }
         }
     }
 
-    fun startBroadcastSend(channel: String, delayMs: Long, recipientIds: Set<String> = selectedIds) {
+    fun startBroadcastSend(channel: String, delayMs: Long, recipientIds: Set<String> = selectedIds, smsMethod: String? = null) {
         val customText = bulkMessageText.trim()
         val targets = filteredDetails
             .filter { it.studentId in recipientIds }
@@ -409,7 +404,8 @@ fun DueFeeListScreen(db: AppDatabase, onBack: () -> Unit) {
                         )
                     }.isSuccess
                 }
-            }
+            },
+            smsMethodOverride = smsMethod
         )
         if (!started) {
             scope.launch { snackbarHostState.showSnackbar("Sending is already in progress.") }
@@ -532,7 +528,15 @@ fun DueFeeListScreen(db: AppDatabase, onBack: () -> Unit) {
                         group = group,
                         selected = group.studentId in selectedIds,
                         selectionMode = selectionMode,
-                        onSms = { sendReminder(group, "sms") },
+                        onSms = {
+                            // A one-student reminder uses the same automatic/manual
+                            // chooser and trusted server path as a bulk send.
+                            broadcastMode = false
+                            bulkChannel = "sms"
+                            bulkMessageText = ""
+                            pickerSelectedIds = setOf(group.studentId)
+                            showBulkComposer = true
+                        },
                         onWhatsApp = { sendReminder(group, "whatsapp") },
                         onClick = {
                             if (selectionMode) {
@@ -666,7 +670,11 @@ fun DueFeeListScreen(db: AppDatabase, onBack: () -> Unit) {
 
     if (showBulkComposer) {
         BulkMessageDialog(
-            title = if (broadcastMode) "Broadcast Message" else "Bulk Due Reminder",
+            title = when {
+                broadcastMode -> "Broadcast Message"
+                pickerSelectedIds.size == 1 -> "Due Reminder SMS"
+                else -> "Bulk Due Reminder"
+            },
             recipientCount = pickerSelectedIds.size,
             broadcastMode = broadcastMode,
             messageText = bulkMessageText,
@@ -681,11 +689,11 @@ fun DueFeeListScreen(db: AppDatabase, onBack: () -> Unit) {
                 showBulkComposer = false
                 clearSelection()
             },
-            onStartSms = { delayMs ->
+            onStartSms = { delayMs, smsMethod ->
                 if (broadcastMode) {
-                    startBroadcastSend("sms", delayMs, pickerSelectedIds)
+                    startBroadcastSend("sms", delayMs, pickerSelectedIds, smsMethod)
                 } else {
-                    startBulkSend("sms", delayMs, pickerSelectedIds)
+                    startBulkSend("sms", delayMs, pickerSelectedIds, smsMethod)
                 }
                 showBulkComposer = false
                 clearSelection()

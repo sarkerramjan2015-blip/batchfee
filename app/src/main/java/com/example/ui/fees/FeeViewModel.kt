@@ -358,6 +358,38 @@ class FeeViewModel(private val db: AppDatabase) : ViewModel() {
             })
     }
 
+    /**
+     * Resolves the institute's due-fee template into the final message text.
+     * Single-recipient SMS uses this same text through the shared
+     * automatic/manual chooser, so both channels always match.
+     */
+    suspend fun buildDueNotificationText(
+        studentName: String,
+        dueAmount: Double,
+        feePeriod: String
+    ): String? {
+        val instId = SessionManager.currentInstituteId.value ?: return null
+        val dateLabel = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date())
+        val institute = db.instituteDao().getInstitute(instId)
+        val instituteName = institute?.name?.trim().orEmpty().ifBlank { "BatchFee" }
+        val instituteContact = com.example.domain.MessageTemplateStore.loadInstituteContact(db, instId)
+        val template = com.example.domain.MessageTemplateStore.load(db, instId, com.example.domain.MessageTemplateStore.TYPE_DUE_FEE)
+            ?: com.example.domain.MessageTemplateStore.defaultFor(com.example.domain.MessageTemplateStore.TYPE_DUE_FEE)
+            ?: return null
+        return com.example.domain.MessageTemplateStore.apply(
+            template,
+            mapOf(
+                "guardianName" to "Guardian",
+                "studentName" to studentName,
+                "amount" to "%.0f".format(dueAmount),
+                "period" to feePeriod,
+                "date" to dateLabel,
+                "instituteName" to instituteName,
+                "instituteContact" to instituteContact
+            )
+        )
+    }
+
     fun sendDueNotification(
         context: Context,
         studentName: String,
@@ -366,57 +398,21 @@ class FeeViewModel(private val db: AppDatabase) : ViewModel() {
         feePeriod: String,
         channel: String
     ) {
-        val instId = SessionManager.currentInstituteId.value ?: return
-        val dateLabel = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date())
         viewModelScope.launch {
-            val institute = db.instituteDao().getInstitute(instId)
-            val instituteName = institute?.name?.trim().orEmpty().ifBlank { "BatchFee" }
-            val instituteContact = com.example.domain.MessageTemplateStore.loadInstituteContact(db, instId)
-            val template = com.example.domain.MessageTemplateStore.load(db, instId, com.example.domain.MessageTemplateStore.TYPE_DUE_FEE)
-                ?: com.example.domain.MessageTemplateStore.defaultFor(com.example.domain.MessageTemplateStore.TYPE_DUE_FEE)
-                ?: return@launch
-            val msg = com.example.domain.MessageTemplateStore.apply(
-                template,
-                mapOf(
-                    "guardianName" to "Guardian",
-                    "studentName" to studentName,
-                    "amount" to "%.0f".format(dueAmount),
-                    "period" to feePeriod,
-                    "date" to dateLabel,
-                    "instituteName" to instituteName,
-                    "instituteContact" to instituteContact
-                )
-            )
+            val msg = buildDueNotificationText(studentName, dueAmount, feePeriod) ?: return@launch
+            // SMS is routed through SingleSmsDeliveryDialog so Automatic
+            // (BatchFee server) stays the default; only WhatsApp keeps a
+            // direct hand-off here.
+            if (channel != "whatsapp") return@launch
             try {
-            when (channel) {
-                "whatsapp" -> {
-                    val number = phone?.replace("+", "")?.replace(" ", "")?.replace("-", "")
-                    val encoded = URLEncoder.encode(msg, "UTF-8")
-                    val url = if (!number.isNullOrBlank()) {
-                        "https://wa.me/$number?text=$encoded"
-                    } else {
-                        "https://wa.me/?text=$encoded"
-                    }
-                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                val number = phone?.replace("+", "")?.replace(" ", "")?.replace("-", "")
+                val encoded = URLEncoder.encode(msg, "UTF-8")
+                val url = if (!number.isNullOrBlank()) {
+                    "https://wa.me/$number?text=$encoded"
+                } else {
+                    "https://wa.me/?text=$encoded"
                 }
-                "sms" -> {
-                    context.startActivity(
-                        Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${phone ?: ""}"))
-                            .apply { putExtra("sms_body", msg) }
-                    )
-                    runCatching {
-                        com.batchfee.edu.data.firestore.SmsWalletSyncHelper.recordCarrierSmsBatch(
-                            listOf(
-                                com.batchfee.edu.data.firestore.SmsOutboundRecord(
-                                    recipient = phone.orEmpty().replace(Regex("[^0-9]"), ""),
-                                    messageBody = msg,
-                                    purpose = "Due fee reminder · $studentName · $feePeriod"
-                                )
-                            )
-                        )
-                    }
-                }
-            }
+                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
             } catch (_: Exception) {
             }
         }

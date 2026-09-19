@@ -204,18 +204,15 @@ fun StudentListScreen(
             return
         }
 
-        val intent = if (useWhatsApp) {
-            Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/${phones.first()}?text=${Uri.encode(message)}"))
-        } else {
-            Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${phones.joinToString(";")}")).apply {
-                putExtra("sms_body", message)
-            }
-        }
+        // SMS is handled by the central bulk composer (Automatic default with
+        // manual fallback); this helper only performs the WhatsApp hand-off.
+        if (!useWhatsApp) return
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/${phones.first()}?text=${Uri.encode(message)}"))
         runCatching { context.startActivity(intent) }
             .onFailure { scope.launch { snackbarHostState.showSnackbar("No app found to send this message.") } }
     }
 
-    fun startBulkSend(channel: String, delayMs: Long) {
+    fun startBulkSend(channel: String, delayMs: Long, smsMethod: String? = null) {
         val message = appendInstituteSignature(messageText.trim(), instituteSignature)
         if (message.isBlank()) return
         val targets = filteredStudents
@@ -246,7 +243,8 @@ fun StudentListScreen(
                         )
                     }.isSuccess
                 }
-            }
+            },
+            smsMethodOverride = smsMethod
         )
         if (!started) {
             scope.launch { snackbarHostState.showSnackbar("Sending is already in progress.") }
@@ -609,7 +607,11 @@ fun StudentListScreen(
                     }
                     Button(
                         onClick = {
-                            sendMessage(useWhatsApp = false)
+                            // Use the central composer even for one selected
+                            // recipient so Automatic/Manual behavior is uniform.
+                            selectedIds = filteredStudents.map { it.id }.toSet()
+                            bulkChannel = "sms"
+                            showBulkComposer = selectedIds.isNotEmpty()
                             showMessageDialog = false
                         },
                         modifier = Modifier.weight(1f).height(52.dp),
@@ -636,7 +638,7 @@ fun StudentListScreen(
 
     if (showBulkComposer) {
         BulkMessageDialog(
-            title = "Bulk Message",
+            title = if (selectedIds.size == 1) "Student SMS" else "Bulk Message",
             recipientCount = selectedIds.size,
             messageText = messageText,
             onMessageChange = { messageText = it },
@@ -646,8 +648,8 @@ fun StudentListScreen(
                 showBulkComposer = false
                 clearSelection()
             },
-            onStartSms = { delayMs ->
-                startBulkSend("sms", delayMs)
+            onStartSms = { delayMs, smsMethod ->
+                startBulkSend("sms", delayMs, smsMethod)
                 showBulkComposer = false
                 clearSelection()
             },

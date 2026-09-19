@@ -34,6 +34,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.data.models.EnquiryEntity
 import com.batchfee.edu.domain.SessionManager
+import com.example.ui.components.SingleSmsDeliveryDialog
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -67,6 +68,7 @@ fun EnquiryListScreen(db: AppDatabase, onBack: () -> Unit, onAddEnquiry: () -> U
     val overdueFollowUpCount by viewModel.overdueFollowUpCount.collectAsState()
 
     var selectedEnquiry by remember { mutableStateOf<EnquiryEntity?>(null) }
+    var smsEnquiry by remember { mutableStateOf<EnquiryEntity?>(null) }
     var showDetailDialog by remember { mutableStateOf(false) }
     var showAddDialog by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
@@ -197,7 +199,7 @@ fun EnquiryListScreen(db: AppDatabase, onBack: () -> Unit, onAddEnquiry: () -> U
                             items(enquiries, key = { it.id }) { enquiry ->
                                 EnquiryCard(enquiry = enquiry, dateFormat = dateFormat, onClick = { selectedEnquiry = enquiry; showDetailDialog = true },
                                     onCall = { context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:${enquiry.phone}"))) },
-                                    onSms = { context.startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${enquiry.phone}")).apply { putExtra("sms_body", enquiryOpener(enquiry.name)) }) },
+                                    onSms = { smsEnquiry = enquiry },
                                     onWhatsApp = {
                                         val enc = java.net.URLEncoder.encode(enquiryOpener(enquiry.name), "UTF-8")
                                         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/${enquiry.phone.replace("+","").replace(" ","")}?text=$enc")))
@@ -208,7 +210,7 @@ fun EnquiryListScreen(db: AppDatabase, onBack: () -> Unit, onAddEnquiry: () -> U
                         items(filteredEnquiries, key = { it.id }) { enquiry ->
                             EnquiryCard(enquiry = enquiry, dateFormat = dateFormat, onClick = { selectedEnquiry = enquiry; showDetailDialog = true },
                                 onCall = { context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:${enquiry.phone}"))) },
-                                onSms = { context.startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${enquiry.phone}")).apply { putExtra("sms_body", enquiryOpener(enquiry.name)) }) },
+                                onSms = { smsEnquiry = enquiry },
                                 onWhatsApp = {
                                     val enc = java.net.URLEncoder.encode(enquiryOpener(enquiry.name), "UTF-8")
                                     context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/${enquiry.phone.replace("+","").replace(" ","")}?text=$enc")))
@@ -286,7 +288,7 @@ fun EnquiryListScreen(db: AppDatabase, onBack: () -> Unit, onAddEnquiry: () -> U
                     Spacer(Modifier.height(12.dp))
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         ContactButton(Icons.Filled.Call, "Call", AccentGreen, Modifier.weight(1f)) { context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:${e.phone}"))) }
-                        ContactButton(Icons.Filled.Sms, "SMS", ElectricBlue, Modifier.weight(1f)) { context.startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${e.phone}")).apply { putExtra("sms_body", enquiryOpener(e.name)) }) }
+                        ContactButton(Icons.Filled.Sms, "SMS", ElectricBlue, Modifier.weight(1f)) { smsEnquiry = e }
                         ContactButton(Icons.Filled.Whatsapp, "WA", WAGreen, Modifier.weight(1f)) {
                             val enc = java.net.URLEncoder.encode(enquiryOpener(e.name), "UTF-8")
                             context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/${e.phone.replace("+","").replace(" ","")}?text=$enc")))
@@ -380,6 +382,24 @@ fun EnquiryListScreen(db: AppDatabase, onBack: () -> Unit, onAddEnquiry: () -> U
             text = { Text("Remove \"${e.name}\"? This cannot be undone.", color = TextMuted) },
             confirmButton = { TextButton(onClick = { viewModel.deleteEnquiry(e); showDeleteDialog = false; selectedEnquiry = null; scope.launch { snackbarHostState.showSnackbar("Enquiry deleted") } }) { Text("Delete", color = AccentRed, fontWeight = FontWeight.Bold) } },
             dismissButton = { TextButton(onClick = { showDeleteDialog = false }) { Text("Cancel", color = TextMuted) } })
+    }
+
+    // Enquiry SMS follows the shared Automatic (default) → Manual fallback chooser.
+    smsEnquiry?.let { enquiry ->
+        SingleSmsDeliveryDialog(
+            title = "Enquiry SMS",
+            recipientName = enquiry.name,
+            recipientPhone = enquiry.phone,
+            message = enquiryOpener(enquiry.name),
+            purpose = "Enquiry follow-up · ${enquiry.name}",
+            onManualSend = { phone, body ->
+                context.startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:$phone")).apply {
+                    putExtra("sms_body", body)
+                })
+            },
+            onDismiss = { smsEnquiry = null },
+            onFinished = { status -> scope.launch { snackbarHostState.showSnackbar(status) } }
+        )
     }
 }
 

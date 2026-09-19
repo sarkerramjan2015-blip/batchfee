@@ -649,7 +649,7 @@ fun ExamDetailScreen(db: AppDatabase, examId: String, onBack: () -> Unit, onEdit
     var resultBulkText by remember { mutableStateOf("") }
     val bulkState by viewModel.bulkSender.state.collectAsState()
 
-    fun startResultBulkSend(channel: String, delayMs: Long, recipientIds: Set<String>, exam: ExamEntity) {
+    fun startResultBulkSend(channel: String, delayMs: Long, recipientIds: Set<String>, exam: ExamEntity, smsMethod: String? = null) {
         val customText = resultBulkText.trim()
         val targets = studentResults
             .filter { it.result != null && it.student.id in recipientIds }
@@ -688,7 +688,8 @@ fun ExamDetailScreen(db: AppDatabase, examId: String, onBack: () -> Unit, onEdit
                         )
                     }.isSuccess
                 }
-            }
+            },
+            smsMethodOverride = smsMethod
         )
         if (!started) {
             scope.launch { snackbarHostState.showSnackbar("Sending is already in progress.") }
@@ -1086,8 +1087,8 @@ fun ExamDetailScreen(db: AppDatabase, examId: String, onBack: () -> Unit, onEdit
                 startResultBulkSend("whatsapp", delayMs, resultPickerIds, exam)
                 showResultComposer = false
             },
-            onStartSms = { delayMs ->
-                startResultBulkSend("sms", delayMs, resultPickerIds, exam)
+            onStartSms = { delayMs, smsMethod ->
+                startResultBulkSend("sms", delayMs, resultPickerIds, exam, smsMethod)
                 showResultComposer = false
             },
             onDismiss = { showResultComposer = false },
@@ -1241,8 +1242,10 @@ fun ExamDetailScreen(db: AppDatabase, examId: String, onBack: () -> Unit, onEdit
                                 color = ElectricBlue,
                                 onClick = {
                                     showStudentMessageDialog = null
-                                    val msg = viewModel.buildStudentMessage(item, exam)
-                                    sendSMS(context, item.student.phone, msg)
+                                    resultPickerIds = setOf(item.student.id)
+                                    resultBulkChannel = "sms"
+                                    resultBulkText = ""
+                                    showResultComposer = true
                                 },
                                 modifier = Modifier.weight(1f)
                             )
@@ -1671,15 +1674,6 @@ private fun sendWhatsApp(context: android.content.Context, phone: String?, msg: 
         }.let { context.startActivity(it) }
     } catch (_: Exception) {
         shareText(context, msg, "Share Result")
-    }
-}
-
-private fun sendSMS(context: android.content.Context, phone: String?, msg: String) {
-    try {
-        val uri = Uri.parse("smsto:${phone ?: ""}")
-        context.startActivity(Intent(Intent.ACTION_SENDTO, uri).apply { putExtra("sms_body", msg) })
-    } catch (_: Exception) {
-        shareText(context, msg, "Share via SMS")
     }
 }
 

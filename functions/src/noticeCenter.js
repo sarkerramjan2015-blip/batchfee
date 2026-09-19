@@ -11,6 +11,7 @@ const { HttpsError } = require("firebase-functions/v2/https");
 const NOTICE_ACTIONS = new Set([
   "list_my_notices",
   "mark_notice_state",
+  "register_notice_push_token",
   "submit_support_item",
   "publish_notice",
   "update_notice",
@@ -36,6 +37,8 @@ const SUPPORT_ITEM_STATUSES = new Set(["open", "in_progress", "resolved"]);
 const TUTORIAL_STATUSES = new Set(["published", "archived"]);
 const PAGE_SIZES = new Set([25, 50, 100]);
 const MAX_NOTICE_LIST_WINDOW = 100;
+const MAX_NOTICE_PUSH_TOKENS = 10_000;
+const MAX_PUSH_AGE_MS = 90 * 86_400_000;
 
 function requiredString(data, field, maxLength = 160) {
   const value = data && typeof data[field] === "string" ? data[field].trim() : "";
@@ -62,6 +65,12 @@ function hashRequest(data) {
 
 function validOperationId(value) {
   return typeof value === "string" && /^[A-Za-z0-9_-]{16,128}$/.test(value);
+}
+
+function noticePushTokenId(token) {
+  // Tokens are credentials for a device endpoint. They are never used as a
+  // document ID or exposed to any client response.
+  return createHash("sha256").update(token).digest("hex");
 }
 
 function normalisedIdentifier(value, maxLength = 160) {
@@ -318,6 +327,70 @@ async function markNoticeState({ db, request, operationId, requestHash, now }) {
   });
 }
 
+/** Registers one authenticated tenant device for server-owned notice pushes. */
+async function registerNoticePushToken({ db, request, now }) {
+  const recipient = await resolveTenantRecipient(db, request.auth);
+  const token = requiredString(request.data, "token", 4_096);
+  if (token.length < 20) throw new HttpsError("invalid-argument", "Invalid notification token.");
+  await db.collection("notice_push_tokens").doc(noticePushTokenId(token)).set({
+    token,
+    userId: recipient.uid,
+    instituteId: recipient.instituteId,
+    role: recipient.role,
+    updatedAtMs: now,
+  }, { merge: true });
+  return { registered: true };
+}
+
+function invalidPushToken(error) {
+  const code = error && error.code;
+  return code === "messaging/registration-token-not-registered" || code === "messaging/invalid-registration-token";
+}
+
+/**
+ * Push is best-effort and never changes the published notice transaction.
+ * In-app notice reads remain the durable source of truth if FCM is disabled,
+ * a device is offline, or the user has denied notification permission.
+ */
+async function sendNoticePush({ db, messaging, noticeId, notice, now }) {
+  if (!messaging || typeof messaging.sendEachForMulticast !== "function") return { targeted: 0, sent: 0 };
+  const roles = Array.isArray(notice.audience?.roles) ? notice.audience.roles.filter((role) => RECIPIENT_ROLES.has(role)) : [];
+  if (!roles.length) return { targeted: 0, sent: 0 };
+  const snapshot = await db.collection("notice_push_tokens")
+    .where("role", "in", roles)
+    .limit(MAX_NOTICE_PUSH_TOKENS)
+    .get();
+  const restrictedInstitutes = Array.isArray(notice.audience?.instituteIds) ? notice.audience.instituteIds : [];
+  // FCM's complete payload has a 4 KB limit. Bengali text commonly uses three
+  // UTF-8 bytes per character and is included in both notification and data,
+  // so keep this preview intentionally small. The full notice remains in
+  // Firestore and opens in the app.
+  const pushBody = notice.body.slice(0, 300);
+  const targets = snapshot.docs.filter((doc) => {
+    const data = doc.data() || {};
+    const token = typeof data.token === "string" ? data.token : "";
+    const fresh = safeMillis(data.updatedAtMs) >= now - MAX_PUSH_AGE_MS;
+    return token.length >= 20 && fresh && (!restrictedInstitutes.length || restrictedInstitutes.includes(data.instituteId));
+  });
+  let sent = 0;
+  const staleRefs = [];
+  for (let index = 0; index < targets.length; index += 500) {
+    const batch = targets.slice(index, index + 500);
+    const response = await messaging.sendEachForMulticast({
+      tokens: batch.map((doc) => doc.get("token")),
+      notification: { title: notice.title, body: pushBody },
+      data: { type: "platform_notice", noticeId, title: notice.title, body: pushBody },
+      android: { priority: "high", notification: { channelId: "batchfee_notices", sound: "default" } },
+    });
+    sent += response.successCount || 0;
+    response.responses.forEach((result, responseIndex) => {
+      if (!result.success && invalidPushToken(result.error)) staleRefs.push(batch[responseIndex].ref);
+    });
+  }
+  await Promise.all(staleRefs.map((ref) => ref.delete().catch(() => {})));
+  return { targeted: targets.length, sent };
+}
+
 function publicSupportItem(id, item) {
   return {
     itemId: id,
@@ -347,10 +420,12 @@ function publicSupportItemNote(id, note) {
  * Only persist the canonical video ID. It prevents a platform administrator
  * from accidentally embedding an arbitrary website inside the Android app.
  */
-function extractYouTubeVideoId(value) {
+function parseYouTubeVideo(value) {
   const candidate = normalisedIdentifier(value, 2_000);
   if (!candidate) throw new HttpsError("invalid-argument", "A YouTube video link is required.");
-  if (/^[A-Za-z0-9_-]{11}$/.test(candidate)) return candidate;
+  if (/^[A-Za-z0-9_-]{11}$/.test(candidate)) {
+    return { videoId: candidate, videoLayout: "landscape" };
+  }
   let url;
   try {
     url = new URL(candidate);
@@ -359,17 +434,25 @@ function extractYouTubeVideoId(value) {
   }
   const host = url.hostname.toLowerCase().replace(/^www\./, "");
   let id = "";
+  let videoLayout = "landscape";
   if (host === "youtu.be") {
     id = url.pathname.split("/").filter(Boolean)[0] || "";
   } else if (["youtube.com", "m.youtube.com", "youtube-nocookie.com"].includes(host)) {
     const parts = url.pathname.split("/").filter(Boolean);
     if (parts[0] === "watch") id = url.searchParams.get("v") || "";
-    else if (["embed", "shorts", "live"].includes(parts[0])) id = parts[1] || "";
+    else if (["embed", "shorts", "live"].includes(parts[0])) {
+      id = parts[1] || "";
+      if (parts[0] === "shorts") videoLayout = "portrait";
+    }
   }
   if (!/^[A-Za-z0-9_-]{11}$/.test(id)) {
     throw new HttpsError("invalid-argument", "Use a single YouTube video link, not a playlist or channel link.");
   }
-  return id;
+  return { videoId: id, videoLayout };
+}
+
+function extractYouTubeVideoId(value) {
+  return parseYouTubeVideo(value).videoId;
 }
 
 function normalizedTutorial(data, now, existing = null) {
@@ -381,12 +464,17 @@ function normalizedTutorial(data, now, existing = null) {
     throw new HttpsError("invalid-argument", "Tutorial display order must be between 0 and 10000.");
   }
   assertNoCredentialMaterial(`${title}\n${description}\n${category}`);
+  const video = parseYouTubeVideo(data?.youtubeUrl);
   return {
     title,
     description,
     category,
     displayOrder,
-    youtubeVideoId: extractYouTubeVideoId(data?.youtubeUrl),
+    youtubeVideoId: video.videoId,
+    // A YouTube Shorts URL is the reliable signal for a 9:16 player. Normal
+    // watch/embed URLs remain 16:9, while existing tutorials default safely to
+    // that original landscape layout.
+    videoLayout: video.videoLayout,
     ...(existing ? {} : { status: "published", publishedAtMs: now }),
   };
 }
@@ -399,6 +487,7 @@ function publicTutorial(id, tutorial) {
     category: typeof tutorial.category === "string" ? tutorial.category : "Getting started",
     displayOrder: safeMillis(tutorial.displayOrder),
     youtubeVideoId: typeof tutorial.youtubeVideoId === "string" ? tutorial.youtubeVideoId : "",
+    videoLayout: tutorial.videoLayout === "portrait" ? "portrait" : "landscape",
     status: TUTORIAL_STATUSES.has(tutorial.status) ? tutorial.status : "archived",
     publishedAtMs: safeMillis(tutorial.publishedAtMs),
     updatedAtMs: safeMillis(tutorial.updatedAtMs || tutorial.publishedAtMs),
@@ -569,7 +658,7 @@ async function submitSupportItem({ db, request, operationId, requestHash, now })
   return result;
 }
 
-async function publishNotice({ db, request, actor, operationId, requestHash, now }) {
+async function publishNotice({ db, request, actor, operationId, requestHash, now, messaging }) {
   const notice = normalizeNotice(request.data, now);
   const noticeId = randomUUID();
   const noticeRef = db.collection("platform_notices").doc(noticeId);
@@ -601,6 +690,7 @@ async function publishNotice({ db, request, actor, operationId, requestHash, now
     });
     transaction.create(operationRef, { actorUid: actor.uid, requestHash, action: "publish_notice", result, createdAtMs: now });
   });
+  await sendNoticePush({ db, messaging, noticeId, notice, now }).catch(() => {});
   return result;
 }
 
@@ -758,7 +848,7 @@ async function updateSupportItemStatus({ db, request, actor, operationId, reques
   return result;
 }
 
-function createNoticeCenterHandler({ db }) {
+function createNoticeCenterHandler({ db, messaging = null }) {
   return async (request) => {
     const action = requiredString(request.data, "action", 64);
     const operationId = requiredString(request.data, "operationId", 128);
@@ -767,14 +857,15 @@ function createNoticeCenterHandler({ db }) {
     }
     const now = Date.now();
     const requestHash = hashRequest(request.data);
-    if (["list_my_notices", "mark_notice_state", "submit_support_item", "list_tutorials"].includes(action)) {
+    if (["list_my_notices", "mark_notice_state", "register_notice_push_token", "submit_support_item", "list_tutorials"].includes(action)) {
       if (action === "list_my_notices") return listMyNotices({ db, request });
       if (action === "mark_notice_state") return markNoticeState({ db, request, operationId, requestHash, now });
+      if (action === "register_notice_push_token") return registerNoticePushToken({ db, request, now });
       if (action === "list_tutorials") return listTutorials({ db, request });
       return submitSupportItem({ db, request, operationId, requestHash, now });
     }
     const actor = await assertRoot(db, request.auth);
-    if (action === "publish_notice") return publishNotice({ db, request, actor, operationId, requestHash, now });
+    if (action === "publish_notice") return publishNotice({ db, request, actor, operationId, requestHash, now, messaging });
     if (action === "update_notice") return updateNotice({ db, request, actor, operationId, requestHash, now });
     if (action === "archive_notice") return archiveOrRestoreNotice({ db, request, actor, operationId, requestHash, now, restore: false });
     if (action === "restore_notice") return archiveOrRestoreNotice({ db, request, actor, operationId, requestHash, now, restore: true });

@@ -72,6 +72,7 @@ import com.batchfee.edu.data.firebase.FirebaseFailureReporter
 import com.batchfee.edu.data.repository.AppNotice
 import com.batchfee.edu.data.repository.NoticeCenterRepository
 import com.batchfee.edu.domain.SessionManager
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -98,11 +99,15 @@ fun NoticeBellButton(onOpen: () -> Unit, compact: Boolean = false) {
 
     LaunchedEffect(userId) {
         if (userId == null) return@LaunchedEffect
-        runCatching { repository.myNotices(tab = "all", pageSize = 50).unreadCount }
-            .onSuccess { unreadCount = it }
-            .onFailure { error ->
-                FirebaseFailureReporter.report(error, operation = "notice bell refresh", permissionDeniedIsExpected = true)
-            }
+        while (true) {
+            runCatching { repository.myNotices(tab = "all", pageSize = 50).unreadCount }
+                .onSuccess { unreadCount = it }
+                .onFailure { error ->
+                    FirebaseFailureReporter.report(error, operation = "notice bell refresh", permissionDeniedIsExpected = true)
+                }
+            delay(60_000)
+            if (SessionManager.currentUserId.value != userId) break
+        }
     }
 
     Box(contentAlignment = Alignment.TopEnd) {

@@ -5,6 +5,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.widget.Toast
 import android.content.pm.PackageManager
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -56,6 +57,7 @@ import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.domain.SessionManager
 import com.batchfee.edu.domain.StaffPermissions
 import com.batchfee.edu.ui.components.PhoneInputField
+import com.example.ui.components.SingleSmsDeliveryDialog
 import com.batchfee.edu.ui.components.SquarePhotoCropDialog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -569,8 +571,10 @@ fun AddEditStaffScreen(
     // Credential sharing dialog
     if (showCredentialShare) {
         CredentialShareDialog(
+            db = db,
             loginId = savedCredentials.loginId,
             password = savedCredentials.password,
+            phone = phone,
             onDismiss = {
                 showCredentialShare = false
                 onBack()
@@ -782,10 +786,33 @@ private fun darkFieldColors() = OutlinedTextFieldDefaults.colors(
 )
 
 @Composable
-private fun CredentialShareDialog(loginId: String, password: String, onDismiss: () -> Unit) {
+private fun CredentialShareDialog(db: AppDatabase, loginId: String, password: String, phone: String?, onDismiss: () -> Unit) {
     val context = LocalContext.current
+    val instId = SessionManager.currentInstituteId.collectAsState().value
     val appLink = "https://play.google.com/store/apps/details?id=com.batchfee.edu&hl=en"
-    val message = "Your BatchFee Staff Account:\n\nID: $loginId\nPassword: $password\n\nDownload the app: $appLink"
+    var template by remember { mutableStateOf<String?>(null) }
+    var instituteName by remember { mutableStateOf("BatchFee") }
+    LaunchedEffect(instId) {
+        template = com.example.domain.MessageTemplateStore.load(
+            db, instId, com.example.domain.MessageTemplateStore.TYPE_STAFF_CREDENTIALS
+        )
+        instituteName = instId?.let { db.instituteDao().getInstitute(it)?.name?.trim() }
+            .orEmpty().ifBlank { "BatchFee" }
+    }
+    val message = com.example.domain.MessageTemplateStore.apply(
+        template ?: com.example.domain.MessageTemplateStore.defaultFor(
+            com.example.domain.MessageTemplateStore.TYPE_STAFF_CREDENTIALS
+        ).orEmpty(),
+        mapOf(
+            "instituteName" to instituteName,
+            "staffName" to "New staff member",
+            "staffCode" to loginId,
+            "password" to password,
+            "staffRole" to "Staff",
+            "appLink" to appLink,
+        )
+    )
+    var showSmsChooser by remember { mutableStateOf(false) }
 
     androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
         Card(
@@ -892,9 +919,7 @@ private fun CredentialShareDialog(loginId: String, password: String, onDismiss: 
                 Spacer(Modifier.height(8.dp))
                 // SMS button
                 OutlinedButton(
-                    onClick = {
-                        context.startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:")).apply { putExtra("sms_body", message) })
-                    },
+                    onClick = { showSmsChooser = true },
                     modifier = Modifier.fillMaxWidth().height(42.dp),
                     shape = RoundedCornerShape(12.dp),
                     border = BorderStroke(1.dp, ElectricBlue.copy(alpha = 0.4f))
@@ -910,6 +935,24 @@ private fun CredentialShareDialog(loginId: String, password: String, onDismiss: 
                 }
             }
         }
+    }
+
+    // Credentials SMS follows the shared Automatic (default) → Manual fallback chooser.
+    if (showSmsChooser) {
+        SingleSmsDeliveryDialog(
+            title = "Staff Credentials SMS",
+            recipientName = "New Staff",
+            recipientPhone = phone,
+            message = message,
+            purpose = "Staff credentials · $loginId",
+            onManualSend = { p, body ->
+                context.startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:$p")).apply {
+                    putExtra("sms_body", body)
+                })
+            },
+            onDismiss = { showSmsChooser = false },
+            onFinished = { status -> Toast.makeText(context, status, Toast.LENGTH_SHORT).show() }
+        )
     }
 }
 

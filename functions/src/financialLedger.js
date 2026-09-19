@@ -31,6 +31,7 @@ const ALLOWED_ACTIONS = new Set([
   "reconcile_invalid_monthly_fees",
   "reverse_payment",
   "owner_edit_payment",
+  "owner_edit_grouped_payment",
   "owner_delete_payment",
 ]);
 
@@ -40,6 +41,7 @@ const OWNER_ONLY_ACTIONS = new Set([
   "reconcile_invalid_monthly_fees",
   "waive_fee",
   "owner_edit_payment",
+  "owner_edit_grouped_payment",
   "owner_delete_payment",
 ]);
 
@@ -421,6 +423,10 @@ function describeFinancialActivity(action, result, authority, now) {
       return { ...base, action: "payment_edited", targetType: "payment",
         targetId: (payments[0] && payments[0].id) || "",
         summary: `${actorLabel} edited a payment for ${studentLabel}` };
+    case "owner_edit_grouped_payment":
+      return { ...base, action: "grouped_payment_edited", targetType: "payment",
+        targetId: (payments[0] && payments[0].receiptNumber) || "",
+        summary: `${actorLabel} edited a grouped payment across ${payments.length} fee(s) for ${studentLabel}` };
     case "owner_delete_payment":
       return { ...base, action: "payment_deleted", targetType: "payment",
         targetId: (payments[0] && payments[0].id) || "",
@@ -1956,6 +1962,201 @@ function createFinancialLedgerHandler({ db }) {
           movesToAnotherFee ? [updatedSourceFee, updatedTargetFee] : updatedSourceFee,
           [updatedPayment],
           updatedReceipt ? [updatedReceipt] : [],
+        );
+      } else if (action === "owner_edit_grouped_payment") {
+        // A grouped receipt has one immutable monthly allocation per payment.
+        // Never treat it as a normal payment edit: doing so would change one
+        // line while the receipt header and the other monthly ledgers stayed
+        // untouched. This branch validates and rewrites the entire group in
+        // one transaction instead.
+        const receiptNumberValue = requiredString(data, "receiptNumber", 128);
+        const paymentMethod = requiredString(data, "paymentMethod", 40).toLowerCase();
+        const paymentDateMs = requiredTimestamp(data, "paymentDateMs");
+        const note = optionalString(data, "note");
+        const reason = requiredString(data, "reason", 500);
+        if (reason.length < 3) throw new HttpsError("invalid-argument", "A correction reason is required.");
+        const requestedLines = requiredArray(data, "allocations", 24).map((raw, index) => {
+          if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+            throw new HttpsError("invalid-argument", `Invalid grouped allocation ${index + 1}.`);
+          }
+          return {
+            paymentId: requiredString(raw, "paymentId"),
+            amount: money(raw, "amount", { allowZero: false }),
+          };
+        });
+        if (new Set(requestedLines.map((line) => line.paymentId)).size !== requestedLines.length) {
+          throw new HttpsError("invalid-argument", "A grouped payment line was submitted more than once.");
+        }
+
+        const receiptQuery = instituteRef.collection("receipts")
+          .where("receiptNumber", "==", receiptNumberValue);
+        const paymentsQuery = instituteRef.collection("payments")
+          .where("receiptNumber", "==", receiptNumberValue);
+        const [receiptsSnap, paymentsSnap] = await Promise.all([
+          transaction.get(receiptQuery),
+          transaction.get(paymentsQuery),
+        ]);
+        if (receiptsSnap.size !== 1) {
+          throw new HttpsError("failed-precondition", "Grouped receipt requires reconciliation before it can be edited.");
+        }
+        const receiptDoc = receiptsSnap.docs[0];
+        const groupedReceipt = { id: receiptDoc.id, ...receiptDoc.data() };
+        if (groupedReceipt.grouped !== true || groupedReceipt.status !== "completed") {
+          throw new HttpsError("failed-precondition", "Only an active grouped receipt can be edited.");
+        }
+        const existingPayments = paymentsSnap.docs
+          .map((doc) => ({ id: doc.id, ref: doc.ref, ...doc.data() }));
+        const storedPaymentIds = Array.isArray(groupedReceipt.paymentIds)
+          ? groupedReceipt.paymentIds.filter((id) => typeof id === "string")
+          : [];
+        const requestedPaymentIds = requestedLines.map((line) => line.paymentId);
+        const samePaymentSet = storedPaymentIds.length === requestedPaymentIds.length &&
+          storedPaymentIds.length === existingPayments.length &&
+          storedPaymentIds.every((id) => requestedPaymentIds.includes(id)) &&
+          existingPayments.every((payment) => storedPaymentIds.includes(payment.id));
+        if (!samePaymentSet) {
+          throw new HttpsError("failed-precondition", "The grouped receipt lines have changed. Refresh and try again.");
+        }
+        if (new Set(existingPayments.map((payment) => payment.studentId)).size !== 1 ||
+            existingPayments.some((payment) => payment.status !== "completed" ||
+              payment.receiptNumber !== receiptNumberValue)) {
+          throw new HttpsError("failed-precondition", "Grouped receipt contains an invalid payment line.");
+        }
+
+        const requestByPaymentId = new Map(requestedLines.map((line) => [line.paymentId, line]));
+        const feeSnaps = await Promise.all(existingPayments.map((payment) =>
+          transaction.get(instituteRef.collection("fees").doc(payment.feeId)),
+        ));
+        const updatedLines = [];
+        for (let index = 0; index < existingPayments.length; index += 1) {
+          const payment = existingPayments[index];
+          const feeSnap = feeSnaps[index];
+          if (!feeSnap.exists || feeSnap.get("cancelledAtMs") != null) {
+            throw new HttpsError("failed-precondition", "A grouped monthly fee is unavailable.");
+          }
+          const fee = { id: feeSnap.id, ...feeSnap.data() };
+          if (fee.studentId !== payment.studentId || !isMonthlyFeeType(fee.feeType)) {
+            throw new HttpsError("failed-precondition", "Grouped receipt contains an invalid monthly fee.");
+          }
+          const oldAmount = Number(payment.amount || 0);
+          const newAmount = requestByPaymentId.get(payment.id).amount;
+          const effectivePaid = await readEffectivePaid(transaction, instituteRef, fee.id);
+          if (effectivePaid + MONEY_EPSILON < oldAmount) {
+            throw new HttpsError("failed-precondition", "A grouped payment line is missing from the effective ledger.");
+          }
+          const paidAfter = effectivePaid - oldAmount + newAmount;
+          if (paidAfter < -MONEY_EPSILON ||
+              paidAfter - Number(fee.totalAmount || 0) > MONEY_EPSILON) {
+            throw new HttpsError("failed-precondition", `Corrected amount exceeds the balance for ${fee.feePeriod || "a monthly fee"}.`);
+          }
+          const ledger = ledgerStatus(Number(fee.totalAmount || 0), paidAfter);
+          const updatedFee = { ...fee, ...ledger, updatedAtMs: now, ledgerVersion: 1 };
+          const updatedPayment = {
+            ...payment,
+            amount: newAmount,
+            paymentMethod,
+            paymentDateMs,
+            note,
+            updatedAtMs: now,
+            ledgerVersion: 1,
+          };
+          updatedLines.push({ payment, fee, feeRef: feeSnap.ref, updatedFee, updatedPayment, oldAmount, newAmount });
+        }
+
+        const lineByFeeId = new Map(updatedLines.map((line) => [line.updatedFee.id, line]));
+        const existingLineItems = Array.isArray(groupedReceipt.lineItems) ? groupedReceipt.lineItems : [];
+        if (existingLineItems.length !== updatedLines.length ||
+            existingLineItems.some((line) => !line || !lineByFeeId.has(line.feeId))) {
+          throw new HttpsError("failed-precondition", "Grouped receipt detail requires reconciliation before it can be edited.");
+        }
+        const updatedLineItems = existingLineItems.map((line) => {
+          const updated = lineByFeeId.get(line.feeId);
+          return {
+            ...line,
+            collectedAmount: updated.newAmount,
+            dueAmount: updated.updatedFee.dueAmount,
+            totalAmount: updated.updatedFee.totalAmount,
+          };
+        });
+        const orderedPayments = updatedLines
+          .map((line) => line.updatedPayment)
+          .sort((left, right) => (left.id === groupedReceipt.paymentId ? -1 : right.id === groupedReceipt.paymentId ? 1 : 0));
+        const groupedTotal = validatedMoney(
+          updatedLines.reduce((sum, line) => sum + Number(line.updatedFee.totalAmount || 0), 0),
+          "group total",
+        );
+        const groupedPaid = validatedMoney(
+          updatedLines.reduce((sum, line) => sum + line.newAmount, 0),
+          "group payment",
+          { allowZero: false },
+        );
+        const groupedDue = validatedMoney(
+          updatedLines.reduce((sum, line) => sum + Number(line.updatedFee.dueAmount || 0), 0),
+          "group due",
+        );
+        const updatedReceipt = {
+          ...groupedReceipt,
+          receiptDateMs: paymentDateMs,
+          totalAmount: groupedTotal,
+          paidAmount: groupedPaid,
+          dueAmount: groupedDue,
+          paymentMethod,
+          receiptText: `Grouped payment of ${groupedPaid.toFixed(2)} received for ${updatedLines.length} monthly fees.`,
+          lineItems: updatedLineItems,
+          updatedAtMs: now,
+          ledgerVersion: 1,
+        };
+
+        updatedLines.forEach((line) => {
+          transaction.update(line.feeRef, {
+            ...ledgerStatus(line.updatedFee.totalAmount, line.updatedFee.paidAmount),
+            updatedAtMs: now,
+            ledgerVersion: 1,
+          });
+          transaction.update(line.payment.ref, {
+            amount: line.newAmount,
+            paymentMethod,
+            paymentDateMs,
+            note,
+            updatedAtMs: now,
+            ledgerVersion: 1,
+          });
+        });
+        transaction.update(receiptDoc.ref, {
+          receiptDateMs: updatedReceipt.receiptDateMs,
+          totalAmount: updatedReceipt.totalAmount,
+          paidAmount: updatedReceipt.paidAmount,
+          dueAmount: updatedReceipt.dueAmount,
+          paymentMethod: updatedReceipt.paymentMethod,
+          receiptText: updatedReceipt.receiptText,
+          lineItems: updatedReceipt.lineItems,
+          updatedAtMs: now,
+          ledgerVersion: 1,
+        });
+        transaction.create(instituteRef.collection("grouped_payment_corrections").doc(
+          compactId("grouped_payment_correction", operationId),
+        ), {
+          instituteId,
+          receiptId: groupedReceipt.id,
+          receiptNumber: receiptNumberValue,
+          studentId: groupedReceipt.studentId,
+          previous: updatedLines.map((line) => ({ paymentId: line.payment.id, feeId: line.fee.id, amount: line.oldAmount })),
+          next: updatedLines.map((line) => ({ paymentId: line.updatedPayment.id, feeId: line.updatedFee.id, amount: line.newAmount })),
+          paymentMethod,
+          paymentDateMs,
+          note,
+          reason,
+          correctedByUserId: actorUid,
+          correctedAtMs: now,
+          operationId,
+          ledgerVersion: 1,
+        });
+        result = publicResult(
+          operationId,
+          action,
+          updatedLines.map((line) => line.updatedFee),
+          orderedPayments,
+          [updatedReceipt],
         );
       } else if (action === "owner_delete_payment") {
         const paymentId = requiredString(data, "paymentId");

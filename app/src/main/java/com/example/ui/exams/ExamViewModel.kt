@@ -45,6 +45,7 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
     private val _instituteName = MutableStateFlow("")
     private val _instituteContact = MutableStateFlow("")
     private val _resultMessageTemplate = MutableStateFlow<String?>(null)
+    private val _meritListTemplate = MutableStateFlow<String?>(null)
 
     private val _institute = MutableStateFlow<InstituteEntity?>(null)
     val institute = _institute.asStateFlow()
@@ -88,6 +89,9 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
         viewModelScope.launch {
             _resultMessageTemplate.value = com.example.domain.MessageTemplateStore.load(
                 db, instId, com.example.domain.MessageTemplateStore.TYPE_RESULT
+            )
+            _meritListTemplate.value = com.example.domain.MessageTemplateStore.load(
+                db, instId, com.example.domain.MessageTemplateStore.TYPE_MERIT_LIST
             )
         }
     }
@@ -408,21 +412,29 @@ class ExamViewModel(private val db: AppDatabase) : ViewModel() {
         val results = _studentResults.value.filter { it.result != null }
         val batchName = _batches.value.find { it.id == exam.batchId }?.name ?: "Batch"
         val instituteName = currentInstituteName()
-        val sb = StringBuilder()
-        sb.appendLine("Exam Merit List")
-        sb.appendLine("${exam.examName} - $batchName")
-        if (exam.subject != null) sb.appendLine("Subject: ${exam.subject}")
-        sb.appendLine("Total Marks: ${formatMarks(exam.totalMarks)} | Pass: ${formatMarks(exam.passingMarks)}")
-        sb.appendLine()
+        val listText = StringBuilder()
         val list = if (includeAll) results else results.take(10)
         list.forEach { item ->
             val grade = item.result?.grade ?: "-"
             val marks = item.result?.marksObtained?.let { formatMarks(it) } ?: "-"
-            sb.appendLine("${item.position}. ${item.student.fullName} - $marks ($grade)")
+            listText.appendLine("${item.position}. ${item.student.fullName} - $marks ($grade)")
         }
-        sb.appendLine()
-        sb.appendLine("Sent via $instituteName")
-        return sb.toString()
+        val examLabel = buildString {
+            append("${exam.examName} - $batchName")
+            exam.subject?.takeIf { it.isNotBlank() }?.let { append(" (${it})") }
+        }
+        return com.example.domain.MessageTemplateStore.apply(
+            _meritListTemplate.value
+                ?: com.example.domain.MessageTemplateStore.defaultFor(
+                    com.example.domain.MessageTemplateStore.TYPE_MERIT_LIST
+                ).orEmpty(),
+            mapOf(
+                "examName" to examLabel,
+                "meritList" to listText.toString().trim(),
+                "instituteName" to instituteName,
+                "instituteContact" to _instituteContact.value,
+            )
+        )
     }
 
     fun buildStudentMessage(item: StudentResultItem, exam: ExamEntity): String {

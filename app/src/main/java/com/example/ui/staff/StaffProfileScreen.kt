@@ -5,6 +5,7 @@ import android.net.Uri
 import android.content.ClipboardManager
 import android.content.ClipData
 import android.content.Context
+import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -39,6 +40,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.domain.SessionManager
 import com.batchfee.edu.domain.StaffPermissions
+import com.example.ui.components.SingleSmsDeliveryDialog
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -72,11 +74,23 @@ fun StaffProfileScreen(
     val context = LocalContext.current
     var showArchiveDialog by remember { mutableStateOf(false) }
     var showShareCredentials by remember { mutableStateOf(false) }
+    var showCredentialSms by remember { mutableStateOf(false) }
+    var credentialSmsText by remember { mutableStateOf("") }
+    var staffCredentialsTemplate by remember { mutableStateOf<String?>(null) }
+    var instituteNameForSms by remember { mutableStateOf("BatchFee") }
     val timeFmt = remember { SimpleDateFormat("dd MMM · hh:mm a", Locale.getDefault()) }
 
     LaunchedEffect(staffId) {
         viewModel.loadStaffById(staffId)
         viewModel.loadActivityLogs(staffId)
+    }
+    LaunchedEffect(Unit) {
+        val instId = SessionManager.currentInstituteId.value
+        staffCredentialsTemplate = com.example.domain.MessageTemplateStore.load(
+            db, instId, com.example.domain.MessageTemplateStore.TYPE_STAFF_CREDENTIALS
+        )
+        instituteNameForSms = instId?.let { db.instituteDao().getInstitute(it)?.name?.trim() }
+            .orEmpty().ifBlank { "BatchFee" }
     }
 
     val s = staff
@@ -262,11 +276,19 @@ fun StaffProfileScreen(
         var sharePassword by remember { mutableStateOf("") }
         var passwordVisible by remember { mutableStateOf(false) }
         val appLink = "https://play.google.com/store/apps/details?id=com.batchfee.edu&hl=en"
-        val loginMsg = if (sharePassword.isNotBlank()) {
-            "Staff Login Details:\n\nID: ${staffData.staffCode}\nPassword: $sharePassword\nName: ${staffData.fullName}\nRole: ${staffData.roleTitle}\n\nDownload the app: $appLink"
-        } else {
-            "Staff Login Details:\n\nID: ${staffData.staffCode}\nName: ${staffData.fullName}\nRole: ${staffData.roleTitle}\n\nDownload the app: $appLink"
-        }
+        val loginMsg = com.example.domain.MessageTemplateStore.apply(
+            staffCredentialsTemplate ?: com.example.domain.MessageTemplateStore.defaultFor(
+                com.example.domain.MessageTemplateStore.TYPE_STAFF_CREDENTIALS
+            ).orEmpty(),
+            mapOf(
+                "instituteName" to instituteNameForSms,
+                "staffName" to staffData.fullName,
+                "staffCode" to staffData.staffCode,
+                "password" to sharePassword,
+                "staffRole" to staffData.roleTitle,
+                "appLink" to appLink,
+            )
+        )
 
         AlertDialog(
             onDismissRequest = { showShareCredentials = false; sharePassword = "" },
@@ -321,9 +343,10 @@ fun StaffProfileScreen(
                         sharePassword = ""
                     }) { Text("WhatsApp", color = WAGreen, fontWeight = FontWeight.SemiBold) }
                     TextButton(onClick = {
+                        credentialSmsText = loginMsg
                         showShareCredentials = false
                         sharePassword = ""
-                        context.startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${staffData.phone ?: ""}")).apply { putExtra("sms_body", loginMsg) })
+                        showCredentialSms = true
                     }) { Text("SMS", color = ElectricBlue, fontWeight = FontWeight.SemiBold) }
                 }
             }
@@ -339,6 +362,24 @@ fun StaffProfileScreen(
             text = { Text("${s?.fullName} will be archived and no longer appear in active lists.", color = TextMuted) },
             confirmButton = { TextButton(onClick = { viewModel.archiveStaff(staffId) { showArchiveDialog = false; onBack() } }) { Text("Archive", color = AccentRed, fontWeight = FontWeight.Bold) } },
             dismissButton = { TextButton(onClick = { showArchiveDialog = false }) { Text("Cancel", color = TextMuted) } }
+        )
+    }
+
+    // Credentials SMS follows the shared Automatic (default) → Manual fallback chooser.
+    if (showCredentialSms && s != null) {
+        SingleSmsDeliveryDialog(
+            title = "Staff Credentials SMS",
+            recipientName = s.fullName,
+            recipientPhone = s.phone,
+            message = credentialSmsText,
+            purpose = "Staff credentials · ${s.fullName}",
+            onManualSend = { phone, body ->
+                context.startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:$phone")).apply {
+                    putExtra("sms_body", body)
+                })
+            },
+            onDismiss = { showCredentialSms = false },
+            onFinished = { status -> Toast.makeText(context, status, Toast.LENGTH_SHORT).show() }
         )
     }
 }

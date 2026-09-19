@@ -48,11 +48,18 @@ private fun fmt(n: Double) = "%,.0f".format(n)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ProfitLossScreen(db: AppDatabase, onBack: () -> Unit, onNavigateToPricing: () -> Unit) {
+fun ProfitLossScreen(
+    db: AppDatabase,
+    onBack: () -> Unit,
+    onNavigateToPricing: () -> Unit,
+    onCollectFee: () -> Unit,
+    onAddExpense: () -> Unit,
+) {
     val viewModel: ProfitLossViewModel = viewModel(factory = ProfitLossViewModelFactory(db))
     val income by viewModel.totalIncome.collectAsState()
     val expense by viewModel.totalExpense.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
+    var showIncomeDialog by remember { mutableStateOf(false) }
 
     val net = income - expense
     val margin = if (income > 0) ((net / income) * 100).coerceAtLeast(0.0) else 0.0
@@ -154,8 +161,8 @@ fun ProfitLossScreen(db: AppDatabase, onBack: () -> Unit, onNavigateToPricing: (
                 // Quick actions
                 item {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        ActionChip("Add Income", Icons.Filled.Add, PLGreen, Modifier.weight(1f)) { /* navigate to collection */ }
-                        ActionChip("Add Expense", Icons.Filled.Remove, PLRed, Modifier.weight(1f)) { /* navigate to add expense */ }
+                        ActionChip("Add Income", Icons.Filled.Add, PLGreen, Modifier.weight(1f)) { showIncomeDialog = true }
+                        ActionChip("Add Expense", Icons.Filled.Remove, PLRed, Modifier.weight(1f), onAddExpense)
                     }
                 }
 
@@ -163,7 +170,66 @@ fun ProfitLossScreen(db: AppDatabase, onBack: () -> Unit, onNavigateToPricing: (
             }
         }
     }
+    if (showIncomeDialog) {
+        OtherIncomeDialog(
+            onDismiss = { showIncomeDialog = false },
+            onSave = { title, category, amount, onError ->
+                viewModel.addOtherIncome(title, category, amount, onSuccess = { showIncomeDialog = false }, onError = onError)
+            },
+            onCollectFee = { showIncomeDialog = false; onCollectFee() }
+        )
+    }
 }
+
+@Composable
+private fun OtherIncomeDialog(
+    onDismiss: () -> Unit,
+    onSave: (String, String, Double, (String) -> Unit) -> Unit,
+    onCollectFee: () -> Unit,
+) {
+    var title by remember { mutableStateOf("") }
+    var amount by remember { mutableStateOf("") }
+    var category by remember { mutableStateOf("Other income") }
+    var error by remember { mutableStateOf<String?>(null) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = PLCard,
+        title = { Text("Add Income", color = PLWhite, fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Use this only for non-fee income. Student fees must be collected through Collection Fee so the student ledger stays correct.", color = PLMuted, fontSize = 12.sp)
+                OutlinedTextField(title, { title = it }, label = { Text("Income title", color = PLMuted) }, placeholder = { Text("e.g. Book sale", color = PLDim) }, singleLine = true, modifier = Modifier.fillMaxWidth(), colors = plFieldColors())
+                OutlinedTextField(amount, { if (it.isEmpty() || it.matches(Regex("^\\d*\\.?\\d{0,2}$"))) amount = it }, label = { Text("Amount (BDT)", color = PLMuted) }, singleLine = true, modifier = Modifier.fillMaxWidth(), colors = plFieldColors())
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("Admission", "Books", "Event", "Donation", "Other income").forEach { item ->
+                        FilterChip(selected = category == item, onClick = { category = item }, label = { Text(item, fontSize = 10.sp) })
+                    }
+                }
+                error?.let { Text(it, color = PLRed, fontSize = 11.sp) }
+            }
+        },
+        confirmButton = {
+            Button(onClick = {
+                val value = amount.toDoubleOrNull() ?: 0.0
+                onSave(title, category, value) { error = it }
+            }, enabled = title.isNotBlank() && (amount.toDoubleOrNull() ?: 0.0) > 0, colors = ButtonDefaults.buttonColors(containerColor = PLGreen)) { Text("Save Income", color = PLBg, fontWeight = FontWeight.Bold) }
+        },
+        dismissButton = {
+            Row {
+                TextButton(onClick = onCollectFee) { Text("Collect Fee", color = PLCyan) }
+                TextButton(onClick = onDismiss) { Text("Cancel", color = PLMuted) }
+            }
+        }
+    )
+}
+
+@Composable
+private fun plFieldColors() = OutlinedTextFieldDefaults.colors(
+    focusedContainerColor = PLCardAlt, unfocusedContainerColor = PLCardAlt,
+    focusedBorderColor = PLCyan, unfocusedBorderColor = PLStroke,
+    focusedTextColor = PLWhite, unfocusedTextColor = PLWhite,
+    cursorColor = PLCyan, focusedLabelColor = PLCyan, unfocusedLabelColor = PLMuted,
+)
 
 @Composable
 private fun MetricCard(label: String, value: String, icon: androidx.compose.ui.graphics.vector.ImageVector, accent: Color, modifier: Modifier) =

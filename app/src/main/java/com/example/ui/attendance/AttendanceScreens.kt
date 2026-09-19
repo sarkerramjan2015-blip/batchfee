@@ -56,6 +56,9 @@ import com.example.ui.components.SelectionBadge
 import com.example.ui.components.buildBulkSmsPreview
 import java.text.SimpleDateFormat
 import java.util.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private val BgColor = Color(0xFF07111F)
 private val CardBg = Color(0xFF0F172A)
@@ -348,6 +351,7 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
     val absentMessageTemplate by viewModel.absentMessageTemplate.collectAsState()
     val selectedDateMs by viewModel.selectedDateMs.collectAsState()
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val bulkSaveError by viewModel.bulkSaveError.collectAsState()
     LaunchedEffect(bulkSaveError) {
         bulkSaveError?.let {
@@ -377,6 +381,8 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
     var lateScheduledStartMs by remember { mutableStateOf<Long?>(null) }
     var lateArrivalTimeMs by remember { mutableStateOf<Long?>(null) }
     var lateTimeError by remember { mutableStateOf<String?>(null) }
+    var creatingDailyReport by remember { mutableStateOf(false) }
+    var dailyReportUri by remember { mutableStateOf<Uri?>(null) }
 
     // Bulk multi-select
     var selectionMode by remember { mutableStateOf(false) }
@@ -414,7 +420,7 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
         if (selectedIds.isEmpty()) selectionMode = false
     }
 
-    fun startBulkSend(channel: String, delayMs: Long, recipientIds: Set<String> = selectedIds) {
+    fun startBulkSend(channel: String, delayMs: Long, recipientIds: Set<String> = selectedIds, smsMethod: String? = null) {
         val customText = bulkMessageText.trim()
         val selectedStudents = students.filter { it.id in recipientIds }
         val targets = selectedStudents.map {
@@ -464,7 +470,8 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
                         }
                     }.isSuccess
                 }
-            }
+            },
+            smsMethodOverride = smsMethod
         )
     }
 
@@ -532,6 +539,8 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
             val ltCount = studentsWithStatus.count { it.second == "late" }
             val legacyHolidayCount = studentsWithStatus.count { it.second == "holiday" }
             val totalStudents = students.size
+            val markedStudents = pCount + aCount + lCount + ltCount + legacyHolidayCount
+            val attendanceComplete = totalStudents > 0 && markedStudents == totalStudents
 
             Card(
                 Modifier.fillMaxWidth().shadow(3.dp, RoundedCornerShape(12.dp)),
@@ -553,6 +562,60 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
                         miniChip("Total", "$totalStudents", TextWhite)
                     }
                 }
+            }
+            Spacer(Modifier.height(12.dp))
+
+            // The official daily report is deliberately locked until every enrolled
+            // student has one status. This prevents an incomplete PDF becoming a
+            // misleading official attendance record.
+            OutlinedButton(
+                onClick = {
+                    if (!attendanceComplete || creatingDailyReport) return@OutlinedButton
+                    creatingDailyReport = true
+                    scope.launch {
+                        try {
+                            val institute = withContext(Dispatchers.IO) {
+                                SessionManager.currentInstituteId.value?.let { db.instituteDao().getInstitute(it) }
+                            }
+                            val rows = students.mapNotNull { student ->
+                                records[student.id]?.let { DailyAttendanceReportRow(student, it) }
+                            }
+                            dailyReportUri = withContext(Dispatchers.IO) {
+                                createDailyAttendanceReportPdf(
+                                    context = context,
+                                    institute = institute,
+                                    batchName = batch?.name.orEmpty().ifBlank { "Batch" },
+                                    dateMs = selectedDateMs,
+                                    rows = rows,
+                                )
+                            }
+                        } catch (error: Exception) {
+                            Toast.makeText(context, error.message ?: "Could not create the attendance PDF.", Toast.LENGTH_LONG).show()
+                        } finally {
+                            creatingDailyReport = false
+                        }
+                    }
+                },
+                enabled = attendanceComplete && !creatingDailyReport,
+                modifier = Modifier.fillMaxWidth().height(44.dp),
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(1.5.dp, if (attendanceComplete) Cyan else BorderSub),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    containerColor = if (attendanceComplete) Cyan.copy(alpha = 0.10f) else CardBgAlt,
+                    contentColor = if (attendanceComplete) Cyan else TextMuted,
+                )
+            ) {
+                Icon(Icons.Filled.PictureAsPdf, null, modifier = Modifier.size(17.dp))
+                Spacer(Modifier.width(7.dp))
+                Text(
+                    when {
+                        creatingDailyReport -> "Creating Daily Report..."
+                        attendanceComplete -> "Download Daily Attendance PDF"
+                        else -> "Daily Report locked · $markedStudents of $totalStudents marked"
+                    },
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                )
             }
             Spacer(Modifier.height(12.dp))
 
@@ -742,12 +805,13 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
                     channelCard("SMS", Icons.Filled.Sms, ElectricBlue, {
                         showChannelDialog = false
                         student?.let {
-                            viewModel.sendAttendanceMessage(
-                                context = context, student = it, batchId = batchId,
-                                dateMs = selectedDateMs, channel = "sms", messageText = messageDraft,
-                                onSent = {},
-                                onError = { error -> Toast.makeText(context, error, Toast.LENGTH_LONG).show() }
-                            )
+                            // Single attendance SMS follows the same trusted
+                            // automatic/manual delivery flow as SMS All.
+                            selectedIds = setOf(it.id)
+                            pickerSelectedIds = setOf(it.id)
+                            bulkChannel = "sms"
+                            bulkMessageText = messageDraft
+                            showBulkComposer = true
                         }
                     })
                 }
@@ -1039,7 +1103,11 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
 
     if (showBulkComposer) {
         BulkMessageDialog(
-            title = if (bulkChannel == "whatsapp") "Bulk WhatsApp Message" else "Bulk SMS Message",
+            title = when {
+                bulkChannel == "whatsapp" -> "Bulk WhatsApp Message"
+                selectedIds.size == 1 -> "Attendance SMS"
+                else -> "Bulk SMS Message"
+            },
             recipientCount = selectedIds.size,
             messageText = bulkMessageText,
             onMessageChange = { bulkMessageText = it },
@@ -1049,8 +1117,8 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
                 showBulkComposer = false
                 clearSelection()
             },
-            onStartSms = { delayMs ->
-                startBulkSend("sms", delayMs, selectedIds)
+            onStartSms = { delayMs, smsMethod ->
+                startBulkSend("sms", delayMs, selectedIds, smsMethod)
                 showBulkComposer = false
                 clearSelection()
             },
@@ -1068,6 +1136,35 @@ fun TakeAttendanceScreen(db: AppDatabase, batchId: String, onBack: () -> Unit) {
             onRetryFailed = { viewModel.bulkSender.retryFailed() },
             onStop = { viewModel.bulkSender.cancel() },
             onClose = { viewModel.bulkSender.reset() }
+        )
+    }
+
+    dailyReportUri?.let { uri ->
+        AlertDialog(
+            onDismissRequest = { dailyReportUri = null },
+            containerColor = CardBg,
+            title = { Text("Daily report downloaded", color = TextWhite, fontWeight = FontWeight.Bold) },
+            text = { Text("The completed ${batch?.name ?: "batch"} attendance report was saved to Downloads/BatchFee.", color = TextMuted, fontSize = 13.sp) },
+            confirmButton = {
+                TextButton(onClick = {
+                    val view = Intent(Intent.ACTION_VIEW).apply {
+                        setDataAndType(uri, "application/pdf")
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    runCatching { context.startActivity(view) }
+                        .onFailure { Toast.makeText(context, "No PDF viewer is available.", Toast.LENGTH_SHORT).show() }
+                }) { Text("Open PDF", color = Cyan, fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    val share = Intent(Intent.ACTION_SEND).apply {
+                        type = "application/pdf"
+                        putExtra(Intent.EXTRA_STREAM, uri)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    context.startActivity(Intent.createChooser(share, "Share attendance PDF"))
+                }) { Text("Share", color = AccentGreen) }
+            }
         )
     }
 }

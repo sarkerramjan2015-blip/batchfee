@@ -13,12 +13,15 @@ import com.batchfee.edu.domain.InstituteContactNumber
  */
 object MessageTemplateStore {
     const val TYPE_ATTENDANCE_ABSENT = "AttendanceAbsent"
+    const val TYPE_ATTENDANCE_UPDATE = "AttendanceUpdate"
     const val TYPE_DUE_FEE = "DueFee"
     const val TYPE_BIRTHDAY = "Birthday"
     const val TYPE_PAYMENT_CONFIRMATION = "PaymentConfirmation"
     const val TYPE_ENQUIRY_FOLLOW_UP = "EnquiryFollowUp"
     const val TYPE_RESULT = "ResultPublished"
+    const val TYPE_MERIT_LIST = "MeritListPublished"
     const val TYPE_WELCOME = "WelcomeMessage"
+    const val TYPE_STAFF_CREDENTIALS = "StaffCredentials"
 
     private val defaults = mapOf(
         TYPE_ATTENDANCE_ABSENT to """
@@ -27,6 +30,14 @@ object MessageTemplateStore {
             {studentName} ({studentCode}) was absent from {batchName} on {date}.
 
             Please let us know the reason at your earliest convenience.
+
+            - {instituteName}
+            Contact: {instituteContact}
+        """.trimIndent(),
+        TYPE_ATTENDANCE_UPDATE to """
+            Dear Guardian,
+
+            {studentName} ({studentCode}) {attendanceStatus} at {batchName} on {date}.
 
             - {instituteName}
             Contact: {instituteContact}
@@ -56,6 +67,10 @@ object MessageTemplateStore {
 
             Payment of BDT {amount} for {studentName} has been received for {period}.
 
+            Receipt: {receiptNumber}
+            Remaining due: BDT {dueAmount}
+            Payment method: {paymentMethod}
+
             Thank you.
 
             - {instituteName}
@@ -81,6 +96,15 @@ object MessageTemplateStore {
             - {instituteName}
             Contact: {instituteContact}
         """.trimIndent(),
+        TYPE_MERIT_LIST to """
+            {instituteName}
+
+            Merit list for {examName}
+
+            {meritList}
+
+            Contact: {instituteContact}
+        """.trimIndent(),
         TYPE_WELCOME to """
             Dear Guardian,
 
@@ -91,6 +115,16 @@ object MessageTemplateStore {
 
             - {instituteName}
             Contact: {instituteContact}
+        """.trimIndent(),
+        TYPE_STAFF_CREDENTIALS to """
+            {instituteName} staff login details
+
+            Name: {staffName}
+            ID: {staffCode}
+            Password: {password}
+            Role: {staffRole}
+
+            App: {appLink}
         """.trimIndent()
     )
 

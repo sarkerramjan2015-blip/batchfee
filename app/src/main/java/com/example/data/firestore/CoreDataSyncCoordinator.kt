@@ -55,7 +55,10 @@ object CoreDataSyncCoordinator {
             }
             if (plan.syncEnquiries) EnquirySyncHelper.syncAllFromFirestore(db, instituteId)
             if (plan.syncExams) ExamSyncHelper.syncAllFromFirestore(db, instituteId)
-            if (plan.syncExpenses) ExpenseSyncHelper.syncAllFromFirestore(db, instituteId)
+            if (plan.syncExpenses) {
+                ExpenseSyncHelper.syncAllFromFirestore(db, instituteId)
+                OtherIncomeSyncHelper.syncAllFromFirestore(db, instituteId)
+            }
             if (plan.syncSalaries) {
                 SalarySyncHelper.syncAllFromFirestore(db, instituteId)
                 TeachingSessionSyncHelper.syncAllFromFirestore(db, instituteId)
@@ -116,8 +119,10 @@ object CoreDataSyncCoordinator {
                     FinanceSyncHelper.syncAllFromFirestore(db, instituteId)
                 }
 
-                InstituteRefreshScope.EXPENSES ->
+                InstituteRefreshScope.EXPENSES -> {
                     ExpenseSyncHelper.syncAllFromFirestore(db, instituteId)
+                    OtherIncomeSyncHelper.syncAllFromFirestore(db, instituteId)
+                }
 
                 InstituteRefreshScope.ATTENDANCE ->
                     AttendanceSyncHelper.syncAllFromFirestore(

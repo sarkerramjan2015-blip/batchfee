@@ -748,6 +748,14 @@ service cloud.firestore {
         || hasStaffPermission(instituteId, 'manage_expenses');
     }
 
+    match /institutes/{instituteId}/other_income/{incomeId} {
+      allow read: if isActiveInstitutePrincipal(instituteId)
+        || hasStaffPermission(instituteId, 'manage_expenses')
+        || hasStaffPermission(instituteId, 'view_reports');
+      allow write: if isActiveInstitutePrincipal(instituteId)
+        || hasStaffPermission(instituteId, 'manage_expenses');
+    }
+
     match /institutes/{instituteId}/salaries/{salaryId} {
       allow read: if isActiveInstitutePrincipal(instituteId)
         || hasStaffPermission(instituteId, 'manage_salary')

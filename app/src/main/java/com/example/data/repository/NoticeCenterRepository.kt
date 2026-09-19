@@ -67,6 +67,8 @@ data class AppTutorial(
     val category: String,
     val displayOrder: Int,
     val youtubeVideoId: String,
+    /** portrait for YouTube Shorts; landscape for regular YouTube videos. */
+    val videoLayout: String,
     val status: String,
     val publishedAtMs: Long,
     val updatedAtMs: Long
@@ -79,6 +81,12 @@ data class AppTutorial(
 class NoticeCenterRepository(
     private val functions: FirebaseFunctions = FirebaseFunctions.getInstance("asia-south1")
 ) {
+    /** Associates this authenticated tenant device with trusted notice delivery. */
+    suspend fun registerPushToken(token: String) {
+        require(token.length in 20..4_096) { "Invalid notification token." }
+        call("register_notice_push_token", values = mapOf("token" to token))
+    }
+
     suspend fun myNotices(tab: String = "all", pageSize: Int = 50): NoticeInbox {
         require(tab in setOf("all", "unread", "archived")) { "Invalid notice tab." }
         require(pageSize in setOf(25, 50, 100)) { "Invalid notice page size." }
@@ -356,6 +364,7 @@ private fun Map<*, *>.toAppTutorial(): AppTutorial {
         category = text("category").ifBlank { "Getting started" },
         displayOrder = (this["displayOrder"] as? Number)?.toInt() ?: 0,
         youtubeVideoId = text("youtubeVideoId"),
+        videoLayout = text("videoLayout").ifBlank { "landscape" },
         status = text("status").ifBlank { "archived" },
         publishedAtMs = millis("publishedAtMs"),
         updatedAtMs = millis("updatedAtMs")

@@ -114,7 +114,7 @@ fun V18TutorialAdministrationSection() {
                 }
             }
             Text(
-                "Paste a single YouTube video link or ID. It plays in BatchFee's embedded player; YouTube controls playback availability and advertising.",
+                "Paste one YouTube link. Shorts automatically use a portrait frame; normal videos use 16:9. It plays inside BatchFee, while YouTube controls availability and advertising.",
                 color = TutorialAdminMuted,
                 fontSize = 11.sp,
                 lineHeight = 15.sp
@@ -255,7 +255,7 @@ private fun TutorialEditorDialog(
                     youtubeUrl,
                     { if (it.length <= 2_000) youtubeUrl = it },
                     label = { Text("YouTube video link or 11-character ID") },
-                    supportingText = { Text("Playlist and channel links are not accepted.", fontSize = 10.sp) },
+                    supportingText = { Text("Shorts use portrait frame; normal videos use 16:9. Playlist and channel links are not accepted.", fontSize = 10.sp) },
                     modifier = Modifier.fillMaxWidth(),
                     colors = tutorialFieldColors()
                 )

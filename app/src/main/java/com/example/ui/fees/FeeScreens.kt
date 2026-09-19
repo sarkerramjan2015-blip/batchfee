@@ -57,6 +57,7 @@ import com.batchfee.edu.data.models.ReceiptEntity
 import com.batchfee.edu.data.models.StudentEntity
 import com.batchfee.edu.domain.SessionManager
 import com.batchfee.edu.domain.InstituteContactNumber
+import com.example.ui.components.SingleSmsDeliveryDialog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
@@ -328,21 +329,6 @@ private fun loadBitmapFromUri(context: Context, uriString: String?): Bitmap? {
     }
 }
 
-private fun sendReceiptMessage(context: Context, phone: String?, body: String) {
-    val intent = Intent(Intent.ACTION_SENDTO).apply {
-        data = Uri.parse("smsto:${phone.orEmpty()}")
-        putExtra("sms_body", body)
-    }
-    try {
-        context.startActivity(intent)
-    } catch (_: Exception) {
-        context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
-            type = "text/plain"
-            putExtra(Intent.EXTRA_TEXT, body)
-        }, "Send Receipt Message"))
-    }
-}
-
 private fun buildReceiptMessage(
     receiptNumber: String,
     studentName: String,
@@ -351,18 +337,28 @@ private fun buildReceiptMessage(
     dueAmount: Double,
     paymentMethod: String,
     instituteName: String,
-    instituteContact: String
-): String = buildString {
-    appendLine("$instituteName - Payment Receipt")
-    appendLine("Receipt: $receiptNumber")
-    appendLine("Student: $studentName")
-    appendLine("Period: $feePeriod")
-    appendLine("Collected: BDT ${"%.0f".format(collectedAmount)}")
-    appendLine("Remaining Due: BDT ${"%.0f".format(dueAmount)}")
-    appendLine("Payment Mode: ${paymentMethod.uppercase()}")
-    appendLine()
-    if (instituteContact.isNotBlank()) appendLine("Contact: $instituteContact")
-    appendLine("Thank you.")
+    instituteContact: String,
+    template: String? = null,
+): String {
+    val resolved = template
+        ?: com.example.domain.MessageTemplateStore.defaultFor(
+            com.example.domain.MessageTemplateStore.TYPE_PAYMENT_CONFIRMATION
+        )
+        .orEmpty()
+    return com.example.domain.MessageTemplateStore.apply(
+        resolved,
+        mapOf(
+            "guardianName" to "Guardian",
+            "studentName" to studentName,
+            "amount" to "%.0f".format(collectedAmount),
+            "dueAmount" to "%.0f".format(dueAmount.coerceAtLeast(0.0)),
+            "period" to feePeriod,
+            "receiptNumber" to receiptNumber,
+            "paymentMethod" to paymentMethod.uppercase(),
+            "instituteName" to instituteName,
+            "instituteContact" to instituteContact,
+        )
+    )
 }
 
 // ── Reusable dropdown composable ─────────────────────────────────
@@ -616,6 +612,9 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
     var errorMsg by remember { mutableStateOf<String?>(null) }
     var savedPaymentId by remember { mutableStateOf<String?>(null) }
     var savedReceipt by remember { mutableStateOf<ReceiptEntity?>(null) }
+    var showReceiptSms by remember { mutableStateOf(false) }
+    var receiptSmsText by remember { mutableStateOf("") }
+    var paymentReceiptTemplate by remember { mutableStateOf<String?>(null) }
 
     // ── Load fee ──
     LaunchedEffect(instId, feeId) {
@@ -630,6 +629,13 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
             InstituteCacheRefreshManager.refreshIfStaleInBackground(db, instId)
             db.instituteDao().getInstituteFlow(instId).collect { institute = it }
         }
+    }
+    LaunchedEffect(instId) {
+        paymentReceiptTemplate = com.example.domain.MessageTemplateStore.load(
+            db,
+            instId,
+            com.example.domain.MessageTemplateStore.TYPE_PAYMENT_CONFIRMATION
+        )
     }
     // ── Load student ──
     LaunchedEffect(instId, fee?.studentId) {
@@ -744,7 +750,8 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
                         dueAmount = remainingDue,
                         paymentMethod = paymentMethod,
                         instituteName = institute?.name ?: "BatchFee",
-                        instituteContact = InstituteContactNumber.primary(institute?.phone, institute?.whatsappNumber).orEmpty()
+                        instituteContact = InstituteContactNumber.primary(institute?.phone, institute?.whatsappNumber).orEmpty(),
+                        template = paymentReceiptTemplate,
                     )
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         OutlinedButton(
@@ -806,7 +813,10 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
                     Spacer(Modifier.height(10.dp))
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         OutlinedButton(
-                            onClick = { sendReceiptMessage(context, student?.phone, receiptMessage) },
+                            onClick = {
+                                receiptSmsText = receiptMessage
+                                showReceiptSms = true
+                            },
                             modifier = Modifier.weight(1f).height(48.dp),
                             shape = RoundedCornerShape(12.dp),
                             border = BorderStroke(1.dp, TextMuted),
@@ -1157,6 +1167,27 @@ fun CollectPaymentScreen(db: AppDatabase, feeId: String, onBack: () -> Unit, onN
                 }
             }
         }
+    }
+
+    // Payment receipt SMS uses the shared Automatic (default) → Manual
+    // fallback chooser, like every other operational SMS path.
+    if (showReceiptSms) {
+        SingleSmsDeliveryDialog(
+            title = "Payment Receipt SMS",
+            recipientName = student?.fullName.orEmpty(),
+            recipientPhone = student?.phone,
+            message = receiptSmsText,
+            purpose = "Payment receipt · ${student?.fullName.orEmpty()}",
+            onManualSend = { phone, body ->
+                context.startActivity(
+                    Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:$phone")).apply {
+                        putExtra("sms_body", body)
+                    }
+                )
+            },
+            onDismiss = { showReceiptSms = false },
+            onFinished = { status -> Toast.makeText(context, status, Toast.LENGTH_SHORT).show() }
+        )
     }
 }
 

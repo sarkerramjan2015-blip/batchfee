@@ -8,6 +8,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -19,6 +20,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -262,7 +264,18 @@ private fun TutorialPlayerDialog(tutorial: AppTutorial, onDismiss: () -> Unit) {
         },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                EmbeddedYouTubeTutorial(videoId = tutorial.youtubeVideoId)
+                EmbeddedYouTubeTutorial(
+                    videoId = tutorial.youtubeVideoId,
+                    videoLayout = tutorial.videoLayout
+                )
+                if (tutorial.videoLayout == "portrait") {
+                    Text(
+                        "This YouTube Short is shown in its original portrait frame.",
+                        color = TutorialMuted,
+                        fontSize = 10.sp,
+                        lineHeight = 14.sp
+                    )
+                }
                 Text(
                     "This guide plays inside BatchFee. Playback availability and any advertising are controlled by YouTube.",
                     color = TutorialMuted,
@@ -276,9 +289,26 @@ private fun TutorialPlayerDialog(tutorial: AppTutorial, onDismiss: () -> Unit) {
 }
 
 @Composable
-private fun EmbeddedYouTubeTutorial(videoId: String) {
-    AndroidView(
-        modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(12.dp)),
+private fun EmbeddedYouTubeTutorial(videoId: String, videoLayout: String) {
+    val isPortrait = videoLayout == "portrait"
+    BoxWithConstraints(
+        modifier = Modifier.fillMaxWidth(),
+        contentAlignment = Alignment.Center
+    ) {
+        // A portrait frame is deliberately capped so the dialog remains usable
+        // on compact phones. Landscape guides still use the full available width.
+        val frameModifier = if (isPortrait) {
+            Modifier
+                .fillMaxWidth(0.70f)
+                .widthIn(max = 260.dp)
+                .aspectRatio(9f / 16f)
+        } else {
+            Modifier
+                .fillMaxWidth()
+                .aspectRatio(16f / 9f)
+        }
+        AndroidView(
+        modifier = frameModifier.clip(RoundedCornerShape(12.dp)),
         factory = { context ->
             WebView(context).apply {
                 setBackgroundColor(AndroidColor.BLACK)
@@ -297,7 +327,8 @@ private fun EmbeddedYouTubeTutorial(videoId: String) {
                 webView.loadUrl(youtubeEmbedUrl(videoId))
             }
         }
-    )
+        )
+    }
 }
 
 private fun youtubeEmbedUrl(videoId: String): String =

@@ -6,6 +6,7 @@ const { createHash, randomUUID } = require("node:crypto");
 const { initializeApp } = require("firebase-admin/app");
 const { getAuth } = require("firebase-admin/auth");
 const { FieldPath, FieldValue, getFirestore } = require("firebase-admin/firestore");
+const { getMessaging } = require("firebase-admin/messaging");
 const { getStorage } = require("firebase-admin/storage");
 const { logger } = require("firebase-functions");
 const { defineSecret } = require("firebase-functions/params");
@@ -52,6 +53,7 @@ const {
   createPlatformSmsAnalyticsHandler,
   createPlatformSmsTopupHandler,
   createServerSmsHandler,
+  createTenantSmsDeliveryRefreshHandler,
   createSmsWalletHandler,
 } = require("./smsWallet");
 const { createZendSmsProvider } = require("./zendSmsProvider");
@@ -121,6 +123,7 @@ const zendSmsSenderId = defineSecret("ZEND_SMS_SENDER_ID");
 
 const db = getFirestore();
 const adminAuth = getAuth();
+const messaging = getMessaging();
 function configuredMediaStorageBucketName() {
   if (process.env.FIREBASE_STORAGE_BUCKET) return process.env.FIREBASE_STORAGE_BUCKET;
   try {
@@ -2581,13 +2584,23 @@ exports.commitPlatformAdminOperation = onCall(
 // grants a tenant account no platform-administration privileges.
 exports.commitNoticeCenterOperation = onCall(
   { ...callableOptions, timeoutSeconds: 60 },
-  guarded(createNoticeCenterHandler({ db })),
+  guarded(createNoticeCenterHandler({ db, messaging })),
 );
 // Multi-tenant SMS wallet reads and the owner-only send-method setting. Wallet
 // counters are server-authoritative and can never be forged by a client.
 exports.commitSmsWalletOperation = onCall(
-  { ...callableOptions, timeoutSeconds: 60 },
-  guarded(createSmsWalletHandler({ db })),
+  {
+    ...callableOptions,
+    timeoutSeconds: 60,
+    secrets: [zendSmsApiKey, zendSmsSenderId],
+  },
+  guarded(createSmsWalletHandler({
+    db,
+    smsProvider: createZendSmsProvider({
+      apiKey: () => zendSmsApiKey.value(),
+      senderId: () => zendSmsSenderId.value(),
+    }),
+  })),
 );
 // Provider credentials exist only in Secret Manager and are exposed solely to
 // this isolated sending function. Existing wallet/settings calls remain free
@@ -2606,6 +2619,23 @@ exports.sendBulkSms = onCall(
       senderId: () => zendSmsSenderId.value(),
     }),
   }), "server_sms_batch"),
+);
+// An institute can reconcile only its own queued messages when opening SMS
+// History. The gateway credential remains inside this trusted function.
+exports.refreshMySmsDelivery = onCall(
+  {
+    ...callableOptions,
+    timeoutSeconds: 60,
+    memory: "256MiB",
+    secrets: [zendSmsApiKey, zendSmsSenderId],
+  },
+  guarded(createTenantSmsDeliveryRefreshHandler({
+    db,
+    smsProvider: createZendSmsProvider({
+      apiKey: () => zendSmsApiKey.value(),
+      senderId: () => zendSmsSenderId.value(),
+    }),
+  }), "tenant_sms_dlr_refresh"),
 );
 // Root-only dashboard. It owns the Zend credentials because it reads the
 // provider balance and reconciles trusted delivery reports; no client gets a

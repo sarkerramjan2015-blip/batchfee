@@ -257,23 +257,20 @@ fun BatchDetailScreen(
             java.net.URLEncoder.encode(msg, "UTF-8") }"))) }
     }
 
-    fun openSMS(target: BatchStudentWithFee) {
-        val msg = buildDueMessage(target)
-        val phone = target.student.phone?.takeIf { it.isNotBlank() }
-        val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${phone ?: ""}"))
-        intent.putExtra("sms_body", msg)
-        try { context.startActivity(intent) }
-        catch (_: Exception) {
-            context.startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:")).apply { putExtra("sms_body", msg) })
-        }
-    }
-
     fun sendSingle(target: BatchStudentWithFee, channel: String) {
+        if (channel == "sms") {
+            // Reuse the central SMS composer for one recipient so Automatic
+            // remains the default and Phone SMS is an explicit fallback.
+            selectedIds = setOf(target.student.id)
+            bulkChannel = "sms"
+            bulkMessageText = ""
+            showBulkComposer = true
+            return
+        }
         paymentVM.markSending(target.student.id)
         try {
             when (channel) {
                 "whatsapp" -> openWhatsApp(target)
-                "sms" -> openSMS(target)
             }
             paymentVM.markSent(target.student.id)
         } catch (_: Exception) {
@@ -285,7 +282,7 @@ fun BatchDetailScreen(
         val due = studentsWF.filter { it.dueAmount > 0 }
         paymentVM.markSendingAll()
         try {
-            if (due.isNotEmpty()) {
+            if (due.isNotEmpty() && channel == "whatsapp") {
                 val batchName = batch?.name ?: "Batch"
                 val lines = due.joinToString("\n") { s ->
                     "${
@@ -293,15 +290,8 @@ fun BatchDetailScreen(
                     } — Due BDT ${s.dueAmount.toLong()} (${s.fee?.feePeriod ?: "N/A"})"
                 }
                 val msg = appendInstituteSignature("$batchName\nDue Fees:\n$lines", instituteSignature)
-                when (channel) {
-                    "whatsapp" -> {
-                        val encoded = URLEncoder.encode(msg, "UTF-8")
-                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/?text=$encoded")))
-                    }
-                    "sms" -> {
-                        context.startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:")).apply { putExtra("sms_body", msg) })
-                    }
-                }
+                val encoded = URLEncoder.encode(msg, "UTF-8")
+                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/?text=$encoded")))
             }
             paymentVM.markSentAll()
         } catch (_: Exception) {
@@ -309,7 +299,7 @@ fun BatchDetailScreen(
         }
     }
 
-    fun startBulkSend(channel: String, delayMs: Long) {
+    fun startBulkSend(channel: String, delayMs: Long, smsMethod: String? = null) {
         val customText = bulkMessageText.trim()
         val targets = displayedStudents
             .filter { it.student.id in selectedIds }
@@ -346,7 +336,8 @@ fun BatchDetailScreen(
                         )
                     }.isSuccess
                 }
-            }
+            },
+            smsMethodOverride = smsMethod
         )
         if (!started) {
             scope.launch { snackbarHostState.showSnackbar("Sending is already in progress.") }
@@ -760,9 +751,10 @@ fun BatchDetailScreen(
                         color = ElectricBlue,
                         onClick = {
                             sendMessageTarget = null
-                            paymentVM.markSending(target.student.id)
-                            openSMS(target)
-                            paymentVM.markSent(target.student.id)
+                            selectedIds = setOf(target.student.id)
+                            bulkChannel = "sms"
+                            bulkMessageText = ""
+                            showBulkComposer = true
                         }
                     )
                 }
@@ -792,9 +784,15 @@ fun BatchDetailScreen(
                     Spacer(Modifier.height(8.dp))
                     channelCard(
                         label = "SMS (all)",
-                        subtitle = "Send via text message",
+                        subtitle = "Automatic (default) with manual fallback",
                         icon = Icons.Filled.Sms, color = ElectricBlue,
-                        onClick = { sendAllDueChoice = false; sendAllDue("sms") }
+                        onClick = {
+                            sendAllDueChoice = false
+                            selectedIds = dueStudents.map { it.student.id }.toSet()
+                            bulkChannel = "sms"
+                            bulkMessageText = ""
+                            showBulkComposer = true
+                        }
                     )
                 }
             },
@@ -826,7 +824,7 @@ fun BatchDetailScreen(
 
     if (showBulkComposer) {
         BulkMessageDialog(
-            title = "Bulk Message",
+            title = if (selectedIds.size == 1) "Student SMS" else "Bulk Message",
             recipientCount = selectedIds.size,
             messageText = bulkMessageText,
             onMessageChange = { bulkMessageText = it },
@@ -836,8 +834,8 @@ fun BatchDetailScreen(
                 showBulkComposer = false
                 clearSelection()
             },
-            onStartSms = { delayMs ->
-                startBulkSend("sms", delayMs)
+            onStartSms = { delayMs, smsMethod ->
+                startBulkSend("sms", delayMs, smsMethod)
                 showBulkComposer = false
                 clearSelection()
             },

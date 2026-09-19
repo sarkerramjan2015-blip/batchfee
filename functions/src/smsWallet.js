@@ -38,7 +38,7 @@ const WALLET_FIELDS = {
   sms_usage_day_key: "",
   sms_used_this_month: 0,
   sms_usage_month_key: "",
-  sms_send_method: "carrier",
+  sms_send_method: "server",
 };
 
 // BatchFee's service charge collected from an institute owner. This is shown
@@ -75,6 +75,9 @@ const MAX_SERVER_SMS_BATCH = 100;
 const MAX_SMS_REPORT_ROWS = 200;
 const MAX_SMS_REPORT_METRICS = 5000;
 const MAX_PLATFORM_SMS_EVENTS = 5000;
+// The root dashboard receives a readable audit window, while the 5,000-event
+// source window continues to power accurate recent delivery totals.
+const MAX_PLATFORM_SMS_AUDIT_ROWS = 150;
 const MAX_PLATFORM_SMS_TOPUPS = 100;
 
 function requiredString(data, field, maxLength = 128) {
@@ -149,7 +152,7 @@ function walletDefaults(data, now = Date.now()) {
   out.sms_usage_month_key = usageKeys.monthKey;
   out.sms_used_this_month = data.sms_usage_month_key === usageKeys.monthKey && Number.isInteger(data.sms_used_this_month) && data.sms_used_this_month >= 0
     ? data.sms_used_this_month : 0;
-  out.sms_send_method = SMS_SEND_METHODS.has(data.sms_send_method) ? data.sms_send_method : "carrier";
+  out.sms_send_method = SMS_SEND_METHODS.has(data.sms_send_method) ? data.sms_send_method : "server";
   return out;
 }
 
@@ -880,6 +883,53 @@ async function syncPendingZendDelivery({ db, smsProvider, now }) {
   return { attempted, updated };
 }
 
+/**
+ * Same DLR reconciliation, scoped to the signed-in institute. This is used by
+ * the institute's own History refresh so an owner never has to wait for a
+ * platform administrator to open analytics before seeing a delivered result.
+ */
+async function syncPendingZendDeliveryForInstitute({ db, smsProvider, instituteId, now }) {
+  if (!smsProvider || typeof smsProvider.getDeliveryStatus !== "function") {
+    return { attempted: 0, updated: 0 };
+  }
+  const pending = await db.collection("institutes").doc(instituteId).collection("sms_messages")
+    .where("channel", "==", "server")
+    .where("status", "==", "pending")
+    .limit(MAX_PENDING_DLR_SYNC)
+    .get();
+  let attempted = 0;
+  let updated = 0;
+  await mapWithConcurrency(pending.docs, 4, async (doc) => {
+    const data = doc.data() || {};
+    const providerMessageId = typeof data.providerMessageId === "string" ? data.providerMessageId : "";
+    if (!providerMessageId) return;
+    attempted += 1;
+    try {
+      const result = await smsProvider.getDeliveryStatus(providerMessageId);
+      const status = zendDeliveryStatus(result.status);
+      if (status === "pending") return;
+      const deliveredAtMs = result.deliveredAt ? Date.parse(result.deliveredAt) : now;
+      await updateSmsMessageStatus(db, instituteId, doc.id, status, {
+        now,
+        deliveredAtMs: Number.isFinite(deliveredAtMs) ? deliveredAtMs : now,
+        providerStatus: result.status,
+        failureReason: status === "failed" ? `Zend DLR: ${result.status}` : "",
+      });
+      updated += 1;
+    } catch (_) {
+      // A transient provider lookup error should leave the original status intact.
+    }
+  });
+  return { attempted, updated };
+}
+
+/** Tenant-scoped DLR refresh. No delivery result is trusted from the client. */
+async function refreshMySmsDelivery({ db, request, smsProvider, now = Date.now() }) {
+  const actor = await resolveTenantActor(db, request.auth);
+  assertCanSendServerSms(actor);
+  return syncPendingZendDeliveryForInstitute({ db, smsProvider, instituteId: actor.instituteId, now });
+}
+
 /** Root-only, provider-backed operations view. Wallet totals are authoritative;
  * message rows supply the weekly/DLR view and institute breakdowns. */
 async function platformSmsAnalytics({ db, request, smsProvider, now = Date.now() }) {
@@ -907,6 +957,7 @@ async function platformSmsAnalytics({ db, request, smsProvider, now = Date.now()
     rows.set(doc.id, {
       instituteId: doc.id,
       instituteName: typeof data.instituteName === "string" ? data.instituteName : doc.id,
+      totalSmsPurchased: wallet.total_sms_purchased,
       todaySms: wallet.sms_used_today,
       weekSms: 0,
       monthSms: wallet.sms_used_this_month,
@@ -918,7 +969,7 @@ async function platformSmsAnalytics({ db, request, smsProvider, now = Date.now()
   for (const doc of events.docs) {
     const data = doc.data() || {}; const used = Number.isInteger(data.credits) ? data.credits : 1;
     const id = typeof data.instituteId === "string" ? data.instituteId : "";
-    const row = rows.get(id) || { instituteId: id, instituteName: id || "Unknown institute", todaySms: 0, weekSms: 0, monthSms: 0, lifetimeSms: 0, walletBalance: 0 };
+    const row = rows.get(id) || { instituteId: id, instituteName: id || "Unknown institute", totalSmsPurchased: 0, todaySms: 0, weekSms: 0, monthSms: 0, lifetimeSms: 0, walletBalance: 0 };
     const keys = dhakaUsageKeys(safeMillis(data.createdAtMs));
     if (keys.dayKey >= weekKey) { weekSms += used; row.weekSms += used; }
     const status = data.status; if (status === "delivered") delivered += used; else if (status === "failed") failed += used; else pending += used;
@@ -981,13 +1032,26 @@ async function platformSmsAnalytics({ db, request, smsProvider, now = Date.now()
     providerError,
     dlrSync,
     eventWindowTruncated: events.size === MAX_PLATFORM_SMS_EVENTS,
-    institutes: [...rows.values()].sort((a, b) => b.monthSms - a.monthSms).slice(0, 20),
+    // Every institute is returned so root can reconcile bought, used and
+    // remaining credits institute-by-institute. The mobile UI is responsible
+    // for search/filtering rather than silently hiding lower-usage rows.
+    institutes: [...rows.values()].sort((a, b) => a.instituteName.localeCompare(b.instituteName)),
+    recentMessages: events.docs.slice(0, MAX_PLATFORM_SMS_AUDIT_ROWS).map((doc) => {
+      const message = publicSmsMessage(doc.id, doc.data() || {});
+      const institute = rows.get(message.instituteId);
+      return {
+        ...message,
+        instituteName: institute ? institute.instituteName : message.instituteId || "Unknown institute",
+      };
+    }),
+    recentMessagesTruncated: events.size > MAX_PLATFORM_SMS_AUDIT_ROWS,
   };
 }
 
 function publicSmsMessage(id, data) {
   return {
     messageId: id,
+    instituteId: typeof data.instituteId === "string" ? data.instituteId : "",
     recipient: typeof data.recipient === "string" ? data.recipient : "",
     purpose: typeof data.purpose === "string" ? data.purpose : "",
     messageBody: typeof data.messageBody === "string" ? data.messageBody : "",
@@ -1305,6 +1369,10 @@ function createPlatformSmsAnalyticsHandler({ db, smsProvider }) {
   return async (request) => platformSmsAnalytics({ db, request, smsProvider });
 }
 
+function createTenantSmsDeliveryRefreshHandler({ db, smsProvider }) {
+  return async (request) => refreshMySmsDelivery({ db, request, smsProvider });
+}
+
 function createPlatformSmsTopupHandler({ db }) {
   return async (request) => recordPlatformSmsTopup({ db, request });
 }
@@ -1326,8 +1394,17 @@ function addSmsToReportCounts(counts, data) {
  * keep the app responsive; the same response exposes whether the historical
  * statistics were capped, rather than silently presenting incomplete data.
  */
-async function listSmsReport({ db, request }) {
+async function listSmsReport({ db, request, smsProvider = null }) {
   const actor = await resolveTenantActor(db, request.auth);
+  // Keep older app builds correct too: their existing list_sms_report request
+  // refreshes the gateway DLR before reading the ledger. The provider result is
+  // still server-owned; a client never supplies a delivery status.
+  await syncPendingZendDeliveryForInstitute({
+    db,
+    smsProvider,
+    instituteId: actor.instituteId,
+    now: Date.now(),
+  });
   const snapshot = await db.collection("institutes").doc(actor.instituteId)
     .collection("sms_messages")
     .orderBy("createdAtMs", "desc")
@@ -1376,7 +1453,7 @@ async function updateSmsMessageStatus(db, instituteId, messageId, status, option
   await ref.update(patch);
 }
 
-function createSmsWalletHandler({ db }) {
+function createSmsWalletHandler({ db, smsProvider = null }) {
   return async (request) => {
     const action = requiredString(request.data, "action", 64);
     const operationId = requiredString(request.data, "operationId", 128);
@@ -1392,7 +1469,7 @@ function createSmsWalletHandler({ db }) {
     if (action === "list_recharge_requests") return listRechargeRequests({ db, request });
     if (action === "review_recharge_request") return reviewRechargeRequest({ db, request, operationId, now });
     if (action === "record_sms_batch") return recordSmsBatch({ db, request, operationId, now });
-    if (action === "list_sms_report") return listSmsReport({ db, request });
+    if (action === "list_sms_report") return listSmsReport({ db, request, smsProvider });
     return smsAccounting({ db, request });
   };
 }
@@ -1409,9 +1486,11 @@ module.exports = {
   MAX_SERVER_SMS_BATCH,
   WALLET_FIELDS,
   createServerSmsHandler,
+  createTenantSmsDeliveryRefreshHandler,
   createPlatformSmsAnalyticsHandler,
   createPlatformSmsTopupHandler,
   platformSmsAnalytics,
+  refreshMySmsDelivery,
   recordPlatformSmsTopup,
   createSmsWalletHandler,
   updateSmsMessageStatus,

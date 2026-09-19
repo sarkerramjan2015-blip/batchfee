@@ -160,6 +160,73 @@ test("grouped monthly collection is atomic, has one receipt, and is idempotent",
   assert.equal(activityAfterFailedDelete.length, 1, "a rejected operation must not write an activity event");
 });
 
+test("owner can correct every line of one grouped receipt atomically", async () => {
+  const db = seededDb();
+  const handler = createFinancialLedgerHandler({ db });
+  const collected = await handler({ auth: { uid: "owner" }, data: {
+    instituteId: "i", action: "collect_grouped_payment", operationId: "grouped-edit-source-0001",
+    studentId: "s", paymentMethod: "cash", paymentDateMs: 1_788_000_000_000,
+    allocations: [
+      { batchId: "b", feePeriod: "Jun 2026", feeType: "monthly_fee", dueDateMs: 1_788_000_000_000, baseAmount: 1000, discountAmount: 0, lateFeeAmount: 0, amount: 1000 },
+      { batchId: "b", feePeriod: "Jul 2026", feeType: "monthly_fee", dueDateMs: 1_788_000_000_000, baseAmount: 1000, discountAmount: 0, lateFeeAmount: 0, amount: 1000 },
+    ],
+  } });
+
+  const corrected = await handler({ auth: { uid: "owner" }, data: {
+    instituteId: "i", action: "owner_edit_grouped_payment", operationId: "grouped-edit-0001",
+    receiptNumber: collected.receipts[0].receiptNumber,
+    paymentMethod: "bkash", paymentDateMs: 1_789_000_000_000,
+    note: "Corrected deposit", reason: "Cash count corrected",
+    allocations: [
+      { paymentId: collected.payments[0].id, amount: 900 },
+      { paymentId: collected.payments[1].id, amount: 800 },
+    ],
+  } });
+
+  assert.equal(corrected.payments.length, 2);
+  assert.equal(corrected.receipts.length, 1);
+  assert.deepEqual(corrected.payments.map((payment) => payment.amount).sort(), [800, 900]);
+  assert.equal(corrected.payments.every((payment) => payment.paymentMethod === "bkash"), true);
+  assert.equal(corrected.receipts[0].paidAmount, 1700);
+  assert.equal(corrected.receipts[0].dueAmount, 300);
+  assert.deepEqual(
+    corrected.fees.map((fee) => fee.dueAmount).sort(),
+    [100, 200],
+  );
+  const receipt = db.documents.get(`institutes/i/receipts/${corrected.receipts[0].id}`);
+  assert.equal(receipt.lineItems.reduce((sum, line) => sum + line.collectedAmount, 0), 1700);
+  assert.equal([...db.documents.keys()].filter((key) => key.includes("/grouped_payment_corrections/")).length, 1);
+});
+
+test("invalid grouped correction cannot partially change any month", async () => {
+  const db = seededDb();
+  const handler = createFinancialLedgerHandler({ db });
+  const collected = await handler({ auth: { uid: "owner" }, data: {
+    instituteId: "i", action: "collect_grouped_payment", operationId: "grouped-invalid-edit-source-0001",
+    studentId: "s", paymentMethod: "cash", paymentDateMs: 1_788_000_000_000,
+    allocations: [
+      { batchId: "b", feePeriod: "Jun 2026", feeType: "monthly_fee", dueDateMs: 1_788_000_000_000, baseAmount: 1000, discountAmount: 0, lateFeeAmount: 0, amount: 1000 },
+      { batchId: "b", feePeriod: "Jul 2026", feeType: "monthly_fee", dueDateMs: 1_788_000_000_000, baseAmount: 1000, discountAmount: 0, lateFeeAmount: 0, amount: 1000 },
+    ],
+  } });
+
+  await assert.rejects(handler({ auth: { uid: "owner" }, data: {
+    instituteId: "i", action: "owner_edit_grouped_payment", operationId: "grouped-invalid-edit-0001",
+    receiptNumber: collected.receipts[0].receiptNumber,
+    paymentMethod: "bkash", paymentDateMs: 1_789_000_000_000,
+    reason: "Invalid correction",
+    allocations: [
+      { paymentId: collected.payments[0].id, amount: 900 },
+      { paymentId: collected.payments[1].id, amount: 1001 },
+    ],
+  } }));
+
+  const payments = collected.payments.map((payment) => db.documents.get(`institutes/i/payments/${payment.id}`));
+  assert.deepEqual(payments.map((payment) => payment.amount), [1000, 1000]);
+  assert.equal(payments.every((payment) => payment.paymentMethod === "cash"), true);
+  assert.equal([...db.documents.keys()].filter((key) => key.includes("/grouped_payment_corrections/")).length, 0);
+});
+
 test("an invalid grouped allocation leaves every month untouched", async () => {
   const db = seededDb();
   const handler = createFinancialLedgerHandler({ db });

@@ -18,7 +18,7 @@ data class SmsWalletState(
     val totalSmsUsed: Int = 0,
     val smsUsedToday: Int = 0,
     val smsUsedThisMonth: Int = 0,
-    val smsSendMethod: String = METHOD_CARRIER
+    val smsSendMethod: String = METHOD_SERVER
 ) {
     companion object {
         const val METHOD_CARRIER = "carrier"
@@ -162,7 +162,7 @@ object SmsWalletSyncHelper {
             totalSmsUsed = (data["total_sms_used"] as? Number)?.toInt() ?: 0,
             smsUsedToday = (data["sms_used_today"] as? Number)?.toInt() ?: 0,
             smsUsedThisMonth = (data["sms_used_this_month"] as? Number)?.toInt() ?: 0,
-            smsSendMethod = data["sms_send_method"] as? String ?: SmsWalletState.METHOD_CARRIER
+            smsSendMethod = data["sms_send_method"] as? String ?: SmsWalletState.METHOD_SERVER
         )
     }
 
@@ -292,6 +292,15 @@ object SmsWalletSyncHelper {
         )
     }
 
+    /**
+     * Reconciles this institute's queued server messages with the SMS gateway.
+     * The callable owns the credential; Android never receives a provider key
+     * and can never write a delivery status itself.
+     */
+    suspend fun refreshMySmsDelivery() {
+        callTrustedFunction(functions, "refreshMySmsDelivery", emptyMap<String, Any?>())
+    }
+
     /** Status counts plus the latest messages for the institute SMS report. */
     suspend fun smsReport(): SmsMessageReport {
         val payload = call("list_sms_report", instituteId = null, values = emptyMap())
@@ -340,7 +349,7 @@ object SmsWalletSyncHelper {
         totalSmsUsed = (payload["totalSmsUsed"] as? Number)?.toInt() ?: 0,
         smsUsedToday = (payload["smsUsedToday"] as? Number)?.toInt() ?: 0,
         smsUsedThisMonth = (payload["smsUsedThisMonth"] as? Number)?.toInt() ?: 0,
-        smsSendMethod = payload["smsSendMethod"] as? String ?: SmsWalletState.METHOD_CARRIER
+        smsSendMethod = payload["smsSendMethod"] as? String ?: SmsWalletState.METHOD_SERVER
     )
 }
 

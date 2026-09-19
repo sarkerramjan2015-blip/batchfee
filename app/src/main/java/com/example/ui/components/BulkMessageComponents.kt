@@ -39,9 +39,12 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.batchfee.edu.data.firestore.SmsWalletState
 import com.batchfee.edu.data.firestore.SmsWalletSyncHelper
+import com.batchfee.edu.data.firestore.ServerSmsOutbound
+import com.batchfee.edu.data.firestore.SmsOutboundRecord
 import com.batchfee.edu.domain.SessionManager
 import com.example.domain.BulkMessageController
 import kotlinx.coroutines.launch
+import java.util.UUID
 
 // Shared dark palette — mirrors the Students / Fees screens.
 private val BgColor      = Color(0xFF07111F)
@@ -394,7 +397,7 @@ fun BulkMessageDialog(
     onMessageChange: (String) -> Unit,
     initialDelaySeconds: Int,
     onStartWhatsApp: (delayMs: Long) -> Unit,
-    onStartSms: (delayMs: Long) -> Unit,
+    onStartSms: (delayMs: Long, smsMethod: String) -> Unit,
     onDismiss: () -> Unit,
     broadcastMode: Boolean = false,
     /** When set, prevents a Due Fee SMS flow from offering the WhatsApp path (and vice versa). */
@@ -411,7 +414,7 @@ fun BulkMessageDialog(
     var delayText by remember {
         mutableStateOf(initialDelaySeconds.toString())
     }
-    var smsMethod by remember(instituteId) { mutableStateOf(SmsWalletState.METHOD_CARRIER) }
+    var smsMethod by remember(instituteId) { mutableStateOf(SmsWalletState.METHOD_SERVER) }
     var smsBalance by remember(instituteId) { mutableStateOf(0) }
     var methodLoading by remember(instituteId) { mutableStateOf(true) }
     var methodBackendAvailable by remember(instituteId) { mutableStateOf(false) }
@@ -443,10 +446,11 @@ fun BulkMessageDialog(
             .onSuccess { wallet ->
                 methodBackendAvailable = true
                 smsBalance = wallet.smsBalance
-                // Owners choose for every send; the safer phone carrier flow
-                // is always the default. Staff use the owner's saved method.
+                // Automatic BatchFee SMS is the primary/default route. Owners
+                // may still choose the phone composer as a one-send fallback;
+                // staff follow the institute's saved automatic preference.
                 smsMethod = if (ownerCanChooseMethod) {
-                    SmsWalletState.METHOD_CARRIER
+                    SmsWalletState.METHOD_SERVER
                 } else {
                     wallet.smsSendMethod
                 }
@@ -553,18 +557,18 @@ fun BulkMessageDialog(
                         }
                     }
                     SmsDeliveryOption(
-                        title = "Phone SMS · Semi-automatic",
-                        subtitle = "Recommended default. Review and send from your phone.",
-                        selected = smsMethod == SmsWalletState.METHOD_CARRIER,
-                        enabled = ownerCanChooseMethod && !methodLoading && !methodSaving,
-                        onClick = { smsMethod = SmsWalletState.METHOD_CARRIER; methodError = null }
-                    )
-                    SmsDeliveryOption(
-                        title = "BatchFee SMS · Automatic",
-                        subtitle = "Sends in the background · Balance: $smsBalance credits",
+                        title = "BatchFee SMS · Automatic (Default)",
+                        subtitle = "Send securely in the background · Balance: $smsBalance credits",
                         selected = smsMethod == SmsWalletState.METHOD_SERVER,
                         enabled = ownerCanChooseMethod && methodBackendAvailable && !methodLoading && !methodSaving,
                         onClick = { smsMethod = SmsWalletState.METHOD_SERVER; methodError = null }
+                    )
+                    SmsDeliveryOption(
+                        title = "Phone SMS · Manual / Semi-automatic",
+                        subtitle = "Fallback: review and send from your phone's SMS app.",
+                        selected = smsMethod == SmsWalletState.METHOD_CARRIER,
+                        enabled = ownerCanChooseMethod && !methodLoading && !methodSaving,
+                        onClick = { smsMethod = SmsWalletState.METHOD_CARRIER; methodError = null }
                     )
                     if (!ownerCanChooseMethod && methodBackendAvailable && !methodLoading && methodError == null) {
                         Text("Delivery method is controlled by the institute owner.", color = TextMuted, fontSize = 10.sp)
@@ -662,19 +666,21 @@ fun BulkMessageDialog(
                             methodError = "No active institute session. Please log in again."
                             return@Button
                         }
-                        if (!ownerCanChooseMethod || (!methodBackendAvailable && smsMethod == SmsWalletState.METHOD_CARRIER)) {
-                            onStartSms(seconds * 1000L)
+                        if (smsMethod == SmsWalletState.METHOD_CARRIER || !ownerCanChooseMethod) {
+                            onStartSms(seconds * 1000L, smsMethod)
                             return@Button
                         }
                         methodSaving = true
                         methodError = null
                         scope.launch {
                             runCatching {
-                                SmsWalletSyncHelper.setSmsSendMethod(resolvedInstituteId, smsMethod)
+                                // Persist only the automatic preference. A manual
+                                // fallback must not silently make future sends manual.
+                                SmsWalletSyncHelper.setSmsSendMethod(resolvedInstituteId, SmsWalletState.METHOD_SERVER)
                             }.onSuccess { wallet ->
                                 smsBalance = wallet.smsBalance
                                 methodSaving = false
-                                onStartSms(seconds * 1000L)
+                                onStartSms(seconds * 1000L, SmsWalletState.METHOD_SERVER)
                             }.onFailure { error ->
                                 methodSaving = false
                                 methodError = error.message ?: "Could not confirm the SMS delivery method."
@@ -697,6 +703,168 @@ fun BulkMessageDialog(
                         fontSize = 15.sp
                     )
                 }
+            }
+        }
+    )
+}
+
+/**
+ * The shared one-recipient SMS chooser. Operational single messages use the
+ * same automatic wallet, credit estimate and manual fallback as bulk SMS.
+ */
+@Composable
+fun SingleSmsDeliveryDialog(
+    title: String,
+    recipientName: String,
+    recipientPhone: String?,
+    message: String,
+    purpose: String,
+    onManualSend: (phone: String, body: String) -> Unit,
+    onDismiss: () -> Unit,
+    onFinished: (String) -> Unit = {}
+) {
+    val scope = rememberCoroutineScope()
+    val instituteId by SessionManager.currentInstituteId.collectAsState()
+    val role by SessionManager.currentUserRole.collectAsState()
+    val ownerCanChooseMethod = role == "InstituteOwner"
+    val operationId = remember(recipientPhone, message) { "single-${UUID.randomUUID()}" }
+    val cleanPhone = recipientPhone.orEmpty().filter(Char::isDigit)
+    val cleanMessage = message.trim()
+    val credits = estimateSmsCredits(cleanMessage)
+    var smsMethod by remember(instituteId) { mutableStateOf(SmsWalletState.METHOD_SERVER) }
+    var smsBalance by remember(instituteId) { mutableStateOf(0) }
+    var loading by remember(instituteId) { mutableStateOf(true) }
+    var backendAvailable by remember(instituteId) { mutableStateOf(false) }
+    var sending by remember { mutableStateOf(false) }
+    var errorText by remember { mutableStateOf<String?>(null) }
+    var warningText by remember { mutableStateOf<String?>(null) }
+    val automatic = smsMethod == SmsWalletState.METHOD_SERVER && backendAvailable
+    val automaticBlocked = automatic && (credits > smsBalance || cleanMessage.length > 480)
+
+    LaunchedEffect(instituteId, role) {
+        val resolvedInstituteId = instituteId
+        if (resolvedInstituteId.isNullOrBlank()) {
+            loading = false
+            errorText = "No active institute session. Please log in again."
+            return@LaunchedEffect
+        }
+        loading = true
+        runCatching { SmsWalletSyncHelper.ensureWalletInitialized(resolvedInstituteId) }
+            .onSuccess { wallet ->
+                backendAvailable = true
+                smsBalance = wallet.smsBalance
+                smsMethod = if (ownerCanChooseMethod) SmsWalletState.METHOD_SERVER else wallet.smsSendMethod
+            }
+            .onFailure {
+                backendAvailable = false
+                smsMethod = SmsWalletState.METHOD_CARRIER
+                warningText = "Automatic SMS is unavailable right now. Phone SMS can still be used."
+            }
+        loading = false
+    }
+
+    AlertDialog(
+        onDismissRequest = { if (!sending) onDismiss() },
+        containerColor = ModalBg,
+        shape = RoundedCornerShape(22.dp),
+        title = {
+            Column {
+                Text(title, color = Cyan, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                Text(recipientName, color = TextMuted, fontSize = 12.sp)
+            }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                Text(
+                    cleanMessage,
+                    color = TextWhite,
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp,
+                    maxLines = 7,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                        .background(CardBgAlt).padding(11.dp)
+                )
+                Text("$cleanPhone · ${cleanMessage.length} characters · $credits SMS credit${if (credits == 1) "" else "s"}", color = TextMuted, fontSize = 10.sp)
+                SmsDeliveryOption(
+                    title = "BatchFee SMS · Automatic (Default)",
+                    subtitle = "Send securely in the background · Balance: $smsBalance credits",
+                    selected = smsMethod == SmsWalletState.METHOD_SERVER,
+                    enabled = ownerCanChooseMethod && backendAvailable && !loading && !sending,
+                    onClick = { smsMethod = SmsWalletState.METHOD_SERVER; errorText = null }
+                )
+                SmsDeliveryOption(
+                    title = "Phone SMS · Manual / Semi-automatic",
+                    subtitle = "Fallback: review and send from your phone's SMS app.",
+                    selected = smsMethod == SmsWalletState.METHOD_CARRIER,
+                    enabled = ownerCanChooseMethod && !loading && !sending,
+                    onClick = { smsMethod = SmsWalletState.METHOD_CARRIER; errorText = null }
+                )
+                if (!ownerCanChooseMethod && backendAvailable && !loading) {
+                    Text("Delivery method is controlled by the institute owner.", color = TextMuted, fontSize = 10.sp)
+                }
+                if (automatic && cleanMessage.length > 480) {
+                    Text("Automatic SMS supports up to 480 characters. Shorten the message or use Phone SMS.", color = SoftRed, fontSize = 10.sp)
+                } else if (automatic && credits > smsBalance) {
+                    Text("Insufficient balance: $credits credits needed, $smsBalance available.", color = SoftRed, fontSize = 10.sp)
+                }
+                warningText?.let { Text(it, color = Amber, fontSize = 10.sp) }
+                errorText?.let { Text(it, color = SoftRed, fontSize = 11.sp) }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !sending) { Text("Cancel", color = TextMuted) }
+        },
+        confirmButton = {
+            Button(
+                enabled = !loading && !sending && cleanPhone.isNotBlank() && cleanMessage.isNotBlank() && !automaticBlocked,
+                onClick = {
+                    sending = true
+                    errorText = null
+                    scope.launch {
+                        runCatching {
+                            if (smsMethod == SmsWalletState.METHOD_CARRIER || !backendAvailable) {
+                                onManualSend(cleanPhone, cleanMessage)
+                                runCatching {
+                                    SmsWalletSyncHelper.recordCarrierSmsBatch(
+                                        listOf(SmsOutboundRecord(cleanPhone, purpose, cleanMessage)),
+                                        operationId
+                                    )
+                                }
+                                "Opened in your phone's SMS app"
+                            } else {
+                                val resolvedInstituteId = requireNotNull(instituteId) { "No active institute session." }
+                                if (ownerCanChooseMethod) {
+                                    SmsWalletSyncHelper.setSmsSendMethod(resolvedInstituteId, SmsWalletState.METHOD_SERVER)
+                                }
+                                val result = SmsWalletSyncHelper.sendServerSmsBatch(
+                                    listOf(
+                                        ServerSmsOutbound(
+                                            targetKey = cleanPhone,
+                                            recipient = cleanPhone,
+                                            message = cleanMessage,
+                                            purpose = purpose
+                                        )
+                                    ),
+                                    operationId
+                                )
+                                smsBalance = result.wallet.smsBalance
+                                val row = result.results.firstOrNull() ?: error("SMS server returned no result.")
+                                if (row.status == "failed") error(row.failureReason.ifBlank { "SMS provider rejected the message." })
+                                "SMS accepted by BatchFee server"
+                            }
+                        }.onSuccess { status ->
+                            sending = false
+                            onFinished(status)
+                            onDismiss()
+                        }.onFailure { error ->
+                            sending = false
+                            errorText = error.message ?: "Could not send SMS."
+                        }
+                    }
+                }
+            ) {
+                Text(if (sending) "Sending..." else if (automatic) "Send $credits SMS" else "Open Phone SMS")
             }
         }
     )

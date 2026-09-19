@@ -183,6 +183,7 @@ dependencies {
   implementation(libs.firebase.firestore)
   implementation(libs.firebase.functions)
   implementation(libs.firebase.crashlytics)
+  implementation("com.google.firebase:firebase-messaging")
   // implementation(libs.accompanist.permissions)
   implementation(libs.androidx.activity.compose)
   implementation(libs.androidx.biometric)

@@ -843,8 +843,10 @@ private fun AuthContactFooter(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .background(Brush.verticalGradient(listOf(Color.Transparent, AuthBg.copy(alpha = 0.96f))))
-            .padding(top = 8.dp, bottom = 6.dp)
+            // This footer participates in the normal screen layout instead of
+            // sitting over the form. A transparent background prevents a dark band
+            // appearing above the Android navigation area on some phones.
+            .padding(top = 10.dp, bottom = 8.dp)
             .navigationBarsPadding(),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -861,7 +863,7 @@ private fun AuthContactFooter(
                     Toast.makeText(context, "WhatsApp is not installed on this device.", Toast.LENGTH_SHORT).show()
                 }
             },
-            modifier = Modifier.height(36.dp),
+            modifier = Modifier.height(40.dp),
             shape = RoundedCornerShape(12.dp),
             border = BorderStroke(1.dp, AuthViolet.copy(alpha = 0.5f)),
             colors = ButtonDefaults.outlinedButtonColors(
@@ -872,7 +874,7 @@ private fun AuthContactFooter(
         ) {
             Icon(Icons.Filled.Chat, null, tint = AuthViolet, modifier = Modifier.size(15.dp))
             Spacer(Modifier.width(6.dp))
-            Text("Contact with Developer", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Text("Contact Support", fontSize = 12.sp, fontWeight = FontWeight.Bold)
         }
         Spacer(Modifier.height(2.dp))
         Row(
@@ -886,7 +888,7 @@ private fun AuthContactFooter(
             ) {
                 Text("Privacy Policy", color = AuthCyan, fontSize = 11.sp)
             }
-            Text("·", color = AuthMuted.copy(alpha = 0.7f), fontSize = 11.sp)
+            Text("•", color = AuthMuted.copy(alpha = 0.7f), fontSize = 11.sp)
             TextButton(
                 onClick = onNavigateTermsConditions,
                 modifier = Modifier.height(30.dp),
@@ -896,7 +898,7 @@ private fun AuthContactFooter(
             }
         }
         Text(
-            text = "v${BuildConfig.VERSION_NAME} · BatchFee",
+            text = "v${BuildConfig.VERSION_NAME} • BatchFee",
             style = MaterialTheme.typography.labelSmall,
             color = AuthMuted.copy(alpha = 0.58f),
             textAlign = TextAlign.Center
@@ -904,7 +906,8 @@ private fun AuthContactFooter(
     }
 }
 
-// Animated, floating logo composable
+// A single entrance animation feels polished without continually moving the
+// top of the form or doing unnecessary work on lower-end phones.
 @Composable
 private fun AnimatedLogo(modifier: Modifier = Modifier) {
     var startAnim by remember { mutableStateOf(false) }
@@ -917,15 +920,6 @@ private fun AnimatedLogo(modifier: Modifier = Modifier) {
         targetValue = if (startAnim) 1f else 0.3f,
         animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)
     )
-    val floatOffset by rememberInfiniteTransition().animateFloat(
-        initialValue = -4f,
-        targetValue = 4f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(2500, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        )
-    )
-
     LaunchedEffect(Unit) { startAnim = true }
 
     Box(
@@ -934,7 +928,6 @@ private fun AnimatedLogo(modifier: Modifier = Modifier) {
                 alpha = fadeAlpha
                 scaleX = scale
                 scaleY = scale
-                translationY = floatOffset * density
             }
             .shadow(20.dp, RoundedCornerShape(24.dp), spotColor = AuthCyan.copy(alpha = 0.35f))
             .clip(RoundedCornerShape(24.dp)),
@@ -1204,6 +1197,9 @@ fun AuthScreen(
     val imeVisible = WindowInsets.isImeVisible
     val hasLoginFeedback = errorMessage != null || infoMessage != null ||
         (selectedRole == UnifiedLoginRole.STUDENT && !studentLoginState.errorMessage.isNullOrBlank())
+    // Reserve a real footer area only when it can be shown without competing
+    // with the keyboard or an error message. This removes the former overlay.
+    val showFixedLoginFooter = isLoginMode && !hasLoginFeedback && !imeVisible
     val primaryActionInteraction = remember { MutableInteractionSource() }
     val primaryActionPressed by primaryActionInteraction.collectIsPressedAsState()
     val primaryActionScale by animateFloatAsState(
@@ -1298,8 +1294,12 @@ fun AuthScreen(
                 modifier = Modifier.fillMaxSize()
             ) {
                 Column(
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                Column(
                     modifier = Modifier
-                        .fillMaxSize()
+                        .fillMaxWidth()
+                        .weight(1f)
                         .statusBarsPadding()
                         .then(
                             // The normal login view remains a single page. If feedback
@@ -1315,9 +1315,8 @@ fun AuthScreen(
                             start = contentHorizontalPadding,
                             end = contentHorizontalPadding,
                             top = contentVerticalPadding,
-                            bottom = if (isLoginMode && !hasLoginFeedback) 128.dp else 20.dp
-                        )
-                        .navigationBarsPadding(),
+                            bottom = if (showFixedLoginFooter) 12.dp else 20.dp
+                        ),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                 Spacer(
@@ -1936,17 +1935,19 @@ fun AuthScreen(
                 Spacer(Modifier.height(if (isLoginMode) 4.dp else 10.dp))
 
                 }
+                if (showFixedLoginFooter) {
+                    AuthContactFooter(
+                        context = context,
+                        onNavigatePrivacyPolicy = onNavigatePrivacyPolicy,
+                        onNavigateTermsConditions = onNavigateTermsConditions
+                    )
+                } else {
+                    // When the footer is hidden, preserve a safe gap above the
+                    // gesture/navigation area without drawing a separate bar.
+                    Spacer(Modifier.navigationBarsPadding())
+                }
+                }
             }
-        }
-        if (isLoginMode && !hasLoginFeedback) {
-            AuthContactFooter(
-                context = context,
-                onNavigatePrivacyPolicy = onNavigatePrivacyPolicy,
-                onNavigateTermsConditions = onNavigateTermsConditions,
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .then(if (compactHeight) Modifier else Modifier.offset(y = (-12).dp))
-            )
         }
     }
 }

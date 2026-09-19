@@ -25,6 +25,7 @@ test("notice centre exposes only explicit categories, recipient roles and action
   assert.deepEqual([...SUPPORT_ITEM_STATUSES].sort(), ["in_progress", "open", "resolved"]);
   assert.deepEqual([...TUTORIAL_STATUSES].sort(), ["archived", "published"]);
   assert.ok(NOTICE_ACTIONS.has("mark_notice_state"));
+  assert.ok(NOTICE_ACTIONS.has("register_notice_push_token"));
   assert.ok(NOTICE_ACTIONS.has("submit_support_item"));
   assert.ok(NOTICE_ACTIONS.has("add_support_item_note"));
   assert.ok(NOTICE_ACTIONS.has("create_tutorial"));
@@ -35,6 +36,7 @@ test("tutorials accept only a single canonical YouTube video", () => {
   assert.equal(extractYouTubeVideoId("dQw4w9WgXcQ"), "dQw4w9WgXcQ");
   assert.equal(extractYouTubeVideoId("https://youtu.be/dQw4w9WgXcQ?t=5"), "dQw4w9WgXcQ");
   assert.equal(extractYouTubeVideoId("https://www.youtube.com/watch?v=dQw4w9WgXcQ"), "dQw4w9WgXcQ");
+  assert.equal(extractYouTubeVideoId("https://youtube.com/shorts/puZaesauAK4?si=TlEoaLu0VTN7ZjYd"), "puZaesauAK4");
   assert.throws(() => extractYouTubeVideoId("https://example.com/player"), /YouTube/i);
   assert.throws(() => extractYouTubeVideoId("https://youtube.com/playlist?list=123"), /single YouTube/i);
 });

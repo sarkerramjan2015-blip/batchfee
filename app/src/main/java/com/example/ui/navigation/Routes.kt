@@ -73,7 +73,7 @@ object BillingRoute
 @Serializable object GenerateSalaryRoute
 @Serializable data class SalaryDetailRoute(val salaryId: String)
 @Serializable object ExpensesRoute
-@Serializable object AddExpenseRoute
+@Serializable data class AddExpenseRoute(val expenseId: String? = null)
 @Serializable object ExpenseReportRoute
 @Serializable object ProfitLossRoute
 @Serializable object ExamsRoute

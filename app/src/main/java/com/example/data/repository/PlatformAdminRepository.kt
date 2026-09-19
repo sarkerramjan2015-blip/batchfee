@@ -215,11 +215,26 @@ data class SmsProfitPeriod(
 data class SmsInstituteUsage(
     val instituteId: String,
     val instituteName: String,
+    val totalSmsPurchased: Int,
     val todaySms: Int,
     val weekSms: Int,
     val monthSms: Int,
     val lifetimeSms: Int,
     val walletBalance: Int
+)
+
+/** Root-only SMS audit row. It is returned only by the trusted platform report. */
+data class PlatformSmsAuditMessage(
+    val messageId: String,
+    val instituteId: String,
+    val instituteName: String,
+    val recipient: String,
+    val purpose: String,
+    val messageBody: String,
+    val status: String,
+    val credits: Int,
+    val createdAtMs: Long,
+    val failureReason: String
 )
 
 data class PlatformSmsTopup(
@@ -261,6 +276,8 @@ data class SmsPlatformAnalytics(
     val dlrUpdated: Int,
     val eventWindowTruncated: Boolean,
     val institutes: List<SmsInstituteUsage>,
+    val recentMessages: List<PlatformSmsAuditMessage>,
+    val recentMessagesTruncated: Boolean,
     val profitToday: SmsProfitPeriod,
     val profitWeek: SmsProfitPeriod,
     val profitMonth: SmsProfitPeriod,
@@ -614,6 +631,9 @@ class PlatformAdminRepository(
             dlrUpdated = (dlr["updated"] as? Number)?.toInt() ?: 0,
             eventWindowTruncated = data["eventWindowTruncated"] as? Boolean ?: false,
             institutes = institutes,
+            recentMessages = (data["recentMessages"] as? List<*>).orEmpty()
+                .mapNotNull { (it as? Map<*, *>)?.toPlatformSmsAuditMessage() },
+            recentMessagesTruncated = data["recentMessagesTruncated"] as? Boolean ?: false,
             profitToday = financials.period("today"),
             profitWeek = financials.period("week"),
             profitMonth = financials.period("month"),
@@ -849,11 +869,29 @@ private fun Map<*, *>.toSmsInstituteUsage(): SmsInstituteUsage {
     return SmsInstituteUsage(
         instituteId = string("instituteId"),
         instituteName = string("instituteName"),
+        totalSmsPurchased = int("totalSmsPurchased"),
         todaySms = int("todaySms"),
         weekSms = int("weekSms"),
         monthSms = int("monthSms"),
         lifetimeSms = int("lifetimeSms"),
         walletBalance = int("walletBalance")
+    )
+}
+
+private fun Map<*, *>.toPlatformSmsAuditMessage(): PlatformSmsAuditMessage {
+    fun string(key: String): String = this[key] as? String ?: ""
+    fun int(key: String): Int = (this[key] as? Number)?.toInt() ?: 0
+    return PlatformSmsAuditMessage(
+        messageId = string("messageId"),
+        instituteId = string("instituteId"),
+        instituteName = string("instituteName"),
+        recipient = string("recipient"),
+        purpose = string("purpose"),
+        messageBody = string("messageBody"),
+        status = string("status"),
+        credits = int("credits"),
+        createdAtMs = (this["createdAtMs"] as? Number)?.toLong() ?: 0L,
+        failureReason = string("failureReason")
     )
 }
 

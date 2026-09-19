@@ -1,23 +1,40 @@
 package com.batchfee.edu
 
 import android.app.Activity
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.fragment.app.FragmentActivity
+import androidx.core.content.ContextCompat
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -29,6 +46,7 @@ import com.batchfee.edu.domain.PasswordHasher
 import com.batchfee.edu.domain.SessionManager
 import com.batchfee.edu.domain.StudentSessionManager
 import com.batchfee.edu.domain.ThemePreferences
+import com.batchfee.edu.notifications.NoticePushRegistration
 import com.batchfee.edu.data.firestore.InstituteRealtimeSyncManager
 import com.batchfee.edu.data.firebase.FirebaseFailureReporter
 import com.batchfee.edu.ui.auth.AuthScreen
@@ -165,6 +183,88 @@ class MainActivity : FragmentActivity() {
 }
 
 @Composable
+private fun NotificationPermissionEducationDialog(
+    onEnable: () -> Unit,
+    onNotNow: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onNotNow,
+        containerColor = Color(0xFF101B31),
+        shape = RoundedCornerShape(28.dp),
+        icon = {
+            Box(
+                modifier = Modifier
+                    .size(60.dp)
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(Brush.linearGradient(listOf(Color(0xFF2563EB), Color(0xFF22D3EE)))),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.NotificationsActive,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(30.dp),
+                )
+            }
+        },
+        title = {
+            Text(
+                text = "Stay updated with BatchFee",
+                color = Color(0xFFF8FAFC),
+                fontWeight = FontWeight.ExtraBold,
+                fontSize = 21.sp,
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = "Enable alerts so important institute notices are never missed.",
+                    color = Color(0xFFCBD5E1),
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp,
+                )
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Color(0xFF172641))
+                        .padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text("You will receive", color = Color(0xFF67E8F9), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    Text("• Super Admin notices\n• Account and subscription updates\n• Important service alerts", color = Color(0xFFCBD5E1), fontSize = 12.sp, lineHeight = 18.sp)
+                }
+                Text(
+                    text = "You can change this anytime from phone settings.",
+                    color = Color(0xFF94A3B8),
+                    fontSize = 11.sp,
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onEnable,
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+                shape = RoundedCornerShape(14.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFF22C7E8),
+                    contentColor = Color(0xFF06131F),
+                ),
+            ) {
+                Icon(Icons.Filled.NotificationsActive, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Enable notifications", fontWeight = FontWeight.ExtraBold)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onNotNow, modifier = Modifier.fillMaxWidth()) {
+                Text("Not now", color = Color(0xFF94A3B8), fontWeight = FontWeight.SemiBold)
+            }
+        },
+    )
+}
+
+@Composable
 private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
     LaunchedEffect(appDb) { com.batchfee.edu.data.firestore.BackgroundSyncQueue.start(appDb) }
     val navController = rememberNavController()
@@ -180,7 +280,45 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
     val studentSessionExpiry by StudentSessionManager.sessionExpiresAtMs.collectAsState()
     val restoredStudentSession by StudentSessionManager.restoredSession.collectAsState()
     val sessionScope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { /* Push registration still runs; Android simply suppresses alerts if declined. */ }
+    val notificationPromptPreferences = remember(context) {
+        context.getSharedPreferences("batchfee_notification_prompt", Context.MODE_PRIVATE)
+    }
+    var showNotificationEducation by rememberSaveable { mutableStateOf(false) }
     var hadStudentSession by rememberSaveable { mutableStateOf(StudentSessionManager.isLoggedIn()) }
+
+    // Each authenticated owner/staff device registers through the trusted
+    // callable. On Android 13+ we explain the benefit in BatchFee's own UI
+    // before opening the system-controlled permission sheet.
+    LaunchedEffect(isLoggedIn, sessionRole, sessionInstituteId) {
+        val tenantRole = sessionRole in setOf("InstituteOwner", "InstituteAdmin", "Staff")
+        if (isLoggedIn != null && tenantRole && !sessionInstituteId.isNullOrBlank()) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED &&
+                !notificationPromptPreferences.getBoolean("has_explained", false)
+            ) {
+                showNotificationEducation = true
+            }
+            NoticePushRegistration.registerCurrentTenantDevice()
+        }
+    }
+
+    if (showNotificationEducation) {
+        NotificationPermissionEducationDialog(
+            onEnable = {
+                notificationPromptPreferences.edit().putBoolean("has_explained", true).apply()
+                showNotificationEducation = false
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            },
+            onNotNow = {
+                notificationPromptPreferences.edit().putBoolean("has_explained", true).apply()
+                showNotificationEducation = false
+            }
+        )
+    }
 
     // Navigation is derived directly from session state. The previous implementation used a
     // temporary "was logged in" flag, which could miss a fast expiry event during bootstrap.
@@ -427,7 +565,7 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
                             "StaffAttendanceRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.StaffAttendanceRoute)
                             "SalaryRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.SalaryRoute)
                             "ExpensesRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.ExpensesRoute)
-                            "AddExpenseRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.AddExpenseRoute)
+                            "AddExpenseRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.AddExpenseRoute())
                             "ProfitLossRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.ProfitLossRoute)
                             "ExamsRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.ExamsRoute)
                             "CreateExamRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.CreateExamRoute)
@@ -769,17 +907,29 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
             com.batchfee.edu.ui.expenses.ExpenseListScreen(
                 db = appDb,
                 onBack = { navController.popBackStack() },
-                onAddExpense = { navController.navigate(AddExpenseRoute) },
+                onAddExpense = { navController.navigate(AddExpenseRoute()) },
+                onEditExpense = { expenseId -> navController.navigate(AddExpenseRoute(expenseId = expenseId)) },
                 onNavigateToPricing = { navController.navigate(PricingRoute) }
             )
         }
         
-        composable<AddExpenseRoute> {
-            com.batchfee.edu.ui.expenses.AddEditExpenseScreen(db = appDb, onBack = { navController.popBackStack() })
+        composable<AddExpenseRoute> { backStackEntry ->
+            val route = backStackEntry.toRoute<AddExpenseRoute>()
+            com.batchfee.edu.ui.expenses.AddEditExpenseScreen(
+                db = appDb,
+                expenseId = route.expenseId,
+                onBack = { navController.popBackStack() }
+            )
         }
         
         composable<ProfitLossRoute> {
-            com.batchfee.edu.ui.reports.ProfitLossScreen(db = appDb, onBack = { navController.popBackStack() }, onNavigateToPricing = { navController.navigate(PricingRoute) })
+            com.batchfee.edu.ui.reports.ProfitLossScreen(
+                db = appDb,
+                onBack = { navController.popBackStack() },
+                onNavigateToPricing = { navController.navigate(PricingRoute) },
+                onCollectFee = { navController.navigate(UnifiedCollectRoute) },
+                onAddExpense = { navController.navigate(AddExpenseRoute()) },
+            )
         }
         
         composable<ExamsRoute> {

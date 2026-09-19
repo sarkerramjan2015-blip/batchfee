@@ -431,17 +431,34 @@ fun SettingsScreen(
                                 onClick = { showRechargeDialog = true },
                                 modifier = Modifier.weight(1f),
                                 border = BorderStroke(1.dp, Cyan),
-                                shape = RoundedCornerShape(10.dp)
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
                             ) {
-                                Text("Top Up SMS", color = Cyan, fontWeight = FontWeight.Bold)
+                                Text(
+                                    "Top Up SMS",
+                                    color = Cyan,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
                             }
                             OutlinedButton(
                                 onClick = { showSmsReport = true },
                                 modifier = Modifier.weight(1f),
                                 border = BorderStroke(1.dp, ElectricBlue),
-                                shape = RoundedCornerShape(10.dp)
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
                             ) {
-                                Text("Bulk SMS History", color = ElectricBlue, fontWeight = FontWeight.Bold)
+                                Text(
+                                    "Bulk SMS History",
+                                    color = ElectricBlue,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Ellipsis
+                                )
                             }
                         }
                         rechargeRequests.take(3).forEach { request ->
@@ -956,6 +973,9 @@ private fun SmsReportDialog(onDismiss: () -> Unit) {
     var search by remember { mutableStateOf("") }
     var selectedStatus by remember { mutableStateOf("all") }
     LaunchedEffect(reloadKey) {
+        // The gateway is queried inside a trusted callable; the client only
+        // reads its result. A temporary DLR refresh error must not hide history.
+        runCatching { SmsWalletSyncHelper.refreshMySmsDelivery() }
         runCatching { SmsWalletSyncHelper.smsReport() }
             .onSuccess { report = it; loadError = null }
             .onFailure {
@@ -1006,7 +1026,7 @@ private fun SmsReportDialog(onDismiss: () -> Unit) {
                         singleLine = true,
                         leadingIcon = { Icon(Icons.Filled.Search, null, tint = Cyan) },
                         placeholder = { Text("Search number, message or purpose", color = TextMuted) },
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().height(44.dp),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = Cyan,
                             unfocusedBorderColor = BorderSub,
@@ -1015,13 +1035,20 @@ private fun SmsReportDialog(onDismiss: () -> Unit) {
                         )
                     )
                     Spacer(Modifier.height(7.dp))
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         listOf("all", "delivered", "pending", "failed", "sent").forEach { status ->
                             FilterChip(
                                 selected = selectedStatus == status,
                                 onClick = { selectedStatus = status },
-                                label = { Text(if (status == "all") "All" else status.replaceFirstChar { it.uppercase() }, fontSize = 9.sp) },
-                                modifier = Modifier.weight(1f),
+                                label = {
+                                    Text(
+                                        if (status == "all") "All" else status.replaceFirstChar { it.uppercase() },
+                                        fontSize = 8.sp,
+                                        maxLines = 1,
+                                        softWrap = false
+                                    )
+                                },
+                                modifier = Modifier.weight(1f).height(31.dp),
                                 colors = FilterChipDefaults.filterChipColors(
                                     containerColor = CardBg,
                                     selectedContainerColor = Cyan.copy(alpha = 0.18f),
@@ -1076,9 +1103,9 @@ private fun SmsHistoryPeriodGrid(data: SmsMessageReport) {
         "Month" to data.month,
         "Lifetime" to data.lifetime
     )
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         periods.chunked(2).forEach { row ->
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 row.forEach { (label, period) ->
                     SmsHistoryPeriodCard(label, period, Modifier.weight(1f))
                 }
@@ -1090,15 +1117,16 @@ private fun SmsHistoryPeriodGrid(data: SmsMessageReport) {
 @Composable
 private fun SmsHistoryPeriodCard(label: String, period: SmsMessagePeriod, modifier: Modifier = Modifier) {
     Column(
-        modifier.clip(RoundedCornerShape(11.dp)).background(CardBg).padding(9.dp)
+        modifier.clip(RoundedCornerShape(10.dp)).background(CardBg).padding(horizontal = 8.dp, vertical = 6.dp)
     ) {
-        Text(label, color = TextMuted, fontSize = 9.sp)
-        Text("${period.total}", color = Cyan, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-        Text("recipients · ${period.credits} credits", color = TextMuted, fontSize = 8.sp)
+        Text(label, color = TextMuted, fontSize = 8.sp)
+        Text("${period.total}", color = Cyan, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+        Text("recipients · ${period.credits} credits", color = TextMuted, fontSize = 7.sp, maxLines = 1)
         Text(
             "D ${period.delivered} · P ${period.pending} · F ${period.failed}",
             color = TextMuted,
-            fontSize = 8.sp
+            fontSize = 7.sp,
+            maxLines = 1
         )
     }
 }
@@ -1138,11 +1166,13 @@ private fun SmsReportRow(message: SmsMessageStatus) {
         "pending" -> "Pending" to Color(0xFFF59E0B)
         else -> "Sent" to Color(0xFF3B82F6)
     }
+    var showDetail by remember { mutableStateOf(false) }
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
             .background(Color(0xFF0B1B2E))
+            .clickable { showDetail = true }
             .padding(horizontal = 10.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -1177,6 +1207,54 @@ private fun SmsReportRow(message: SmsMessageStatus) {
             }
         }
         Text(statusLabel, color = statusColor, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+    }
+
+    // Tap a row to read the complete message exactly as it was sent.
+    if (showDetail) {
+        AlertDialog(
+            onDismissRequest = { showDetail = false },
+            containerColor = CardBg,
+            shape = RoundedCornerShape(16.dp),
+            title = {
+                Text(
+                    message.purpose.ifBlank { "SMS Message" },
+                    color = TextWhite,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp
+                )
+            },
+            text = {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        "To: ${message.recipient}\n${message.channel.uppercase().replaceFirstChar { it.uppercase() }} · " +
+                            SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault()).format(Date(message.createdAtMs)) +
+                            " · $statusLabel",
+                        color = TextMuted,
+                        fontSize = 11.sp
+                    )
+                    if (message.failureReason.isNotBlank()) {
+                        Text("Reason: ${message.failureReason}", color = AccentRed, fontSize = 11.sp)
+                    } else if (message.providerStatus.isNotBlank()) {
+                        Text("Gateway: ${message.providerStatus}", color = TextMuted, fontSize = 10.sp)
+                    }
+                    HorizontalDivider(color = BorderSub)
+                    Text(
+                        message.messageBody.trim().ifBlank { "(Message body was not stored for this hand-off.)" },
+                        color = TextWhite,
+                        fontSize = 13.sp,
+                        lineHeight = 18.sp
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showDetail = false }) {
+                    Text("Close", color = Cyan, fontWeight = FontWeight.SemiBold)
+                }
+            }
+        )
     }
 }
 

@@ -28,6 +28,8 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -86,6 +88,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.material3.DropdownMenu
@@ -106,6 +109,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.ui.components.SingleSmsDeliveryDialog
 import androidx.compose.foundation.layout.Row
 import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.data.firestore.FinanceSyncHelper
@@ -120,6 +124,7 @@ import com.batchfee.edu.data.repository.FinancialOperationPendingException
 import com.batchfee.edu.data.repository.FinancialOperationRejectedException
 import com.batchfee.edu.data.repository.FinancialSessionExpiredException
 import com.batchfee.edu.data.repository.GroupedMonthlyCollectionAllocation
+import com.batchfee.edu.data.repository.GroupedPaymentCorrectionAllocation
 import com.batchfee.edu.domain.SessionManager
 import com.batchfee.edu.domain.DueCollectionPolicy
 import com.batchfee.edu.domain.FirstMonthProrationInfo
@@ -229,6 +234,7 @@ fun UnifiedCollectScreen(
     val feeRepository = remember { FeeCollectionRepository(db) }
 
     var instituteInfo by remember { mutableStateOf(InstituteInfo("BatchFee", "N/A", "BF")) }
+    var paymentReceiptTemplate by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(Unit) {
         val instId = SessionManager.currentInstituteId.value
         if (instId != null) {
@@ -241,6 +247,9 @@ fun UnifiedCollectScreen(
                     logoUri = entity.profilePhotoUri
                 )
             }
+            paymentReceiptTemplate = com.example.domain.MessageTemplateStore.load(
+                db, instId, com.example.domain.MessageTemplateStore.TYPE_PAYMENT_CONFIRMATION
+            )
         }
     }
 
@@ -283,6 +292,7 @@ fun UnifiedCollectScreen(
     var collectError by remember { mutableStateOf<String?>(null) }
     var editingHistoryItem by remember { mutableStateOf<StudentPaymentHistory?>(null) }
     var deletingHistoryItem by remember { mutableStateOf<StudentPaymentHistory?>(null) }
+    var receiptSmsItem by remember { mutableStateOf<StudentPaymentHistory?>(null) }
     var isPartialPayment by remember { mutableStateOf(false) }
 
     val selectedBatch = studentBatches.firstOrNull { it.id == selectedBatchId }
@@ -827,7 +837,7 @@ fun UnifiedCollectScreen(
                                 history = paymentHistory,
                                 onPrint = { item -> scope.launch { printHistoryReceipt(context, instituteInfo, student, item) } },
                                 onWhatsApp = { item -> scope.launch { sendHistoryReceiptWhatsApp(context, instituteInfo, student, student.phone, item) } },
-                                onMessage = { item -> scope.launch { sendHistoryReceiptMessage(context, instituteInfo, student, item) } },
+                                onMessage = { item -> receiptSmsItem = item },
                                 onShare = { item -> shareHistoryReceipt(context, buildHistoryReceiptText(instituteInfo, student, item)) },
                                 onEdit = { item -> editingHistoryItem = item }
                             )
@@ -1497,6 +1507,39 @@ fun UnifiedCollectScreen(
                     }
                 }
             },
+            onSaveGrouped = { update ->
+                if (student == null) return@PaymentEditDialog
+                if (isSaving) return@PaymentEditDialog
+                isSaving = true
+                scope.launch {
+                    val instId = SessionManager.currentInstituteId.value
+                    if (instId == null) {
+                        isSaving = false
+                        snackbarHostState.showSnackbar("No active institute session.")
+                        return@launch
+                    }
+                    try {
+                        feeRepository.ownerEditGroupedPayment(
+                            receiptNumber = item.payment.receiptNumber,
+                            instituteId = instId,
+                            allocations = update.allocations,
+                            paymentMethod = update.paymentMethod,
+                            paymentDateMs = update.paymentDateMs,
+                            note = update.note,
+                            reason = update.reason
+                        )
+                        editingHistoryItem = null
+                        loadStudentLedger(student)
+                        snackbarHostState.showSnackbar("Grouped payment updated successfully.")
+                    } catch (e: FinancialOperationPendingException) {
+                        snackbarHostState.showSnackbar("Grouped payment update is pending. Do not submit it again.")
+                    } catch (e: Exception) {
+                        snackbarHostState.showSnackbar(e.message ?: "Could not update this grouped payment.")
+                    } finally {
+                        isSaving = false
+                    }
+                }
+            },
             onDelete = {
                 editingHistoryItem = null
                 deletingHistoryItem = item
@@ -1562,6 +1605,36 @@ fun UnifiedCollectScreen(
                 }
             }
         )
+    }
+
+    receiptSmsItem?.let { item ->
+        val student = selectedStudent
+        if (student != null) {
+            val body = buildHistoryReceiptSms(
+                template = paymentReceiptTemplate,
+                institute = instituteInfo,
+                student = student,
+                item = item
+            )
+            SingleSmsDeliveryDialog(
+                title = "Payment Receipt SMS",
+                recipientName = student.fullName,
+                recipientPhone = student.phone,
+                message = body,
+                purpose = "Payment receipt · ${student.fullName}",
+                onManualSend = { phone, message ->
+                    context.startActivity(
+                        Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:$phone")).apply {
+                            putExtra("sms_body", message)
+                        }
+                    )
+                },
+                onDismiss = { receiptSmsItem = null },
+                onFinished = { status ->
+                    scope.launch { snackbarHostState.showSnackbar(status) }
+                }
+            )
+        }
     }
 }
 
@@ -1754,7 +1827,7 @@ private fun PaymentHistoryCard(
                             item {
                                 HistoryActionButton("Share", Icons.Filled.Share, ElectricBlue) { onShare(item) }
                             }
-                            if (isFinancialOwner && item.payment.status == "completed" && !item.isGroupedReceipt) {
+                            if (isFinancialOwner && item.payment.status == "completed") {
                                 item {
                                     HistoryActionButton("Edit", Icons.Filled.Payments, Cyan) { onEdit(item) }
                                 }
@@ -1798,6 +1871,15 @@ private data class PaymentCorrectionRequest(
     val reason: String
 )
 
+/** Whole-receipt correction used only when one collection paid multiple months. */
+private data class GroupedPaymentCorrectionRequest(
+    val allocations: List<GroupedPaymentCorrectionAllocation>,
+    val paymentMethod: String,
+    val paymentDateMs: Long,
+    val note: String?,
+    val reason: String
+)
+
 private fun monthOptionMatchesFeePeriod(option: UcMonthYear, feePeriod: String): Boolean {
     val periodStart = feePeriod.substringBefore(" - ").trim()
     val calendar = Calendar.getInstance().apply { set(option.year, option.month - 1, 1) }
@@ -1811,6 +1893,7 @@ private fun PaymentEditDialog(
     isSubmitting: Boolean,
     onDismiss: () -> Unit,
     onSave: (PaymentCorrectionRequest) -> Unit,
+    onSaveGrouped: (GroupedPaymentCorrectionRequest) -> Unit,
     onDelete: () -> Unit
 ) {
     val monthOptions = remember { generateMonthOptions() }
@@ -1824,8 +1907,21 @@ private fun PaymentEditDialog(
     var selectedMonthIndex by remember(item.payment.id) { mutableIntStateOf(initialMonthIndex) }
     var note by remember(item.payment.id) { mutableStateOf(item.payment.note.orEmpty()) }
     var reason by remember(item.payment.id) { mutableStateOf("") }
+    val groupedAmounts = remember(item.payment.receiptNumber) {
+        mutableStateMapOf<String, String>().apply {
+            item.groupedLines.forEach { line ->
+                put(line.payment.id, "%.2f".format(Locale.US, line.payment.amount))
+            }
+        }
+    }
     val validAmount = amount.toDoubleOrNull()?.takeIf { it > 0.0 }
     val validDate = parseEditDate(paymentDate)
+    val groupedAllocations = item.groupedLines.mapNotNull { line ->
+        groupedAmounts[line.payment.id]?.toDoubleOrNull()
+            ?.takeIf { it > 0.0 }
+            ?.let { GroupedPaymentCorrectionAllocation(line.payment.id, it) }
+    }
+    val groupAmountsAreValid = groupedAllocations.size == item.groupedLines.size
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1834,38 +1930,94 @@ private fun PaymentEditDialog(
         shape = RoundedCornerShape(20.dp),
         title = {
             Column {
-                Text("Edit Payment", color = TextWhite, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    if (item.isGroupedReceipt) "Edit Grouped Payment" else "Edit Payment",
+                    color = TextWhite,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold
+                )
                 Text(item.payment.receiptNumber, color = TextMuted, fontSize = 11.sp)
             }
         },
         text = {
             Column(
-                modifier = Modifier.heightIn(max = 430.dp),
+                modifier = Modifier.heightIn(max = 430.dp).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Text(
-                    "Correct this saved payment. The receipt number stays the same.",
+                    if (item.isGroupedReceipt) {
+                        "Correct all ${item.groupedLines.size} monthly lines together. Months stay fixed so this receipt remains accurate."
+                    } else {
+                        "Correct this saved payment. The receipt number stays the same."
+                    },
                     color = TextMuted,
                     fontSize = 12.sp
                 )
-                SmartTextField(
-                    value = amount,
-                    onValueChange = { amount = moneyInput(it) },
-                    placeholder = "Collected amount",
-                    keyboardType = KeyboardType.Decimal,
-                    leadingIcon = Icons.Filled.Payments
-                )
-                MonthPickerField(
-                    label = "Payment month",
-                    selectedIdx = selectedMonthIndex,
-                    monthOptions = monthOptions,
-                    onSelected = { selectedMonthIndex = it }
-                )
-                Text(
-                    "Changing the month moves only this payment; other receipts stay unchanged.",
-                    color = TextMuted,
-                    fontSize = 11.sp
-                )
+                if (item.isGroupedReceipt) {
+                    item.groupedLines.forEach { line ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(CardBgAlt)
+                                .border(1.dp, BorderSub, RoundedCornerShape(10.dp))
+                                .padding(horizontal = 10.dp, vertical = 7.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(line.feePeriod, color = TextWhite, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                Text("Previously ${formatSmartAmount(line.payment.amount)}", color = TextMuted, fontSize = 10.sp)
+                            }
+                            OutlinedTextField(
+                                value = groupedAmounts[line.payment.id].orEmpty(),
+                                onValueChange = { groupedAmounts[line.payment.id] = moneyInput(it) },
+                                modifier = Modifier.width(106.dp),
+                                singleLine = true,
+                                label = { Text("Amount", fontSize = 10.sp) },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                textStyle = TextStyle(color = TextWhite, fontSize = 12.sp),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedTextColor = TextWhite,
+                                    unfocusedTextColor = TextWhite,
+                                    focusedBorderColor = ElectricBlue,
+                                    unfocusedBorderColor = BorderSub,
+                                    focusedContainerColor = CardBgAlt,
+                                    unfocusedContainerColor = CardBgAlt,
+                                    cursorColor = ElectricBlue
+                                )
+                            )
+                        }
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Corrected total", color = TextMuted, fontSize = 12.sp)
+                        Text(
+                            formatSmartAmount(groupedAllocations.sumOf { it.amount }),
+                            color = if (groupAmountsAreValid) AccentGreen else AccentRed,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                } else {
+                    SmartTextField(
+                        value = amount,
+                        onValueChange = { amount = moneyInput(it) },
+                        placeholder = "Collected amount",
+                        keyboardType = KeyboardType.Decimal,
+                        leadingIcon = Icons.Filled.Payments
+                    )
+                    MonthPickerField(
+                        label = "Payment month",
+                        selectedIdx = selectedMonthIndex,
+                        monthOptions = monthOptions,
+                        onSelected = { selectedMonthIndex = it }
+                    )
+                    Text(
+                        "Changing the month moves only this payment; other receipts stay unchanged.",
+                        color = TextMuted,
+                        fontSize = 11.sp
+                    )
+                }
                 SmartTextField(
                     value = paymentDate,
                     onValueChange = { paymentDate = it },
@@ -1896,25 +2048,39 @@ private fun PaymentEditDialog(
             ) {
                 Button(
                     onClick = {
-                        val selectedPeriod = if (selectedMonthIndex == initialMonthIndex) {
-                            item.feePeriod
-                        } else {
-                            monthOptions.getOrNull(selectedMonthIndex)?.label ?: item.feePeriod
-                        }
-                        val correctedAmount = validAmount ?: return@Button
                         val correctedDate = validDate ?: return@Button
-                        onSave(
-                            PaymentCorrectionRequest(
-                                amount = correctedAmount,
-                                paymentMethod = paymentMethod,
-                                paymentDateMs = correctedDate,
-                                feePeriod = selectedPeriod,
-                                note = note.trim().takeIf { it.isNotEmpty() },
-                                reason = reason.trim()
+                        if (item.isGroupedReceipt) {
+                            if (!groupAmountsAreValid) return@Button
+                            onSaveGrouped(
+                                GroupedPaymentCorrectionRequest(
+                                    allocations = groupedAllocations,
+                                    paymentMethod = paymentMethod,
+                                    paymentDateMs = correctedDate,
+                                    note = note.trim().takeIf { it.isNotEmpty() },
+                                    reason = reason.trim()
+                                )
                             )
-                        )
+                        } else {
+                            val selectedPeriod = if (selectedMonthIndex == initialMonthIndex) {
+                                item.feePeriod
+                            } else {
+                                monthOptions.getOrNull(selectedMonthIndex)?.label ?: item.feePeriod
+                            }
+                            val correctedAmount = validAmount ?: return@Button
+                            onSave(
+                                PaymentCorrectionRequest(
+                                    amount = correctedAmount,
+                                    paymentMethod = paymentMethod,
+                                    paymentDateMs = correctedDate,
+                                    feePeriod = selectedPeriod,
+                                    note = note.trim().takeIf { it.isNotEmpty() },
+                                    reason = reason.trim()
+                                )
+                            )
+                        }
                     },
-                    enabled = !isSubmitting && validAmount != null && validDate != null && reason.trim().length >= 3,
+                    enabled = !isSubmitting && validDate != null && reason.trim().length >= 3 &&
+                        if (item.isGroupedReceipt) groupAmountsAreValid else validAmount != null,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(44.dp),
@@ -1940,13 +2106,15 @@ private fun PaymentEditDialog(
                     ) {
                         Text("Close", color = TextMuted, fontSize = 12.sp)
                     }
-                    TextButton(
-                        onClick = onDelete,
-                        enabled = !isSubmitting,
-                        modifier = Modifier.weight(1f),
-                        contentPadding = PaddingValues(horizontal = 2.dp, vertical = 4.dp)
-                    ) {
-                        Text("Delete", color = AccentRed, fontSize = 12.sp)
+                    if (!item.isGroupedReceipt) {
+                        TextButton(
+                            onClick = onDelete,
+                            enabled = !isSubmitting,
+                            modifier = Modifier.weight(1f),
+                            contentPadding = PaddingValues(horizontal = 2.dp, vertical = 4.dp)
+                        ) {
+                            Text("Delete", color = AccentRed, fontSize = 12.sp)
+                        }
                     }
                 }
             }
@@ -3088,6 +3256,28 @@ private fun buildHistoryReceiptText(institute: InstituteInfo, student: StudentEn
         appendLine("Thank you, ${institute.name}")
     }
 
+private fun buildHistoryReceiptSms(
+    template: String?,
+    institute: InstituteInfo,
+    student: StudentEntity,
+    item: StudentPaymentHistory,
+): String = com.example.domain.MessageTemplateStore.apply(
+    template ?: com.example.domain.MessageTemplateStore.defaultFor(
+        com.example.domain.MessageTemplateStore.TYPE_PAYMENT_CONFIRMATION
+    ).orEmpty(),
+    mapOf(
+        "guardianName" to "Guardian",
+        "studentName" to student.fullName,
+        "amount" to formatSmartAmount(item.collectedAmount),
+        "dueAmount" to formatSmartAmount(item.remainingDue),
+        "period" to receiptPeriodDetails(item),
+        "receiptNumber" to item.payment.receiptNumber,
+        "paymentMethod" to item.payment.paymentMethod.uppercase(),
+        "instituteName" to institute.name,
+        "instituteContact" to institute.phone.takeUnless { it == "N/A" }.orEmpty(),
+    )
+)
+
 private data class InstituteInfo(val name: String, val phone: String, val logoText: String, val logoUri: String? = null)
 
 private fun shareHistoryReceipt(context: Context, receiptText: String) {
@@ -3101,27 +3291,6 @@ private fun shareHistoryReceipt(context: Context, receiptText: String) {
             "Share Receipt"
         )
     )
-}
-
-private suspend fun sendHistoryReceiptMessage(context: Context, institute: InstituteInfo, student: StudentEntity, item: StudentPaymentHistory) {
-    context.startActivity(
-        Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${student.phone.orEmpty()}")).apply {
-            putExtra("sms_body", buildHistoryReceiptText(institute, student, item))
-        }
-    )
-    // Carrier hand-off is recorded as sent; delivery confirmation belongs to the
-    // phone's own SMS app and cannot be observed by BatchFee.
-    runCatching {
-        com.batchfee.edu.data.firestore.SmsWalletSyncHelper.recordCarrierSmsBatch(
-            listOf(
-                com.batchfee.edu.data.firestore.SmsOutboundRecord(
-                    recipient = student.phone.orEmpty().replace(Regex("[^0-9]"), ""),
-                    messageBody = buildHistoryReceiptText(institute, student, item),
-                    purpose = "Payment receipt · ${student.fullName}"
-                )
-            )
-        )
-    }
 }
 
 private suspend fun sendHistoryReceiptWhatsApp(context: Context, institute: InstituteInfo, student: StudentEntity, phone: String?, item: StudentPaymentHistory) {

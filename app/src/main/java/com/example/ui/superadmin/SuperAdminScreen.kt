@@ -718,17 +718,19 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
     /** Root/Billing SMS recharge queue plus the Root-only accounting summary. */
     fun loadSmsRecharge() {
         viewModelScope.launch {
-            try {
-                _smsRechargeRequests.value = platformAdminRepository.listSmsRechargeRequests()
-                _smsAccounting.value = runCatching { platformAdminRepository.smsAccounting() }.getOrNull()
-                _smsPlatformAnalytics.value = if (_platformRole.value == "root") {
-                    runCatching { platformAdminRepository.smsPlatformAnalytics() }.getOrNull()
-                } else {
-                    null
+            // Each source loads independently: one failing backend query must
+            // never blank the whole SMS section (requests, accounting, analytics).
+            runCatching { platformAdminRepository.listSmsRechargeRequests() }
+                .onSuccess { _smsRechargeRequests.value = it }
+                .onFailure { e ->
+                    _operationMsg.value = "SMS recharge list unavailable: ${e.message}"
+                    FirebaseFailureReporter.recordException(e)
                 }
-            } catch (e: Exception) {
-                _operationMsg.value = "SMS recharge list unavailable: ${e.message}"
-                FirebaseFailureReporter.recordException(e)
+            _smsAccounting.value = runCatching { platformAdminRepository.smsAccounting() }.getOrNull()
+            _smsPlatformAnalytics.value = if (_platformRole.value == "root") {
+                runCatching { platformAdminRepository.smsPlatformAnalytics() }.getOrNull()
+            } else {
+                null
             }
         }
     }
@@ -2904,7 +2906,18 @@ private fun SmsRechargeReviewSection(
     var centralSmsCount by remember { mutableStateOf("") }
     var centralReference by remember { mutableStateOf("") }
     var centralNote by remember { mutableStateOf("") }
+    val smsAuditDateFormat = remember { SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault()) }
     LaunchedEffect(Unit) { onLoaded() }
+    // Keep the root view current while it is open without making every
+    // recomposition hit the provider. Manual Refresh remains available.
+    LaunchedEffect(analytics != null) {
+        if (analytics != null) {
+            while (true) {
+                delay(60_000)
+                onRefresh()
+            }
+        }
+    }
 
     Column {
         Spacer(Modifier.height(12.dp))
@@ -3130,10 +3143,15 @@ private fun SmsRechargeReviewSection(
                         Spacer(Modifier.height(10.dp))
                         HorizontalDivider(color = BorderSub)
                         Spacer(Modifier.height(8.dp))
-                        Text("Top institute usage this month", color = TextWhite, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
-                        report.institutes.take(5).forEach { institute ->
+                        Text("Institute SMS ledger (${report.institutes.size})", color = TextWhite, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                        Text("Bought, sent and remaining credits for every institute", color = TextMuted, fontSize = 9.sp)
+                        report.institutes.forEach { institute ->
                             Spacer(Modifier.height(6.dp))
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Row(
+                                Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
+                                    .background(BgColor.copy(alpha = 0.36f)).padding(8.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
                                 Column(Modifier.weight(1f)) {
                                     Text(
                                         institute.instituteName.ifBlank { institute.instituteId },
@@ -3143,17 +3161,65 @@ private fun SmsRechargeReviewSection(
                                         overflow = TextOverflow.Ellipsis
                                     )
                                     Text(
-                                        "Today ${institute.todaySms} | Week ${institute.weekSms} | Lifetime ${institute.lifetimeSms}",
+                                        "Bought ${institute.totalSmsPurchased} | Sent ${institute.lifetimeSms} | Remaining ${institute.walletBalance}",
                                         color = TextMuted,
                                         fontSize = 9.sp
                                     )
                                 }
                                 Text(
-                                    "${institute.monthSms} SMS\nWallet ${institute.walletBalance}",
+                                    "Today ${institute.todaySms}\nWeek ${institute.weekSms}\nMonth ${institute.monthSms}",
                                     color = AccentCyan,
                                     fontSize = 10.sp,
                                     fontWeight = FontWeight.SemiBold
                                 )
+                            }
+                        }
+                    }
+                    if (report.recentMessages.isNotEmpty()) {
+                        Spacer(Modifier.height(10.dp))
+                        HorizontalDivider(color = BorderSub)
+                        Spacer(Modifier.height(8.dp))
+                        Text("Recent server SMS audit", color = TextWhite, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                        Text(
+                            if (report.recentMessagesTruncated) "Latest ${report.recentMessages.size} messages shown. Refresh keeps delivery statuses current."
+                            else "Every available server message is shown below.",
+                            color = TextMuted,
+                            fontSize = 9.sp
+                        )
+                        report.recentMessages.forEach { message ->
+                            Spacer(Modifier.height(6.dp))
+                            Column(
+                                Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
+                                    .background(BgColor.copy(alpha = 0.36f)).padding(8.dp)
+                            ) {
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text(
+                                        message.instituteName.ifBlank { message.instituteId },
+                                        color = TextWhite,
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 10.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    val statusColor = when (message.status) {
+                                        "delivered" -> AccentGreen
+                                        "failed" -> AccentRed
+                                        "pending" -> AccentAmber
+                                        else -> AccentCyan
+                                    }
+                                    Text(message.status.replaceFirstChar { it.uppercase() }, color = statusColor, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                }
+                                Text(
+                                    "${message.recipient} · ${message.credits} credit${if (message.credits == 1) "" else "s"} · ${smsAuditDateFormat.format(Date(message.createdAtMs))}",
+                                    color = TextMuted,
+                                    fontSize = 9.sp
+                                )
+                                if (message.purpose.isNotBlank()) Text(message.purpose, color = AccentCyan, fontSize = 9.sp)
+                                if (message.messageBody.isNotBlank()) {
+                                    Text(message.messageBody, color = TextMuted, fontSize = 9.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                }
+                                if (message.failureReason.isNotBlank()) Text(message.failureReason, color = AccentRed, fontSize = 9.sp)
                             }
                         }
                     }
