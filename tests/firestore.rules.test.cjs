@@ -1530,3 +1530,36 @@ describe("online payment request boundary", { concurrency: false }, () => {
     }
   });
 });
+
+describe("In-app review prompt marker", { concurrency: false }, () => {
+  const validRating = () => ({ ratedAtMs: Date.now(), stars: 5 });
+
+  test("signed-in user writes and reads only their own marker", async () => {
+    const db = authDb(OWNER_A);
+    await assertSucceeds(setDoc(doc(db, "app_ratings", OWNER_A), validRating()));
+    const own = await assertSucceeds(getDoc(doc(db, "app_ratings", OWNER_A)));
+    assert.equal(own.data().stars, 5);
+
+    await assertFails(setDoc(doc(db, "app_ratings", OWNER_B), validRating()));
+    await assertFails(getDoc(doc(authDb(OWNER_A), "app_ratings", OWNER_B)));
+    await assertFails(getDoc(doc(db, "app_ratings", "other-user")));
+  });
+
+  test("marker schema is validated and deletion stays server-only", async () => {
+    const db = authDb(OWNER_A);
+    await assertFails(setDoc(doc(db, "app_ratings", OWNER_A), { ratedAtMs: Date.now(), stars: 0 }));
+    await assertFails(setDoc(doc(db, "app_ratings", OWNER_A), { ratedAtMs: Date.now(), stars: 6 }));
+    await assertFails(setDoc(doc(db, "app_ratings", OWNER_A), { ratedAtMs: Date.now(), stars: 4, extra: true }));
+    await assertFails(setDoc(doc(db, "app_ratings", OWNER_A), { ratedAtMs: "now", stars: 4 }));
+
+    await assertSucceeds(setDoc(doc(db, "app_ratings", OWNER_A), validRating()));
+    await assertFails(deleteDoc(doc(db, "app_ratings", OWNER_A)));
+  });
+
+  test("unauthenticated visitors cannot read or write markers", async () => {
+    const anonDb = testEnv.unauthenticatedContext().firestore();
+    await assertFails(setDoc(doc(anonDb, "app_ratings", "anyone"), validRating()));
+    await assertFails(getDoc(doc(anonDb, "app_ratings", OWNER_A)));
+    await assertFails(getDocs(collection(anonDb, "app_ratings")));
+  });
+});

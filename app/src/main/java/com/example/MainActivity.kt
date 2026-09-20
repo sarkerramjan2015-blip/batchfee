@@ -336,7 +336,11 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
         val anyLoggedIn = isLoggedIn != null || (restoredStudentSession && studentSessionId != null)
         if (anyLoggedIn) {
             delay(2500)
-            if (ReviewPromptPreferences.shouldShow(context, System.currentTimeMillis())) {
+            // The server flag survives reinstall, so a user who already rated
+            // never sees the prompt again even on a fresh install.
+            if (ReviewPromptPreferences.shouldShow(context, System.currentTimeMillis()) &&
+                !ReviewPromptPreferences.isRatedOnServer(context)
+            ) {
                 showReviewDialog = true
             }
         }
@@ -348,6 +352,7 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
                 ReviewPromptPreferences.markRated(context)
                 ReviewPromptPreferences.markShown(context, System.currentTimeMillis())
                 showReviewDialog = false
+                sessionScope.launch { ReviewPromptPreferences.recordServerRating(stars) }
                 if (stars >= 4) {
                     sessionScope.launch {
                         (context as? Activity)?.let { ReviewFlowLauncher.openPlayReview(it) }

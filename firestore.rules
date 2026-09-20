@@ -1137,6 +1137,21 @@ service cloud.firestore {
           .hasOnly(['name', 'email']);
     }
 
+    // Per-user review-prompt marker. Each signed-in user writes only their own
+    // flag, so the rating prompt stays dismissed across reinstalls. No client
+    // may read another user's marker or erase any record.
+    match /app_ratings/{userId} {
+      allow read: if isSignedIn() && request.auth.uid == userId;
+      allow create, update: if isSignedIn()
+        && request.auth.uid == userId
+        && request.resource.data.keys().hasOnly(['ratedAtMs', 'stars'])
+        && request.resource.data.ratedAtMs is int
+        && request.resource.data.stars is int
+        && request.resource.data.stars >= 1
+        && request.resource.data.stars <= 5;
+      allow delete: if false;
+    }
+
     match /subscriptionRequests/{requestId} {
       allow read: if isPlatformDataReader()
         || (isSignedIn() && exists(institutePath(resource.data.instituteId))
