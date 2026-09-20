@@ -1935,7 +1935,11 @@ class SuperAdminViewModelFactory(private val db: AppDatabase) : ViewModelProvide
 // ── Screen ────────────────────────────────────────────────────
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
+fun SuperAdminScreen(
+    db: AppDatabase,
+    onLogout: () -> Unit,
+    onOpenQuestionCuration: () -> Unit = {},
+) {
     val viewModel: SuperAdminViewModel = viewModel(factory = SuperAdminViewModelFactory(db))
     val platformRole by viewModel.platformRole.collectAsState()
     val institutes by viewModel.institutes.collectAsState()
@@ -2158,6 +2162,27 @@ fun SuperAdminScreen(db: AppDatabase, onLogout: () -> Unit) {
                             Text("Review every platform-level administration action, newest first.", color = TextMuted, fontSize = 11.sp)
                         }
                         TextButton(onClick = { showAuditHistory = true }) { Text("Open", color = AccentViolet) }
+                    }
+                }
+            }
+
+            item {
+                Card(
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(containerColor = CardBg),
+                    border = BorderStroke(1.dp, AccentGreen.copy(alpha = 0.28f))
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Filled.Quiz, null, tint = AccentGreen)
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Question Bank Moderation", color = TextWhite, fontWeight = FontWeight.Bold)
+                            Text("Review anonymous AI question contributions before publishing them globally.", color = TextMuted, fontSize = 11.sp)
+                        }
+                        TextButton(onClick = onOpenQuestionCuration) { Text("Review", color = AccentGreen) }
                     }
                 }
             }

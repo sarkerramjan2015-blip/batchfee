@@ -61,6 +61,12 @@ const {
   createQuestionFinalizationHandler,
 } = require("./questionFinalization");
 const {
+  createQuestionCurationHandler,
+} = require("./questionCuration");
+const {
+  createQuestionBankLibraryHandler,
+} = require("./questionBankLibrary");
+const {
   createPlatformSmsAnalyticsHandler,
   createPlatformSmsTopupHandler,
   createServerSmsHandler,
@@ -176,6 +182,14 @@ const questionGenerationHandler = createQuestionGenerationHandler({
   },
 });
 const questionFinalizationHandler = createQuestionFinalizationHandler({
+  db,
+  authorize: assertCanManageTenantResource,
+});
+const questionCurationHandler = createQuestionCurationHandler({
+  db,
+  authorizeRoot: assertPlatformRoot,
+});
+const questionBankLibraryHandler = createQuestionBankLibraryHandler({
   db,
   authorize: assertCanManageTenantResource,
 });
@@ -2649,6 +2663,16 @@ exports.generateExamQuestions = onCall(
 exports.finalizeExamQuestions = onCall(
   { ...callableOptions, timeoutSeconds: 60, memory: "512MiB" },
   guarded(questionFinalizationHandler, "question_finalization"),
+);
+// Global question-bank moderation remains a root-only, server-mediated action.
+// The callable allow-lists anonymous academic content and never exposes a tenant.
+exports.commitQuestionCurationOperation = onCall(
+  { ...callableOptions, timeoutSeconds: 60, memory: "512MiB" },
+  guarded(questionCurationHandler, "question_curation"),
+);
+exports.commitQuestionBankLibraryOperation = onCall(
+  { ...callableOptions, timeoutSeconds: 60, memory: "512MiB" },
+  guarded(questionBankLibraryHandler, "question_bank_library"),
 );
 // Multi-tenant SMS wallet reads and the owner-only send-method setting. Wallet
 // counters are server-authoritative and can never be forged by a client.

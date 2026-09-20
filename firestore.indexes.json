@@ -23,6 +23,14 @@
         { "fieldPath": "subscriptionStatus", "order": "ASCENDING" },
         { "fieldPath": "currentPeriodEndMs", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "global_question_bank",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "curatedAtMs", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": [

@@ -20,6 +20,9 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.DocumentScanner
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.PictureAsPdf
+import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.PrivacyTip
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -32,6 +35,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import com.batchfee.edu.data.repository.QuestionBankFoundation
 import com.batchfee.edu.data.repository.QuestionBankFoundationRepository
 import com.batchfee.edu.data.repository.QuestionGenerationPreview
@@ -42,12 +46,16 @@ import com.batchfee.edu.data.repository.QuestionFinalizationResult
 import com.batchfee.edu.data.repository.QuestionReviewPolicy
 import com.batchfee.edu.data.repository.ReviewableQuestion
 import com.batchfee.edu.data.repository.toReviewable
+import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.domain.SessionManager
 import com.google.mlkit.vision.documentscanner.GmsDocumentScannerOptions
 import com.google.mlkit.vision.documentscanner.GmsDocumentScanning
 import com.google.mlkit.vision.documentscanner.GmsDocumentScanningResult
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.util.UUID
+import java.io.File
 
 private val BankBg = Color(0xFF07111F)
 private val BankCard = Color(0xFF0F172A)
@@ -58,7 +66,10 @@ private val BankCyan = Color(0xFF22D3EE)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun QuestionBankFoundationScreen(onBack: () -> Unit) {
+fun QuestionBankFoundationScreen(
+    db: AppDatabase,
+    onBack: () -> Unit,
+) {
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
     val instituteId by SessionManager.currentInstituteId.collectAsState()
@@ -76,6 +87,7 @@ fun QuestionBankFoundationScreen(onBack: () -> Unit) {
     var preview by remember { mutableStateOf<QuestionGenerationPreview?>(null) }
     var reviewQuestions by remember { mutableStateOf<List<ReviewableQuestion>>(emptyList()) }
     var finalizationResult by remember { mutableStateOf<QuestionFinalizationResult?>(null) }
+    var showPaperComposer by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var reloadKey by remember { mutableIntStateOf(0) }
 
@@ -355,8 +367,23 @@ fun QuestionBankFoundationScreen(onBack: () -> Unit) {
     finalizationResult?.let { result ->
         FinalizationSuccessDialog(
             result = result,
+            onCreatePaper = { showPaperComposer = true },
             onCreateAnother = { resetGeneration() },
             onBackToExams = { resetGeneration(); onBack() },
+        )
+    }
+    if (showPaperComposer) {
+        QuestionPaperComposerDialog(
+            db = db,
+            instituteId = instituteId,
+            examName = examName,
+            className = className,
+            subject = subject,
+            chapter = chapter,
+            totalMarks = totalMarks.toIntOrNull() ?: 0,
+            durationMinutes = durationMinutes.toIntOrNull() ?: 0,
+            questions = reviewQuestions.filter { it.selected },
+            onDismiss = { showPaperComposer = false },
         )
     }
 }
@@ -815,6 +842,7 @@ private fun ReviewCostBar(
 @Composable
 private fun FinalizationSuccessDialog(
     result: QuestionFinalizationResult,
+    onCreatePaper: () -> Unit,
     onCreateAnother: () -> Unit,
     onBackToExams: () -> Unit,
 ) {
@@ -835,10 +863,13 @@ private fun FinalizationSuccessDialog(
         },
         dismissButton = { TextButton(onClick = onCreateAnother) { Text("Create another") } },
         confirmButton = {
-            Button(
-                onClick = onBackToExams,
-                colors = ButtonDefaults.buttonColors(containerColor = BankCyan, contentColor = BankBg),
-            ) { Text("Back to exams") }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onBackToExams) { Text("Back to exams") }
+                Button(
+                    onClick = onCreatePaper,
+                    colors = ButtonDefaults.buttonColors(containerColor = BankCyan, contentColor = BankBg),
+                ) { Text("Create PDF") }
+            }
         },
     )
 }
@@ -930,6 +961,231 @@ private fun BankSection(content: @Composable ColumnScope.() -> Unit) {
             verticalArrangement = Arrangement.spacedBy(12.dp),
             content = content,
         )
+    }
+}
+
+@Composable
+internal fun QuestionPaperComposerDialog(
+    db: AppDatabase,
+    instituteId: String?,
+    examName: String,
+    className: String,
+    subject: String,
+    chapter: String,
+    totalMarks: Int,
+    durationMinutes: Int,
+    questions: List<ReviewableQuestion>,
+    onDismiss: () -> Unit,
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var institute by remember { mutableStateOf<com.batchfee.edu.data.models.InstituteEntity?>(null) }
+    var loadingInstitute by remember { mutableStateOf(true) }
+    var working by remember { mutableStateOf(false) }
+    var generatedFile by remember { mutableStateOf<File?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var notice by remember { mutableStateOf<String?>(null) }
+    var paperSize by rememberSaveable { mutableStateOf(QuestionPaperSize.A4.name) }
+    var margin by rememberSaveable { mutableStateOf(QuestionPaperMargin.STANDARD.name) }
+    var fontSize by rememberSaveable { mutableStateOf(QuestionPaperFontSize.STANDARD.name) }
+    var includeAnswerKey by rememberSaveable { mutableStateOf(false) }
+
+    LaunchedEffect(db, instituteId) {
+        loadingInstitute = true
+        institute = instituteId?.let { id -> withContext(Dispatchers.IO) { db.instituteDao().getInstitute(id) } }
+        loadingInstitute = false
+    }
+
+    fun currentSetup() = QuestionPaperSetup(
+        examName = examName.trim(),
+        className = className.trim(),
+        subject = subject.trim(),
+        chapter = chapter.trim(),
+        totalMarks = totalMarks,
+        durationMinutes = durationMinutes,
+        paperSize = QuestionPaperSize.valueOf(paperSize),
+        margin = QuestionPaperMargin.valueOf(margin),
+        fontSize = QuestionPaperFontSize.valueOf(fontSize),
+        includeAnswerKey = includeAnswerKey,
+    )
+
+    fun generatePreview() {
+        val owner = institute
+        if (owner == null) {
+            error = "Your institute profile could not be loaded. Try again after it finishes syncing."
+            return
+        }
+        working = true
+        error = null
+        notice = null
+        scope.launch {
+            runCatching { generateQuestionPaperPdf(context, owner, currentSetup(), questions) }
+                .onSuccess {
+                    generatedFile?.takeIf { old -> old != it && old.exists() }?.delete()
+                    generatedFile = it
+                    notice = "PDF preview is ready. Review the layout, then download or print it."
+                }
+                .onFailure { error = it.message ?: "Could not create the question paper PDF." }
+            working = false
+        }
+    }
+
+    Dialog(onDismissRequest = { if (!working) onDismiss() }) {
+        Surface(
+            modifier = Modifier.fillMaxWidth().fillMaxHeight(0.92f),
+            shape = RoundedCornerShape(24.dp),
+            color = BankBg,
+        ) {
+            Column(
+                modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.PictureAsPdf, null, tint = BankCyan, modifier = Modifier.size(30.dp))
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("Page setup & preview", color = BankText, fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                        Text("Institute-branded question paper", color = BankMuted, fontSize = 12.sp)
+                    }
+                    TextButton(onClick = onDismiss, enabled = !working) { Text("Close") }
+                }
+
+                BankSection {
+                    Text(examName.ifBlank { "Question Paper" }, color = BankText, fontWeight = FontWeight.Bold)
+                    Text(
+                        "$className  •  $subject  •  ${questions.size} selected question${if (questions.size == 1) "" else "s"}",
+                        color = BankMuted,
+                        fontSize = 12.sp,
+                    )
+                    Text(
+                        "The PDF contains your institute's name, logo and a subtle institute-name watermark. BatchFee branding is never added.",
+                        color = BankCyan,
+                        fontSize = 12.sp,
+                    )
+                }
+
+                Text("Paper size", color = BankText, fontWeight = FontWeight.SemiBold)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    QuestionPaperSize.entries.forEach { option ->
+                        FilterChip(
+                            selected = paperSize == option.name,
+                            onClick = { paperSize = option.name; generatedFile = null },
+                            label = { Text(option.label) },
+                            colors = FilterChipDefaults.filterChipColors(selectedContainerColor = BankCyan.copy(alpha = .18f), selectedLabelColor = BankCyan, labelColor = BankMuted),
+                        )
+                    }
+                }
+                Text("Margins", color = BankText, fontWeight = FontWeight.SemiBold)
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    QuestionPaperMargin.entries.forEach { option ->
+                        FilterChip(
+                            selected = margin == option.name,
+                            onClick = { margin = option.name; generatedFile = null },
+                            label = { Text(option.label) },
+                            colors = FilterChipDefaults.filterChipColors(selectedContainerColor = BankCyan.copy(alpha = .18f), selectedLabelColor = BankCyan, labelColor = BankMuted),
+                        )
+                    }
+                }
+                Text("Text size", color = BankText, fontWeight = FontWeight.SemiBold)
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    QuestionPaperFontSize.entries.forEach { option ->
+                        FilterChip(
+                            selected = fontSize == option.name,
+                            onClick = { fontSize = option.name; generatedFile = null },
+                            label = { Text(option.label) },
+                            colors = FilterChipDefaults.filterChipColors(selectedContainerColor = BankCyan.copy(alpha = .18f), selectedLabelColor = BankCyan, labelColor = BankMuted),
+                        )
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Include answer key", color = BankText, fontWeight = FontWeight.SemiBold)
+                        Text("Adds a separate teacher-only answer-key page.", color = BankMuted, fontSize = 12.sp)
+                    }
+                    Switch(
+                        checked = includeAnswerKey,
+                        onCheckedChange = { includeAnswerKey = it; generatedFile = null },
+                    )
+                }
+
+                BankSection {
+                    Text("Visual preview", color = BankText, fontWeight = FontWeight.Bold)
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        color = Color(0xFFF8FAFC),
+                    ) {
+                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                            Text(institute?.name ?: "Institute", color = Color(0xFF0F172A), fontWeight = FontWeight.Bold)
+                            Text(examName.ifBlank { "Question Paper" }, color = Color(0xFF0369A1), fontWeight = FontWeight.SemiBold)
+                            Text("$className  |  $subject  |  Marks: $totalMarks  |  Time: $durationMinutes min", color = Color(0xFF475569), fontSize = 10.sp)
+                            questions.take(2).forEachIndexed { index, question ->
+                                Text("${index + 1}. ${question.questionText}", color = Color(0xFF0F172A), fontSize = 11.sp, maxLines = 3)
+                                question.options.take(4).forEachIndexed { optionIndex, option ->
+                                    Text("   ${('A'.code + optionIndex).toChar()}. $option", color = Color(0xFF475569), fontSize = 10.sp, maxLines = 1)
+                                }
+                            }
+                            if (questions.size > 2) Text("+ ${questions.size - 2} more question(s)", color = Color(0xFF0369A1), fontSize = 10.sp)
+                            Text(institute?.name ?: "Institute", color = Color(0xFFCBD5E1), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                    Text("Preview shows the final hierarchy. The generated PDF handles page breaks automatically.", color = BankMuted, fontSize = 11.sp)
+                }
+
+                if (loadingInstitute) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(Modifier.size(18.dp), color = BankCyan, strokeWidth = 2.dp)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Loading institute branding…", color = BankMuted, fontSize = 12.sp)
+                    }
+                }
+                error?.let { Text(it, color = Color(0xFFFCA5A5), fontSize = 12.sp) }
+                notice?.let { Text(it, color = Color(0xFF86EFAC), fontSize = 12.sp) }
+
+                Button(
+                    onClick = ::generatePreview,
+                    enabled = !working && !loadingInstitute && institute != null && questions.isNotEmpty(),
+                    modifier = Modifier.fillMaxWidth().height(50.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = BankCyan, contentColor = BankBg),
+                ) {
+                    if (working) {
+                        CircularProgressIndicator(Modifier.size(18.dp), color = BankBg, strokeWidth = 2.dp)
+                        Spacer(Modifier.width(8.dp))
+                    }
+                    Text(if (working) "Creating PDF…" else if (generatedFile == null) "Generate PDF preview" else "Regenerate PDF", fontWeight = FontWeight.Bold)
+                }
+                generatedFile?.let { file ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        OutlinedButton(
+                            modifier = Modifier.weight(1f),
+                            onClick = {
+                                runCatching {
+                                    downloadQuestionPaperPdf(context, file, examName.ifBlank { "question_paper" })
+                                }.onSuccess { notice = "PDF saved to Downloads/Question Papers." }
+                                    .onFailure { error = it.message ?: "Could not download PDF." }
+                            },
+                        ) {
+                            Icon(Icons.Filled.Download, null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Download")
+                        }
+                        Button(
+                            modifier = Modifier.weight(1f),
+                            onClick = {
+                                if (!printQuestionPaperPdf(context, file, examName.ifBlank { "Question Paper" })) {
+                                    error = "Printing is not available on this device."
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB)),
+                        ) {
+                            Icon(Icons.Filled.Print, null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Direct print")
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

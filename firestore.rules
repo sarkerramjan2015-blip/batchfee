@@ -482,6 +482,7 @@ service cloud.firestore {
         && collection != 'question_contribution_consent_events'
         && collection != 'question_bank_wallet'
         && collection != 'question_bank_wallet_ledger'
+        && collection != 'question_bank_usage'
         && collection != 'payment_settings'
         && collection != 'payment_requests'
         && collection != 'payment_request_audit'
@@ -516,13 +517,24 @@ service cloud.firestore {
     match /institutes/{instituteId}/question_bank_wallet_ledger/{document=**} {
       allow read, write: if false;
     }
+    match /institutes/{instituteId}/question_bank_usage/{document=**} {
+      allow read, write: if false;
+    }
 
     // Only a future curation callable may publish reviewed contributions.
     // Never let a teacher or owner insert directly into the global asset.
     match /global_question_bank/{document=**} {
       allow read, write: if false;
     }
+
+    // Server-only deterministic duplicate registry for the approved bank.
+    match /global_question_dedup/{document=**} {
+      allow read, write: if false;
+    }
     match /global_pending_review/{document=**} {
+      allow read, write: if false;
+    }
+    match /question_curation_operations/{document=**} {
       allow read, write: if false;
     }
 

@@ -60,6 +60,7 @@ import com.batchfee.edu.ui.legal.TermsConditionsScreen
 import com.batchfee.edu.ui.navigation.*
 import com.batchfee.edu.ui.pricing.PricingScreen
 import com.batchfee.edu.ui.superadmin.SuperAdminScreen
+import com.batchfee.edu.ui.superadmin.QuestionCurationScreen
 import com.batchfee.edu.ui.subscription.SubscriptionExpiredScreen
 import com.batchfee.edu.ui.theme.MyApplicationTheme
 import com.batchfee.edu.ui.update.ForceUpdateScreen
@@ -959,13 +960,22 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
                 onNavigateToPricing = { navController.navigate(PricingRoute) },
                 onOpenFinalExams = { navController.navigate(FinalExamsRoute) },
                 onOpenQuestionBank = { navController.navigate(QuestionBankFoundationRoute) },
+                onOpenCuratedQuestionBank = { navController.navigate(CuratedQuestionBankRoute) },
                 onCreateFinalExam = { navController.navigate(CreateFinalExamRoute) }
             )
         }
 
         composable<QuestionBankFoundationRoute> {
             com.batchfee.edu.ui.exams.QuestionBankFoundationScreen(
+                db = appDb,
                 onBack = { navController.popBackStack() }
+            )
+        }
+
+        composable<CuratedQuestionBankRoute> {
+            com.batchfee.edu.ui.exams.CuratedQuestionBankScreen(
+                db = appDb,
+                onBack = { navController.popBackStack() },
             )
         }
         
@@ -1128,6 +1138,7 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
         composable<SuperAdminRoute> {
             SuperAdminScreen(
                 db = appDb,
+                onOpenQuestionCuration = { navController.navigate(QuestionCurationRoute) },
                 onLogout = {
                     SessionManager.logout()
                     navController.navigate(AuthRoute) {
@@ -1135,6 +1146,10 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
                     }
                 }
             )
+        }
+
+        composable<QuestionCurationRoute> {
+            QuestionCurationScreen(onBack = { navController.popBackStack() })
         }
 
         composable<SubscriptionExpiredRoute> {
