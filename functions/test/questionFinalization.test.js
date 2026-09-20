@@ -36,7 +36,7 @@ function memoryDb() {
   };
 }
 
-function seedPreview(db, actorUid = "teacher-a") {
+function seedPreview(db, actorUid = "teacher-a", billingMode = "lifetime_free") {
   db.records.set("institutes/institute-a/question_contribution_consents/teacher-a", {
     aiTncAccepted: true,
     policyVersion: CONTRIBUTION_POLICY_VERSION,
@@ -55,6 +55,7 @@ function seedPreview(db, actorUid = "teacher-a") {
       language: "bn",
     },
     result: { questions: [{ id: "generated_01" }, { id: "generated_02" }] },
+    billing: { mode: billingMode, attemptNumber: billingMode === "lifetime_free" ? 1 : 6 },
   });
 }
 
@@ -97,8 +98,11 @@ test("finalization saves reviewed private questions with an idempotent operation
   assert.deepEqual(first, {
     operationId: "finalize_0001",
     questionCount: 2,
-    costPoisha: 50,
-    billingStatus: "pricing_not_configured_no_debit",
+    costPoisha: 0,
+    quotedCostPoisha: 50,
+    chargedCostPoisha: 0,
+    remainingBalancePoisha: 0,
+    billingStatus: "lifetime_free",
   });
   const privateQuestion = db.records.get(
     "institutes/institute-a/question_bank/finalized_finalize_0001_generated_01",
@@ -107,12 +111,61 @@ test("finalization saves reviewed private questions with an idempotent operation
   assert.equal(privateQuestion.createdBy, "teacher-a");
   assert.equal(privateQuestion.subject, "Science");
   assert.equal(privateQuestion.pricing.quotedCostPoisha, 25);
+  assert.equal(privateQuestion.pricing.chargedCostPoisha, 0);
   assert.equal(
     db.records.get("institutes/institute-a/question_generation_jobs/generation_0001").finalizationOperationId,
     "finalize_0001",
   );
   assert.deepEqual(await handler(request([mcq(), mcq("generated_02")])), first);
   assert.equal(proposedCostPoisha("creative", 2), 150);
+});
+
+test("legacy previews without billing metadata remain free", async () => {
+  const db = memoryDb();
+  seedPreview(db);
+  delete db.records.get("institutes/institute-a/question_generation_jobs/generation_0001").billing;
+  const handler = createQuestionFinalizationHandler({ db, authorize: async () => {}, now: () => 48_000 });
+
+  const result = await handler(request([mcq()]));
+
+  assert.equal(result.billingStatus, "lifetime_free");
+  assert.equal(result.chargedCostPoisha, 0);
+  assert.equal(db.records.has("institutes/institute-a/question_bank_wallet_ledger/debit_finalize_0001"), false);
+});
+
+test("paid finalization debits selected questions once and records an immutable ledger", async () => {
+  const db = memoryDb();
+  seedPreview(db, "teacher-a", "wallet");
+  db.records.set("institutes/institute-a/question_bank_wallet/default", {
+    balancePoisha: 200,
+    totalCreditedPoisha: 200,
+    totalDebitedPoisha: 0,
+  });
+  const handler = createQuestionFinalizationHandler({ db, authorize: async () => {}, now: () => 55_000 });
+  const first = await handler(request([mcq(), mcq("generated_02")]));
+  assert.equal(first.billingStatus, "wallet_debited");
+  assert.equal(first.chargedCostPoisha, 50);
+  assert.equal(first.remainingBalancePoisha, 150);
+  assert.equal(db.records.get("institutes/institute-a/question_bank_wallet/default").balancePoisha, 150);
+  const ledger = db.records.get("institutes/institute-a/question_bank_wallet_ledger/debit_finalize_0001");
+  assert.equal(ledger.amountPoisha, 50);
+  assert.equal(ledger.balanceAfterPoisha, 150);
+  assert.deepEqual(await handler(request([mcq(), mcq("generated_02")])), first);
+  assert.equal(db.records.get("institutes/institute-a/question_bank_wallet/default").balancePoisha, 150);
+});
+
+test("insufficient wallet rejects atomically without saving questions or charging", async () => {
+  const db = memoryDb();
+  seedPreview(db, "teacher-a", "wallet");
+  db.records.set("institutes/institute-a/question_bank_wallet/default", {
+    balancePoisha: 24,
+    totalCreditedPoisha: 24,
+    totalDebitedPoisha: 0,
+  });
+  const handler = createQuestionFinalizationHandler({ db, authorize: async () => {} });
+  await assert.rejects(handler(request([mcq()])), { code: "resource-exhausted" });
+  assert.equal(db.records.get("institutes/institute-a/question_bank_wallet/default").balancePoisha, 24);
+  assert.equal(db.records.has("institutes/institute-a/question_bank/finalized_finalize_0001_generated_01"), false);
 });
 
 test("finalization rejects injected source IDs, over-total marks, and duplicate operations", async () => {
@@ -163,6 +216,9 @@ test("manual authoring saves without an AI preview or AI charge", async () => {
     operationId: "manual_finalize_0001",
     questionCount: 1,
     costPoisha: 0,
+    quotedCostPoisha: 0,
+    chargedCostPoisha: 0,
+    remainingBalancePoisha: 0,
     billingStatus: "manual_no_ai_charge",
   });
   const saved = db.records.get(

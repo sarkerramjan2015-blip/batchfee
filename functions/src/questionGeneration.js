@@ -9,6 +9,13 @@ const {
   SETTINGS_DOCUMENT,
   settingsDto,
 } = require("./questionBankAdmin");
+const {
+  FREE_LIFETIME_AI_ATTEMPTS,
+  actorUsageId,
+  billingModeForAttempt,
+  normalizedUsage,
+  questionCostPoisha,
+} = require("./questionBilling");
 
 const DEFAULT_MODEL = "gemini-3.8-flash";
 const MAX_SOURCE_PAGES = 2;
@@ -278,11 +285,13 @@ function createQuestionGenerationHandler({
       .doc(`${currentDay}_institute`);
     const platformQuotaRef = db.collection("question_generation_platform_daily_usage").doc(currentDay);
     const controlsRef = db.collection(SETTINGS_COLLECTION).doc(SETTINGS_DOCUMENT);
+    const lifetimeUsageRef = instituteRef.collection("question_bank_usage").doc(actorUsageId(uid));
 
     const replay = await db.runTransaction(async (tx) => {
-      const [jobSnap, consentSnap, actorQuotaSnap, instituteQuotaSnap, platformQuotaSnap, controlsSnap] = await Promise.all([
+      const [jobSnap, consentSnap, actorQuotaSnap, instituteQuotaSnap, platformQuotaSnap,
+        controlsSnap, lifetimeUsageSnap] = await Promise.all([
         tx.get(jobRef), tx.get(consentRef), tx.get(actorQuotaRef), tx.get(instituteQuotaRef),
-        tx.get(platformQuotaRef), tx.get(controlsRef),
+        tx.get(platformQuotaRef), tx.get(controlsRef), tx.get(lifetimeUsageRef),
       ]);
       if (jobSnap.exists) {
         if (jobSnap.get("actorUid") !== uid || jobSnap.get("requestHash") !== input.requestHash) {
@@ -322,10 +331,15 @@ function createQuestionGenerationHandler({
           platformCount >= enforcedControls.platformDailyPreviewLimit) {
         throw new HttpsError(
           "resource-exhausted",
-          "Phase 2 preview limit reached for today. Try again tomorrow.",
+          "Daily AI safety limit reached. Try again tomorrow.",
         );
       }
       const timestamp = now();
+      const lifetimeUsage = normalizedUsage(lifetimeUsageSnap.exists ? lifetimeUsageSnap.data() : null);
+      const attemptNumber = lifetimeUsage.aiGenerationAttemptCount + 1;
+      const billingMode = billingModeForAttempt(attemptNumber);
+      const maximumCostPoisha = billingMode === "wallet" ?
+        questionCostPoisha(input.questionType, input.questionCount) : 0;
       tx.create(jobRef, {
         schemaVersion: QUESTION_SCHEMA_VERSION,
         instituteId: input.instituteId,
@@ -350,7 +364,14 @@ function createQuestionGenerationHandler({
         },
         sourcePageCount: input.sourcePages.length,
         controlSnapshot: enforcedControls,
-        billingStatus: "phase2_preview_no_wallet_charge",
+        billing: {
+          mode: billingMode,
+          attemptNumber,
+          freeLifetimeAttemptLimit: FREE_LIFETIME_AI_ATTEMPTS,
+          maximumCostPoisha,
+          currency: "BDT",
+        },
+        billingStatus: billingMode === "lifetime_free" ? "lifetime_free_pending" : "wallet_debit_on_finalize",
         status: "processing",
         createdAtMs: timestamp,
         updatedAtMs: timestamp,
@@ -365,6 +386,13 @@ function createQuestionGenerationHandler({
       });
       tx.set(platformQuotaRef, {
         day: currentDay, scope: "platform", attemptCount: platformCount + 1,
+        updatedAtMs: timestamp,
+      });
+      tx.set(lifetimeUsageRef, {
+        actorHash: actorUsageId(uid),
+        aiGenerationAttemptCount: attemptNumber,
+        freeAttemptsUsed: Math.min(attemptNumber, FREE_LIFETIME_AI_ATTEMPTS),
+        paidAttemptsStarted: Math.max(0, attemptNumber - FREE_LIFETIME_AI_ATTEMPTS),
         updatedAtMs: timestamp,
       });
       return null;
@@ -396,13 +424,24 @@ function createQuestionGenerationHandler({
       });
       const questions = parseGeneratedQuestions(response.text || "", input);
       const usage = response.usageMetadata || {};
+      const jobSnapshot = await jobRef.get();
+      const jobBilling = jobSnapshot.exists && jobSnapshot.data().billing ? jobSnapshot.data().billing : {};
       const result = {
         schemaVersion: QUESTION_SCHEMA_VERSION,
         operationId: input.operationId,
         model,
         questions,
         sourcePageCount: input.sourcePages.length,
-        billing: { walletDebited: false, mode: "phase2_preview" },
+        billing: {
+          walletDebited: false,
+          mode: jobBilling.mode || "wallet",
+          attemptNumber: Number(jobBilling.attemptNumber) || 0,
+          freeAttemptsRemaining: Math.max(
+            0,
+            FREE_LIFETIME_AI_ATTEMPTS - (Number(jobBilling.attemptNumber) || FREE_LIFETIME_AI_ATTEMPTS),
+          ),
+          maximumCostPoisha: Number(jobBilling.maximumCostPoisha) || 0,
+        },
         usage: {
           promptTokens: Number(usage.promptTokenCount) || 0,
           outputTokens: Number(usage.candidatesTokenCount) || 0,

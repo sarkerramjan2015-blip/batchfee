@@ -620,7 +620,7 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
                             "PaymentSettingsRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.PaymentSettingsRoute)
                             "AttendanceRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.AttendanceRoute)
                             "AttendanceReportRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.AttendanceReportRoute)
-                            "ReportsRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.ReportsRoute)
+                            "ReportsRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.ReportsRoute())
                             "ReportsRoute?period=today" -> navController.navigate(com.batchfee.edu.ui.navigation.ReportsRoute(period = "today"))
                             "ReportsRoute?period=month" -> navController.navigate(com.batchfee.edu.ui.navigation.ReportsRoute(period = "month"))
                             "ReportsRoute?period=lifetime" -> navController.navigate(com.batchfee.edu.ui.navigation.ReportsRoute(period = "lifetime"))

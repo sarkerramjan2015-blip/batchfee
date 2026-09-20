@@ -41,7 +41,7 @@ function request(uid, action, extra = {}) {
   return { auth: uid ? { uid } : null, data: { instituteId: "institute-a", action, ...extra } };
 }
 
-test("AI terms start unaccepted and billing remains disabled", async () => {
+test("AI terms start unaccepted with an empty server-owned wallet and five free attempts", async () => {
   const db = memoryDb();
   const authorization = [];
   const handler = createQuestionBankFoundationHandler({
@@ -52,8 +52,11 @@ test("AI terms start unaccepted and billing remains disabled", async () => {
   assert.equal(result.aiTerms.accepted, false);
   assert.equal(result.aiTerms.perQuestionApprovalRequired, false);
   assert.equal(result.aiTerms.automaticAnonymousSync, true);
-  assert.equal(result.aiBilling.enabled, false);
+  assert.equal(result.aiBilling.enabled, true);
   assert.equal(result.aiBilling.walletSeparateFromSms, true);
+  assert.equal(result.aiBilling.balancePoisha, 0);
+  assert.equal(result.aiBilling.freeAttemptsRemaining, 5);
+  assert.equal(result.aiBilling.ratesPoisha.mcq, 25);
   assert.deepEqual(result.taxonomy.questionTypes, ["mcq", "short", "creative"]);
   assert.equal(authorization[0][2], "manage_exams");
   assert.equal(db.records.size, 0);

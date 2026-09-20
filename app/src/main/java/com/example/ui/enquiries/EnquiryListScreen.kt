@@ -30,6 +30,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.data.models.EnquiryEntity
@@ -82,7 +83,7 @@ fun EnquiryListScreen(db: AppDatabase, onBack: () -> Unit, onAddEnquiry: () -> U
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val dateFormat = remember { SimpleDateFormat("dd MMM yyyy", Locale.getDefault()) }
-    val instId = SessionManager.currentInstituteId.value
+    val instId by SessionManager.currentInstituteId.collectAsStateWithLifecycle()
     var instituteName by remember { mutableStateOf("") }
     var instituteContact by remember { mutableStateOf("") }
     var enquiryTemplate by remember { mutableStateOf<String?>(null) }

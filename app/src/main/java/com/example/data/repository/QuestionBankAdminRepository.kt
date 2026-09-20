@@ -25,6 +25,12 @@ data class AdminBankQuestion(
     val marks: Int,
 )
 
+data class QuestionWalletCreditResult(
+    val instituteId: String,
+    val amountPoisha: Int,
+    val balancePoisha: Int,
+)
+
 /** Root-only callable transport for global question-bank operational controls. */
 class QuestionBankAdminRepository(
     private val functions: FirebaseFunctions = FirebaseFunctions.getInstance("asia-south1"),
@@ -74,6 +80,30 @@ class QuestionBankAdminRepository(
                 "questionId" to questionId,
                 "operationId" to UUID.randomUUID().toString(),
             ),
+        )
+    }
+
+    suspend fun creditInstituteWallet(
+        instituteId: String,
+        amountPoisha: Int,
+        reason: String,
+    ): QuestionWalletCreditResult {
+        require(instituteId.isNotBlank()) { "Institute ID is required." }
+        require(amountPoisha > 0) { "Credit amount must be greater than zero." }
+        val body = call(
+            mapOf(
+                "action" to "credit_institute_wallet",
+                "operationId" to UUID.randomUUID().toString(),
+                "instituteId" to instituteId.trim(),
+                "amountPoisha" to amountPoisha,
+                "reason" to reason.trim().ifBlank { "Question wallet top-up" },
+            ),
+        )
+        return QuestionWalletCreditResult(
+            instituteId = body["instituteId"] as? String ?: instituteId.trim(),
+            amountPoisha = (body["amountPoisha"] as? Number)?.toInt() ?: amountPoisha,
+            balancePoisha = (body["balancePoisha"] as? Number)?.toInt()
+                ?: error("Missing wallet balance."),
         )
     }
 

@@ -25,6 +25,10 @@ data class QuestionGenerationPreview(
     val operationId: String,
     val questions: List<GeneratedQuestionPreview>,
     val model: String,
+    val billingMode: String = "manual",
+    val attemptNumber: Int = 0,
+    val freeAttemptsRemaining: Int = 0,
+    val maximumCostPoisha: Int = 0,
 )
 
 data class QuestionGenerationSetup(
@@ -39,7 +43,7 @@ data class QuestionGenerationSetup(
     val language: String = "bn",
 )
 
-/** Phase 2 preview only. No client Storage permission or AI credential is needed. */
+/** Server-authorized AI generation. No client Storage permission or AI credential is needed. */
 class QuestionGenerationRepository(
     private val functions: FirebaseFunctions = FirebaseFunctions.getInstance("asia-south1"),
 ) {
@@ -77,6 +81,7 @@ class QuestionGenerationRepository(
                 "sourcePages" to sourcePages,
             )).await()
         val body = response.data as? Map<*, *> ?: error("Invalid AI generation response.")
+        val billing = body["billing"] as? Map<*, *> ?: emptyMap<String, Any>()
         val questions = (body["questions"] as? List<*>)?.mapIndexed { index, raw ->
             val item = raw as? Map<*, *> ?: error("Invalid question in response.")
             GeneratedQuestionPreview(
@@ -93,6 +98,10 @@ class QuestionGenerationRepository(
             operationId = body["operationId"] as? String ?: operationId,
             questions = questions,
             model = body["model"] as? String ?: "AI",
+            billingMode = billing["mode"] as? String ?: "wallet",
+            attemptNumber = (billing["attemptNumber"] as? Number)?.toInt() ?: 0,
+            freeAttemptsRemaining = (billing["freeAttemptsRemaining"] as? Number)?.toInt() ?: 0,
+            maximumCostPoisha = (billing["maximumCostPoisha"] as? Number)?.toInt() ?: 0,
         )
     }
 

@@ -158,6 +158,9 @@ test("generates inline-image preview and replays without a second model call", a
   const result = await f.handler(request());
   assert.equal(result.questions[0].questionText, "আলোর প্রতিফলন কী?");
   assert.equal(result.billing.walletDebited, false);
+  assert.equal(result.billing.mode, "lifetime_free");
+  assert.equal(result.billing.attemptNumber, 1);
+  assert.equal(result.billing.freeAttemptsRemaining, 4);
   assert.equal(result.usage.totalTokens, 130);
   assert.equal(f.aiInput.model, "gemini-3.8-flash");
   assert.equal(f.aiInput.contents[0].parts[1].inlineData.mimeType, "image/jpeg");
@@ -176,6 +179,27 @@ test("enforces actor daily preview quota without another model call", async () =
   }
   await assert.rejects(f.handler(request({ operationId: "operation-extra" })), { code: "resource-exhausted" });
   assert.equal(f.calls, 5);
+});
+
+test("sixth lifetime AI attempt is marked for selected-question wallet billing", async () => {
+  const f = fixtures();
+  f.db.records.set("platform_question_bank_settings/default", {
+    generationEnabled: true,
+    contributionEnabled: true,
+    actorDailyPreviewLimit: 20,
+    instituteDailyPreviewLimit: 25,
+    platformDailyPreviewLimit: 100,
+    maxQuestionsPerRequest: 30,
+  });
+  const actorHash = require("../src/questionBilling").actorUsageId("teacher-1");
+  f.db.records.set(`institutes/institute-1/question_bank_usage/${actorHash}`, {
+    aiGenerationAttemptCount: 5,
+  });
+  const result = await f.handler(request());
+  assert.equal(result.billing.mode, "wallet");
+  assert.equal(result.billing.attemptNumber, 6);
+  assert.equal(result.billing.freeAttemptsRemaining, 0);
+  assert.equal(result.billing.maximumCostPoisha, 25);
 });
 
 test("provider failure is sanitized and audited without storing source scans", async () => {

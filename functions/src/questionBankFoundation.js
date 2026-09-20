@@ -2,6 +2,14 @@
 
 const { createHash } = require("node:crypto");
 const { HttpsError } = require("firebase-functions/v2/https");
+const {
+  QUESTION_WALLET_DOCUMENT,
+  FREE_LIFETIME_AI_ATTEMPTS,
+  QUESTION_RATE_POISHA,
+  actorUsageId,
+  normalizedWallet,
+  normalizedUsage,
+} = require("./questionBilling");
 
 // Version this text whenever the meaning of an opt-in changes. A previous
 // opt-in never silently authorizes a broader future contribution policy.
@@ -38,7 +46,9 @@ function consentDto(data) {
   };
 }
 
-function foundationDto(consent) {
+function foundationDto(consent, walletData = null, usageData = null) {
+  const wallet = normalizedWallet(walletData);
+  const usage = normalizedUsage(usageData);
   return {
     schemaVersion: QUESTION_SCHEMA_VERSION,
     taxonomy: QUESTION_TAXONOMY,
@@ -49,12 +59,17 @@ function foundationDto(consent) {
       perQuestionApprovalRequired: false,
     },
     aiBilling: {
-      enabled: false,
+      enabled: true,
       currency: "BDT",
       minorUnit: "poisha",
-      pricingStatus: "not_configured",
+      pricingStatus: "active",
       walletSeparateFromSms: true,
       clientBalanceWritesAllowed: false,
+      balancePoisha: wallet.balancePoisha,
+      freeLifetimeAttemptLimit: FREE_LIFETIME_AI_ATTEMPTS,
+      freeAttemptsUsed: usage.freeAttemptsUsed,
+      freeAttemptsRemaining: usage.freeAttemptsRemaining,
+      ratesPoisha: QUESTION_RATE_POISHA,
     },
   };
 }
@@ -79,9 +94,17 @@ function createQuestionBankFoundationHandler({ db, authorize, now = Date.now }) 
     }
     const instituteRef = db.collection("institutes").doc(instituteId);
     const consentRef = instituteRef.collection("question_contribution_consents").doc(uid);
+    const walletRef = instituteRef.collection("question_bank_wallet").doc(QUESTION_WALLET_DOCUMENT);
+    const usageRef = instituteRef.collection("question_bank_usage").doc(actorUsageId(uid));
     if (action === "get_foundation") {
-      const snapshot = await consentRef.get();
-      return foundationDto(snapshot.exists ? snapshot.data() : null);
+      const [snapshot, walletSnapshot, usageSnapshot] = await Promise.all([
+        consentRef.get(), walletRef.get(), usageRef.get(),
+      ]);
+      return foundationDto(
+        snapshot.exists ? snapshot.data() : null,
+        walletSnapshot.exists ? walletSnapshot.data() : null,
+        usageSnapshot.exists ? usageSnapshot.data() : null,
+      );
     }
 
     const operationId = data.operationId;
@@ -118,7 +141,12 @@ function createQuestionBankFoundationHandler({ db, authorize, now = Date.now }) 
       tx.create(eventRef, { ...next, confirmedRights: true });
       return next;
     });
-    return foundationDto(result);
+    const [walletSnapshot, usageSnapshot] = await Promise.all([walletRef.get(), usageRef.get()]);
+    return foundationDto(
+      result,
+      walletSnapshot.exists ? walletSnapshot.data() : null,
+      usageSnapshot.exists ? usageSnapshot.data() : null,
+    );
   };
 }
 

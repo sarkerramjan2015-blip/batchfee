@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.core.content.FileProvider
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.batchfee.edu.data.database.AppDatabase
@@ -360,7 +361,7 @@ fun BirthdayReminderScreen(db: AppDatabase, onBack: () -> Unit, onNavigateToPric
     val upcomingBirthdays by viewModel.upcomingBirthdays.collectAsState()
     val dayTick by viewModel.dayTick.collectAsState()
     val context = LocalContext.current
-    val instId = SessionManager.currentInstituteId.value
+    val instId by SessionManager.currentInstituteId.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
     var instituteSignature by remember { mutableStateOf("") }

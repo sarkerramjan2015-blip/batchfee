@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.listSaver
@@ -89,7 +90,7 @@ fun StudentListScreen(
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
-    val instId = SessionManager.currentInstituteId.value
+    val instId by SessionManager.currentInstituteId.collectAsStateWithLifecycle()
     var instituteSignature by remember { mutableStateOf("") }
 
     LaunchedEffect(instId) {
@@ -141,10 +142,11 @@ fun StudentListScreen(
     }
 
     LaunchedEffect(instId) {
-        if (instId == null) {
+        val instituteId = instId
+        if (instituteId == null) {
             activeBatchEnrollments = emptyList()
         } else {
-            db.batchStudentDao().getActiveEnrollmentsForInstitute(instId).collect { enrollments ->
+            db.batchStudentDao().getActiveEnrollmentsForInstitute(instituteId).collect { enrollments ->
                 activeBatchEnrollments = enrollments
             }
         }

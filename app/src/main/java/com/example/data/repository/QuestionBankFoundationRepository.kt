@@ -11,6 +11,11 @@ data class QuestionBankFoundation(
     val questionTypes: List<String>,
     val automaticAnonymousSync: Boolean,
     val aiBillingEnabled: Boolean,
+    val walletBalancePoisha: Int,
+    val freeLifetimeAttemptLimit: Int,
+    val freeAttemptsUsed: Int,
+    val freeAttemptsRemaining: Int,
+    val ratesPoisha: Map<String, Int>,
 )
 
 /** Phase 0 policy transport. All authorization and preference writes are server-side. */
@@ -46,6 +51,16 @@ class QuestionBankFoundationRepository(
             questionTypes = (taxonomy["questionTypes"] as? List<*>)?.mapNotNull { it as? String }.orEmpty(),
             automaticAnonymousSync = aiTerms["automaticAnonymousSync"] as? Boolean ?: false,
             aiBillingEnabled = billing["enabled"] as? Boolean ?: false,
+            walletBalancePoisha = (billing["balancePoisha"] as? Number)?.toInt() ?: 0,
+            freeLifetimeAttemptLimit = (billing["freeLifetimeAttemptLimit"] as? Number)?.toInt() ?: 5,
+            freeAttemptsUsed = (billing["freeAttemptsUsed"] as? Number)?.toInt() ?: 0,
+            freeAttemptsRemaining = (billing["freeAttemptsRemaining"] as? Number)?.toInt() ?: 0,
+            ratesPoisha = (billing["ratesPoisha"] as? Map<*, *>)
+                ?.mapNotNull { (key, value) ->
+                    val name = key as? String ?: return@mapNotNull null
+                    val amount = (value as? Number)?.toInt() ?: return@mapNotNull null
+                    name to amount
+                }?.toMap().orEmpty(),
         )
     }
 }

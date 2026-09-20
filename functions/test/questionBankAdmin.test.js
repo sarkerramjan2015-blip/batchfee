@@ -9,6 +9,7 @@ function memoryDb() {
   const ref = (path) => ({
     path,
     get: async () => snapshot(path),
+    collection: (name) => ({ doc: (id) => ref(`${path}/${name}/${id}`) }),
   });
   const snapshot = (path) => ({
     exists: records.has(path),
@@ -111,6 +112,29 @@ test("root can retire and restore one curated question while maintaining duplica
   }));
   assert.equal(restored.status, "curated");
   assert.equal(db.records.get(`global_question_dedup/${"f".repeat(64)}`).globalQuestionId, "question_0001");
+});
+
+test("root can credit an institute question wallet once with an audited ledger", async () => {
+  const db = memoryDb();
+  db.records.set("institutes/institute-1", { instituteName: "Test Institute" });
+  const handler = createQuestionBankAdminHandler({
+    db, authorizeRoot: async () => {}, now: () => 900, randomId: () => "wallet-audit",
+  });
+  const input = request("credit_institute_wallet", {
+    operationId: "question_wallet_0001",
+    instituteId: "institute-1",
+    amountPoisha: 1_000,
+    reason: "Manual payment TXN-1",
+  });
+  const first = await handler(input);
+  assert.equal(first.balancePoisha, 1_000);
+  assert.equal(db.records.get("institutes/institute-1/question_bank_wallet/default").balancePoisha, 1_000);
+  assert.equal(
+    db.records.get("institutes/institute-1/question_bank_wallet_ledger/credit_question_wallet_0001").amountPoisha,
+    1_000,
+  );
+  assert.deepEqual(await handler(input), first);
+  assert.equal(db.records.get("institutes/institute-1/question_bank_wallet/default").balancePoisha, 1_000);
 });
 
 test("approved list is academic-only and non-root calls fail closed", async () => {

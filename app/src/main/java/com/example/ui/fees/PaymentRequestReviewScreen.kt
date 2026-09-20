@@ -29,6 +29,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.data.firebase.FirebaseFailureReporter
@@ -89,7 +90,8 @@ fun PaymentRequestReviewScreen(
     onBack: () -> Unit,
     onNavigateReceipt: (String) -> Unit
 ) {
-    val instituteId = SessionManager.currentInstituteId.value.orEmpty()
+    val currentInstituteId by SessionManager.currentInstituteId.collectAsStateWithLifecycle()
+    val instituteId = currentInstituteId.orEmpty()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }

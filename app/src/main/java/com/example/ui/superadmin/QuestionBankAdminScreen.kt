@@ -46,6 +46,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -79,6 +80,10 @@ fun QuestionBankAdminScreen(
     var status by remember { mutableStateOf("curated") }
     var error by remember { mutableStateOf<String?>(null) }
     var notice by remember { mutableStateOf<String?>(null) }
+    var walletInstituteId by remember { mutableStateOf("") }
+    var walletAmountBdt by remember { mutableStateOf("") }
+    var walletReason by remember { mutableStateOf("") }
+    var creditingWallet by remember { mutableStateOf(false) }
 
     fun refresh() {
         loading = true
@@ -118,6 +123,26 @@ fun QuestionBankAdminScreen(
                 }
                 .onFailure { error = it.message ?: "Could not update question status." }
             changingId = null
+        }
+    }
+    fun creditWallet() {
+        val amountPoisha = bdtTextToPoisha(walletAmountBdt)
+        if (walletInstituteId.isBlank() || amountPoisha == null || amountPoisha <= 0) {
+            error = "Enter a valid institute ID and a positive BDT amount."
+            return
+        }
+        creditingWallet = true
+        error = null
+        notice = null
+        scope.launch {
+            runCatching {
+                repository.creditInstituteWallet(walletInstituteId, amountPoisha, walletReason)
+            }.onSuccess { result ->
+                notice = "Question wallet credited by ${formatPoisha(result.amountPoisha)}. New balance: ${formatPoisha(result.balancePoisha)}."
+                walletAmountBdt = ""
+                walletReason = ""
+            }.onFailure { error = it.message ?: "Could not credit the question wallet." }
+            creditingWallet = false
         }
     }
 
@@ -161,6 +186,52 @@ fun QuestionBankAdminScreen(
                             Text("Controls new teacher contributions to the moderation queue.", color = AdminMuted, fontSize = 12.sp)
                         }
                         Switch(checked = settings.contributionEnabled, onCheckedChange = { settings = settings.copy(contributionEnabled = it) })
+                    }
+                }
+            }
+            item {
+                ControlCard {
+                    Text("Institute question wallet", color = AdminText, fontWeight = FontWeight.Bold)
+                    Text(
+                        "Credit a verified institute payment. Wallet changes are server-authoritative and permanently audited.",
+                        color = AdminMuted,
+                        fontSize = 12.sp,
+                    )
+                    OutlinedTextField(
+                        value = walletInstituteId,
+                        onValueChange = { walletInstituteId = it.trim().take(128) },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Institute ID") },
+                        singleLine = true,
+                    )
+                    OutlinedTextField(
+                        value = walletAmountBdt,
+                        onValueChange = { input ->
+                            walletAmountBdt = input.filter { it.isDigit() || it == '.' }.take(12)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Credit amount (BDT)") },
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        singleLine = true,
+                    )
+                    OutlinedTextField(
+                        value = walletReason,
+                        onValueChange = { walletReason = it.take(240) },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Payment reference or note") },
+                        singleLine = true,
+                    )
+                    Button(
+                        onClick = ::creditWallet,
+                        enabled = !creditingWallet,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = AdminGreen, contentColor = AdminBg),
+                    ) {
+                        if (creditingWallet) {
+                            CircularProgressIndicator(Modifier.width(16.dp).height(16.dp), strokeWidth = 2.dp, color = AdminBg)
+                            Spacer(Modifier.width(8.dp))
+                        }
+                        Text(if (creditingWallet) "Crediting..." else "Credit question wallet")
                     }
                 }
             }
@@ -212,6 +283,18 @@ fun QuestionBankAdminScreen(
         }
     }
 }
+
+private fun bdtTextToPoisha(value: String): Int? {
+    val normalized = value.trim()
+    if (!normalized.matches(Regex("\\d{1,7}(\\.\\d{0,2})?"))) return null
+    val parts = normalized.split('.', limit = 2)
+    val whole = parts[0].toLongOrNull() ?: return null
+    val fraction = parts.getOrNull(1).orEmpty().padEnd(2, '0').take(2).toIntOrNull() ?: 0
+    val result = whole * 100L + fraction
+    return result.takeIf { it in 1..100_000_000L }?.toInt()
+}
+
+private fun formatPoisha(value: Int): String = "BDT ${value / 100}.${(value % 100).toString().padStart(2, '0')}"
 
 @Composable
 private fun ControlCard(content: @Composable ColumnScope.() -> Unit) {

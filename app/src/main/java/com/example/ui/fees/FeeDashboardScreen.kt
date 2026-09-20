@@ -28,6 +28,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.domain.SessionManager
@@ -77,7 +78,8 @@ fun FeeDashboardScreen(
     val scope = rememberCoroutineScope()
     var smsDueTarget by remember { mutableStateOf<SmsDueTarget?>(null) }
     var pendingRequests by remember { mutableStateOf(0) }
-    val instituteId = SessionManager.currentInstituteId.value.orEmpty()
+    val currentInstituteId by SessionManager.currentInstituteId.collectAsStateWithLifecycle()
+    val instituteId = currentInstituteId.orEmpty()
 
     DisposableEffect(instituteId) {
         if (instituteId.isBlank()) { onDispose { }; return@DisposableEffect onDispose { } }

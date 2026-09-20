@@ -24,6 +24,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.data.media.FirebaseStorageImageUploadHelper
@@ -45,7 +46,8 @@ private val PsRed = Color(0xFFEF4444)
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PaymentSettingsScreen(db: AppDatabase, onBack: () -> Unit) {
-    val instituteId = SessionManager.currentInstituteId.value.orEmpty()
+    val currentInstituteId by SessionManager.currentInstituteId.collectAsStateWithLifecycle()
+    val instituteId = currentInstituteId.orEmpty()
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }

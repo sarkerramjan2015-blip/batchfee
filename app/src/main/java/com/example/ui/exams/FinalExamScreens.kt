@@ -41,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.core.content.FileProvider
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.batchfee.edu.data.database.AppDatabase
 import com.batchfee.edu.data.models.FinalExamMarksEntity
@@ -896,7 +897,7 @@ fun FinalExamDetailScreen(
     val snackbarHostState = remember { SnackbarHostState() }
 
     val isOwner = SessionManager.isAdmin()
-    val currentUserId = SessionManager.currentUserId.value
+    val currentUserId by SessionManager.currentUserId.collectAsStateWithLifecycle()
 
     var showEditMenu by remember { mutableStateOf(false) }
     var showRenameDialog by remember { mutableStateOf(false) }

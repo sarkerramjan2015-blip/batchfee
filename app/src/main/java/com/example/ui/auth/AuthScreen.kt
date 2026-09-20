@@ -1547,7 +1547,7 @@ fun AuthScreen(
         )
         if (passwordHasBengali) Text("Please use English letters.", color = Color(0xFFF87171), fontSize = 11.sp, modifier = Modifier.padding(start = 12.dp, top = 2.dp))
 
-                    if (!isLoginMode) {
+        if (!isLoginMode) {
                         Text(
                             text = "Use at least 6 characters.",
                             color = AuthMuted,

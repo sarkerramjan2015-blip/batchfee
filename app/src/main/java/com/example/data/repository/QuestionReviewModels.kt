@@ -20,8 +20,8 @@ data class ReviewValidation(
 )
 
 object QuestionReviewPolicy {
-    // These are the proposed Phase-3 rates, represented as integer poisha.
-    // A client quote is informational only; a future billing callable must quote and debit itself.
+    // Client display mirrors the public rate card; the trusted callable always
+    // recalculates and performs the authoritative debit in integer poisha.
     fun unitPricePoisha(questionType: String): Int = when (questionType.lowercase()) {
         "mcq" -> 25
         "short" -> 50

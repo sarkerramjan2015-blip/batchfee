@@ -73,6 +73,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
@@ -143,7 +144,7 @@ fun DueFeeListScreen(db: AppDatabase, onBack: () -> Unit) {
     val viewModel: FeeViewModel = viewModel(factory = FeeViewModelFactory(db))
     val dueDetails by viewModel.dueFeesWithDetails.collectAsState()
     val context = LocalContext.current
-    val instId = SessionManager.currentInstituteId.value
+    val instId by SessionManager.currentInstituteId.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
     var instituteSignature by remember { mutableStateOf("") }

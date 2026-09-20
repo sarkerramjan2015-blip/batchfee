@@ -3,12 +3,14 @@
 const { HttpsError } = require("firebase-functions/v2/https");
 const { CONTRIBUTION_POLICY_VERSION, QUESTION_SCHEMA_VERSION } = require("./questionBankFoundation");
 const { parseMediaReference } = require("./mediaSecurityCore");
+const {
+  QUESTION_WALLET_DOCUMENT,
+  QUESTION_RATE_POISHA,
+  normalizedWallet,
+  questionCostPoisha,
+} = require("./questionBilling");
 
-const PROPOSED_RATE_POISHA = Object.freeze({
-  mcq: 25,
-  short: 50,
-  creative: 75,
-});
+const PROPOSED_RATE_POISHA = QUESTION_RATE_POISHA;
 
 function cleanString(value, maxLength) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
@@ -30,9 +32,7 @@ function requiredString(value, label, maxLength) {
 }
 
 function proposedCostPoisha(questionType, count) {
-  const rate = PROPOSED_RATE_POISHA[questionType];
-  if (!rate) throw new HttpsError("invalid-argument", "Unsupported question type.");
-  return rate * count;
+  return questionCostPoisha(questionType, count);
 }
 
 function normalizeQuestion(raw, questionType, instituteId) {
@@ -130,8 +130,8 @@ function finalizedQuestionId(operationId, sourceQuestionId) {
 /**
  * Saves teacher-reviewed questions to the private bank atomically and lets the
  * existing document trigger anonymously enqueue them for Super Admin review.
- * Pricing is quoted in integer poisha, but intentionally never debited while
- * aiBilling is not configured. Wallet charging stays a separate audited phase.
+ * The first five lifetime AI attempts are free. Later attempts debit the
+ * separate question wallet atomically when reviewed questions are finalized.
  */
 function createQuestionFinalizationHandler({ db, authorize, now = Date.now }) {
   return async function finalizeExamQuestions(request) {
@@ -144,10 +144,12 @@ function createQuestionFinalizationHandler({ db, authorize, now = Date.now }) {
     const generationRef = instituteRef.collection("question_generation_jobs").doc(input.generationOperationId);
     const consentRef = instituteRef.collection("question_contribution_consents").doc(uid);
     const finalizationRef = instituteRef.collection("question_finalization_operations").doc(input.operationId);
+    const walletRef = instituteRef.collection("question_bank_wallet").doc(QUESTION_WALLET_DOCUMENT);
+    const walletLedgerRef = instituteRef.collection("question_bank_wallet_ledger").doc(`debit_${input.operationId}`);
 
     return db.runTransaction(async (tx) => {
-      const [generationSnap, consentSnap, finalizationSnap] = await Promise.all([
-        tx.get(generationRef), tx.get(consentRef), tx.get(finalizationRef),
+      const [generationSnap, consentSnap, finalizationSnap, walletSnap] = await Promise.all([
+        tx.get(generationRef), tx.get(consentRef), tx.get(finalizationRef), tx.get(walletRef),
       ]);
       if (finalizationSnap.exists) {
         const saved = finalizationSnap.data();
@@ -163,6 +165,7 @@ function createQuestionFinalizationHandler({ db, authorize, now = Date.now }) {
         throw new HttpsError("failed-precondition", "Review and accept the current contribution terms first.");
       }
       let setup;
+      let billingMode = input.sourceType === "manual" ? "manual" : "wallet";
       if (input.sourceType === "ai_assisted") {
         if (!generationSnap.exists || generationSnap.get("actorUid") !== uid ||
             generationSnap.get("status") !== "complete") {
@@ -183,6 +186,12 @@ function createQuestionFinalizationHandler({ db, authorize, now = Date.now }) {
         if (input.questions.some((question) => !generatedIds.has(question.sourceQuestionId))) {
           throw new HttpsError("invalid-argument", "A selected question is not part of this preview.");
         }
+        const generationData = generationSnap.data() || {};
+        // Jobs created before wallet billing was activated do not have billing metadata.
+        // Keep those already-generated previews free instead of surprising the teacher
+        // with a retroactive charge. Only an explicit wallet marker may debit funds.
+        billingMode = generationData.billing && generationData.billing.mode === "wallet" ?
+          "wallet" : "lifetime_free";
       } else {
         setup = input.manualSetup;
       }
@@ -192,13 +201,25 @@ function createQuestionFinalizationHandler({ db, authorize, now = Date.now }) {
       }
 
       const timestamp = now();
+      const chargedCostPoisha = billingMode === "wallet" ? input.costPoisha : 0;
+      const wallet = normalizedWallet(walletSnap.exists ? walletSnap.data() : null);
+      if (chargedCostPoisha > wallet.balancePoisha) {
+        throw new HttpsError(
+          "resource-exhausted",
+          `Insufficient question wallet balance. Required BDT ${(chargedCostPoisha / 100).toFixed(2)}, available BDT ${(wallet.balancePoisha / 100).toFixed(2)}.`,
+        );
+      }
+      const remainingBalancePoisha = wallet.balancePoisha - chargedCostPoisha;
+      const billingStatus = input.sourceType === "manual" ? "manual_no_ai_charge" :
+        billingMode === "lifetime_free" ? "lifetime_free" : "wallet_debited";
       const result = {
         operationId: input.operationId,
         questionCount: input.questions.length,
-        costPoisha: input.costPoisha,
-        // No money is removed in the current unconfigured AI billing phase. Manual
-        // authoring is intentionally free because it does not invoke the AI service.
-        billingStatus: input.sourceType === "manual" ? "manual_no_ai_charge" : "pricing_not_configured_no_debit",
+        costPoisha: chargedCostPoisha,
+        quotedCostPoisha: input.costPoisha,
+        chargedCostPoisha,
+        remainingBalancePoisha,
+        billingStatus,
       };
       input.questions.forEach((question) => {
         const questionRef = instituteRef.collection("question_bank")
@@ -229,13 +250,39 @@ function createQuestionFinalizationHandler({ db, authorize, now = Date.now }) {
           pricing: {
             currency: "BDT",
             quotedCostPoisha: input.sourceType === "manual" ? 0 : PROPOSED_RATE_POISHA[input.questionType],
+            chargedCostPoisha: chargedCostPoisha > 0 ? PROPOSED_RATE_POISHA[input.questionType] : 0,
             billingStatus: result.billingStatus,
           },
         });
       });
+      if (chargedCostPoisha > 0) {
+        const nextWallet = {
+          balancePoisha: remainingBalancePoisha,
+          totalCreditedPoisha: wallet.totalCreditedPoisha,
+          totalDebitedPoisha: wallet.totalDebitedPoisha + chargedCostPoisha,
+          updatedAtMs: timestamp,
+        };
+        if (walletSnap.exists) tx.update(walletRef, nextWallet);
+        else tx.create(walletRef, nextWallet);
+        tx.create(walletLedgerRef, {
+          schemaVersion: QUESTION_SCHEMA_VERSION,
+          type: "debit",
+          amountPoisha: chargedCostPoisha,
+          balanceAfterPoisha: remainingBalancePoisha,
+          instituteId: input.instituteId,
+          actorUid: uid,
+          generationOperationId: input.generationOperationId,
+          finalizationOperationId: input.operationId,
+          questionType: input.questionType,
+          questionCount: input.questions.length,
+          createdAtMs: timestamp,
+        });
+      }
       if (input.sourceType === "ai_assisted") {
         tx.update(generationRef, {
           finalizationOperationId: input.operationId,
+          billingStatus,
+          chargedCostPoisha,
           finalizedAtMs: timestamp,
           updatedAtMs: timestamp,
         });
@@ -248,7 +295,10 @@ function createQuestionFinalizationHandler({ db, authorize, now = Date.now }) {
         sourceType: input.sourceType,
         operationId: input.operationId,
         questionCount: input.questions.length,
-        costPoisha: input.costPoisha,
+        costPoisha: chargedCostPoisha,
+        quotedCostPoisha: input.costPoisha,
+        chargedCostPoisha,
+        remainingBalancePoisha,
         billingStatus: result.billingStatus,
         createdAtMs: timestamp,
         result,

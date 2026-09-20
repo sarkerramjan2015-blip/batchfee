@@ -9,6 +9,9 @@ data class QuestionFinalizationResult(
     val questionCount: Int,
     val costPoisha: Int,
     val billingStatus: String,
+    val quotedCostPoisha: Int = costPoisha,
+    val chargedCostPoisha: Int = costPoisha,
+    val remainingBalancePoisha: Int = 0,
 )
 
 /**
@@ -67,6 +70,11 @@ class QuestionFinalizationRepository(
             questionCount = (body["questionCount"] as? Number)?.toInt() ?: 0,
             costPoisha = (body["costPoisha"] as? Number)?.toInt() ?: 0,
             billingStatus = body["billingStatus"] as? String ?: "not_configured",
+            quotedCostPoisha = (body["quotedCostPoisha"] as? Number)?.toInt()
+                ?: (body["costPoisha"] as? Number)?.toInt() ?: 0,
+            chargedCostPoisha = (body["chargedCostPoisha"] as? Number)?.toInt()
+                ?: (body["costPoisha"] as? Number)?.toInt() ?: 0,
+            remainingBalancePoisha = (body["remainingBalancePoisha"] as? Number)?.toInt() ?: 0,
         )
     }
 }

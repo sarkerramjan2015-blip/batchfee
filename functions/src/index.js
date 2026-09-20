@@ -2694,7 +2694,8 @@ exports.questionBankFoundation = onCall(
   callableOptions,
   guarded(questionBankFoundationHandler),
 );
-// Phase 2 is a bounded preview. It never debits a wallet or finalizes a question.
+// AI generation grants five lifetime free attempts per actor. Later reviewed
+// questions are charged from the separate question wallet during finalization.
 // Its Gemini API key is a server-only Secret Manager binding. Validated JPEG
 // bytes are sent inline; no source page is stored or exposed through a URL.
 exports.generateExamQuestions = onCall(
@@ -2710,8 +2711,8 @@ exports.generateExamQuestions = onCall(
 );
 // Phase 3 saves teacher-reviewed questions only after server-side ownership and
 // content validation. The private-bank write triggers anonymous moderation sync.
-// It quotes the proposed per-question price but cannot debit a wallet until the
-// separate, approved question-wallet phase is configured.
+// The callable atomically debits only the selected questions after the five
+// lifetime free attempts, and an idempotent ledger prevents double charging.
 exports.finalizeExamQuestions = onCall(
   { ...callableOptions, timeoutSeconds: 60, memory: "512MiB" },
   guarded(questionFinalizationHandler, "question_finalization"),

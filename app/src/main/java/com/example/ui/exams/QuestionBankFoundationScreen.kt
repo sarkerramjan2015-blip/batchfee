@@ -276,7 +276,8 @@ fun QuestionBankFoundationScreen(
     val selectedValidation = selectedQuestions.map { QuestionReviewPolicy.validate(questionType, it) }
     val firstValidationError = selectedValidation.firstOrNull { !it.isValid }?.message
     val selectedMarks = selectedQuestions.sumOf { it.marks }
-    val proposedCostPoisha = if (reviewingManualEntry) 0 else {
+    val currentBillingMode = preview?.billingMode ?: if (reviewingManualEntry) "manual" else "wallet"
+    val proposedCostPoisha = if (reviewingManualEntry || currentBillingMode == "lifetime_free") 0 else {
         QuestionReviewPolicy.totalPricePoisha(questionType, reviewQuestions)
     }
 
@@ -306,7 +307,8 @@ fun QuestionBankFoundationScreen(
                     selectedMarks = selectedMarks,
                     totalMarks = totalMarks.toIntOrNull() ?: 0,
                     costPoisha = proposedCostPoisha,
-                    billingEnabled = foundation?.aiBillingEnabled == true,
+                    billingMode = currentBillingMode,
+                    walletBalancePoisha = foundation?.walletBalancePoisha ?: 0,
                     manualEntry = reviewingManualEntry,
                     finalizing = finalizing,
                     validationError = firstValidationError,
@@ -345,7 +347,10 @@ fun QuestionBankFoundationScreen(
                                                 )
                                             } else null,
                                         )
-                                    }.onSuccess { finalizationResult = it }
+                                    }.onSuccess {
+                                        finalizationResult = it
+                                        foundation = foundation?.copy(walletBalancePoisha = it.remainingBalancePoisha)
+                                    }
                                         .onFailure { error = it.message ?: "Could not finalize questions. Try again." }
                                     finalizing = false
                                 }
@@ -494,6 +499,7 @@ fun QuestionBankFoundationScreen(
                 canContinue = canContinue,
                 generating = generating,
                 preview = preview,
+                foundation = foundation,
                 onContinue = {
                     val id = instituteId
                     if (sourceMode == "manual" && canContinue) {
@@ -525,6 +531,12 @@ fun QuestionBankFoundationScreen(
                             }.onSuccess { result ->
                                 if (generationOperationId == requestedOperationId) {
                                     preview = result
+                                    foundation = foundation?.copy(
+                                        freeAttemptsUsed = result.attemptNumber.coerceAtMost(
+                                            foundation?.freeLifetimeAttemptLimit ?: 5,
+                                        ),
+                                        freeAttemptsRemaining = result.freeAttemptsRemaining,
+                                    )
                                     reviewQuestions = result.questions.mapIndexed { index, question ->
                                         question.toReviewable(index)
                                     }
@@ -689,6 +701,7 @@ private fun ExamSetupContent(
     canContinue: Boolean,
     generating: Boolean,
     preview: QuestionGenerationPreview?,
+    foundation: QuestionBankFoundation?,
     onContinue: () -> Unit,
     onNewAttempt: () -> Unit,
 ) {
@@ -706,6 +719,33 @@ private fun ExamSetupContent(
                     Text("Step 1 of 5 · Setup and source", color = BankMuted, fontSize = 12.sp)
                 }
             }
+        }
+
+        BankSection {
+            SectionTitle("AI question wallet")
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Column {
+                    Text("Wallet balance", color = BankMuted, fontSize = 12.sp)
+                    Text(
+                        bdtFromPoisha(foundation?.walletBalancePoisha ?: 0),
+                        color = BankCyan,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    Text("Lifetime free attempts", color = BankMuted, fontSize = 12.sp)
+                    Text(
+                        "${foundation?.freeAttemptsRemaining ?: 0} remaining",
+                        color = if ((foundation?.freeAttemptsRemaining ?: 0) > 0) Color(0xFF34D399) else BankText,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+            }
+            Text(
+                "After the first ${foundation?.freeLifetimeAttemptLimit ?: 5} AI attempts, only selected questions are charged: MCQ BDT 0.25, Short BDT 0.50, Creative BDT 0.75. Manual entry is free.",
+                color = BankMuted,
+                fontSize = 12.sp,
+            )
         }
 
         BankSection {
@@ -894,7 +934,11 @@ private fun ExamSetupContent(
                     "${addedManualQuestions.size} question${if (addedManualQuestions.size == 1) "" else "s"} ready. You can add more, remove any item, then review before saving."
                 }
             } else {
-                "Phase 2 preview only: no wallet debit or saved question yet. Review every AI answer before using it. Up to 5 previews per user daily."
+                if ((foundation?.freeAttemptsRemaining ?: 0) > 0) {
+                    "This AI attempt is covered by your lifetime free quota. Review every answer before finalizing."
+                } else {
+                    "Generate, review and select questions. The exact selected-question cost is debited only when you finalize."
+                }
             },
             color = BankMuted,
             fontSize = 12.sp,
@@ -902,7 +946,7 @@ private fun ExamSetupContent(
         preview?.let { result ->
             BankSection {
                 Text("Generated preview · ${result.questions.size} questions", color = BankText, fontWeight = FontWeight.Bold)
-                Text("Read-only in Phase 2. Editing, selection and final saving come in Phase 3.", color = BankMuted, fontSize = 12.sp)
+                Text("Review every question carefully. You can edit, select and finalize below.", color = BankMuted, fontSize = 12.sp)
             }
             result.questions.forEachIndexed { index, question ->
                 BankSection {
@@ -1472,12 +1516,15 @@ private fun ReviewCostBar(
     selectedMarks: Int,
     totalMarks: Int,
     costPoisha: Int,
-    billingEnabled: Boolean,
+    billingMode: String,
+    walletBalancePoisha: Int,
     manualEntry: Boolean,
     finalizing: Boolean,
     validationError: String?,
     onFinalize: () -> Unit,
 ) {
+    val isFree = manualEntry || billingMode == "lifetime_free"
+    val hasEnoughBalance = isFree || walletBalancePoisha >= costPoisha
     Surface(color = BankCard, tonalElevation = 8.dp, shadowElevation = 12.dp) {
         Column(
             Modifier.navigationBarsPadding().padding(horizontal = 20.dp, vertical = 12.dp),
@@ -1486,7 +1533,11 @@ private fun ReviewCostBar(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(
-                        if (manualEntry) "Manual entry - no AI charge" else "Proposed cost: ${bdtFromPoisha(costPoisha)}",
+                        when {
+                            manualEntry -> "Manual entry - no AI charge"
+                            billingMode == "lifetime_free" -> "Lifetime free attempt - no charge"
+                            else -> "Final charge: ${bdtFromPoisha(costPoisha)}"
+                        },
                         color = BankText,
                         fontWeight = FontWeight.Bold,
                     )
@@ -1499,7 +1550,7 @@ private fun ReviewCostBar(
                 Button(
                     onClick = onFinalize,
                     enabled = !finalizing && selectedCount > 0 && validationError == null &&
-                        (totalMarks <= 0 || selectedMarks <= totalMarks),
+                        (totalMarks <= 0 || selectedMarks <= totalMarks) && hasEnoughBalance,
                     colors = ButtonDefaults.buttonColors(containerColor = BankCyan, contentColor = BankBg),
                 ) {
                     if (finalizing) {
@@ -1510,10 +1561,13 @@ private fun ReviewCostBar(
                 }
             }
             Text(
-                if (manualEntry) "Manual questions use the same reviewed and secure question-bank save flow."
-                else if (billingEnabled) "Final server quote and wallet debit will be shown before completing."
-                else "Pricing is an estimate only. This build has no question-wallet debit configured.",
-                color = if (manualEntry || billingEnabled) BankMuted else Color(0xFFFBBF24),
+                when {
+                    manualEntry -> "Manual questions use the same reviewed and secure question-bank save flow."
+                    billingMode == "lifetime_free" -> "This entire AI attempt is free, including every selected question."
+                    hasEnoughBalance -> "Wallet ${bdtFromPoisha(walletBalancePoisha)} · The server debits once when finalization succeeds."
+                    else -> "Insufficient wallet balance. Available ${bdtFromPoisha(walletBalancePoisha)}; required ${bdtFromPoisha(costPoisha)}."
+                },
+                color = if (hasEnoughBalance) BankMuted else Color(0xFFFBBF24),
                 fontSize = 11.sp,
             )
         }
@@ -1534,9 +1588,21 @@ private fun FinalizationSuccessDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("${result.questionCount} reviewed question(s) are now in your private question bank.", color = BankText)
-                Text("Proposed cost: ${bdtFromPoisha(result.costPoisha)}", color = BankCyan, fontWeight = FontWeight.SemiBold)
                 Text(
-                    "No wallet debit was made because question-bank billing is not configured yet. Consented content will be queued anonymously for Super Admin moderation.",
+                    when (result.billingStatus) {
+                        "manual_no_ai_charge" -> "Manual entry · No AI charge"
+                        "lifetime_free" -> "Lifetime free attempt · No charge"
+                        else -> "Wallet charged: ${bdtFromPoisha(result.chargedCostPoisha)}"
+                    },
+                    color = BankCyan,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    if (result.billingStatus == "wallet_debited") {
+                        "Remaining question wallet balance: ${bdtFromPoisha(result.remainingBalancePoisha)}. Consented content is queued anonymously for moderation."
+                    } else {
+                        "No wallet debit was made. Consented content is queued anonymously for Super Admin moderation."
+                    },
                     color = BankMuted,
                     fontSize = 13.sp,
                 )

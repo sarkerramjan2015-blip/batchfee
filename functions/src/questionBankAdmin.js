@@ -4,6 +4,10 @@ const { randomUUID } = require("node:crypto");
 const { HttpsError } = require("firebase-functions/v2/https");
 const { QUESTION_SCHEMA_VERSION } = require("./questionBankFoundation");
 const { publicQuestionDto } = require("./questionCuration");
+const {
+  QUESTION_WALLET_DOCUMENT,
+  normalizedWallet,
+} = require("./questionBilling");
 
 const SETTINGS_COLLECTION = "platform_question_bank_settings";
 const SETTINGS_DOCUMENT = "default";
@@ -40,6 +44,18 @@ function booleanValue(value, fallback, label) {
   if (value == null) return fallback;
   if (typeof value !== "boolean") throw new HttpsError("invalid-argument", `Invalid ${label}.`);
   return value;
+}
+
+function cleanString(value, maxLength) {
+  return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
+}
+
+function creditAmount(value) {
+  const amount = Number(value);
+  if (!Number.isSafeInteger(amount) || amount < 1 || amount > 100_000_000) {
+    throw new HttpsError("invalid-argument", "Wallet credit must be between BDT 0.01 and BDT 1,000,000.00.");
+  }
+  return amount;
 }
 
 function settingsDto(data) {
@@ -90,6 +106,17 @@ function createQuestionBankAdminHandler({ db, authorizeRoot, now = Date.now, ran
 
     if (action === "get_settings") return { settings: await loadQuestionBankSettings(db) };
 
+    if (action === "get_institute_wallet") {
+      const instituteId = requiredId(data.instituteId, "institute");
+      const instituteRef = db.collection("institutes").doc(instituteId);
+      const [instituteSnapshot, walletSnapshot] = await Promise.all([
+        instituteRef.get(),
+        instituteRef.collection("question_bank_wallet").doc(QUESTION_WALLET_DOCUMENT).get(),
+      ]);
+      if (!instituteSnapshot.exists) throw new HttpsError("not-found", "Institute was not found.");
+      return { instituteId, wallet: normalizedWallet(walletSnapshot.exists ? walletSnapshot.data() : null) };
+    }
+
     if (action === "list_questions") {
       const status = typeof data.status === "string" ? data.status : "curated";
       if (!["curated", "retired"].includes(status)) {
@@ -108,11 +135,73 @@ function createQuestionBankAdminHandler({ db, authorizeRoot, now = Date.now, ran
       return { questions, limit };
     }
 
-    if (!["update_settings", "retire_question", "restore_question"].includes(action)) {
+    if (!["update_settings", "credit_institute_wallet", "retire_question", "restore_question"].includes(action)) {
       throw new HttpsError("invalid-argument", "Invalid question bank admin action.");
     }
     const operationId = requiredId(data.operationId, "admin operation");
     const operationRef = db.collection("question_bank_admin_operations").doc(operationId);
+
+    if (action === "credit_institute_wallet") {
+      const instituteId = requiredId(data.instituteId, "institute");
+      const amountPoisha = creditAmount(data.amountPoisha);
+      const reason = cleanString(data.reason, 240) || "Question wallet top-up";
+      const instituteRef = db.collection("institutes").doc(instituteId);
+      const walletRef = instituteRef.collection("question_bank_wallet").doc(QUESTION_WALLET_DOCUMENT);
+      const ledgerRef = instituteRef.collection("question_bank_wallet_ledger").doc(`credit_${operationId}`);
+      return db.runTransaction(async (tx) => {
+        const [previous, instituteSnapshot, walletSnapshot] = await Promise.all([
+          tx.get(operationRef), tx.get(instituteRef), tx.get(walletRef),
+        ]);
+        if (previous.exists) {
+          const saved = previous.data();
+          if (saved.actorUid !== uid || saved.action !== action || saved.instituteId !== instituteId ||
+              saved.amountPoisha !== amountPoisha) {
+            throw new HttpsError("already-exists", "Operation ID belongs to another wallet credit.");
+          }
+          return saved.result;
+        }
+        if (!instituteSnapshot.exists) throw new HttpsError("not-found", "Institute was not found.");
+        const wallet = normalizedWallet(walletSnapshot.exists ? walletSnapshot.data() : null);
+        const timestamp = now();
+        const balancePoisha = wallet.balancePoisha + amountPoisha;
+        if (!Number.isSafeInteger(balancePoisha)) {
+          throw new HttpsError("out-of-range", "Question wallet balance is too large.");
+        }
+        const nextWallet = {
+          balancePoisha,
+          totalCreditedPoisha: wallet.totalCreditedPoisha + amountPoisha,
+          totalDebitedPoisha: wallet.totalDebitedPoisha,
+          updatedAtMs: timestamp,
+        };
+        if (walletSnapshot.exists) tx.update(walletRef, nextWallet);
+        else tx.create(walletRef, nextWallet);
+        tx.create(ledgerRef, {
+          schemaVersion: QUESTION_SCHEMA_VERSION,
+          type: "credit",
+          amountPoisha,
+          balanceAfterPoisha: balancePoisha,
+          instituteId,
+          reason,
+          recordedBy: uid,
+          operationId,
+          createdAtMs: timestamp,
+        });
+        const result = { action, instituteId, amountPoisha, balancePoisha, updatedAtMs: timestamp };
+        tx.create(operationRef, {
+          schemaVersion: QUESTION_SCHEMA_VERSION,
+          operationId,
+          actorUid: uid,
+          action,
+          instituteId,
+          amountPoisha,
+          reason,
+          auditToken: randomId(),
+          createdAtMs: timestamp,
+          result,
+        });
+        return result;
+      });
+    }
 
     if (action === "update_settings") {
       const settings = requestedSettings(data.settings);
