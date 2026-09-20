@@ -65,6 +65,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import com.batchfee.edu.ui.components.BatchFeeBottomNav
 import com.batchfee.edu.ui.components.SquarePhotoCropDialog
+import com.example.ui.components.ShimmerBorderCard
 import com.batchfee.edu.domain.AccessControl
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -3135,32 +3136,37 @@ private fun HomeFullActionTile(
     icon: ImageVector,
     onClick: () -> Unit
 ) {
-    Card(
+    ShimmerBorderCard(
         modifier = Modifier
             .fillMaxWidth()
-            .height(58.dp)
-            .premiumClickable(onClick),
+            .height(58.dp),
         shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = DashboardCardAlt),
-        border = borderStroke()
+        containerColor = DashboardCardAlt,
+        borderStops = listOf(
+            0f to Color.Transparent,
+            0.3f to AccentCyan.copy(alpha = 0.14f),
+            0.37f to AccentCyan,
+            0.44f to AccentCyan.copy(alpha = 0.14f),
+            0.5f to Color.Transparent,
+            0.8f to AccentBlue.copy(alpha = 0.14f),
+            0.87f to AccentBlue,
+            0.94f to AccentBlue.copy(alpha = 0.14f),
+            1f to Color.Transparent
+        ),
+        glowColor = AccentCyan,
+        contentPadding = PaddingValues(horizontal = 14.dp),
+        onClick = onClick
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 14.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(icon, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(23.dp))
-            Spacer(Modifier.width(12.dp))
-            Text(
-                title,
-                color = TextPrimary,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
+        Icon(icon, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(23.dp))
+        Spacer(Modifier.width(12.dp))
+        Text(
+            title,
+            color = TextPrimary,
+            fontSize = 16.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }
 
@@ -3327,63 +3333,63 @@ private fun academicSubjects(level: String, group: String): List<String> = when 
             "Physical Education & Health", "Career Education & Life Skills",
         )
     }
-    "SSC" -> when (group) {
-        "Science" -> listOf(
+    "SSC" -> {
+        val common = listOf(
             "Bangla 1st Paper", "Bangla 2nd Paper", "English 1st Paper", "English 2nd Paper",
-            "Mathematics", "Physics", "Chemistry", "Biology", "Higher Mathematics",
-            "Bangladesh & Global Studies", "Information & Communication Technology",
-            "Religion & Moral Education", "Career Education", "Physical Education, Health & Sports",
+            "General Mathematics", "Religion & Moral Education", "Information & Communication Technology",
         )
-        "Humanities" -> listOf(
-            "Bangla 1st Paper", "Bangla 2nd Paper", "English 1st Paper", "English 2nd Paper",
-            "Mathematics", "History of Bangladesh & World Civilization", "Geography & Environment",
-            "Economics", "Civics & Citizenship", "Science", "Bangladesh & Global Studies",
-            "Information & Communication Technology", "Religion & Moral Education", "Career Education",
-        )
-        "Business Studies" -> listOf(
-            "Bangla 1st Paper", "Bangla 2nd Paper", "English 1st Paper", "English 2nd Paper",
-            "Mathematics", "Accounting", "Finance & Banking", "Business Entrepreneurship",
-            "Science", "Bangladesh & Global Studies", "Information & Communication Technology",
-            "Religion & Moral Education", "Career Education",
-        )
-        else -> listOf(
-            "Bangla 1st Paper", "Bangla 2nd Paper", "English 1st Paper", "English 2nd Paper",
-            "Mathematics", "General Science", "Bangladesh & Global Studies",
-            "Information & Communication Technology", "Religion & Moral Education",
-            "Agriculture Studies", "Home Science", "Career Education", "Physical Education, Health & Sports",
-        )
+        when (group) {
+            "Science" -> common + listOf(
+                "Physics", "Chemistry", "Biology", "Higher Mathematics", "Bangladesh & Global Studies",
+            )
+            "Humanities" -> common + listOf(
+                "History", "Geography", "Civics", "Economics", "Sociology", "Agriculture",
+            )
+            "Business Studies" -> common + listOf(
+                "Accounting", "Finance & Banking", "Business Entrepreneurship", "Agriculture",
+            )
+            else -> common + listOf(
+                "General Science", "Bangladesh & Global Studies", "Agriculture", "Home Science",
+                "Career Education", "Physical Education, Health & Sports",
+            )
+        }
     }
-    else -> when (group) {
-        "Science" -> listOf(
+    else -> {
+        val common = listOf(
             "Bangla 1st Paper", "Bangla 2nd Paper", "English 1st Paper", "English 2nd Paper",
-            "Information & Communication Technology", "Physics 1st Paper", "Physics 2nd Paper",
-            "Chemistry 1st Paper", "Chemistry 2nd Paper", "Biology 1st Paper", "Biology 2nd Paper",
-            "Higher Mathematics 1st Paper", "Higher Mathematics 2nd Paper",
-            "Statistics 1st Paper", "Statistics 2nd Paper",
+            "Information & Communication Technology", "Statistics", "Home Science", "Agriculture",
         )
-        "Humanities" -> listOf(
-            "Bangla 1st Paper", "Bangla 2nd Paper", "English 1st Paper", "English 2nd Paper",
-            "Information & Communication Technology", "History 1st Paper", "History 2nd Paper",
-            "Economics 1st Paper", "Economics 2nd Paper", "Civics & Good Governance 1st Paper",
-            "Civics & Good Governance 2nd Paper", "Geography 1st Paper", "Geography 2nd Paper",
-            "Logic 1st Paper", "Logic 2nd Paper", "Social Work 1st Paper", "Social Work 2nd Paper",
-            "Sociology 1st Paper", "Sociology 2nd Paper", "Islamic History & Culture 1st Paper",
-            "Islamic History & Culture 2nd Paper", "Psychology 1st Paper", "Psychology 2nd Paper",
-        )
-        "Business Studies" -> listOf(
-            "Bangla 1st Paper", "Bangla 2nd Paper", "English 1st Paper", "English 2nd Paper",
-            "Information & Communication Technology", "Accounting 1st Paper", "Accounting 2nd Paper",
-            "Finance, Banking & Insurance 1st Paper", "Finance, Banking & Insurance 2nd Paper",
-            "Business Organization & Management 1st Paper", "Business Organization & Management 2nd Paper",
-            "Production Management & Marketing 1st Paper", "Production Management & Marketing 2nd Paper",
-            "Economics 1st Paper", "Economics 2nd Paper", "Statistics 1st Paper", "Statistics 2nd Paper",
-        )
-        else -> listOf(
-            "Bangla 1st Paper", "Bangla 2nd Paper", "English 1st Paper", "English 2nd Paper",
-            "Information & Communication Technology", "Economics 1st Paper", "Economics 2nd Paper",
-            "Statistics 1st Paper", "Statistics 2nd Paper", "Logic 1st Paper", "Logic 2nd Paper",
-            "Psychology 1st Paper", "Psychology 2nd Paper", "Social Work 1st Paper", "Social Work 2nd Paper",
-        )
+        when (group) {
+            "Science" -> common + listOf(
+                "Physics 1st Paper", "Physics 2nd Paper",
+                "Chemistry 1st Paper", "Chemistry 2nd Paper",
+                "Biology 1st Paper", "Biology 2nd Paper",
+                "Higher Mathematics 1st Paper", "Higher Mathematics 2nd Paper",
+            )
+            "Humanities" -> common + listOf(
+                "History 1st Paper", "History 2nd Paper",
+                "Geography 1st Paper", "Geography 2nd Paper",
+                "Civics & Good Governance 1st Paper", "Civics & Good Governance 2nd Paper",
+                "Economics 1st Paper", "Economics 2nd Paper",
+                "Sociology 1st Paper", "Sociology 2nd Paper",
+                "Logic 1st Paper", "Logic 2nd Paper",
+                "Psychology 1st Paper", "Psychology 2nd Paper",
+                "Islamic History & Culture 1st Paper", "Islamic History & Culture 2nd Paper",
+                "Social Work 1st Paper", "Social Work 2nd Paper",
+            )
+            "Business Studies" -> common + listOf(
+                "Accounting 1st Paper", "Accounting 2nd Paper",
+                "Business Organization & Management 1st Paper", "Business Organization & Management 2nd Paper",
+                "Finance, Banking & Insurance 1st Paper", "Finance, Banking & Insurance 2nd Paper",
+                "Production Management & Marketing 1st Paper", "Production Management & Marketing 2nd Paper",
+            )
+            else -> common + listOf(
+                "Economics 1st Paper", "Economics 2nd Paper",
+                "Logic 1st Paper", "Logic 2nd Paper",
+                "Psychology 1st Paper", "Psychology 2nd Paper",
+                "Social Work 1st Paper", "Social Work 2nd Paper",
+            )
+        }
     }
 }
 

@@ -32,7 +32,7 @@
 
 - When implementing data-loading screens, use cache-first architecture: start local Room/DB observation immediately so cached data renders without delay, then launch a narrow scoped background sync (not a full-institute refresh). Never block the UI collector on a network sync. Confidence: 0.80
 
-- When the user says "commit everything" (Banglish: "commit kore felo shob"), commit all pending work — source, docs, tests, release artifacts, promo/media assets, and even preference/taste files — leaving only pure test/build junk untracked (tmp/, .build-outputs/, emulator UI dumps, format logs). Confidence: 0.75
+- When the user says "commit everything" (Banglish: "commit kore felo shob" / "shob commit kore felo"), commit all pending work — source, docs, tests, release artifacts, promo/media assets, and even preference/taste files — leaving only pure test/build junk untracked (tmp/, .build-outputs/, emulator UI dumps, format logs). Confidence: 0.80
 
 - For performance optimization work, scope changes to one screen at a time — fully validate the current screen and stop; do not cascade optimizations to other screens without explicit approval. Confidence: 0.80
 

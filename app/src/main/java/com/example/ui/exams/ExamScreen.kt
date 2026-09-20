@@ -61,6 +61,7 @@ import com.example.ui.components.BulkMessageDialog
 import com.example.ui.components.BulkSmsPreviewMessage
 import com.example.ui.components.BulkSendProgressDialog
 import com.example.ui.components.SelectionBadge
+import com.example.ui.components.ShimmerBorderCard
 import com.example.ui.components.buildBulkSmsPreview
 import com.batchfee.edu.ui.components.buildWhatsAppUrl
 import coil.compose.AsyncImage
@@ -158,22 +159,31 @@ fun ExamListScreen(
                 }
             }
 
-            Card(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 2.dp)
-                    .clickable(onClick = onOpenQuestionBank),
+            ShimmerBorderCard(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 2.dp),
                 shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = CardBg),
-                border = BorderStroke(1.dp, Cyan.copy(alpha = 0.45f))
+                containerColor = CardBg,
+                borderStops = listOf(
+                    0f to Color.Transparent,
+                    0.3f to Cyan.copy(alpha = 0.14f),
+                    0.37f to Cyan,
+                    0.44f to Cyan.copy(alpha = 0.14f),
+                    0.5f to Color.Transparent,
+                    0.8f to AccentViolet.copy(alpha = 0.14f),
+                    0.87f to AccentViolet,
+                    0.94f to AccentViolet.copy(alpha = 0.14f),
+                    1f to Color.Transparent
+                ),
+                glowColor = Cyan,
+                onClick = onOpenQuestionBank
             ) {
-                Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Filled.LibraryBooks, null, tint = Cyan, modifier = Modifier.size(28.dp))
-                    Spacer(Modifier.width(12.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text("Create Questions", color = TextWhite, fontWeight = FontWeight.Bold)
-                        Text("Create academic questions from up to 2 scanned pages", color = TextMuted, fontSize = 12.sp)
-                    }
-                    Icon(Icons.Filled.ChevronRight, null, tint = Cyan)
+                Icon(Icons.Filled.LibraryBooks, null, tint = Cyan, modifier = Modifier.size(28.dp))
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Create Questions", color = TextWhite, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Text("Create academic questions from up to 2 scanned pages", color = TextMuted, fontSize = 12.sp)
                 }
+                Icon(Icons.Filled.ChevronRight, null, tint = Cyan)
             }
 
             Card(
