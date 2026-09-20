@@ -43,6 +43,8 @@ function validNewInstitute(email, createdAt = Date.now()) {
     ownerName: "New Owner",
     email,
     whatsappNumber: "+8801700000000",
+    // Optional profile metadata; it must not affect the trial entitlement.
+    instituteType: "Batch",
     role: "owner",
     createdAt,
     isActive: true,

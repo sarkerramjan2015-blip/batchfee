@@ -10,6 +10,7 @@ const PURPOSES = Object.freeze({
   staff_photo: { private: true, maxBytes: 400 * 1024 },
   payment_qr: { private: false, maxBytes: 600 * 1024 },
   payment_proof: { private: true, maxBytes: 1024 * 1024 },
+  question_attachment: { private: true, maxBytes: 1024 * 1024 },
 });
 
 function requiredString(data, field, maxLength) {

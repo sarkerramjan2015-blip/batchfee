@@ -283,7 +283,14 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                 try {
                     FirebaseAuth.getInstance().currentUser?.delete()
                 } catch (_: Exception) { }
-                onError(e.localizedMessage ?: "Cloud sync failed. Check your connection and try again.")
+                onError(
+                    when (e.code) {
+                        FirebaseFirestoreException.Code.UNAVAILABLE,
+                        FirebaseFirestoreException.Code.DEADLINE_EXCEEDED ->
+                            "Connection problem. Check your internet and try again."
+                        else -> "We couldn't create your institute right now. Please try again."
+                    }
+                )
             } catch (e: Exception) {
                 FirebaseFailureReporter.report(e, "create institute")
                 // Auth and the Firestore profile may already be written even though
@@ -297,7 +304,13 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                             .delete().await()
                     } catch (_: Exception) { }
                 }
-                onError(e.localizedMessage ?: "Registration failed")
+                onError(
+                    if (e is TimeoutCancellationException) {
+                        "Registration took too long. Check your internet and try again."
+                    } else {
+                        "We couldn't create your institute right now. Please try again."
+                    }
+                )
             }
         }
     }
@@ -616,8 +629,9 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                     db.staffDao().insertStaff(staffEntity)
                 }
 
-                // Seed demo data at the REAL Firebase UID for demo accounts
-                val isDemoOwner = firebaseEmail == "demo@batchfee.app" || firebaseEmail == "owner@batchfee.app"
+                // Seed demo data at the REAL Firebase UID for demo accounts.
+                // Release builds never seed demo credentials or demo data.
+                val isDemoOwner = BuildConfig.DEBUG && (firebaseEmail == "demo@batchfee.app" || firebaseEmail == "owner@batchfee.app")
                 if (isDemoOwner && role == "InstituteOwner" && instituteId != null) {
                     withContext(Dispatchers.IO) {
                         val studentCount = db.studentDao().getStudentsByInstituteOnce(instituteId).size
@@ -1056,16 +1070,15 @@ private fun LoginRoleDropdown(
 private data class InstituteTypeOption(
     val value: String,
     val label: String,
-    val description: String,
     val icon: ImageVector
 )
 
 private val INSTITUTE_TYPES = listOf(
-    InstituteTypeOption("Batch", "Batch", "Private batch-based teaching", Icons.Filled.Groups),
-    InstituteTypeOption("Coaching", "Coaching Centre", "Coaching, tuition and courses", Icons.Filled.Groups),
-    InstituteTypeOption("School", "School", "Primary and secondary education", Icons.Filled.School),
-    InstituteTypeOption("College", "College", "Higher secondary and college", Icons.Filled.AccountBalance),
-    InstituteTypeOption("Madrasa", "Madrasa", "Islamic and general education", Icons.Filled.MenuBook)
+    InstituteTypeOption("Batch", "Coaching / Batch", Icons.Filled.Groups),
+    InstituteTypeOption("School", "School", Icons.Filled.School),
+    InstituteTypeOption("College", "College", Icons.Filled.AccountBalance),
+    InstituteTypeOption("Madrasa", "Madrasa", Icons.Filled.MenuBook),
+    InstituteTypeOption("Other", "Other", Icons.Filled.AccountBalance)
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1084,10 +1097,10 @@ private fun InstituteTypeDropdown(
             value = selectedOption.label,
             onValueChange = {},
             readOnly = true,
-            label = { Text("Institute type *", color = AuthMuted) },
+            label = { Text("Institute type (optional)", color = AuthMuted) },
             supportingText = {
                 Text(
-                    selectedOption.description,
+                    "Profile only — all BatchFee features stay the same.",
                     color = AuthMuted.copy(alpha = 0.9f),
                     fontSize = 11.sp
                 )
@@ -1116,7 +1129,7 @@ private fun InstituteTypeDropdown(
             modifier = Modifier.background(AuthCardBg)
         ) {
             Text(
-                text = "Choose the option that best describes your institute",
+                text = "Choose what best describes your institute",
                 color = AuthMuted,
                 fontSize = 11.sp,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
@@ -1124,10 +1137,7 @@ private fun InstituteTypeDropdown(
             INSTITUTE_TYPES.forEach { option ->
                 DropdownMenuItem(
                     text = {
-                        Column {
-                            Text(option.label, color = AuthWhite, fontWeight = FontWeight.SemiBold)
-                            Text(option.description, color = AuthMuted, fontSize = 11.sp)
-                        }
+                        Text(option.label, color = AuthWhite, fontWeight = FontWeight.SemiBold)
                     },
                     onClick = { expanded = false; onSelected(option.value) },
                     leadingIcon = {
@@ -1370,13 +1380,27 @@ fun AuthScreen(
                         Spacer(Modifier.width(12.dp))
                         Column {
                             Text("Create your institute", color = AuthWhite, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                            Text("Set up your profile and start the free trial", color = AuthMuted, fontSize = 12.sp)
+                            Text("Set up your profile and start your free trial", color = AuthMuted, fontSize = 12.sp)
+                            Spacer(Modifier.height(6.dp))
+                            Surface(
+                                shape = RoundedCornerShape(99.dp),
+                                color = AuthCyan.copy(alpha = 0.12f),
+                                border = BorderStroke(1.dp, AuthCyan.copy(alpha = 0.28f))
+                            ) {
+                                Text(
+                                    text = "Free trial",
+                                    color = AuthCyan,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
+                                )
+                            }
                         }
                     }
                     Spacer(Modifier.height(14.dp))
                 }
 
-                // Login / Register Form Card
+                // One continuous form keeps registration quick on small screens.
                 GlassCard(
                     modifier = if (formMaxWidth > 0.dp) {
                         Modifier
@@ -1415,7 +1439,7 @@ fun AuthScreen(
             DarkTextField(
                 value = instituteName,
                 onValueChange = { instituteName = it; if (hasInstErr) { fieldError = fieldError - "instituteName"; errorMessage = null } },
-                label = "Institute Name *",
+                label = "Institute name *",
                 leadingIcon = { Icon(Icons.Filled.AccountBalance, null, tint = AuthMuted) }
             )
             if (hasInstErr) Text("This field is required", color = Color(0xFFF87171), fontSize = 10.sp, modifier = Modifier.padding(start = 12.dp, top = 2.dp))
@@ -1428,7 +1452,7 @@ fun AuthScreen(
             DarkTextField(
                 value = ownerName,
                 onValueChange = { ownerName = it; if (hasOwnerErr) { fieldError = fieldError - "ownerName"; errorMessage = null } },
-                label = "Your Name *",
+                label = "Owner name *",
                 leadingIcon = { Icon(Icons.Filled.Person, null, tint = AuthMuted) }
             )
             if (hasOwnerErr) Text("This field is required", color = Color(0xFFF87171), fontSize = 10.sp, modifier = Modifier.padding(start = 12.dp, top = 2.dp))
@@ -1442,7 +1466,7 @@ fun AuthScreen(
                         errorMessage = null
                     }
                 },
-                label = "Contact / WhatsApp *",
+                label = "Phone / WhatsApp *",
                 leadingIcon = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("+880 ", color = AuthMuted, fontSize = 14.sp, fontWeight = FontWeight.Medium)
@@ -1488,7 +1512,7 @@ fun AuthScreen(
             } else androidx.compose.ui.text.input.KeyboardType.Email
         )
         if (hasEmailErr) Text("This field is required", color = Color(0xFFF87171), fontSize = 10.sp, modifier = Modifier.padding(start = 12.dp, top = 2.dp))
-        if (credentialHasBengali) Text("দয়া করে এই ফিল্ডটি ইংরেজিতে পূরণ করুন", color = Color(0xFFF87171), fontSize = 11.sp, modifier = Modifier.padding(start = 12.dp, top = 2.dp))
+        if (credentialHasBengali) Text("Please use English letters.", color = Color(0xFFF87171), fontSize = 11.sp, modifier = Modifier.padding(start = 12.dp, top = 2.dp))
         Spacer(Modifier.height(12.dp))
 
         val hasPwdErr = fieldError.containsKey("password")
@@ -1515,14 +1539,25 @@ fun AuthScreen(
                 }
             }
         )
-        if (hasPwdErr) Text("This field is required", color = Color(0xFFF87171), fontSize = 10.sp, modifier = Modifier.padding(start = 12.dp, top = 2.dp))
-        if (passwordHasBengali) Text("দয়া করে এই ফিল্ডটি ইংরেজিতে পূরণ করুন", color = Color(0xFFF87171), fontSize = 11.sp, modifier = Modifier.padding(start = 12.dp, top = 2.dp))
+        if (hasPwdErr) Text(
+            text = if (!isLoginMode && password.length < 6) "Use at least 6 characters." else "This field is required",
+            color = Color(0xFFF87171),
+            fontSize = 10.sp,
+            modifier = Modifier.padding(start = 12.dp, top = 2.dp)
+        )
+        if (passwordHasBengali) Text("Please use English letters.", color = Color(0xFFF87171), fontSize = 11.sp, modifier = Modifier.padding(start = 12.dp, top = 2.dp))
 
                     if (!isLoginMode) {
+                        Text(
+                            text = "Use at least 6 characters.",
+                            color = AuthMuted,
+                            fontSize = 11.sp,
+                            modifier = Modifier.padding(start = 12.dp, top = 4.dp)
+                        )
                         Spacer(Modifier.height(8.dp))
                         val hasConsentErr = fieldError.containsKey("consent")
                         Row(
-                            verticalAlignment = Alignment.CenterVertically,
+                            verticalAlignment = Alignment.Top,
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Checkbox(
@@ -1538,24 +1573,27 @@ fun AuthScreen(
                                     checkedColor = AuthCyan,
                                     uncheckedColor = AuthMuted,
                                     checkmarkColor = AuthBg
-                                )
+                                ),
+                                modifier = Modifier.padding(top = 1.dp)
                             )
-                            Row(Modifier.padding(start = 4.dp)) {
-                                Text("I agree to the ", color = AuthMuted, fontSize = 12.sp)
-                                TextButton(
-                                    onClick = onNavigatePrivacyPolicy,
-                                    contentPadding = PaddingValues(0.dp),
-                                    modifier = Modifier.defaultMinSize(minWidth = 0.dp, minHeight = 0.dp)
-                                ) {
-                                    Text("Privacy Policy", color = AuthCyan, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                                }
-                                Text(" & ", color = AuthMuted, fontSize = 12.sp)
-                                TextButton(
-                                    onClick = onNavigateTermsConditions,
-                                    contentPadding = PaddingValues(0.dp),
-                                    modifier = Modifier.defaultMinSize(minWidth = 0.dp, minHeight = 0.dp)
-                                ) {
-                                    Text("Terms", color = AuthCyan, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            Column(Modifier.padding(start = 4.dp, top = 6.dp)) {
+                                Text("I agree to BatchFee's", color = AuthMuted, fontSize = 12.sp)
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    TextButton(
+                                        onClick = onNavigatePrivacyPolicy,
+                                        contentPadding = PaddingValues(0.dp),
+                                        modifier = Modifier.defaultMinSize(minWidth = 0.dp, minHeight = 0.dp)
+                                    ) {
+                                        Text("Privacy Policy", color = AuthCyan, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                    }
+                                    Text(" and ", color = AuthMuted, fontSize = 12.sp)
+                                    TextButton(
+                                        onClick = onNavigateTermsConditions,
+                                        contentPadding = PaddingValues(0.dp),
+                                        modifier = Modifier.defaultMinSize(minWidth = 0.dp, minHeight = 0.dp)
+                                    ) {
+                                        Text("Terms", color = AuthCyan, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                    }
                                 }
                             }
                         }
@@ -1711,14 +1749,14 @@ fun AuthScreen(
                                 if (ownerName.isBlank()) errs["ownerName"] = true
                                 if (InstituteContactNumber.normalizeBangladesh(whatsappNumber) == null) errs["whatsappNumber"] = true
                                 if (email.isBlank()) errs["email"] = true
-                                if (password.isBlank()) errs["password"] = true
+                                if (password.length < 6) errs["password"] = true
                                 if (!consentChecked) errs["consent"] = true
                                 if (errs.isNotEmpty()) {
                                     fieldError = errs
-                                    errorMessage = if (errs.containsKey("whatsappNumber")) {
-                                        "Enter a valid institute contact number."
-                                    } else {
-                                        "Please fill all required fields and accept the terms."
+                                    errorMessage = when {
+                                        errs.containsKey("whatsappNumber") -> "Enter a valid Bangladesh mobile number."
+                                        errs.containsKey("password") -> "Use a password with at least 6 characters."
+                                        else -> "Please fill all required fields and accept the terms."
                                     }
                                     isLoading = false
                                     return@Button
@@ -1748,6 +1786,12 @@ fun AuthScreen(
                             .fillMaxWidth()
                             .scale(primaryActionScale)
                             .height(52.dp),
+                        enabled = isLoginMode || (
+                            instituteName.isNotBlank() &&
+                                ownerName.isNotBlank() &&
+                                InstituteContactNumber.normalizeBangladesh(whatsappNumber) != null &&
+                                email.isNotBlank() && password.length >= 6 && consentChecked
+                            ),
                         interactionSource = primaryActionInteraction,
                         shape = RoundedCornerShape(14.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent),
@@ -1758,7 +1802,19 @@ fun AuthScreen(
                                 .fillMaxSize()
                                 .shadow(8.dp, RoundedCornerShape(14.dp), spotColor = AuthCyan.copy(alpha = 0.4f))
                                 .clip(RoundedCornerShape(14.dp))
-                                .background(Brush.horizontalGradient(listOf(AuthBlue, AuthCyan))),
+                                .background(
+                                    if (isLoginMode || (
+                                            instituteName.isNotBlank() &&
+                                                ownerName.isNotBlank() &&
+                                                InstituteContactNumber.normalizeBangladesh(whatsappNumber) != null &&
+                                                email.isNotBlank() && password.length >= 6 && consentChecked
+                                        )
+                                    ) {
+                                        Brush.horizontalGradient(listOf(AuthBlue, AuthCyan))
+                                    } else {
+                                        Brush.horizontalGradient(listOf(AuthBorder, AuthBorder))
+                                    }
+                                ),
                             contentAlignment = Alignment.Center
                         ) {
                             AnimatedContent(

@@ -540,7 +540,18 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
                     if (route == "DashboardRoute" || route == "More") {
                         currentTab = route
                     } else {
-                        if (!AccessControl.canAccessRoute(route)) return@navigate
+                        val accessRoute = route.substringBefore('|')
+                        if (!AccessControl.canAccessRoute(accessRoute)) return@navigate
+                        if (route.startsWith("QuestionBankFoundationRoute|")) {
+                            val selection = route.split('|', limit = 3)
+                            navController.navigate(
+                                com.batchfee.edu.ui.navigation.QuestionBankFoundationRoute(
+                                    className = selection.getOrNull(1),
+                                    subject = selection.getOrNull(2),
+                                )
+                            )
+                            return@navigate
+                        }
                         when (route) {
                             "StudentsRoute" -> navController.navigate(StudentsRoute)
                             "ArchivedStudentsRoute" -> navController.navigate(ArchivedStudentsRoute)
@@ -561,6 +572,7 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
                             "ReportsRoute?period=month" -> navController.navigate(com.batchfee.edu.ui.navigation.ReportsRoute(period = "month"))
                             "ReportsRoute?period=lifetime" -> navController.navigate(com.batchfee.edu.ui.navigation.ReportsRoute(period = "lifetime"))
                             "ReminderTemplatesRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.ReminderTemplatesRoute)
+                            "SmartDueAutomationRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.SmartDueAutomationRoute)
                             "StaffRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.StaffRoute)
                             "AddStaffRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.AddStaffRoute)
                             "StaffActivityRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.StaffActivityRoute)
@@ -573,6 +585,7 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
                             "ProfitLossRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.ProfitLossRoute)
                             "ExamsRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.ExamsRoute)
                             "CreateExamRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.CreateExamRoute)
+                            "QuestionBankFoundationRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.QuestionBankFoundationRoute())
                             "IdCardGeneratorRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.IdCardGeneratorRoute)
                             "BirthdayReminderRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.BirthdayReminderRoute)
                             "SettingsRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.SettingsRoute)
@@ -764,6 +777,10 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
         
         composable<ReminderTemplatesRoute> {
             com.batchfee.edu.ui.reminders.ReminderTemplatesScreen(db = appDb, onBack = { navController.popBackStack() })
+        }
+
+        composable<com.batchfee.edu.ui.navigation.SmartDueAutomationRoute> {
+            com.batchfee.edu.ui.automation.SmartDueAutomationScreen(db = appDb, onBack = { navController.popBackStack() })
         }
         
         composable<AttendanceRoute> {
@@ -960,16 +977,19 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
                 onNavigateToDetail = { examId -> navController.navigate(ExamDetailRoute(examId)) },
                 onNavigateToPricing = { navController.navigate(PricingRoute) },
                 onOpenFinalExams = { navController.navigate(FinalExamsRoute) },
-                onOpenQuestionBank = { navController.navigate(QuestionBankFoundationRoute) },
+                onOpenQuestionBank = { navController.navigate(QuestionBankFoundationRoute()) },
                 onOpenCuratedQuestionBank = { navController.navigate(CuratedQuestionBankRoute) },
                 onCreateFinalExam = { navController.navigate(CreateFinalExamRoute) }
             )
         }
 
-        composable<QuestionBankFoundationRoute> {
+        composable<QuestionBankFoundationRoute> { backStackEntry ->
+            val route = backStackEntry.toRoute<QuestionBankFoundationRoute>()
             com.batchfee.edu.ui.exams.QuestionBankFoundationScreen(
                 db = appDb,
-                onBack = { navController.popBackStack() }
+                onBack = { navController.popBackStack() },
+                initialClassName = route.className,
+                initialSubject = route.subject,
             )
         }
 
@@ -1092,6 +1112,7 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
                     when(routeStr) {
                         "BillingRoute" -> navController.navigate(BillingRoute)
                         "ReminderTemplatesRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.ReminderTemplatesRoute)
+                        "SmartDueAutomationRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.SmartDueAutomationRoute)
                         "BackupRestoreRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.BackupRestoreRoute)
                         "StudentRegistrationRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.StudentRegistrationRoute)
                         "PaymentSettingsRoute" -> navController.navigate(com.batchfee.edu.ui.navigation.PaymentSettingsRoute)

@@ -1735,6 +1735,7 @@ function createFinancialLedgerHandler({ db }) {
           plan.payments,
           [plan.receipt],
         );
+        transaction.update(instituteRef, { lastCollectionAtMs: now });
       } else if (action === "review_payment_request") {
         const requestId = requiredString(data, "requestId", 128);
         const decision = requiredString(data, "decision", 20);
@@ -1864,6 +1865,7 @@ function createFinancialLedgerHandler({ db }) {
             });
           }
           writeGroupedCollection(transaction, instituteRef, plan, actorUid, studentId, now);
+          transaction.update(instituteRef, { lastCollectionAtMs: now });
           transaction.update(requestRef, {
             status: "approved",
             approvedPaymentId: plan.payments[0].id,
@@ -1992,6 +1994,7 @@ function createFinancialLedgerHandler({ db }) {
         transaction.update(feeRef, { ...adjustedFields, ...ledger, updatedAtMs: now, ledgerVersion: 1 });
         transaction.create(instituteRef.collection("payments").doc(records.payment.id), records.payment);
         transaction.create(instituteRef.collection("receipts").doc(records.receipt.id), records.receipt);
+        transaction.update(instituteRef, { lastCollectionAtMs: now });
         if (referenceRef) transaction.create(referenceRef, { paymentId: records.payment.id, createdAtMs: now });
         if (newKeyRef && !newKeySnap.exists) {
           transaction.create(newKeyRef, { feeId, businessKey: newBusinessKey, createdAtMs: now });

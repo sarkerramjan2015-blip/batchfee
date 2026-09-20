@@ -8,6 +8,7 @@ const { FieldPath } = require("firebase-admin/firestore");
 const { HttpsError } = require("firebase-functions/v2/https");
 const { FREE_TRIAL_DURATION_MS, FREE_TRIAL_STUDENT_LIMIT } = require("./subscriptionPolicy");
 const { planFromSnapshot } = require("./defaultSubscriptionPlans");
+const { SMS_UNIT_COST_PAISA, SMS_PROVIDER_RECHARGE_CHARGE_PERCENT, dhakaUsageKeys, walletDefaults } = require("./smsWallet");
 
 const PLATFORM_ROLES = new Set(["root", "billing", "support", "operations", "read_only"]);
 const NON_ROOT_PLATFORM_ROLES = new Set(["billing", "support", "operations", "read_only"]);
@@ -30,6 +31,7 @@ const ACTIONS = new Set([
   "list_client_notes",
   "create_client_note",
   "get_platform_dashboard",
+  "get_business_intelligence",
 ]);
 const PERMISSIONS = {
   root: new Set(ACTIONS),
@@ -329,23 +331,32 @@ async function previewImport({ db, rows }) {
 
 async function dashboardMetrics(db) {
   const now = Date.now();
-  const [institutesSnap, receiptsSnap] = await Promise.all([
+  const [
+    institutesSnap,
+    receiptsSnap,
+    pendingSubscriptionSnap,
+    approvedPaymentRequests,
+    rejectedPaymentRequests,
+  ] = await Promise.all([
     db.collection("institutes").get(),
     db.collectionGroup("subscription_receipts").get(),
+    db.collection("subscriptionRequests").where("status", "==", "pending").get(),
+    db.collectionGroup("payment_requests").where("status", "==", "approved").count().get(),
+    db.collectionGroup("payment_requests").where("status", "==", "rejected").count().get(),
   ]);
-  const monthStartDate = new Date(now);
-  monthStartDate.setUTCDate(1);
-  monthStartDate.setUTCHours(0, 0, 0, 0);
-  const monthStart = monthStartDate.getTime();
+  // Revenue and institute-growth windows follow Dhaka calendar months, not
+  // UTC months — a receipt around Dhaka midnight must land in the correct
+  // business month.
+  const monthStart = Date.parse(`${dhakaUsageKeys(now).monthKey}-01T00:00:00Z`) - 6 * 3600 * 1000;
   const nonRetainedInstitutes = institutesSnap.docs.filter((doc) => doc.get("deletionState") !== "retained");
   // "Active" mirrors firestore.rules hasActiveSubscription: the institute must be
-  // enabled (isActive === true), hold a trial/active subscription status, and still
+  // enabled (isActive !== false), hold a trial/active subscription status, and still
   // be inside its current subscription period. Statuses such as past_due, expired,
   // blocked, or cancelled must not count as active.
   const active = nonRetainedInstitutes.filter((doc) => {
     const end = Number(doc.get("currentPeriodEndMs") || doc.get("trialEndDate") || 0);
     const status = String(doc.get("subscriptionStatus") || "");
-    return doc.get("isActive") === true
+    return doc.get("isActive") !== false
       && (status === "trial" || status === "active")
       && end > now;
   });
@@ -362,6 +373,16 @@ async function dashboardMetrics(db) {
     const end = Number(doc.get("currentPeriodEndMs") || doc.get("trialEndDate") || 0);
     return end <= now + days * 24 * 60 * 60 * 1000;
   }).length;
+  const newInstitutesThisMonth = nonRetainedInstitutes.filter((doc) => {
+    const createdAtMs = safeMillis(doc.get("createdAt"), safeMillis(doc.get("createdAtMs"), 0));
+    return createdAtMs > 0 && createdAtMs >= monthStart;
+  }).length;
+  const pendingSubscriptionAmount = pendingSubscriptionSnap.docs.reduce(
+    (sum, doc) => sum + (Number(doc.get("amountPaid")) || 0), 0,
+  );
+  const approvedCount = approvedPaymentRequests.data().count || 0;
+  const rejectedCount = rejectedPaymentRequests.data().count || 0;
+  const reviewedCount = approvedCount + rejectedCount;
   return {
     snapshotAtMs: now,
     // "Institutes" is the true total of every institute document, including
@@ -375,6 +396,13 @@ async function dashboardMetrics(db) {
     lifetimeRevenue: Math.round(revenue.lifetime * 100) / 100,
     thisMonthRevenue: Math.round(revenue.thisMonth * 100) / 100,
     canonicalReceiptCount: receiptsSnap.size,
+    newInstitutesThisMonth,
+    pendingSubscriptionAmountBdt: Math.round(pendingSubscriptionAmount * 100) / 100,
+    pendingSubscriptionCount: pendingSubscriptionSnap.size,
+    paymentRequestApprovalRate: reviewedCount > 0
+      ? Math.round((approvedCount / reviewedCount) * 1000) / 10 : null,
+    paymentRequestApprovedCount: approvedCount,
+    paymentRequestRejectedCount: rejectedCount,
   };
 }
 
@@ -620,6 +648,269 @@ async function queryInstituteDirectory({ db, request, now }) {
     hasMore,
     nextCursor: hasMore && cursor
       ? encodeDirectoryCursor({ v: 1, signature: directory.signature, ...cursor }) : "",
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Root-only business intelligence: churn risk, rankings, and forecasts
+// ---------------------------------------------------------------------------
+// Every number here is derived from already-persisted Firestore data. Nothing
+// is guessed: missing activity counters simply contribute no signal until the
+// counter writers (payment callable + attendance trigger) populate them.
+const BI_RISK_LIMIT = 200;
+const BI_RANKING_LIMIT = 8;
+const BI_ACTIVITY_WINDOW_DAYS = 30;
+const BI_RISK_RANK = { high: 0, medium: 1, low: 2 };
+
+function roundMoney2(value) {
+  return Math.round(Number(value || 0) * 100) / 100;
+}
+
+function institutePathId(documentRef) {
+  return documentRef && documentRef.parent && documentRef.parent.parent
+    ? documentRef.parent.parent.id : "";
+}
+
+function countByInstitute(documents) {
+  const counts = new Map();
+  for (const doc of documents) {
+    const instituteId = institutePathId(doc.ref);
+    if (!instituteId) continue;
+    counts.set(instituteId, (counts.get(instituteId) || 0) + 1);
+  }
+  return counts;
+}
+
+function churnRiskRows({ institutesSnap, studentsAdded, studentsLost, pendingPaymentRequests, now }) {
+  const rows = [];
+  for (const doc of institutesSnap.docs) {
+    const data = doc.data() || {};
+    if (data.deletionState === "retained") continue;
+    const base = publicDirectoryInstitute(doc.id, data, now);
+    let daysSinceActive = null;
+    if (base.lastActiveAtMs > 0) {
+      daysSinceActive = Math.floor((now - base.lastActiveAtMs) / DIRECTORY_DAY_MS);
+    } else if (base.createdAtMs > 0) {
+      // An institute that never reported activity is aged from creation.
+      daysSinceActive = Math.floor((now - base.createdAtMs) / DIRECTORY_DAY_MS);
+    }
+    const smsBalance = Math.max(0, Math.trunc(Number(data.sms_balance) || 0));
+    const smsPurchased = Math.max(0, Math.trunc(Number(data.total_sms_purchased) || 0));
+    const studentsAdded30d = studentsAdded.get(doc.id) || 0;
+    const studentsLost30d = studentsLost.get(doc.id) || 0;
+    const lastCollectionAtMs = safeMillis(data.lastCollectionAtMs, 0);
+    const lastAttendanceAtMs = safeMillis(data.lastAttendanceAtMs, 0);
+    const pendingPaymentRequestCount = pendingPaymentRequests.get(doc.id) || 0;
+
+    const reasons = [];
+    let score = 0;
+    if (daysSinceActive != null && daysSinceActive > 21) {
+      score += 2;
+      reasons.push(`No app login in ${daysSinceActive} days`);
+    } else if (daysSinceActive != null && daysSinceActive > 7) {
+      score += 1;
+      reasons.push(`Inactive for ${daysSinceActive} days`);
+    }
+    if (smsPurchased > 0 && smsBalance <= 0) {
+      score += 1;
+      reasons.push("SMS credit exhausted");
+    }
+    if (base.subscriptionStatus === "expired" || base.subscriptionStatus === "blocked") {
+      score += 3;
+      reasons.push(base.subscriptionStatus === "expired" ? "Subscription expired" : "Subscription blocked");
+    } else if (base.currentPeriodEndMs > 0
+        && base.currentPeriodEndMs <= now + 3 * DIRECTORY_DAY_MS) {
+      score += 1;
+      reasons.push("Subscription expires within 3 days");
+    }
+    if (studentsLost30d > studentsAdded30d) {
+      score += 1;
+      reasons.push(`${studentsLost30d} student(s) archived vs ${studentsAdded30d} added in 30 days`);
+    }
+    if (lastCollectionAtMs > 0 && now - lastCollectionAtMs > BI_ACTIVITY_WINDOW_DAYS * DIRECTORY_DAY_MS) {
+      score += 1;
+      reasons.push("No fee collection in 30 days");
+    }
+    if (lastAttendanceAtMs > 0 && now - lastAttendanceAtMs > BI_ACTIVITY_WINDOW_DAYS * DIRECTORY_DAY_MS) {
+      score += 1;
+      reasons.push("No attendance in 30 days");
+    }
+
+    rows.push({
+      instituteId: base.instituteId,
+      instituteName: base.instituteName,
+      phone: base.phone,
+      whatsappNumber: typeof data.whatsappNumber === "string" ? data.whatsappNumber : base.phone,
+      currentPlanId: base.currentPlanId,
+      subscriptionStatus: base.subscriptionStatus,
+      currentPeriodEndMs: base.currentPeriodEndMs,
+      lastActiveAtMs: base.lastActiveAtMs,
+      daysSinceActive,
+      smsBalance,
+      studentsAdded30d,
+      studentsLost30d,
+      lastCollectionAtMs,
+      lastAttendanceAtMs,
+      pendingPaymentRequestCount,
+      risk: score >= 4 ? "high" : score >= 2 ? "medium" : "low",
+      reasons,
+    });
+  }
+  rows.sort((a, b) => BI_RISK_RANK[a.risk] - BI_RISK_RANK[b.risk]
+    || (b.daysSinceActive ?? 0) - (a.daysSinceActive ?? 0)
+    || a.instituteName.localeCompare(b.instituteName));
+  return rows.slice(0, BI_RISK_LIMIT);
+}
+
+function instituteRankings({ institutesSnap, receiptsSnap, pendingSubscriptionSnap, pendingPaymentRequestsSnap, studentsAdded, now }) {
+  const names = new Map();
+  const revenue = new Map();
+  const outstanding = new Map();
+  const smsConsumption = new Map();
+  for (const doc of institutesSnap.docs) {
+    const data = doc.data() || {};
+    names.set(doc.id, typeof data.instituteName === "string" ? data.instituteName : doc.id);
+    // Wallet counters reset when the stored month key is stale, so the raw
+    // field can carry last month's usage. The authoritative reader applies
+    // that rollover; never sum the raw field directly.
+    smsConsumption.set(doc.id, Math.max(0, Math.trunc(Number(walletDefaults(data, now).sms_used_this_month) || 0)));
+  }
+  for (const doc of receiptsSnap.docs) {
+    const instituteId = typeof doc.get("instituteId") === "string" ? doc.get("instituteId") : "";
+    if (!instituteId) continue;
+    revenue.set(instituteId, (revenue.get(instituteId) || 0) + (Number(doc.get("amountPaid")) || 0));
+  }
+  for (const doc of pendingSubscriptionSnap.docs) {
+    const instituteId = typeof doc.get("instituteId") === "string" ? doc.get("instituteId") : "";
+    outstanding.set(instituteId, (outstanding.get(instituteId) || 0) + (Number(doc.get("amountPaid")) || 0));
+  }
+  for (const doc of pendingPaymentRequestsSnap.docs) {
+    const instituteId = institutePathId(doc.ref);
+    outstanding.set(instituteId, (outstanding.get(instituteId) || 0) + (Number(doc.get("amount")) || 0));
+  }
+  const rank = (entries) => entries
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, BI_RANKING_LIMIT)
+    .map(([instituteId, value]) => ({
+      instituteId,
+      instituteName: names.get(instituteId) || instituteId,
+      value: roundMoney2(value),
+    }));
+  return {
+    topRevenue: rank([...revenue.entries()]),
+    topOutstanding: rank([...outstanding.entries()]),
+    topSmsConsumers: rank([...smsConsumption.entries()].filter(([, value]) => value > 0)),
+    fastestGrowing: rank([...studentsAdded.entries()].filter(([, value]) => value > 0)),
+  };
+}
+
+function subscriptionForecast({ receiptsSnap, now }) {
+  const currentMonthKey = dhakaUsageKeys(now).monthKey;
+  const monthKeys = [];
+  for (let offset = 2; offset >= 0; offset -= 1) {
+    const base = new Date(`${currentMonthKey}-01T00:00:00Z`);
+    base.setUTCMonth(base.getUTCMonth() - offset);
+    monthKeys.push(base.toISOString().slice(0, 7));
+  }
+  const totals = new Map(monthKeys.map((key) => [key, 0]));
+  for (const doc of receiptsSnap.docs) {
+    const startDateMs = safeMillis(doc.get("startDateMs"), safeMillis(doc.get("approvedAt"), 0));
+    if (startDateMs <= 0) continue;
+    // Bucket by the Dhaka calendar month of the receipt start date.
+    const key = dhakaUsageKeys(startDateMs).monthKey;
+    if (!totals.has(key)) continue;
+    totals.set(key, totals.get(key) + (Number(doc.get("amountPaid")) || 0));
+  }
+  const trailingMonths = monthKeys.map((key) => ({
+    monthKey: key,
+    collectedBdt: roundMoney2(totals.get(key)),
+  }));
+  const average = trailingMonths.reduce((sum, month) => sum + month.collectedBdt, 0)
+    / Math.max(1, trailingMonths.length);
+  const confidence = receiptsSnap.size >= 12 ? "high" : receiptsSnap.size >= 6 ? "medium" : "low";
+  return {
+    trailingMonths,
+    forecast7dBdt: roundMoney2((average / 30.44) * 7),
+    forecast30dBdt: roundMoney2(average),
+    confidence,
+  };
+}
+
+async function smsForecast({ smsProvider, institutesSnap, now }) {
+  const day = dhakaUsageKeys(now);
+  const dayOfMonth = Number(day.dayKey.slice(8, 10));
+  let monthSms = 0;
+  let outstandingSms = 0;
+  for (const doc of institutesSnap.docs) {
+    const data = doc.data() || {};
+    monthSms += Math.max(0, Math.trunc(Number(walletDefaults(data, now).sms_used_this_month) || 0));
+    outstandingSms += Math.max(0, Math.trunc(Number(data.sms_balance) || 0));
+  }
+  const dailyBurnSms = dayOfMonth > 0 ? Math.round(monthSms / dayOfMonth) : 0;
+  let providerBalance = null;
+  let providerError = "";
+  if (smsProvider) {
+    try {
+      providerBalance = await smsProvider.getBalance();
+    } catch (error) {
+      providerError = error && error.message ? error.message.slice(0, 120) : "Zend balance unavailable.";
+    }
+  }
+  const centralCapacitySms = providerBalance && Number.isFinite(providerBalance.balance)
+    ? Math.floor(providerBalance.balance * 100 / SMS_UNIT_COST_PAISA) : null;
+  const daysOfCentralCapacityLeft = centralCapacitySms != null && dailyBurnSms > 0
+    ? Math.floor(centralCapacitySms / dailyBurnSms) : null;
+  const suggestedReorderSms = centralCapacitySms != null
+    ? Math.max(0, outstandingSms + dailyBurnSms * 7 - centralCapacitySms) : null;
+  // Central procurement pays the provider recharge charge (2%), not the
+  // owner-facing service charge (1.8%).
+  const providerEffectiveCostPaisa = SMS_UNIT_COST_PAISA * (1 + SMS_PROVIDER_RECHARGE_CHARGE_PERCENT / 100);
+  return {
+    monthSms,
+    dailyBurnSms,
+    outstandingSms,
+    centralCapacitySms,
+    daysOfCentralCapacityLeft,
+    suggestedReorderSms,
+    suggestedReorderAmountBdt: suggestedReorderSms != null
+      ? roundMoney2(suggestedReorderSms * providerEffectiveCostPaisa / 100) : null,
+    providerError,
+  };
+}
+
+async function businessIntelligence({ db, smsProvider, now = Date.now() }) {
+  const cutoff30d = now - BI_ACTIVITY_WINDOW_DAYS * DIRECTORY_DAY_MS;
+  const [
+    institutesSnap,
+    receiptsSnap,
+    pendingSubscriptionSnap,
+    pendingPaymentRequestsSnap,
+    addedStudentsSnap,
+    lostStudentsSnap,
+  ] = await Promise.all([
+    db.collection("institutes").get(),
+    db.collectionGroup("subscription_receipts").get(),
+    db.collection("subscriptionRequests").where("status", "==", "pending").get(),
+    db.collectionGroup("payment_requests").where("status", "==", "pending").get(),
+    db.collectionGroup("students").where("createdAtMs", ">=", cutoff30d).get(),
+    db.collectionGroup("students").where("archivedAtMs", ">=", cutoff30d).get(),
+  ]);
+  const studentsAdded = countByInstitute(addedStudentsSnap.docs);
+  const studentsLost = countByInstitute(lostStudentsSnap.docs);
+  const pendingPaymentRequests = countByInstitute(pendingPaymentRequestsSnap.docs);
+  const [subscription, sms] = await Promise.all([
+    subscriptionForecast({ receiptsSnap, now }),
+    smsForecast({ smsProvider, institutesSnap, now }),
+  ]);
+  return {
+    snapshotAtMs: now,
+    churnRisk: churnRiskRows({
+      institutesSnap, studentsAdded, studentsLost, pendingPaymentRequests, now,
+    }),
+    rankings: instituteRankings({
+      institutesSnap, receiptsSnap, pendingSubscriptionSnap, pendingPaymentRequestsSnap, studentsAdded, now,
+    }),
+    forecast: { subscription, sms },
   };
 }
 
@@ -1281,7 +1572,7 @@ async function updatePlatformAdmin({ db, request, operationId, requestHash, now 
   });
 }
 
-function createPlatformAdminHandler({ db, adminAuth }) {
+function createPlatformAdminHandler({ db, adminAuth, smsProvider = null }) {
   return async (request) => {
     const action = requiredString(request.data, "action", 64);
     const operationId = requiredString(request.data, "operationId", 128);
@@ -1296,6 +1587,7 @@ function createPlatformAdminHandler({ db, adminAuth }) {
       return { rows: await previewImport({ db, rows: request.data.rows }) };
     }
     if (action === "get_platform_dashboard") return dashboardMetrics(db);
+    if (action === "get_business_intelligence") return businessIntelligence({ db, smsProvider, now });
     if (action === "query_institute_directory") return queryInstituteDirectory({ db, request, now });
     if (action === "query_institute_timeline") return queryInstituteTimeline({ db, request });
     if (action === "query_student_support") return queryStudentSupport({ db, request });
@@ -1320,6 +1612,8 @@ module.exports = {
   assertCanAssignPlatformRole,
   CLIENT_NOTE_STATUSES,
   createPlatformAdminHandler,
+  businessIntelligence,
+  churnRiskRows,
   matchesStudentSupportSearch,
   isManageablePlatformMember,
   matchesDirectoryFilters,

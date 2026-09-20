@@ -15,26 +15,26 @@ object DemoDataSeeder {
     private data class SeedStudent(val name: String, val phone: String, val gender: String)
 
     private val students = listOf(
-        SeedStudent("Abid Mohammad Zaman", "+8801977956650", "Male"),
-        SeedStudent("Ahadul Islam Arafat", "+8801630152980", "Male"),
-        SeedStudent("Ahnaf Binte Masud", "+8801842111666", "Female"),
-        SeedStudent("Alpha Shahriar Shishir", "+8801712102461", "Male"),
-        SeedStudent("Asrafun Nisa Lumia", "+8801783412299", "Female"),
-        SeedStudent("Aysha Akter", "+8801753956958", "Female"),
-        SeedStudent("Bushra", "+8801926255064", "Female"),
-        SeedStudent("Bushra Jahan Sadia", "+8801825469539", "Female"),
-        SeedStudent("Emon", "+8801995685191", "Male"),
-        SeedStudent("Entiha", "+8801518657869", "Female"),
-        SeedStudent("Fahima Afrin Rim", "+8801864628826", "Female"),
-        SeedStudent("Faiza Akter", "+8801626849299", "Female"),
-        SeedStudent("Faria Akter", "+8801741235993", "Female"),
-        SeedStudent("Fariha Chowdhury", "+8801985001330", "Female"),
-        SeedStudent("Farin Jahan", "+8801764753406", "Female"),
-        SeedStudent("Israt Jahan Moni", "+8801612288128", "Female"),
-        SeedStudent("Israt Jahan Prity", "+8801746829021", "Female"),
-        SeedStudent("Jannatul Ferdous", "+8801712345678", "Female"),
-        SeedStudent("Md. Rakib Hasan", "+8801812345678", "Male"),
-        SeedStudent("Nusrat Jahan Tisha", "+8801912345678", "Female")
+        SeedStudent("Demo Student 01", "+8801000000001", "Male"),
+        SeedStudent("Demo Student 02", "+8801000000002", "Male"),
+        SeedStudent("Demo Student 03", "+8801000000003", "Female"),
+        SeedStudent("Demo Student 04", "+8801000000004", "Male"),
+        SeedStudent("Demo Student 05", "+8801000000005", "Female"),
+        SeedStudent("Demo Student 06", "+8801000000006", "Female"),
+        SeedStudent("Demo Student 07", "+8801000000007", "Female"),
+        SeedStudent("Demo Student 08", "+8801000000008", "Female"),
+        SeedStudent("Demo Student 09", "+8801000000009", "Male"),
+        SeedStudent("Demo Student 10", "+8801000000010", "Female"),
+        SeedStudent("Demo Student 11", "+8801000000011", "Female"),
+        SeedStudent("Demo Student 12", "+8801000000012", "Female"),
+        SeedStudent("Demo Student 13", "+8801000000013", "Female"),
+        SeedStudent("Demo Student 14", "+8801000000014", "Female"),
+        SeedStudent("Demo Student 15", "+8801000000015", "Female"),
+        SeedStudent("Demo Student 16", "+8801000000016", "Female"),
+        SeedStudent("Demo Student 17", "+8801000000017", "Female"),
+        SeedStudent("Demo Student 18", "+8801000000018", "Female"),
+        SeedStudent("Demo Student 19", "+8801000000019", "Male"),
+        SeedStudent("Demo Student 20", "+8801000000020", "Female")
     )
 
     suspend fun seed(db: AppDatabase, instituteId: String, userId: String) = withContext(Dispatchers.IO) {

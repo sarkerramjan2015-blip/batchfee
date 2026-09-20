@@ -170,6 +170,12 @@ secrets {
   defaultPropertiesFileName = ".env.example"
 }
 
+// Room schema JSON export so migration gaps are caught by automated tests
+// instead of crashing existing users on upgrade.
+ksp {
+  arg("room.schemaLocation", "$projectDir/schemas")
+}
+
 // Some unused dependencies are commented out below instead of being removed.
 // This makes it easy to add them back in the future if needed.
 dependencies {

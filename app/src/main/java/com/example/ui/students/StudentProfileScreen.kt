@@ -3293,8 +3293,7 @@ private fun CustomMonthlyFeeDialogV18(
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var isSaving by remember { mutableStateOf(false) }
     var confirmation by remember { mutableStateOf<Confirmation?>(null) }
-    // Keep the saved audit reason in English so reports stay consistent across
-    // institutes, while the surrounding financial UI is Bangla-first.
+    // Keep the saved audit reason in English so reports stay consistent across institutes.
     val templates = remember {
         listOf(
             "Sibling discount",
@@ -3342,24 +3341,46 @@ private fun CustomMonthlyFeeDialogV18(
             customFeeEffectiveFromPeriod = pending.enrollment.customFeeEffectiveFromPeriod,
             customFeePolicyTimeline = pending.enrollment.customFeePolicyTimeline
         ) ?: pending.batch.monthlyFeeAmount
-        val targetLabel = pending.amount?.let { "BDT ${it.toLong()}" } ?: "ব্যাচের নির্ধারিত ফি (BDT ${pending.batch.monthlyFeeAmount.toLong()})"
+        val targetLabel = pending.amount?.let { "BDT ${it.toLong()}" }
+            ?: "Default batch fee (BDT ${pending.batch.monthlyFeeAmount.toLong()})"
         AlertDialog(
             onDismissRequest = { if (!isSaving) confirmation = null },
             containerColor = CardBg,
-            icon = { Icon(Icons.Filled.Verified, contentDescription = null, tint = Cyan) },
-            title = { Text("ফি পরিবর্তন নিশ্চিত করুন", color = TextWhite, fontWeight = FontWeight.Bold) },
+            shape = RoundedCornerShape(28.dp),
+            tonalElevation = 8.dp,
+            icon = {
+                Surface(shape = CircleShape, color = Cyan.copy(alpha = 0.14f)) {
+                    Icon(
+                        Icons.Filled.Verified,
+                        contentDescription = null,
+                        tint = Cyan,
+                        modifier = Modifier.padding(10.dp).size(24.dp),
+                    )
+                }
+            },
+            title = {
+                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text("Review fee change", color = TextWhite, fontWeight = FontWeight.ExtraBold, fontSize = 23.sp)
+                    Text("Check the details before you save.", color = TextMuted, fontSize = 13.sp)
+                }
+            },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                    Text("ব্যাচ: ${pending.batch.name}", color = TextWhite, fontWeight = FontWeight.SemiBold)
-                    Text("বর্তমান প্রযোজ্য ফি: BDT ${previousAmount.toLong()}", color = TextMuted)
-                    Text("নতুন ফি: $targetLabel", color = AccentAmber, fontWeight = FontWeight.Bold)
-                    Text("কার্যকর হবে: ${pending.effectivePeriod}", color = Cyan, fontWeight = FontWeight.SemiBold)
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Batch: ${pending.batch.name}", color = TextWhite, fontWeight = FontWeight.SemiBold)
+                    Text("Current fee: BDT ${previousAmount.toLong()}", color = TextMuted)
+                    Surface(shape = RoundedCornerShape(12.dp), color = Cyan.copy(alpha = 0.10f)) {
+                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("New fee", color = TextMuted, fontSize = 11.sp)
+                            Text(targetLabel, color = Cyan, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                        }
+                    }
+                    Text("Starts from: ${pending.effectivePeriod}", color = Color(0xFF86EFAC), fontWeight = FontWeight.SemiBold)
                     Text(
-                        "আগের মাস, সম্পন্ন পেমেন্ট ও রসিদ অপরিবর্তিত থাকবে।",
+                        "Past months, completed payments and receipts will not change.",
                         color = TextMuted,
                         fontSize = 12.sp
                     )
-                    pending.reason?.let { Text("কারণ: $it", color = TextMuted, fontSize = 12.sp) }
+                    pending.reason?.let { Text("Reason: $it", color = TextMuted, fontSize = 12.sp) }
                     errorMessage?.let { Text(it, color = DangerRed, fontSize = 12.sp) }
                 }
             },
@@ -3384,12 +3405,12 @@ private fun CustomMonthlyFeeDialogV18(
                     colors = ButtonDefaults.buttonColors(containerColor = ElectricBlue)
                 ) {
                     if (isSaving) CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
-                    else Text("নিশ্চিত করুন", fontWeight = FontWeight.Bold)
+                    else Text("Confirm change", fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { confirmation = null }, enabled = !isSaving) {
-                    Text("ফিরে যান", color = TextMuted)
+                    Text("Back", color = TextMuted)
                 }
             }
         )
@@ -3399,33 +3420,61 @@ private fun CustomMonthlyFeeDialogV18(
     AlertDialog(
         onDismissRequest = { if (!isSaving) onDismiss() },
         containerColor = CardBg,
-        icon = { Icon(Icons.Filled.Payments, contentDescription = null, tint = Cyan, modifier = Modifier.size(28.dp)) },
-        title = { Text("মাসিক ফি নির্ধারণ করুন", color = TextWhite, fontWeight = FontWeight.Bold) },
+        shape = RoundedCornerShape(28.dp),
+        tonalElevation = 8.dp,
+        icon = {
+            Surface(shape = CircleShape, color = ElectricBlue.copy(alpha = 0.16f)) {
+                Icon(
+                    Icons.Filled.Payments,
+                    contentDescription = null,
+                    tint = Cyan,
+                    modifier = Modifier.padding(11.dp).size(26.dp),
+                )
+            }
+        },
+        title = {
+            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text("Set Monthly Fee", color = TextWhite, fontWeight = FontWeight.ExtraBold, fontSize = 24.sp)
+                Text("Set a custom fee for this student.", color = TextMuted, fontSize = 13.sp)
+            }
+        },
         text = {
             Column(
                 modifier = Modifier.fillMaxWidth().heightIn(max = 520.dp).verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 if (monthlyEnrollments.size > 1) {
-                    Text("ব্যাচ নির্বাচন করুন", color = TextMuted, fontSize = 12.sp)
+                    Text("Choose a batch", color = TextMuted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                     monthlyEnrollments.forEach { enrollment ->
                         val batch = batches.firstOrNull { it.id == enrollment.batchId }
                         FilterChip(
                             selected = enrollment.id == selectedEnrollmentId,
                             onClick = { selectedEnrollmentId = enrollment.id },
-                            label = { Text(batch?.name ?: "ব্যাচ", maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                            label = { Text(batch?.name ?: "Batch", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = ElectricBlue.copy(alpha = 0.22f),
+                                selectedLabelColor = TextWhite,
+                                containerColor = CardBgAlt,
+                                labelColor = TextMuted,
+                            ),
+                            border = FilterChipDefaults.filterChipBorder(
+                                enabled = true,
+                                selected = enrollment.id == selectedEnrollmentId,
+                                borderColor = BorderSub,
+                                selectedBorderColor = ElectricBlue.copy(alpha = 0.72f),
+                            ),
                         )
                     }
                 }
                 if (selectedEnrollment == null || selectedBatch == null) {
-                    Text("এই শিক্ষার্থীর জন্য কোনো সক্রিয় মাসিক ব্যাচ পাওয়া যায়নি।", color = DangerRed)
+                    Text("No active monthly batch was found for this student.", color = DangerRed)
                 } else {
-                    Text("${selectedBatch.name} • নির্ধারিত ফি: BDT ${selectedBatch.monthlyFeeAmount.toLong()}/মাস", color = TextMuted, fontSize = 12.sp)
+                    Text("${selectedBatch.name}  •  Default fee: BDT ${selectedBatch.monthlyFeeAmount.toLong()}/month", color = TextMuted, fontSize = 12.sp)
                     OutlinedTextField(
                         value = amountText,
                         onValueChange = { amountText = it; errorMessage = null },
-                        label = { Text("নতুন মাসিক ফি (BDT)") },
-                        placeholder = { Text("যেমন: 700") },
+                        label = { Text("New monthly fee (BDT)") },
+                        placeholder = { Text("Example: 700") },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         modifier = Modifier.fillMaxWidth(),
@@ -3435,8 +3484,8 @@ private fun CustomMonthlyFeeDialogV18(
                     Surface(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp),
-                        color = Cyan.copy(alpha = 0.08f),
-                        border = BorderStroke(1.dp, Cyan.copy(alpha = 0.22f))
+                        color = ElectricBlue.copy(alpha = 0.10f),
+                        border = BorderStroke(1.dp, SkyBlue.copy(alpha = 0.38f))
                     ) {
                         Row(
                             modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
@@ -3444,36 +3493,49 @@ private fun CustomMonthlyFeeDialogV18(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column {
-                                Text("বর্তমান ফি", color = TextMuted, fontSize = 11.sp)
-                                Text("BDT ${selectedBatch.monthlyFeeAmount.toLong()}", color = TextWhite, fontWeight = FontWeight.SemiBold)
+                                Text("CURRENT FEE", color = TextMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                Text("BDT ${selectedBatch.monthlyFeeAmount.toLong()}", color = TextWhite, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                             }
                             Column(horizontalAlignment = Alignment.End) {
-                                Text("নতুন ফি", color = TextMuted, fontSize = 11.sp)
+                                Text("NEW FEE", color = TextMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                                 Text(
-                                    enteredAmount?.let { "BDT ${it.toLong()}" } ?: "ফি লিখুন",
+                                    enteredAmount?.let { "BDT ${it.toLong()}" } ?: "Enter amount",
                                     color = if (enteredAmount != null) Cyan else TextMuted,
-                                    fontWeight = FontWeight.Bold
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 16.sp,
                                 )
                             }
                         }
                     }
-                    Text("কার্যকর হবে", color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    Text("Effective from", color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                     listOf(
-                        "CURRENT" to "চলতি মাস — $currentPeriod",
-                        "NEXT" to "পরের মাস — $nextPeriod",
-                        "FUTURE" to "ভবিষ্যতের মাস নির্বাচন করুন"
+                        "CURRENT" to "This month — $currentPeriod",
+                        "NEXT" to "Next month — $nextPeriod",
+                        "FUTURE" to "Choose a future month"
                     ).forEach { (choice, label) ->
                         FilterChip(
                             selected = effectiveChoice == choice,
                             onClick = { effectiveChoice = choice; errorMessage = null },
                             label = { Text(label) },
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = ElectricBlue.copy(alpha = 0.24f),
+                                selectedLabelColor = TextWhite,
+                                containerColor = CardBgAlt,
+                                labelColor = TextMuted,
+                            ),
+                            border = FilterChipDefaults.filterChipBorder(
+                                enabled = true,
+                                selected = effectiveChoice == choice,
+                                borderColor = BorderSub,
+                                selectedBorderColor = SkyBlue.copy(alpha = 0.82f),
+                            ),
                         )
                     }
                     if (effectiveChoice == "FUTURE") {
                         Box(Modifier.fillMaxWidth()) {
                             OutlinedButton(onClick = { futureExpanded = true }, modifier = Modifier.fillMaxWidth()) {
-                                Text(futurePeriod.ifBlank { "মাস নির্বাচন করুন" })
+                                Text(futurePeriod.ifBlank { "Choose month" })
                             }
                             DropdownMenu(expanded = futureExpanded, onDismissRequest = { futureExpanded = false }) {
                                 futurePeriods.forEach { period ->
@@ -3485,8 +3547,8 @@ private fun CustomMonthlyFeeDialogV18(
                             }
                         }
                     }
-                    Text("ফি পরিবর্তনের কারণ", color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                    Text("একটি কারণ নির্বাচন করুন", color = TextMuted, fontSize = 11.sp)
+                    Text("Reason for change", color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Text("Choose one reason", color = TextMuted, fontSize = 11.sp)
                     templates.chunked(2).forEach { row ->
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                             row.forEach { template ->
@@ -3503,11 +3565,17 @@ private fun CustomMonthlyFeeDialogV18(
                                     },
                                     modifier = Modifier.weight(1f),
                                     colors = FilterChipDefaults.filterChipColors(
-                                        selectedContainerColor = Cyan.copy(alpha = 0.18f),
-                                        selectedLabelColor = Cyan,
+                                        selectedContainerColor = ElectricBlue.copy(alpha = 0.24f),
+                                        selectedLabelColor = TextWhite,
                                         containerColor = CardBgAlt,
                                         labelColor = TextMuted
-                                    )
+                                    ),
+                                    border = FilterChipDefaults.filterChipBorder(
+                                        enabled = true,
+                                        selected = reasonText.equals(template, ignoreCase = true),
+                                        borderColor = BorderSub,
+                                        selectedBorderColor = SkyBlue.copy(alpha = 0.82f),
+                                    ),
                                 )
                             }
                         }
@@ -3515,14 +3583,14 @@ private fun CustomMonthlyFeeDialogV18(
                     OutlinedTextField(
                         value = reasonDetail,
                         onValueChange = { reasonDetail = it.take(90); errorMessage = null },
-                        label = { Text("অতিরিক্ত নোট (ঐচ্ছিক)") },
-                        placeholder = { Text("প্রয়োজনে সংক্ষিপ্ত বিবরণ লিখুন") },
+                        label = { Text("Additional note (optional)") },
+                        placeholder = { Text("Add a short note if needed") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                         colors = darkFieldColors()
                     )
                     Text(
-                        "আগের মাস পরিবর্তন করা যাবে না। পেইড বা আংশিক পেইড মাসে পরিবর্তন নিরাপদভাবে বাতিল হবে।",
+                        "Past months cannot be changed. Paid or partly paid months are protected.",
                         color = TextMuted,
                         fontSize = 11.sp
                     )
@@ -3538,10 +3606,10 @@ private fun CustomMonthlyFeeDialogV18(
                     val batch = selectedBatch ?: return@Button
                     val amount = amountText.trim().toDoubleOrNull()
                     when {
-                        amount == null || amount <= 0.0 -> errorMessage = "সঠিক মাসিক ফি লিখুন।"
-                        amount >= batch.monthlyFeeAmount -> errorMessage = "নির্ধারিত ফি-এর চেয়ে কম পরিমাণ দিন, অথবা ব্যাচের ফি ব্যবহার করুন।"
-                        reasonText.isBlank() -> errorMessage = "ফি পরিবর্তনের একটি কারণ নির্বাচন করুন।"
-                        selectedEffectivePeriod.isBlank() -> errorMessage = "কোন মাস থেকে ফি কার্যকর হবে তা নির্বাচন করুন।"
+                        amount == null || amount <= 0.0 -> errorMessage = "Enter a valid monthly fee."
+                        amount >= batch.monthlyFeeAmount -> errorMessage = "Enter an amount below the default batch fee, or use the default fee."
+                        reasonText.isBlank() -> errorMessage = "Select a reason for this change."
+                        selectedEffectivePeriod.isBlank() -> errorMessage = "Choose when the fee should start."
                         else -> confirmation = Confirmation(
                             enrollment = enrollment,
                             batch = batch,
@@ -3553,8 +3621,9 @@ private fun CustomMonthlyFeeDialogV18(
                         )
                     }
                 },
-                colors = ButtonDefaults.buttonColors(containerColor = ElectricBlue)
-            ) { Text("পরিবর্তন পর্যালোচনা করুন", fontWeight = FontWeight.Bold) }
+                shape = RoundedCornerShape(14.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = SkyBlue, contentColor = BgColor)
+            ) { Text("Review change", fontWeight = FontWeight.Bold) }
         },
         dismissButton = {
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -3570,9 +3639,9 @@ private fun CustomMonthlyFeeDialogV18(
                             null,
                             selectedEffectivePeriod
                         )
-                    }) { Text("ব্যাচের ফি ব্যবহার করুন", color = AccentAmber) }
+                    }) { Text("Use default fee", color = AccentAmber) }
                 }
-                TextButton(onClick = onDismiss) { Text("বাতিল", color = TextMuted) }
+                TextButton(onClick = onDismiss) { Text("Cancel", color = TextMuted) }
             }
         }
     )

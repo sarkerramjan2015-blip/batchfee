@@ -10,6 +10,8 @@ data class ReviewableQuestion(
     val explanation: String,
     val difficulty: String,
     val marks: Int,
+    /** A tenant-private managed reference for an optional diagram/stimulus image. */
+    val imageReference: String? = null,
 )
 
 data class ReviewValidation(

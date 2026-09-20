@@ -533,24 +533,9 @@ fun StudentListScreen(
                         onNavigateToIdCards()
                     }
                     HorizontalDivider(color = BorderSub.copy(alpha = 0.85f), modifier = Modifier.padding(start = 58.dp))
-                    StudentMenuRow(Icons.Filled.FileUpload, "Export", "You can export student list here") {
-                        showStudentsMenu = false
-                        scope.launch { snackbarHostState.showSnackbar("Export is coming soon.") }
-                    }
-                    HorizontalDivider(color = BorderSub.copy(alpha = 0.85f), modifier = Modifier.padding(start = 58.dp))
                     StudentMenuRow(Icons.Filled.Message, "Message", "You can send message to selected students here") {
                         showStudentsMenu = false
                         showMessageDialog = true
-                    }
-                    HorizontalDivider(color = BorderSub.copy(alpha = 0.85f), modifier = Modifier.padding(start = 58.dp))
-                    StudentMenuRow(Icons.Filled.FileDownload, "Import Students", "You can import students using file") {
-                        showStudentsMenu = false
-                        scope.launch { snackbarHostState.showSnackbar("Import students is coming soon.") }
-                    }
-                    HorizontalDivider(color = BorderSub.copy(alpha = 0.85f), modifier = Modifier.padding(start = 58.dp))
-                    StudentMenuRow(Icons.Filled.Download, "Sample File For Import student", "Download sample file for import students") {
-                        showStudentsMenu = false
-                        scope.launch { snackbarHostState.showSnackbar("Sample file download is coming soon.") }
                     }
                 }
             },

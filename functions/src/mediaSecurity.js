@@ -86,6 +86,7 @@ function assertCanUpload(principal, purpose, subjectId, actorUid) {
   if (purpose === "student_photo" && staffHas(principal.staff, "manage_student")) return;
   if (purpose === "staff_photo" &&
       (staffHas(principal.staff, "manage_staff") || subjectId === actorUid)) return;
+  if (purpose === "question_attachment" && staffHas(principal.staff, "manage_exams")) return;
   throw new HttpsError("permission-denied", "Media upload is not allowed.");
 }
 

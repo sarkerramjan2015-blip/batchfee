@@ -1,0 +1,3791 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 47,
+    "identityHash": "22c57a9a237ada29a1b3e342467562d4",
+    "entities": [
+      {
+        "tableName": "institutes",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `name` TEXT NOT NULL, `currentPlanId` TEXT NOT NULL, `subscriptionStatus` TEXT NOT NULL, `trialStartDateMs` INTEGER NOT NULL, `trialEndDateMs` INTEGER NOT NULL, `currentPeriodEndMs` INTEGER NOT NULL, `createdAtMs` INTEGER NOT NULL, `phone` TEXT, `address` TEXT, `whatsappNumber` TEXT, `profilePhotoUri` TEXT, `ownerName` TEXT, `email` TEXT, `instituteCode` TEXT, `securityPin` TEXT, `trackStaffEntryExit` INTEGER NOT NULL, `instituteType` TEXT, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "currentPlanId",
+            "columnName": "currentPlanId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "subscriptionStatus",
+            "columnName": "subscriptionStatus",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "trialStartDateMs",
+            "columnName": "trialStartDateMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "trialEndDateMs",
+            "columnName": "trialEndDateMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "currentPeriodEndMs",
+            "columnName": "currentPeriodEndMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtMs",
+            "columnName": "createdAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "phone",
+            "columnName": "phone",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "address",
+            "columnName": "address",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "whatsappNumber",
+            "columnName": "whatsappNumber",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "profilePhotoUri",
+            "columnName": "profilePhotoUri",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "ownerName",
+            "columnName": "ownerName",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "email",
+            "columnName": "email",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "instituteCode",
+            "columnName": "instituteCode",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "securityPin",
+            "columnName": "securityPin",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "trackStaffEntryExit",
+            "columnName": "trackStaffEntryExit",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "instituteType",
+            "columnName": "instituteType",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "background_sync",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `actorUid` TEXT NOT NULL, `instituteId` TEXT NOT NULL, `kind` TEXT NOT NULL, `documentId` TEXT NOT NULL, `payload` TEXT NOT NULL, `createdAtMs` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "actorUid",
+            "columnName": "actorUid",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "instituteId",
+            "columnName": "instituteId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "kind",
+            "columnName": "kind",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "documentId",
+            "columnName": "documentId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "payload",
+            "columnName": "payload",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtMs",
+            "columnName": "createdAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "users",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `instituteId` TEXT, `name` TEXT NOT NULL, `email` TEXT NOT NULL, `passwordHash` TEXT NOT NULL, `role` TEXT NOT NULL, `createdAtMs` INTEGER NOT NULL, `failedAttempts` INTEGER NOT NULL, `lockedUntilMs` INTEGER, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "instituteId",
+            "columnName": "instituteId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "email",
+            "columnName": "email",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "passwordHash",
+            "columnName": "passwordHash",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "role",
+            "columnName": "role",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtMs",
+            "columnName": "createdAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "failedAttempts",
+            "columnName": "failedAttempts",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lockedUntilMs",
+            "columnName": "lockedUntilMs",
+            "affinity": "INTEGER"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "subscription_plans",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `name` TEXT NOT NULL, `description` TEXT NOT NULL, `priceBdt` REAL NOT NULL, `priceInr` REAL NOT NULL, `maxStudents` INTEGER NOT NULL, `maxBatches` INTEGER NOT NULL, `maxUsers` INTEGER NOT NULL, `maxBranches` INTEGER NOT NULL, `tag` TEXT NOT NULL, `tierLevel` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "description",
+            "columnName": "description",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "priceBdt",
+            "columnName": "priceBdt",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "priceInr",
+            "columnName": "priceInr",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "maxStudents",
+            "columnName": "maxStudents",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "maxBatches",
+            "columnName": "maxBatches",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "maxUsers",
+            "columnName": "maxUsers",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "maxBranches",
+            "columnName": "maxBranches",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "tag",
+            "columnName": "tag",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "tierLevel",
+            "columnName": "tierLevel",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "students",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `instituteId` TEXT NOT NULL, `studentCode` TEXT NOT NULL, `fullName` TEXT NOT NULL, `photoUri` TEXT, `gender` TEXT, `dateOfBirthMs` INTEGER, `phone` TEXT, `email` TEXT, `address` TEXT, `schoolName` TEXT, `className` TEXT, `guardianName` TEXT, `guardianPhone` TEXT, `guardianEmail` TEXT, `emergencyContact` TEXT, `bloodGroup` TEXT, `admissionDateMs` INTEGER NOT NULL, `status` TEXT NOT NULL, `notes` TEXT, `createdAtMs` INTEGER NOT NULL, `updatedAtMs` INTEGER NOT NULL, `archivedAtMs` INTEGER, `isAppAccessEnabled` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "instituteId",
+            "columnName": "instituteId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "studentCode",
+            "columnName": "studentCode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fullName",
+            "columnName": "fullName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "photoUri",
+            "columnName": "photoUri",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "gender",
+            "columnName": "gender",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "dateOfBirthMs",
+            "columnName": "dateOfBirthMs",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "phone",
+            "columnName": "phone",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "email",
+            "columnName": "email",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "address",
+            "columnName": "address",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "schoolName",
+            "columnName": "schoolName",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "className",
+            "columnName": "className",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "guardianName",
+            "columnName": "guardianName",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "guardianPhone",
+            "columnName": "guardianPhone",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "guardianEmail",
+            "columnName": "guardianEmail",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "emergencyContact",
+            "columnName": "emergencyContact",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "bloodGroup",
+            "columnName": "bloodGroup",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "admissionDateMs",
+            "columnName": "admissionDateMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "notes",
+            "columnName": "notes",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "createdAtMs",
+            "columnName": "createdAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtMs",
+            "columnName": "updatedAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "archivedAtMs",
+            "columnName": "archivedAtMs",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "isAppAccessEnabled",
+            "columnName": "isAppAccessEnabled",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_students_instituteId_archivedAtMs_fullName",
+            "unique": false,
+            "columnNames": [
+              "instituteId",
+              "archivedAtMs",
+              "fullName"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_students_instituteId_archivedAtMs_fullName` ON `${TABLE_NAME}` (`instituteId`, `archivedAtMs`, `fullName`)"
+          },
+          {
+            "name": "index_students_instituteId_studentCode",
+            "unique": false,
+            "columnNames": [
+              "instituteId",
+              "studentCode"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_students_instituteId_studentCode` ON `${TABLE_NAME}` (`instituteId`, `studentCode`)"
+          }
+        ]
+      },
+      {
+        "tableName": "batches",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `instituteId` TEXT NOT NULL, `batchCode` TEXT NOT NULL, `name` TEXT NOT NULL, `subject` TEXT, `className` TEXT, `teacherName` TEXT, `monthlyFeeAmount` REAL NOT NULL, `admissionFeeAmount` REAL NOT NULL, `startDateMs` INTEGER, `endDateMs` INTEGER, `scheduleDays` TEXT, `startTime` TEXT, `endTime` TEXT, `maxStudents` INTEGER, `status` TEXT NOT NULL, `description` TEXT, `createdAtMs` INTEGER NOT NULL, `updatedAtMs` INTEGER NOT NULL, `archivedAtMs` INTEGER, `billingMode` TEXT NOT NULL, `courseFeeAmount` REAL NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "instituteId",
+            "columnName": "instituteId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "batchCode",
+            "columnName": "batchCode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "subject",
+            "columnName": "subject",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "className",
+            "columnName": "className",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "teacherName",
+            "columnName": "teacherName",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "monthlyFeeAmount",
+            "columnName": "monthlyFeeAmount",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "admissionFeeAmount",
+            "columnName": "admissionFeeAmount",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startDateMs",
+            "columnName": "startDateMs",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "endDateMs",
+            "columnName": "endDateMs",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "scheduleDays",
+            "columnName": "scheduleDays",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "startTime",
+            "columnName": "startTime",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "endTime",
+            "columnName": "endTime",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "maxStudents",
+            "columnName": "maxStudents",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "description",
+            "columnName": "description",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "createdAtMs",
+            "columnName": "createdAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtMs",
+            "columnName": "updatedAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "archivedAtMs",
+            "columnName": "archivedAtMs",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "billingMode",
+            "columnName": "billingMode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "courseFeeAmount",
+            "columnName": "courseFeeAmount",
+            "affinity": "REAL",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_batches_instituteId_archivedAtMs_name",
+            "unique": false,
+            "columnNames": [
+              "instituteId",
+              "archivedAtMs",
+              "name"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_batches_instituteId_archivedAtMs_name` ON `${TABLE_NAME}` (`instituteId`, `archivedAtMs`, `name`)"
+          }
+        ]
+      },
+      {
+        "tableName": "batch_students",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `instituteId` TEXT NOT NULL, `batchId` TEXT NOT NULL, `studentId` TEXT NOT NULL, `joinedAtMs` INTEGER NOT NULL, `status` TEXT NOT NULL, `leftAtMs` INTEGER, `firstMonthFeePeriod` TEXT, `firstMonthFeeAmount` REAL, `customMonthlyFeeAmount` REAL, `customFeeReason` TEXT, `customFeeEffectiveFromPeriod` TEXT, `customFeePolicyTimeline` TEXT, `customFeePolicySyncedAtMs` INTEGER, `admissionDateLinked` INTEGER, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "instituteId",
+            "columnName": "instituteId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "batchId",
+            "columnName": "batchId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "studentId",
+            "columnName": "studentId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "joinedAtMs",
+            "columnName": "joinedAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "leftAtMs",
+            "columnName": "leftAtMs",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "firstMonthFeePeriod",
+            "columnName": "firstMonthFeePeriod",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "firstMonthFeeAmount",
+            "columnName": "firstMonthFeeAmount",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "customMonthlyFeeAmount",
+            "columnName": "customMonthlyFeeAmount",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "customFeeReason",
+            "columnName": "customFeeReason",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "customFeeEffectiveFromPeriod",
+            "columnName": "customFeeEffectiveFromPeriod",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "customFeePolicyTimeline",
+            "columnName": "customFeePolicyTimeline",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "customFeePolicySyncedAtMs",
+            "columnName": "customFeePolicySyncedAtMs",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "admissionDateLinked",
+            "columnName": "admissionDateLinked",
+            "affinity": "INTEGER"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_batch_students_instituteId_batchId_status",
+            "unique": false,
+            "columnNames": [
+              "instituteId",
+              "batchId",
+              "status"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_batch_students_instituteId_batchId_status` ON `${TABLE_NAME}` (`instituteId`, `batchId`, `status`)"
+          },
+          {
+            "name": "index_batch_students_instituteId_studentId_status",
+            "unique": false,
+            "columnNames": [
+              "instituteId",
+              "studentId",
+              "status"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_batch_students_instituteId_studentId_status` ON `${TABLE_NAME}` (`instituteId`, `studentId`, `status`)"
+          }
+        ]
+      },
+      {
+        "tableName": "attendance",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `instituteId` TEXT NOT NULL, `batchId` TEXT NOT NULL, `studentId` TEXT NOT NULL, `attendanceDateMs` INTEGER NOT NULL, `status` TEXT NOT NULL, `note` TEXT, `arrivalTimeMs` INTEGER, `scheduledStartTimeMs` INTEGER, `lateByMinutes` INTEGER, `markedByUserId` TEXT NOT NULL, `createdAtMs` INTEGER NOT NULL, `updatedAtMs` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "instituteId",
+            "columnName": "instituteId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "batchId",
+            "columnName": "batchId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "studentId",
+            "columnName": "studentId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "attendanceDateMs",
+            "columnName": "attendanceDateMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "note",
+            "columnName": "note",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "arrivalTimeMs",
+            "columnName": "arrivalTimeMs",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "scheduledStartTimeMs",
+            "columnName": "scheduledStartTimeMs",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "lateByMinutes",
+            "columnName": "lateByMinutes",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "markedByUserId",
+            "columnName": "markedByUserId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtMs",
+            "columnName": "createdAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtMs",
+            "columnName": "updatedAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_attendance_instituteId_batchId_studentId_attendanceDateMs",
+            "unique": true,
+            "columnNames": [
+              "instituteId",
+              "batchId",
+              "studentId",
+              "attendanceDateMs"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_attendance_instituteId_batchId_studentId_attendanceDateMs` ON `${TABLE_NAME}` (`instituteId`, `batchId`, `studentId`, `attendanceDateMs`)"
+          }
+        ]
+      },
+      {
+        "tableName": "fees",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `instituteId` TEXT NOT NULL, `studentId` TEXT NOT NULL, `batchId` TEXT, `feePeriod` TEXT NOT NULL, `feeType` TEXT NOT NULL, `dueDateMs` INTEGER NOT NULL, `baseAmount` REAL NOT NULL, `discountAmount` REAL NOT NULL, `lateFeeAmount` REAL NOT NULL, `totalAmount` REAL NOT NULL, `paidAmount` REAL NOT NULL, `dueAmount` REAL NOT NULL, `status` TEXT NOT NULL, `note` TEXT, `createdAtMs` INTEGER NOT NULL, `updatedAtMs` INTEGER NOT NULL, `cancelledAtMs` INTEGER, `sourceId` TEXT, `businessKey` TEXT, `ledgerVersion` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "instituteId",
+            "columnName": "instituteId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "studentId",
+            "columnName": "studentId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "batchId",
+            "columnName": "batchId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "feePeriod",
+            "columnName": "feePeriod",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "feeType",
+            "columnName": "feeType",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dueDateMs",
+            "columnName": "dueDateMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "baseAmount",
+            "columnName": "baseAmount",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "discountAmount",
+            "columnName": "discountAmount",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lateFeeAmount",
+            "columnName": "lateFeeAmount",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "totalAmount",
+            "columnName": "totalAmount",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "paidAmount",
+            "columnName": "paidAmount",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dueAmount",
+            "columnName": "dueAmount",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "note",
+            "columnName": "note",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "createdAtMs",
+            "columnName": "createdAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtMs",
+            "columnName": "updatedAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "cancelledAtMs",
+            "columnName": "cancelledAtMs",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "sourceId",
+            "columnName": "sourceId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "businessKey",
+            "columnName": "businessKey",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "ledgerVersion",
+            "columnName": "ledgerVersion",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_fees_instituteId_businessKey",
+            "unique": true,
+            "columnNames": [
+              "instituteId",
+              "businessKey"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_fees_instituteId_businessKey` ON `${TABLE_NAME}` (`instituteId`, `businessKey`)"
+          },
+          {
+            "name": "index_fees_instituteId_cancelledAtMs_dueDateMs",
+            "unique": false,
+            "columnNames": [
+              "instituteId",
+              "cancelledAtMs",
+              "dueDateMs"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_fees_instituteId_cancelledAtMs_dueDateMs` ON `${TABLE_NAME}` (`instituteId`, `cancelledAtMs`, `dueDateMs`)"
+          },
+          {
+            "name": "index_fees_instituteId_studentId_cancelledAtMs",
+            "unique": false,
+            "columnNames": [
+              "instituteId",
+              "studentId",
+              "cancelledAtMs"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_fees_instituteId_studentId_cancelledAtMs` ON `${TABLE_NAME}` (`instituteId`, `studentId`, `cancelledAtMs`)"
+          },
+          {
+            "name": "index_fees_instituteId_sourceId",
+            "unique": false,
+            "columnNames": [
+              "instituteId",
+              "sourceId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_fees_instituteId_sourceId` ON `${TABLE_NAME}` (`instituteId`, `sourceId`)"
+          }
+        ]
+      },
+      {
+        "tableName": "payments",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `instituteId` TEXT NOT NULL, `feeId` TEXT NOT NULL, `studentId` TEXT NOT NULL, `amount` REAL NOT NULL, `paymentMethod` TEXT NOT NULL, `transactionId` TEXT, `receiptNumber` TEXT NOT NULL, `paymentDateMs` INTEGER NOT NULL, `collectedByUserId` TEXT NOT NULL, `status` TEXT NOT NULL, `note` TEXT, `createdAtMs` INTEGER NOT NULL, `updatedAtMs` INTEGER NOT NULL, `operationId` TEXT, `ledgerVersion` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "instituteId",
+            "columnName": "instituteId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "feeId",
+            "columnName": "feeId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "studentId",
+            "columnName": "studentId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "amount",
+            "columnName": "amount",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "paymentMethod",
+            "columnName": "paymentMethod",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "transactionId",
+            "columnName": "transactionId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "receiptNumber",
+            "columnName": "receiptNumber",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "paymentDateMs",
+            "columnName": "paymentDateMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "collectedByUserId",
+            "columnName": "collectedByUserId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "note",
+            "columnName": "note",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "createdAtMs",
+            "columnName": "createdAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtMs",
+            "columnName": "updatedAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "operationId",
+            "columnName": "operationId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "ledgerVersion",
+            "columnName": "ledgerVersion",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_payments_instituteId_operationId",
+            "unique": true,
+            "columnNames": [
+              "instituteId",
+              "operationId"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_payments_instituteId_operationId` ON `${TABLE_NAME}` (`instituteId`, `operationId`)"
+          },
+          {
+            "name": "index_payments_instituteId_paymentDateMs",
+            "unique": false,
+            "columnNames": [
+              "instituteId",
+              "paymentDateMs"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_payments_instituteId_paymentDateMs` ON `${TABLE_NAME}` (`instituteId`, `paymentDateMs`)"
+          },
+          {
+            "name": "index_payments_instituteId_feeId_paymentDateMs",
+            "unique": false,
+            "columnNames": [
+              "instituteId",
+              "feeId",
+              "paymentDateMs"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_payments_instituteId_feeId_paymentDateMs` ON `${TABLE_NAME}` (`instituteId`, `feeId`, `paymentDateMs`)"
+          }
+        ]
+      },
+      {
+        "tableName": "receipts",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `instituteId` TEXT NOT NULL, `paymentId` TEXT NOT NULL, `feeId` TEXT NOT NULL, `studentId` TEXT NOT NULL, `receiptNumber` TEXT NOT NULL, `receiptDateMs` INTEGER NOT NULL, `totalAmount` REAL NOT NULL, `paidAmount` REAL NOT NULL, `dueAmount` REAL NOT NULL, `paymentMethod` TEXT NOT NULL, `receiptText` TEXT, `createdAtMs` INTEGER NOT NULL, `operationId` TEXT, `ledgerVersion` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "instituteId",
+            "columnName": "instituteId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "paymentId",
+            "columnName": "paymentId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "feeId",
+            "columnName": "feeId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "studentId",
+            "columnName": "studentId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "receiptNumber",
+            "columnName": "receiptNumber",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "receiptDateMs",
+            "columnName": "receiptDateMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "totalAmount",
+            "columnName": "totalAmount",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "paidAmount",
+            "columnName": "paidAmount",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dueAmount",
+            "columnName": "dueAmount",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "paymentMethod",
+            "columnName": "paymentMethod",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "receiptText",
+            "columnName": "receiptText",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "createdAtMs",
+            "columnName": "createdAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "operationId",
+            "columnName": "operationId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "ledgerVersion",
+            "columnName": "ledgerVersion",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_receipts_instituteId_operationId",
+            "unique": true,
+            "columnNames": [
+              "instituteId",
+              "operationId"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_receipts_instituteId_operationId` ON `${TABLE_NAME}` (`instituteId`, `operationId`)"
+          }
+        ]
+      },
+      {
+        "tableName": "payment_reversals",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `instituteId` TEXT NOT NULL, `paymentId` TEXT NOT NULL, `feeId` TEXT NOT NULL, `studentId` TEXT NOT NULL, `amount` REAL NOT NULL, `receiptNumber` TEXT NOT NULL, `reason` TEXT NOT NULL, `reversedByUserId` TEXT NOT NULL, `reversedAtMs` INTEGER NOT NULL, `operationId` TEXT NOT NULL, `ledgerVersion` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "instituteId",
+            "columnName": "instituteId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "paymentId",
+            "columnName": "paymentId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "feeId",
+            "columnName": "feeId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "studentId",
+            "columnName": "studentId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "amount",
+            "columnName": "amount",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "receiptNumber",
+            "columnName": "receiptNumber",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "reason",
+            "columnName": "reason",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "reversedByUserId",
+            "columnName": "reversedByUserId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "reversedAtMs",
+            "columnName": "reversedAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "operationId",
+            "columnName": "operationId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ledgerVersion",
+            "columnName": "ledgerVersion",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_payment_reversals_instituteId_paymentId",
+            "unique": true,
+            "columnNames": [
+              "instituteId",
+              "paymentId"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_payment_reversals_instituteId_paymentId` ON `${TABLE_NAME}` (`instituteId`, `paymentId`)"
+          },
+          {
+            "name": "index_payment_reversals_instituteId_feeId",
+            "unique": false,
+            "columnNames": [
+              "instituteId",
+              "feeId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_payment_reversals_instituteId_feeId` ON `${TABLE_NAME}` (`instituteId`, `feeId`)"
+          }
+        ]
+      },
+      {
+        "tableName": "financial_outbox",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`operationId` TEXT NOT NULL, `instituteId` TEXT NOT NULL, `action` TEXT NOT NULL, `requestJson` TEXT NOT NULL, `status` TEXT NOT NULL, `attempts` INTEGER NOT NULL, `createdAtMs` INTEGER NOT NULL, `updatedAtMs` INTEGER NOT NULL, `lastError` TEXT, PRIMARY KEY(`instituteId`, `operationId`))",
+        "fields": [
+          {
+            "fieldPath": "operationId",
+            "columnName": "operationId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "instituteId",
+            "columnName": "instituteId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "action",
+            "columnName": "action",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "requestJson",
+            "columnName": "requestJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "attempts",
+            "columnName": "attempts",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtMs",
+            "columnName": "createdAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtMs",
+            "columnName": "updatedAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastError",
+            "columnName": "lastError",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "instituteId",
+            "operationId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_financial_outbox_instituteId_status",
+            "unique": false,
+            "columnNames": [
+              "instituteId",
+              "status"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_financial_outbox_instituteId_status` ON `${TABLE_NAME}` (`instituteId`, `status`)"
+          }
+        ]
+      },
+      {
+        "tableName": "deletion_outbox",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`operationId` TEXT NOT NULL, `instituteId` TEXT NOT NULL, `entityType` TEXT NOT NULL, `entityId` TEXT NOT NULL, `action` TEXT NOT NULL, `reason` TEXT NOT NULL, `requestJson` TEXT NOT NULL, `status` TEXT NOT NULL, `attempts` INTEGER NOT NULL, `createdAtMs` INTEGER NOT NULL, `updatedAtMs` INTEGER NOT NULL, `lastError` TEXT, PRIMARY KEY(`instituteId`, `operationId`))",
+        "fields": [
+          {
+            "fieldPath": "operationId",
+            "columnName": "operationId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "instituteId",
+            "columnName": "instituteId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "entityType",
+            "columnName": "entityType",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "entityId",
+            "columnName": "entityId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "action",
+            "columnName": "action",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "reason",
+            "columnName": "reason",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "requestJson",
+            "columnName": "requestJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "attempts",
+            "columnName": "attempts",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtMs",
+            "columnName": "createdAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtMs",
+            "columnName": "updatedAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastError",
+            "columnName": "lastError",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "instituteId",
+            "operationId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_deletion_outbox_status",
+            "unique": false,
+            "columnNames": [
+              "status"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_deletion_outbox_status` ON `${TABLE_NAME}` (`status`)"
+          },
+          {
+            "name": "index_deletion_outbox_instituteId_entityType_entityId_action_status",
+            "unique": false,
+            "columnNames": [
+              "instituteId",
+              "entityType",
+              "entityId",
+              "action",
+              "status"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_deletion_outbox_instituteId_entityType_entityId_action_status` ON `${TABLE_NAME}` (`instituteId`, `entityType`, `entityId`, `action`, `status`)"
+          }
+        ]
+      },
+      {
+        "tableName": "reminder_templates",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `instituteId` TEXT NOT NULL, `title` TEXT NOT NULL, `type` TEXT NOT NULL, `messageTemplate` TEXT NOT NULL, `isDefault` INTEGER NOT NULL, `createdAtMs` INTEGER NOT NULL, `updatedAtMs` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "instituteId",
+            "columnName": "instituteId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "title",
+            "columnName": "title",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "type",
+            "columnName": "type",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "messageTemplate",
+            "columnName": "messageTemplate",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "isDefault",
+            "columnName": "isDefault",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtMs",
+            "columnName": "createdAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtMs",
+            "columnName": "updatedAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "staff",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `instituteId` TEXT NOT NULL, `staffCode` TEXT NOT NULL, `fullName` TEXT NOT NULL, `photoUri` TEXT, `roleTitle` TEXT NOT NULL, `phone` TEXT, `email` TEXT, `address` TEXT, `joiningDateMs` INTEGER, `monthlySalary` REAL NOT NULL, `assignedBatchIds` TEXT, `status` TEXT NOT NULL, `notes` TEXT, `permissions` TEXT, `createdAtMs` INTEGER NOT NULL, `updatedAtMs` INTEGER NOT NULL, `archivedAtMs` INTEGER, `staffCategory` TEXT NOT NULL, `salaryType` TEXT NOT NULL, `perClassRate` REAL NOT NULL, `perHourRate` REAL NOT NULL, `subjects` TEXT, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "instituteId",
+            "columnName": "instituteId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "staffCode",
+            "columnName": "staffCode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fullName",
+            "columnName": "fullName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "photoUri",
+            "columnName": "photoUri",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "roleTitle",
+            "columnName": "roleTitle",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "phone",
+            "columnName": "phone",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "email",
+            "columnName": "email",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "address",
+            "columnName": "address",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "joiningDateMs",
+            "columnName": "joiningDateMs",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "monthlySalary",
+            "columnName": "monthlySalary",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "assignedBatchIds",
+            "columnName": "assignedBatchIds",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "notes",
+            "columnName": "notes",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "permissions",
+            "columnName": "permissions",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "createdAtMs",
+            "columnName": "createdAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtMs",
+            "columnName": "updatedAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "archivedAtMs",
+            "columnName": "archivedAtMs",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "staffCategory",
+            "columnName": "staffCategory",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "salaryType",
+            "columnName": "salaryType",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "perClassRate",
+            "columnName": "perClassRate",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "perHourRate",
+            "columnName": "perHourRate",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "subjects",
+            "columnName": "subjects",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_staff_instituteId_archivedAtMs_fullName",
+            "unique": false,
+            "columnNames": [
+              "instituteId",
+              "archivedAtMs",
+              "fullName"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_staff_instituteId_archivedAtMs_fullName` ON `${TABLE_NAME}` (`instituteId`, `archivedAtMs`, `fullName`)"
+          },
+          {
+            "name": "index_staff_staffCode_archivedAtMs",
+            "unique": false,
+            "columnNames": [
+              "staffCode",
+              "archivedAtMs"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_staff_staffCode_archivedAtMs` ON `${TABLE_NAME}` (`staffCode`, `archivedAtMs`)"
+          }
+        ]
+      },
+      {
+        "tableName": "staff_attendance",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `instituteId` TEXT NOT NULL, `staffId` TEXT NOT NULL, `attendanceDateMs` INTEGER NOT NULL, `status` TEXT NOT NULL, `note` TEXT, `markedByUserId` TEXT NOT NULL, `createdAtMs` INTEGER NOT NULL, `updatedAtMs` INTEGER NOT NULL, `entryTimeMs` INTEGER, `exitTimeMs` INTEGER, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "instituteId",
+            "columnName": "instituteId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "staffId",
+            "columnName": "staffId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "attendanceDateMs",
+            "columnName": "attendanceDateMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "note",
+            "columnName": "note",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "markedByUserId",
+            "columnName": "markedByUserId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtMs",
+            "columnName": "createdAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtMs",
+            "columnName": "updatedAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "entryTimeMs",
+            "columnName": "entryTimeMs",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "exitTimeMs",
+            "columnName": "exitTimeMs",
+            "affinity": "INTEGER"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "salaries",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `instituteId` TEXT NOT NULL, `staffId` TEXT NOT NULL, `salaryMonth` TEXT NOT NULL, `basicSalary` REAL NOT NULL, `bonusAmount` REAL NOT NULL, `deductionAmount` REAL NOT NULL, `advanceAmount` REAL NOT NULL, `netSalary` REAL NOT NULL, `paidAmount` REAL NOT NULL, `paymentMethod` TEXT, `paymentDateMs` INTEGER, `status` TEXT NOT NULL, `salarySlipNumber` TEXT NOT NULL, `note` TEXT, `createdAtMs` INTEGER NOT NULL, `updatedAtMs` INTEGER NOT NULL, `cancelledAtMs` INTEGER, `calculationType` TEXT NOT NULL, `calculationSessionIds` TEXT, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "instituteId",
+            "columnName": "instituteId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "staffId",
+            "columnName": "staffId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "salaryMonth",
+            "columnName": "salaryMonth",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "basicSalary",
+            "columnName": "basicSalary",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "bonusAmount",
+            "columnName": "bonusAmount",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "deductionAmount",
+            "columnName": "deductionAmount",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "advanceAmount",
+            "columnName": "advanceAmount",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "netSalary",
+            "columnName": "netSalary",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "paidAmount",
+            "columnName": "paidAmount",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "paymentMethod",
+            "columnName": "paymentMethod",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "paymentDateMs",
+            "columnName": "paymentDateMs",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "salarySlipNumber",
+            "columnName": "salarySlipNumber",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "note",
+            "columnName": "note",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "createdAtMs",
+            "columnName": "createdAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtMs",
+            "columnName": "updatedAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "cancelledAtMs",
+            "columnName": "cancelledAtMs",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "calculationType",
+            "columnName": "calculationType",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "calculationSessionIds",
+            "columnName": "calculationSessionIds",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "teaching_sessions",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `instituteId` TEXT NOT NULL, `staffId` TEXT NOT NULL, `batchId` TEXT NOT NULL, `sessionKey` TEXT NOT NULL, `subject` TEXT, `sessionDateMs` INTEGER NOT NULL, `durationMinutes` INTEGER NOT NULL, `salaryTypeSnapshot` TEXT NOT NULL, `rateSnapshot` REAL NOT NULL, `calculatedAmount` REAL NOT NULL, `salaryId` TEXT, `note` TEXT, `createdByUserId` TEXT NOT NULL, `createdAtMs` INTEGER NOT NULL, `updatedAtMs` INTEGER NOT NULL, `deletedAtMs` INTEGER, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "instituteId",
+            "columnName": "instituteId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "staffId",
+            "columnName": "staffId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "batchId",
+            "columnName": "batchId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionKey",
+            "columnName": "sessionKey",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "subject",
+            "columnName": "subject",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "sessionDateMs",
+            "columnName": "sessionDateMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "durationMinutes",
+            "columnName": "durationMinutes",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "salaryTypeSnapshot",
+            "columnName": "salaryTypeSnapshot",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "rateSnapshot",
+            "columnName": "rateSnapshot",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "calculatedAmount",
+            "columnName": "calculatedAmount",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "salaryId",
+            "columnName": "salaryId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "note",
+            "columnName": "note",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "createdByUserId",
+            "columnName": "createdByUserId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtMs",
+            "columnName": "createdAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtMs",
+            "columnName": "updatedAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "deletedAtMs",
+            "columnName": "deletedAtMs",
+            "affinity": "INTEGER"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_teaching_sessions_instituteId_staffId_sessionDateMs",
+            "unique": false,
+            "columnNames": [
+              "instituteId",
+              "staffId",
+              "sessionDateMs"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_teaching_sessions_instituteId_staffId_sessionDateMs` ON `${TABLE_NAME}` (`instituteId`, `staffId`, `sessionDateMs`)"
+          },
+          {
+            "name": "index_teaching_sessions_instituteId_batchId_sessionDateMs",
+            "unique": false,
+            "columnNames": [
+              "instituteId",
+              "batchId",
+              "sessionDateMs"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_teaching_sessions_instituteId_batchId_sessionDateMs` ON `${TABLE_NAME}` (`instituteId`, `batchId`, `sessionDateMs`)"
+          },
+          {
+            "name": "index_teaching_sessions_instituteId_sessionKey",
+            "unique": true,
+            "columnNames": [
+              "instituteId",
+              "sessionKey"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_teaching_sessions_instituteId_sessionKey` ON `${TABLE_NAME}` (`instituteId`, `sessionKey`)"
+          },
+          {
+            "name": "index_teaching_sessions_salaryId",
+            "unique": false,
+            "columnNames": [
+              "salaryId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_teaching_sessions_salaryId` ON `${TABLE_NAME}` (`salaryId`)"
+          }
+        ]
+      },
+      {
+        "tableName": "expenses",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `instituteId` TEXT NOT NULL, `category` TEXT NOT NULL, `title` TEXT NOT NULL, `amount` REAL NOT NULL, `expenseDateMs` INTEGER NOT NULL, `paymentMethod` TEXT, `description` TEXT, `attachmentUri` TEXT, `createdByUserId` TEXT NOT NULL, `createdAtMs` INTEGER NOT NULL, `updatedAtMs` INTEGER NOT NULL, `archivedAtMs` INTEGER, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "instituteId",
+            "columnName": "instituteId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "category",
+            "columnName": "category",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "title",
+            "columnName": "title",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "amount",
+            "columnName": "amount",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "expenseDateMs",
+            "columnName": "expenseDateMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "paymentMethod",
+            "columnName": "paymentMethod",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "description",
+            "columnName": "description",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "attachmentUri",
+            "columnName": "attachmentUri",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "createdByUserId",
+            "columnName": "createdByUserId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtMs",
+            "columnName": "createdAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtMs",
+            "columnName": "updatedAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "archivedAtMs",
+            "columnName": "archivedAtMs",
+            "affinity": "INTEGER"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_expenses_instituteId_archivedAtMs_expenseDateMs",
+            "unique": false,
+            "columnNames": [
+              "instituteId",
+              "archivedAtMs",
+              "expenseDateMs"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_expenses_instituteId_archivedAtMs_expenseDateMs` ON `${TABLE_NAME}` (`instituteId`, `archivedAtMs`, `expenseDateMs`)"
+          }
+        ]
+      },
+      {
+        "tableName": "other_income",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `instituteId` TEXT NOT NULL, `category` TEXT NOT NULL, `title` TEXT NOT NULL, `amount` REAL NOT NULL, `incomeDateMs` INTEGER NOT NULL, `paymentMethod` TEXT, `note` TEXT, `createdByUserId` TEXT NOT NULL, `createdAtMs` INTEGER NOT NULL, `updatedAtMs` INTEGER NOT NULL, `archivedAtMs` INTEGER, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "instituteId",
+            "columnName": "instituteId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "category",
+            "columnName": "category",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "title",
+            "columnName": "title",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "amount",
+            "columnName": "amount",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "incomeDateMs",
+            "columnName": "incomeDateMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "paymentMethod",
+            "columnName": "paymentMethod",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "note",
+            "columnName": "note",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "createdByUserId",
+            "columnName": "createdByUserId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtMs",
+            "columnName": "createdAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtMs",
+            "columnName": "updatedAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "archivedAtMs",
+            "columnName": "archivedAtMs",
+            "affinity": "INTEGER"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_other_income_instituteId_archivedAtMs_incomeDateMs",
+            "unique": false,
+            "columnNames": [
+              "instituteId",
+              "archivedAtMs",
+              "incomeDateMs"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_other_income_instituteId_archivedAtMs_incomeDateMs` ON `${TABLE_NAME}` (`instituteId`, `archivedAtMs`, `incomeDateMs`)"
+          }
+        ]
+      },
+      {
+        "tableName": "exams",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `instituteId` TEXT NOT NULL, `batchId` TEXT NOT NULL, `examName` TEXT NOT NULL, `subject` TEXT, `examDateMs` INTEGER NOT NULL, `totalMarks` REAL NOT NULL, `passingMarks` REAL NOT NULL, `examFeeAmount` REAL NOT NULL, `teacherName` TEXT, `note` TEXT, `status` TEXT NOT NULL, `createdAtMs` INTEGER NOT NULL, `updatedAtMs` INTEGER NOT NULL, `archivedAtMs` INTEGER, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "instituteId",
+            "columnName": "instituteId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "batchId",
+            "columnName": "batchId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "examName",
+            "columnName": "examName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "subject",
+            "columnName": "subject",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "examDateMs",
+            "columnName": "examDateMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "totalMarks",
+            "columnName": "totalMarks",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "passingMarks",
+            "columnName": "passingMarks",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "examFeeAmount",
+            "columnName": "examFeeAmount",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "teacherName",
+            "columnName": "teacherName",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "note",
+            "columnName": "note",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtMs",
+            "columnName": "createdAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtMs",
+            "columnName": "updatedAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "archivedAtMs",
+            "columnName": "archivedAtMs",
+            "affinity": "INTEGER"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "results",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `instituteId` TEXT NOT NULL, `examId` TEXT NOT NULL, `batchId` TEXT NOT NULL, `studentId` TEXT NOT NULL, `marksObtained` REAL NOT NULL, `grade` TEXT, `position` INTEGER, `remarks` TEXT, `published` INTEGER NOT NULL, `createdAtMs` INTEGER NOT NULL, `updatedAtMs` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "instituteId",
+            "columnName": "instituteId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "examId",
+            "columnName": "examId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "batchId",
+            "columnName": "batchId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "studentId",
+            "columnName": "studentId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "marksObtained",
+            "columnName": "marksObtained",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "grade",
+            "columnName": "grade",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "position",
+            "columnName": "position",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "remarks",
+            "columnName": "remarks",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "published",
+            "columnName": "published",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtMs",
+            "columnName": "createdAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtMs",
+            "columnName": "updatedAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "audit_logs",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `instituteId` TEXT NOT NULL, `userId` TEXT, `action` TEXT NOT NULL, `module` TEXT NOT NULL, `description` TEXT NOT NULL, `oldValue` TEXT, `newValue` TEXT, `createdAtMs` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "instituteId",
+            "columnName": "instituteId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "userId",
+            "columnName": "userId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "action",
+            "columnName": "action",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "module",
+            "columnName": "module",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "description",
+            "columnName": "description",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "oldValue",
+            "columnName": "oldValue",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "newValue",
+            "columnName": "newValue",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "createdAtMs",
+            "columnName": "createdAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "absent_messages",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `instituteId` TEXT NOT NULL, `batchId` TEXT NOT NULL, `studentId` TEXT NOT NULL, `attendanceDateMs` INTEGER NOT NULL, `messageType` TEXT NOT NULL, `messageText` TEXT NOT NULL, `sentByUserId` TEXT NOT NULL, `status` TEXT NOT NULL, `createdAtMs` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "instituteId",
+            "columnName": "instituteId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "batchId",
+            "columnName": "batchId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "studentId",
+            "columnName": "studentId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "attendanceDateMs",
+            "columnName": "attendanceDateMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "messageType",
+            "columnName": "messageType",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "messageText",
+            "columnName": "messageText",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sentByUserId",
+            "columnName": "sentByUserId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtMs",
+            "columnName": "createdAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "bulk_message_log",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `instituteId` TEXT NOT NULL, `studentId` TEXT NOT NULL, `channel` TEXT NOT NULL, `messageText` TEXT NOT NULL, `status` TEXT NOT NULL, `createdAtMs` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "instituteId",
+            "columnName": "instituteId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "studentId",
+            "columnName": "studentId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "channel",
+            "columnName": "channel",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "messageText",
+            "columnName": "messageText",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtMs",
+            "columnName": "createdAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_bulk_message_log_instituteId_studentId_channel_messageText",
+            "unique": false,
+            "columnNames": [
+              "instituteId",
+              "studentId",
+              "channel",
+              "messageText"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_bulk_message_log_instituteId_studentId_channel_messageText` ON `${TABLE_NAME}` (`instituteId`, `studentId`, `channel`, `messageText`)"
+          }
+        ]
+      },
+      {
+        "tableName": "enquiries",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `instituteId` TEXT NOT NULL, `name` TEXT NOT NULL, `phone` TEXT NOT NULL, `address` TEXT, `subjectName` TEXT NOT NULL, `enquiryDateMs` INTEGER NOT NULL, `status` TEXT NOT NULL, `followUpDateMs` INTEGER, `note` TEXT, `createdAtMs` INTEGER NOT NULL, `updatedAtMs` INTEGER NOT NULL, `archivedAtMs` INTEGER, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "instituteId",
+            "columnName": "instituteId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "phone",
+            "columnName": "phone",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "address",
+            "columnName": "address",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "subjectName",
+            "columnName": "subjectName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "enquiryDateMs",
+            "columnName": "enquiryDateMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "followUpDateMs",
+            "columnName": "followUpDateMs",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "note",
+            "columnName": "note",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "createdAtMs",
+            "columnName": "createdAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtMs",
+            "columnName": "updatedAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "archivedAtMs",
+            "columnName": "archivedAtMs",
+            "affinity": "INTEGER"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "works",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `instituteId` TEXT NOT NULL, `batchId` TEXT, `type` TEXT NOT NULL, `title` TEXT NOT NULL, `description` TEXT NOT NULL, `dueDateMs` INTEGER, `createdAtMs` INTEGER NOT NULL, `updatedAtMs` INTEGER NOT NULL, `archivedAtMs` INTEGER, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "instituteId",
+            "columnName": "instituteId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "batchId",
+            "columnName": "batchId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "type",
+            "columnName": "type",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "title",
+            "columnName": "title",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "description",
+            "columnName": "description",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dueDateMs",
+            "columnName": "dueDateMs",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "createdAtMs",
+            "columnName": "createdAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtMs",
+            "columnName": "updatedAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "archivedAtMs",
+            "columnName": "archivedAtMs",
+            "affinity": "INTEGER"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "homework",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `instituteId` TEXT NOT NULL, `batchId` TEXT, `title` TEXT NOT NULL, `subject` TEXT, `className` TEXT, `instructions` TEXT NOT NULL, `bookPage` TEXT, `startDateMs` INTEGER NOT NULL, `dueDateMs` INTEGER, `attachmentUri` TEXT, `requiresSubmission` INTEGER NOT NULL, `status` TEXT NOT NULL, `createdAtMs` INTEGER NOT NULL, `updatedAtMs` INTEGER NOT NULL, `archivedAtMs` INTEGER, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "instituteId",
+            "columnName": "instituteId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "batchId",
+            "columnName": "batchId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "title",
+            "columnName": "title",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "subject",
+            "columnName": "subject",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "className",
+            "columnName": "className",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "instructions",
+            "columnName": "instructions",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "bookPage",
+            "columnName": "bookPage",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "startDateMs",
+            "columnName": "startDateMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dueDateMs",
+            "columnName": "dueDateMs",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "attachmentUri",
+            "columnName": "attachmentUri",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "requiresSubmission",
+            "columnName": "requiresSubmission",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtMs",
+            "columnName": "createdAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtMs",
+            "columnName": "updatedAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "archivedAtMs",
+            "columnName": "archivedAtMs",
+            "affinity": "INTEGER"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "assignments",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `instituteId` TEXT NOT NULL, `batchId` TEXT, `title` TEXT NOT NULL, `subject` TEXT, `className` TEXT, `assignmentType` TEXT NOT NULL, `instructions` TEXT NOT NULL, `learningObjective` TEXT, `totalMarks` REAL, `passingMarks` REAL, `gradingMethod` TEXT NOT NULL, `rubricJson` TEXT, `startDateMs` INTEGER NOT NULL, `dueDateMs` INTEGER, `allowLateSubmission` INTEGER NOT NULL, `latePenalty` TEXT, `submissionFormat` TEXT NOT NULL, `maxFileSizeKb` INTEGER, `referenceMaterials` TEXT, `status` TEXT NOT NULL, `publishDateMs` INTEGER, `createdAtMs` INTEGER NOT NULL, `updatedAtMs` INTEGER NOT NULL, `archivedAtMs` INTEGER, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "instituteId",
+            "columnName": "instituteId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "batchId",
+            "columnName": "batchId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "title",
+            "columnName": "title",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "subject",
+            "columnName": "subject",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "className",
+            "columnName": "className",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "assignmentType",
+            "columnName": "assignmentType",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "instructions",
+            "columnName": "instructions",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "learningObjective",
+            "columnName": "learningObjective",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "totalMarks",
+            "columnName": "totalMarks",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "passingMarks",
+            "columnName": "passingMarks",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "gradingMethod",
+            "columnName": "gradingMethod",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "rubricJson",
+            "columnName": "rubricJson",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "startDateMs",
+            "columnName": "startDateMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dueDateMs",
+            "columnName": "dueDateMs",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "allowLateSubmission",
+            "columnName": "allowLateSubmission",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "latePenalty",
+            "columnName": "latePenalty",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "submissionFormat",
+            "columnName": "submissionFormat",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "maxFileSizeKb",
+            "columnName": "maxFileSizeKb",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "referenceMaterials",
+            "columnName": "referenceMaterials",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "publishDateMs",
+            "columnName": "publishDateMs",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "createdAtMs",
+            "columnName": "createdAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtMs",
+            "columnName": "updatedAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "archivedAtMs",
+            "columnName": "archivedAtMs",
+            "affinity": "INTEGER"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "homework_submissions",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `homeworkId` TEXT NOT NULL, `studentId` TEXT NOT NULL, `instituteId` TEXT NOT NULL, `status` TEXT NOT NULL, `submittedAtMs` INTEGER, `attachmentUri` TEXT, `studentNote` TEXT, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "homeworkId",
+            "columnName": "homeworkId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "studentId",
+            "columnName": "studentId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "instituteId",
+            "columnName": "instituteId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "submittedAtMs",
+            "columnName": "submittedAtMs",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "attachmentUri",
+            "columnName": "attachmentUri",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "studentNote",
+            "columnName": "studentNote",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "assignment_submissions",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `assignmentId` TEXT NOT NULL, `studentId` TEXT NOT NULL, `instituteId` TEXT NOT NULL, `status` TEXT NOT NULL, `submittedAtMs` INTEGER, `attachmentUri` TEXT, `studentNote` TEXT, `marksObtained` REAL, `grade` TEXT, `percentage` REAL, `teacherFeedback` TEXT, `feedbackAttachmentUri` TEXT, `gradedAtMs` INTEGER, `resubmitRequested` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "assignmentId",
+            "columnName": "assignmentId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "studentId",
+            "columnName": "studentId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "instituteId",
+            "columnName": "instituteId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "submittedAtMs",
+            "columnName": "submittedAtMs",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "attachmentUri",
+            "columnName": "attachmentUri",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "studentNote",
+            "columnName": "studentNote",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "marksObtained",
+            "columnName": "marksObtained",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "grade",
+            "columnName": "grade",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "percentage",
+            "columnName": "percentage",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "teacherFeedback",
+            "columnName": "teacherFeedback",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "feedbackAttachmentUri",
+            "columnName": "feedbackAttachmentUri",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "gradedAtMs",
+            "columnName": "gradedAtMs",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "resubmitRequested",
+            "columnName": "resubmitRequested",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "final_exams",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `instituteId` TEXT NOT NULL, `batchId` TEXT NOT NULL, `examName` TEXT NOT NULL, `status` TEXT NOT NULL, `createdAtMs` INTEGER NOT NULL, `updatedAtMs` INTEGER NOT NULL, `publishedAtMs` INTEGER, `archivedAtMs` INTEGER, `examFeeAmount` REAL NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "instituteId",
+            "columnName": "instituteId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "batchId",
+            "columnName": "batchId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "examName",
+            "columnName": "examName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtMs",
+            "columnName": "createdAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtMs",
+            "columnName": "updatedAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "publishedAtMs",
+            "columnName": "publishedAtMs",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "archivedAtMs",
+            "columnName": "archivedAtMs",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "examFeeAmount",
+            "columnName": "examFeeAmount",
+            "affinity": "REAL",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_final_exams_instituteId",
+            "unique": false,
+            "columnNames": [
+              "instituteId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_final_exams_instituteId` ON `${TABLE_NAME}` (`instituteId`)"
+          }
+        ]
+      },
+      {
+        "tableName": "final_exam_subjects",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `finalExamId` TEXT NOT NULL, `instituteId` TEXT NOT NULL, `subjectName` TEXT NOT NULL, `fullMarks` REAL NOT NULL, `passMarks` REAL NOT NULL, `components` TEXT NOT NULL, `assignedStaffId` TEXT, `assignedStaffName` TEXT, `sortOrder` INTEGER NOT NULL, `mcqFullMarks` REAL NOT NULL, `cqFullMarks` REAL NOT NULL, `practicalFullMarks` REAL NOT NULL, `mcqPassMarks` REAL NOT NULL, `cqPassMarks` REAL NOT NULL, `practicalPassMarks` REAL NOT NULL, `marksEntryEnabled` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "finalExamId",
+            "columnName": "finalExamId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "instituteId",
+            "columnName": "instituteId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "subjectName",
+            "columnName": "subjectName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fullMarks",
+            "columnName": "fullMarks",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "passMarks",
+            "columnName": "passMarks",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "components",
+            "columnName": "components",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "assignedStaffId",
+            "columnName": "assignedStaffId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "assignedStaffName",
+            "columnName": "assignedStaffName",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "sortOrder",
+            "columnName": "sortOrder",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mcqFullMarks",
+            "columnName": "mcqFullMarks",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "cqFullMarks",
+            "columnName": "cqFullMarks",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "practicalFullMarks",
+            "columnName": "practicalFullMarks",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mcqPassMarks",
+            "columnName": "mcqPassMarks",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "cqPassMarks",
+            "columnName": "cqPassMarks",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "practicalPassMarks",
+            "columnName": "practicalPassMarks",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "marksEntryEnabled",
+            "columnName": "marksEntryEnabled",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_final_exam_subjects_finalExamId",
+            "unique": false,
+            "columnNames": [
+              "finalExamId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_final_exam_subjects_finalExamId` ON `${TABLE_NAME}` (`finalExamId`)"
+          }
+        ]
+      },
+      {
+        "tableName": "final_exam_marks",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `instituteId` TEXT NOT NULL, `finalExamId` TEXT NOT NULL, `subjectId` TEXT NOT NULL, `studentId` TEXT NOT NULL, `mcqMarks` REAL NOT NULL, `cqMarks` REAL NOT NULL, `practicalMarks` REAL NOT NULL, `totalMarks` REAL NOT NULL, `status` TEXT NOT NULL, `enteredByUserId` TEXT NOT NULL, `enteredByName` TEXT NOT NULL, `submittedAtMs` INTEGER, `reviewedAtMs` INTEGER, `approvedAtMs` INTEGER, `updatedAtMs` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "instituteId",
+            "columnName": "instituteId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "finalExamId",
+            "columnName": "finalExamId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "subjectId",
+            "columnName": "subjectId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "studentId",
+            "columnName": "studentId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mcqMarks",
+            "columnName": "mcqMarks",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "cqMarks",
+            "columnName": "cqMarks",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "practicalMarks",
+            "columnName": "practicalMarks",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "totalMarks",
+            "columnName": "totalMarks",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "enteredByUserId",
+            "columnName": "enteredByUserId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "enteredByName",
+            "columnName": "enteredByName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "submittedAtMs",
+            "columnName": "submittedAtMs",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "reviewedAtMs",
+            "columnName": "reviewedAtMs",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "approvedAtMs",
+            "columnName": "approvedAtMs",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "updatedAtMs",
+            "columnName": "updatedAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_final_exam_marks_finalExamId",
+            "unique": false,
+            "columnNames": [
+              "finalExamId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_final_exam_marks_finalExamId` ON `${TABLE_NAME}` (`finalExamId`)"
+          },
+          {
+            "name": "index_final_exam_marks_subjectId",
+            "unique": false,
+            "columnNames": [
+              "subjectId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_final_exam_marks_subjectId` ON `${TABLE_NAME}` (`subjectId`)"
+          },
+          {
+            "name": "index_final_exam_marks_finalExamId_subjectId_studentId",
+            "unique": true,
+            "columnNames": [
+              "finalExamId",
+              "subjectId",
+              "studentId"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_final_exam_marks_finalExamId_subjectId_studentId` ON `${TABLE_NAME}` (`finalExamId`, `subjectId`, `studentId`)"
+          }
+        ]
+      },
+      {
+        "tableName": "custom_routines",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `instituteId` TEXT NOT NULL, `routineName` TEXT NOT NULL, `className` TEXT NOT NULL, `section` TEXT, `academicSession` TEXT, `periodCount` INTEGER NOT NULL DEFAULT 7, `effectiveDateMs` INTEGER, `createdAtMs` INTEGER NOT NULL, `updatedAtMs` INTEGER NOT NULL, `archivedAtMs` INTEGER, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "instituteId",
+            "columnName": "instituteId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "routineName",
+            "columnName": "routineName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "className",
+            "columnName": "className",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "section",
+            "columnName": "section",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "academicSession",
+            "columnName": "academicSession",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "periodCount",
+            "columnName": "periodCount",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "7"
+          },
+          {
+            "fieldPath": "effectiveDateMs",
+            "columnName": "effectiveDateMs",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "createdAtMs",
+            "columnName": "createdAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtMs",
+            "columnName": "updatedAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "archivedAtMs",
+            "columnName": "archivedAtMs",
+            "affinity": "INTEGER"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_custom_routines_instituteId",
+            "unique": false,
+            "columnNames": [
+              "instituteId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_custom_routines_instituteId` ON `${TABLE_NAME}` (`instituteId`)"
+          }
+        ]
+      },
+      {
+        "tableName": "custom_routine_entries",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `routineId` TEXT NOT NULL, `instituteId` TEXT NOT NULL, `dayIndex` INTEGER NOT NULL, `subjectName` TEXT NOT NULL, `teacherName` TEXT NOT NULL, `teacherId` TEXT, `startMinutes` INTEGER NOT NULL, `endMinutes` INTEGER NOT NULL, `sortOrder` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "routineId",
+            "columnName": "routineId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "instituteId",
+            "columnName": "instituteId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dayIndex",
+            "columnName": "dayIndex",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "subjectName",
+            "columnName": "subjectName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "teacherName",
+            "columnName": "teacherName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "teacherId",
+            "columnName": "teacherId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "startMinutes",
+            "columnName": "startMinutes",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endMinutes",
+            "columnName": "endMinutes",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sortOrder",
+            "columnName": "sortOrder",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_custom_routine_entries_routineId",
+            "unique": false,
+            "columnNames": [
+              "routineId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_custom_routine_entries_routineId` ON `${TABLE_NAME}` (`routineId`)"
+          },
+          {
+            "name": "index_custom_routine_entries_instituteId",
+            "unique": false,
+            "columnNames": [
+              "instituteId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_custom_routine_entries_instituteId` ON `${TABLE_NAME}` (`instituteId`)"
+          }
+        ]
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '22c57a9a237ada29a1b3e342467562d4')"
+    ]
+  }
+}

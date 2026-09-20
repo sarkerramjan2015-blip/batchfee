@@ -58,6 +58,12 @@ object FirebaseStorageImageUploadHelper {
         replacesReference: String? = null
     ): String = uploadImage(context, sourceUri, ImagePolicy.PAYMENT_QR, null, replacesReference)
 
+    /** A teacher-owned, private diagram or stimulus image attached to one manual question. */
+    suspend fun uploadQuestionAttachment(
+        context: Context,
+        sourceUri: Uri,
+    ): String = uploadImage(context, sourceUri, ImagePolicy.QUESTION_ATTACHMENT, null, null)
+
     /**
      * Guardian uploads the payment screenshot. Runs under the student session,
      * so the institute ID comes from the student session rather than the owner session.
@@ -376,6 +382,7 @@ object FirebaseStorageImageUploadHelper {
         STUDENT_PHOTO(maxDimension = PROFILE_IMAGE_SIZE, targetBytes = 160 * 1024, purpose = "student_photo"),
         STAFF_PHOTO(maxDimension = PROFILE_IMAGE_SIZE, targetBytes = 160 * 1024, purpose = "staff_photo"),
         PAYMENT_QR(maxDimension = 512, targetBytes = 400 * 1024, purpose = "payment_qr", square = false),
-        PAYMENT_PROOF(maxDimension = 1024, targetBytes = 900 * 1024, purpose = "payment_proof", square = false)
+        PAYMENT_PROOF(maxDimension = 1024, targetBytes = 900 * 1024, purpose = "payment_proof", square = false),
+        QUESTION_ATTACHMENT(maxDimension = 1440, targetBytes = 900 * 1024, purpose = "question_attachment", square = false),
     }
 }

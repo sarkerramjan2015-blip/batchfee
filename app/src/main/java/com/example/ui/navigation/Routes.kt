@@ -54,6 +54,7 @@ object BillingRoute
 
 @Serializable data class ReportsRoute(val period: String = "today")
 @Serializable object ReminderTemplatesRoute
+@Serializable object SmartDueAutomationRoute
 
 // Part 3 Routes
 
@@ -79,7 +80,10 @@ object BillingRoute
 @Serializable object ExpenseReportRoute
 @Serializable object ProfitLossRoute
 @Serializable object ExamsRoute
-@Serializable object QuestionBankFoundationRoute
+@Serializable data class QuestionBankFoundationRoute(
+    val className: String? = null,
+    val subject: String? = null,
+)
 @Serializable object CuratedQuestionBankRoute
 @Serializable object QuestionCurationRoute
 @Serializable object QuestionBankAdminRoute

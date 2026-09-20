@@ -1,5 +1,8 @@
 package com.batchfee.edu.ui.dashboard
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
@@ -37,6 +40,8 @@ import com.batchfee.edu.data.firestore.SmsPackage
 import com.batchfee.edu.data.firestore.SmsRechargeRequest
 import com.batchfee.edu.data.firestore.SmsWalletSyncHelper
 import com.batchfee.edu.data.firestore.SmsWalletState
+import com.batchfee.edu.data.repository.DueAutomationRepository
+import com.batchfee.edu.data.repository.DueAutomationState
 import com.batchfee.edu.BuildConfig
 import com.batchfee.edu.domain.BiometricAuthManager
 import com.batchfee.edu.domain.DataExporter
@@ -58,6 +63,7 @@ private val ElectricBlue  = Color(0xFF3B82F6)
 private val TextWhite     = Color(0xFFF8FAFC)
 private val TextMuted     = Color(0xFF94A3B8)
 private val AccentRed     = Color(0xFFEF4444)
+private val AccentGreen   = Color(0xFF22C55E)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -281,6 +287,7 @@ fun SettingsScreen(
             var showSmsPlans by remember { mutableStateOf(true) }
             var showRechargeDialog by remember { mutableStateOf(false) }
             var showSmsReport by remember { mutableStateOf(false) }
+            var automationState by remember { mutableStateOf<DueAutomationState?>(null) }
             val isAdmin = SessionManager.isAdmin()
             LaunchedEffect(instituteId) {
                 val resolvedInstituteId = instituteId
@@ -291,6 +298,7 @@ fun SettingsScreen(
                         .getOrDefault(emptyList())
                     smsPackages = runCatching { SmsWalletSyncHelper.listPackages() }
                         .getOrDefault(emptyList())
+                    automationState = runCatching { DueAutomationRepository.getState() }.getOrNull()
                 }
             }
             val resolvedInstituteId = instituteId
@@ -332,6 +340,19 @@ fun SettingsScreen(
                                 WalletStat("This month", state.smsUsedThisMonth.toString(), Modifier.weight(1f))
                                 WalletStat("Lifetime used", state.totalSmsUsed.toString(), Modifier.weight(1f))
                             }
+                            HorizontalDivider(color = BorderSub.copy(alpha = 0.75f))
+                            Row(Modifier.fillMaxWidth()) {
+                                WalletStat(
+                                    "Est. days remaining",
+                                    automationState?.estimatedDaysRemaining?.toString() ?: "—",
+                                    Modifier.weight(1f)
+                                )
+                                WalletStat(
+                                    "Auto sent today",
+                                    automationState?.sentToday?.toString() ?: "—",
+                                    Modifier.weight(1f)
+                                )
+                            }
                         }
                         Text(
                             "Total purchased: ${state.totalSmsPurchased} SMS credits",
@@ -339,6 +360,32 @@ fun SettingsScreen(
                             fontSize = 10.sp,
                             modifier = Modifier.padding(start = 4.dp, top = 6.dp)
                         )
+                        Spacer(Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .clickable { onNavigate("SmartDueAutomationRoute") }
+                                .padding(horizontal = 10.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Filled.Autorenew, null, tint = Cyan, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    "Smart Due Automation",
+                                    color = TextWhite,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    if (automationState?.policy?.enabled == true) "Automatic reminders are ON" else "Automatic reminders are off",
+                                    color = if (automationState?.policy?.enabled == true) AccentGreen else TextMuted,
+                                    fontSize = 9.sp
+                                )
+                            }
+                            Icon(Icons.Filled.ChevronRight, null, tint = TextMuted, modifier = Modifier.size(18.dp))
+                        }
                         Spacer(Modifier.height(10.dp))
                         Row(
                             modifier = Modifier
@@ -607,10 +654,12 @@ private fun WalletStat(label: String, value: String, modifier: Modifier = Modifi
 private fun SmsMethodOption(
     title: String,
     subtitle: String,
+    number: String,
     selected: Boolean,
     enabled: Boolean,
     onSelect: () -> Unit
 ) {
+    val context = LocalContext.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -634,6 +683,37 @@ private fun SmsMethodOption(
         Column(Modifier.weight(1f)) {
             Text(title, color = TextWhite, fontSize = 13.sp, fontWeight = FontWeight.Medium)
             Text(subtitle, color = TextMuted, fontSize = 10.sp)
+            Spacer(Modifier.height(4.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(BorderSub.copy(alpha = 0.6f))
+                    .padding(start = 10.dp, top = 4.dp, bottom = 4.dp, end = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    number,
+                    color = TextWhite,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(
+                    onClick = {
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        clipboard.setPrimaryClip(ClipData.newPlainText("number", number))
+                        Toast.makeText(context, "Number copied!", Toast.LENGTH_SHORT).show()
+                    },
+                    enabled = enabled,
+                    contentPadding = PaddingValues(horizontal = 8.dp),
+                    modifier = Modifier.height(28.dp)
+                ) {
+                    Icon(Icons.Filled.ContentCopy, contentDescription = "Copy", tint = Cyan, modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Copy", color = Cyan, fontSize = 10.sp, fontWeight = FontWeight.Medium)
+                }
+            }
         }
     }
 }
@@ -769,17 +849,25 @@ private fun SmsRechargeDialog(
                     Text("Payment method", color = TextWhite, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                     SmsMethodOption(
                         title = "bKash (Send Money)",
-                        subtitle = "Pay to the BatchFee bKash number shown after approval.",
+                        subtitle = "Send Money to this number, then submit your request.",
+                        number = "01777408383",
                         selected = paymentMethod == "bkash",
                         enabled = !submitting,
                         onSelect = { paymentMethod = "bkash" }
                     )
                     SmsMethodOption(
                         title = "Nagad",
-                        subtitle = "Pay to the BatchFee Nagad number shown after approval.",
+                        subtitle = "Send Money to this number, then submit your request.",
+                        number = "01518657869",
                         selected = paymentMethod == "nagad",
                         enabled = !submitting,
                         onSelect = { paymentMethod = "nagad" }
+                    )
+                    Text(
+                        "Personal numbers — only Send Money is available. No cash-out or merchant payment.",
+                        color = Color(0xFFF59E0B),
+                        fontSize = 10.sp,
+                        modifier = Modifier.padding(top = 2.dp)
                     )
                     Spacer(Modifier.height(6.dp))
                     OutlinedTextField(

@@ -367,7 +367,12 @@ private fun PaymentRequestDetailDialog(
                         reviewNote = null,
                         receiptText = "Online payment approved: ${request.method.uppercase()} ${request.transactionId}."
                     )
-                    onApproved(result.payments.first().id)
+                    val paymentId = result.payments.firstOrNull()?.id
+                    if (paymentId == null) {
+                        onError("Approval completed but no payment record was returned. Refresh to confirm.")
+                        return@launch
+                    }
+                    onApproved(paymentId)
                 } else {
                     repository.reviewPaymentRequest(
                         instituteId = instituteId,

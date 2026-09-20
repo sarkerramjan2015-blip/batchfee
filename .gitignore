@@ -17,6 +17,7 @@ local.properties
 .env
 # Android signing secrets and private key material. Keep only the documented example in Git.
 debug.keystore
+debug.keystore.base64
 /keystore.properties
 keystore-credentials.txt
 /keystore.properties.*

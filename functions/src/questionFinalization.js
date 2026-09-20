@@ -2,6 +2,7 @@
 
 const { HttpsError } = require("firebase-functions/v2/https");
 const { CONTRIBUTION_POLICY_VERSION, QUESTION_SCHEMA_VERSION } = require("./questionBankFoundation");
+const { parseMediaReference } = require("./mediaSecurityCore");
 
 const PROPOSED_RATE_POISHA = Object.freeze({
   mcq: 25,
@@ -34,7 +35,7 @@ function proposedCostPoisha(questionType, count) {
   return rate * count;
 }
 
-function normalizeQuestion(raw, questionType) {
+function normalizeQuestion(raw, questionType, instituteId) {
   const sourceQuestionId = requiredId(raw && raw.sourceQuestionId, "source question");
   const questionText = requiredString(raw && raw.questionText, "question text", 8000);
   const correctAnswer = requiredString(raw && raw.correctAnswer, "correct answer", 2000);
@@ -56,13 +57,49 @@ function normalizeQuestion(raw, questionType) {
   } else if (options.length) {
     throw new HttpsError("invalid-argument", "Only MCQs can contain options.");
   }
-  return { sourceQuestionId, questionText, options, correctAnswer, explanation, difficulty, marks };
+  const rawImageReference = cleanString(raw && raw.imageReference, 512);
+  const imageReference = rawImageReference || null;
+  if (imageReference) {
+    const parsed = parseMediaReference(imageReference);
+    if (!parsed || parsed.instituteId !== instituteId) {
+      throw new HttpsError("invalid-argument", "Invalid question image reference.");
+    }
+  }
+  return { sourceQuestionId, questionText, options, correctAnswer, explanation, difficulty, marks, imageReference };
+}
+
+function normalizeManualSetup(raw) {
+  const totalMarks = Number(raw && raw.totalMarks);
+  const durationMinutes = Number(raw && raw.durationMinutes);
+  if (!Number.isSafeInteger(totalMarks) || totalMarks < 1 || totalMarks > 1000) {
+    throw new HttpsError("invalid-argument", "Manual question setup requires total marks between 1 and 1000.");
+  }
+  if (!Number.isSafeInteger(durationMinutes) || durationMinutes < 1 || durationMinutes > 1440) {
+    throw new HttpsError("invalid-argument", "Manual question setup requires a valid duration.");
+  }
+  const language = cleanString(raw && raw.language, 10).toLowerCase() || "bn";
+  if (!["bn", "en"].includes(language)) {
+    throw new HttpsError("invalid-argument", "Unsupported question language.");
+  }
+  return {
+    examName: requiredString(raw && raw.examName, "exam name", 120),
+    totalMarks,
+    durationMinutes,
+    className: requiredString(raw && raw.className, "class name", 120),
+    subject: requiredString(raw && raw.subject, "subject", 160),
+    chapter: requiredString(raw && raw.chapter, "chapter", 200),
+    language,
+  };
 }
 
 function canonicalFinalizationRequest(data) {
   const instituteId = requiredId(data && data.instituteId, "institute");
   const generationOperationId = requiredId(data && data.generationOperationId, "generation operation");
   const operationId = requiredId(data && data.operationId, "finalization operation");
+  const sourceType = cleanString(data && data.sourceType, 32).toLowerCase() || "ai_assisted";
+  if (!["ai_assisted", "manual"].includes(sourceType)) {
+    throw new HttpsError("invalid-argument", "Unsupported question source.");
+  }
   const questionType = requiredString(data && data.questionType, "question type", 20).toLowerCase();
   if (!Object.hasOwn(PROPOSED_RATE_POISHA, questionType)) {
     throw new HttpsError("invalid-argument", "Unsupported question type.");
@@ -70,7 +107,7 @@ function canonicalFinalizationRequest(data) {
   if (!Array.isArray(data && data.questions) || data.questions.length < 1 || data.questions.length > 30) {
     throw new HttpsError("invalid-argument", "Select between one and 30 questions.");
   }
-  const questions = data.questions.map((item) => normalizeQuestion(item, questionType));
+  const questions = data.questions.map((item) => normalizeQuestion(item, questionType, instituteId));
   if (new Set(questions.map((question) => question.sourceQuestionId)).size !== questions.length) {
     throw new HttpsError("invalid-argument", "A generated question can only be finalized once.");
   }
@@ -78,9 +115,11 @@ function canonicalFinalizationRequest(data) {
     instituteId,
     generationOperationId,
     operationId,
+    sourceType,
+    manualSetup: sourceType === "manual" ? normalizeManualSetup(data && data.manualSetup) : null,
     questionType,
     questions,
-    costPoisha: proposedCostPoisha(questionType, questions.length),
+    costPoisha: sourceType === "manual" ? 0 : proposedCostPoisha(questionType, questions.length),
   };
 }
 
@@ -113,33 +152,39 @@ function createQuestionFinalizationHandler({ db, authorize, now = Date.now }) {
       if (finalizationSnap.exists) {
         const saved = finalizationSnap.data();
         if (saved.actorUid !== uid || saved.instituteId !== input.instituteId ||
-            saved.generationOperationId !== input.generationOperationId) {
+            saved.generationOperationId !== input.generationOperationId ||
+            saved.sourceType !== input.sourceType) {
           throw new HttpsError("already-exists", "Finalization operation belongs to another request.");
         }
         return saved.result;
       }
-      if (!generationSnap.exists || generationSnap.get("actorUid") !== uid ||
-          generationSnap.get("status") !== "complete") {
-        throw new HttpsError("failed-precondition", "Generate a completed preview before finalizing.");
-      }
-      if (generationSnap.get("finalizationOperationId")) {
-        throw new HttpsError("failed-precondition", "This preview was already finalized.");
-      }
       const consent = consentSnap.exists ? consentSnap.data() : null;
       if (!consent || consent.aiTncAccepted !== true || consent.policyVersion !== CONTRIBUTION_POLICY_VERSION) {
-        throw new HttpsError("failed-precondition", "Review and accept the current AI contribution terms first.");
+        throw new HttpsError("failed-precondition", "Review and accept the current contribution terms first.");
       }
-      if (generationSnap.get("questionType") !== input.questionType) {
-        throw new HttpsError("invalid-argument", "Question type does not match this preview.");
-      }
-      const setup = generationSnap.get("setup");
-      const generated = generationSnap.get("result") && generationSnap.get("result").questions;
-      if (!setup || !Array.isArray(generated)) {
-        throw new HttpsError("failed-precondition", "This preview is missing required setup information. Generate it again.");
-      }
-      const generatedIds = new Set(generated.map((question) => question && question.id).filter(Boolean));
-      if (input.questions.some((question) => !generatedIds.has(question.sourceQuestionId))) {
-        throw new HttpsError("invalid-argument", "A selected question is not part of this preview.");
+      let setup;
+      if (input.sourceType === "ai_assisted") {
+        if (!generationSnap.exists || generationSnap.get("actorUid") !== uid ||
+            generationSnap.get("status") !== "complete") {
+          throw new HttpsError("failed-precondition", "Generate a completed preview before finalizing.");
+        }
+        if (generationSnap.get("finalizationOperationId")) {
+          throw new HttpsError("failed-precondition", "This preview was already finalized.");
+        }
+        if (generationSnap.get("questionType") !== input.questionType) {
+          throw new HttpsError("invalid-argument", "Question type does not match this preview.");
+        }
+        setup = generationSnap.get("setup");
+        const generated = generationSnap.get("result") && generationSnap.get("result").questions;
+        if (!setup || !Array.isArray(generated)) {
+          throw new HttpsError("failed-precondition", "This preview is missing required setup information. Generate it again.");
+        }
+        const generatedIds = new Set(generated.map((question) => question && question.id).filter(Boolean));
+        if (input.questions.some((question) => !generatedIds.has(question.sourceQuestionId))) {
+          throw new HttpsError("invalid-argument", "A selected question is not part of this preview.");
+        }
+      } else {
+        setup = input.manualSetup;
       }
       const totalMarks = input.questions.reduce((sum, question) => sum + question.marks, 0);
       if (!Number.isSafeInteger(setup.totalMarks) || totalMarks > setup.totalMarks) {
@@ -151,8 +196,9 @@ function createQuestionFinalizationHandler({ db, authorize, now = Date.now }) {
         operationId: input.operationId,
         questionCount: input.questions.length,
         costPoisha: input.costPoisha,
-        // This is deliberately explicit: no money is removed in an unconfigured phase.
-        billingStatus: "pricing_not_configured_no_debit",
+        // No money is removed in the current unconfigured AI billing phase. Manual
+        // authoring is intentionally free because it does not invoke the AI service.
+        billingStatus: input.sourceType === "manual" ? "manual_no_ai_charge" : "pricing_not_configured_no_debit",
       };
       input.questions.forEach((question) => {
         const questionRef = instituteRef.collection("question_bank")
@@ -161,8 +207,9 @@ function createQuestionFinalizationHandler({ db, authorize, now = Date.now }) {
           schemaVersion: QUESTION_SCHEMA_VERSION,
           status: "finalized",
           reviewStatus: "teacher_reviewed",
-          sourceType: "ai_assisted",
-          generationOperationId: input.generationOperationId,
+          sourceType: input.sourceType,
+          generationOperationId: input.sourceType === "ai_assisted" ? input.generationOperationId : null,
+          manualEntryOperationId: input.sourceType === "manual" ? input.generationOperationId : null,
           finalizationOperationId: input.operationId,
           sourceQuestionId: question.sourceQuestionId,
           createdBy: uid,
@@ -181,21 +228,24 @@ function createQuestionFinalizationHandler({ db, authorize, now = Date.now }) {
           ...question,
           pricing: {
             currency: "BDT",
-            quotedCostPoisha: PROPOSED_RATE_POISHA[input.questionType],
+            quotedCostPoisha: input.sourceType === "manual" ? 0 : PROPOSED_RATE_POISHA[input.questionType],
             billingStatus: result.billingStatus,
           },
         });
       });
-      tx.update(generationRef, {
-        finalizationOperationId: input.operationId,
-        finalizedAtMs: timestamp,
-        updatedAtMs: timestamp,
-      });
+      if (input.sourceType === "ai_assisted") {
+        tx.update(generationRef, {
+          finalizationOperationId: input.operationId,
+          finalizedAtMs: timestamp,
+          updatedAtMs: timestamp,
+        });
+      }
       tx.create(finalizationRef, {
         schemaVersion: QUESTION_SCHEMA_VERSION,
         instituteId: input.instituteId,
         actorUid: uid,
         generationOperationId: input.generationOperationId,
+        sourceType: input.sourceType,
         operationId: input.operationId,
         questionCount: input.questions.length,
         costPoisha: input.costPoisha,

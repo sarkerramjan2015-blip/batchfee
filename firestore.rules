@@ -321,6 +321,8 @@ service cloud.firestore {
     // the App Check-protected subscription callable. A Super Admin may still
     // edit normal institute profile fields directly, but cannot bypass the
     // server-side quote, renewal, duplicate-payment, and audit controls.
+    // SMS wallet counters and the churn-activity signals are likewise
+    // server-authoritative: only callables/triggers write them.
     function superAdminClientUpdateAvoidsSubscriptionControls() {
       return !request.resource.data.diff(resource.data).affectedKeys().hasAny([
         'trialEndDate',
@@ -335,7 +337,17 @@ service cloud.firestore {
         'studentCount',
         'staffCount',
         'batchCount',
-        'countSummaryUpdatedAtMs'
+        'countSummaryUpdatedAtMs',
+        'sms_balance',
+        'total_sms_purchased',
+        'total_sms_used',
+        'sms_used_today',
+        'sms_usage_day_key',
+        'sms_used_this_month',
+        'sms_usage_month_key',
+        'sms_send_method',
+        'lastCollectionAtMs',
+        'lastAttendanceAtMs'
       ]);
     }
 
@@ -353,6 +365,7 @@ service cloud.firestore {
         && data.keys().hasOnly([
           'instituteName', 'ownerName', 'email', 'whatsappNumber', 'phone',
           'address', 'profilePhotoUri', 'instituteCode', 'role', 'createdAt',
+          'instituteType',
           'isActive', 'trialEndDate', 'currentPeriodEndMs', 'currentPlanId',
           'subscriptionStatus', 'studentLimit', 'staffLimit',
           'studentCount', 'staffCount', 'batchCount'
@@ -364,6 +377,12 @@ service cloud.firestore {
         && data.email is string
         && data.email.size() > 0
         && data.email.size() <= 254
+        // Institute type is an optional profile label only; it never grants or
+        // limits product access. Keep old clients valid when they omit it.
+        && (!data.keys().hasAll(['instituteType'])
+          || (data.instituteType is string
+            && data.instituteType.size() > 0
+            && data.instituteType.size() <= 40))
         && data.createdAt is int
         && data.createdAt >= nowMs - 900000
         && data.createdAt <= nowMs + 60000
@@ -432,7 +451,10 @@ service cloud.firestore {
       // (which can contain tenant-only fields such as securityPin).
       allow list: if isSuperAdmin();
 
-      allow create: if isSuperAdmin() || validOwnerInstituteCreate(instituteId);
+      // Institute creation is server-only (createInstitute callable) or the
+      // tightly-validated owner signup path. A client — even Super Admin —
+      // must never fabricate subscription state, expiry, or wallet balances.
+      allow create: if validOwnerInstituteCreate(instituteId);
       allow update: if (isSuperAdmin() && superAdminClientUpdateAvoidsSubscriptionControls())
         || (isActiveInstitutePrincipal(instituteId)
           && ownerUpdateTouchesOnlySafeFields()
@@ -486,7 +508,23 @@ service cloud.firestore {
         && collection != 'payment_settings'
         && collection != 'payment_requests'
         && collection != 'payment_request_audit'
+        && collection != 'due_automation'
+        && collection != 'due_reminders'
+        && collection != 'due_automation_runs'
         && (isSuperAdmin() || isActiveInstitutePrincipal(instituteId));
+    }
+
+    // Due automation policy, reminder history, and run summaries are
+    // callable-only: the hourly sweep validates the policy and performs
+    // credit-checked sends server-side. Clients may not bypass that path.
+    match /institutes/{instituteId}/due_automation/{document=**} {
+      allow read, write: if false;
+    }
+    match /institutes/{instituteId}/due_reminders/{document=**} {
+      allow read, write: if false;
+    }
+    match /institutes/{instituteId}/due_automation_runs/{document=**} {
+      allow read, write: if false;
     }
 
     // Phase 0 question-bank boundary. The institute's draft questions, source
@@ -1161,9 +1199,11 @@ service cloud.firestore {
       allow write: if isSuperAdmin();
     }
 
-    // Existing demo telemetry behaviour is intentionally unchanged in this scoped fix.
+    // Demo login telemetry: writes only from an authenticated anonymous
+    // session; nobody may read these docs through the client SDK.
     match /Demo_Visitors/{document=**} {
-      allow read, write: if true;
+      allow read: if false;
+      allow write: if request.auth != null;
     }
 
     match /institutes_trash/{document=**} {

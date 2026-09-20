@@ -136,9 +136,9 @@ function subscriptionQuote({ planId, plan, durationMonths, studentLimit }) {
 }
 
 function assertCorporateEligibility(activeStudentCount, studentLimit) {
-  if (activeStudentCount < CORPORATE_MIN_STUDENTS) {
-    throw new HttpsError("failed-precondition", "Corporate Offer is available from 501 active students.");
-  }
+  // Corporate is a capacity product. A small or growing institute may buy
+  // 501+ seats before it has 501 active students; the only safety boundary is
+  // that the purchased capacity can never be below its current active count.
   if (studentLimit < activeStudentCount) {
     throw new HttpsError(
       "failed-precondition",

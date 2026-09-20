@@ -133,3 +133,84 @@ test("finalization never accepts a generation preview owned by another actor", a
   const handler = createQuestionFinalizationHandler({ db, authorize: async () => {} });
   await assert.rejects(handler(request([mcq()])), { code: "failed-precondition" });
 });
+
+test("manual authoring saves without an AI preview or AI charge", async () => {
+  const db = memoryDb();
+  db.records.set("institutes/institute-a/question_contribution_consents/teacher-a", {
+    aiTncAccepted: true,
+    policyVersion: CONTRIBUTION_POLICY_VERSION,
+  });
+  const handler = createQuestionFinalizationHandler({
+    db,
+    authorize: async () => {},
+    now: () => 42_000,
+  });
+  const result = await handler(request([mcq("manual_question_01")], {
+    generationOperationId: "manual_session_0001",
+    operationId: "manual_finalize_0001",
+    sourceType: "manual",
+    manualSetup: {
+      examName: "Teacher authored test",
+      totalMarks: 10,
+      durationMinutes: 30,
+      className: "Class 8",
+      subject: "Science",
+      chapter: "Light",
+      language: "bn",
+    },
+  }));
+  assert.deepEqual(result, {
+    operationId: "manual_finalize_0001",
+    questionCount: 1,
+    costPoisha: 0,
+    billingStatus: "manual_no_ai_charge",
+  });
+  const saved = db.records.get(
+    "institutes/institute-a/question_bank/finalized_manual_finalize_0001_manual_question_01",
+  );
+  assert.equal(saved.sourceType, "manual");
+  assert.equal(saved.generationOperationId, null);
+  assert.equal(saved.pricing.quotedCostPoisha, 0);
+  assert.deepEqual(await handler(request([mcq("manual_question_01")], {
+    generationOperationId: "manual_session_0001",
+    operationId: "manual_finalize_0001",
+    sourceType: "manual",
+    manualSetup: {
+      examName: "Teacher authored test", totalMarks: 10, durationMinutes: 30,
+      className: "Class 8", subject: "Science", chapter: "Light", language: "bn",
+    },
+  })), result);
+});
+
+test("manual question attachments stay tenant-scoped", async () => {
+  const db = memoryDb();
+  db.records.set("institutes/institute-a/question_contribution_consents/teacher-a", {
+    aiTncAccepted: true,
+    policyVersion: CONTRIBUTION_POLICY_VERSION,
+  });
+  const handler = createQuestionFinalizationHandler({ db, authorize: async () => {} });
+  const manualSetup = {
+    examName: "Teacher authored test", totalMarks: 10, durationMinutes: 30,
+    className: "Class 8", subject: "Science", chapter: "Light", language: "bn",
+  };
+  const ownReference = "batchfee-media://v1/institute-a/0123456789abcdef0123456789abcdef";
+  await handler(request([{ ...mcq("manual_image_01"), imageReference: ownReference }], {
+    generationOperationId: "manual_session_0002",
+    operationId: "manual_finalize_0002",
+    sourceType: "manual",
+    manualSetup,
+  }));
+  assert.equal(
+    db.records.get("institutes/institute-a/question_bank/finalized_manual_finalize_0002_manual_image_01").imageReference,
+    ownReference,
+  );
+  await assert.rejects(handler(request([{
+    ...mcq("manual_image_02"),
+    imageReference: "batchfee-media://v1/institute-b/0123456789abcdef0123456789abcdef",
+  }], {
+    generationOperationId: "manual_session_0003",
+    operationId: "manual_finalize_0003",
+    sourceType: "manual",
+    manualSetup,
+  })), { code: "invalid-argument" });
+});

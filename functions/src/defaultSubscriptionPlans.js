@@ -62,9 +62,9 @@ const defaultPlans = [
   {
     // Price is a server-verifiable per-student monthly rate. The actual seat
     // limit is chosen by the owner (501+) and frozen in each request.
-    id: "plan_corporate", name: "Corporate Offer", description: "For institutes with 501+ active students",
+    id: "plan_corporate", name: "Corporate Offer", description: "For institutes needing 501+ student capacity",
     priceBdt: 1.5, priceInr: 0, maxStudents: 100000, maxBatches: 300, maxUsers: 999,
-    maxBranches: 20, tag: "501+ students", tierLevel: 105,
+    maxBranches: 20, tag: "501+ capacity", tierLevel: 105,
   },
   ...legacyPricingPlans,
 ];

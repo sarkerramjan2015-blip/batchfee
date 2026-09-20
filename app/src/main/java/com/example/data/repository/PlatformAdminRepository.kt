@@ -40,7 +40,78 @@ data class PlatformDashboardMetrics(
     val totalStaff: Int,
     val lifetimeRevenue: Double,
     val thisMonthRevenue: Double,
-    val canonicalReceiptCount: Int
+    val canonicalReceiptCount: Int,
+    val newInstitutesThisMonth: Int = 0,
+    val pendingSubscriptionAmountBdt: Double = 0.0,
+    val pendingSubscriptionCount: Int = 0,
+    val paymentRequestApprovalRate: Double? = null,
+    val paymentRequestApprovedCount: Int = 0,
+    val paymentRequestRejectedCount: Int = 0
+)
+
+/** Root-only business intelligence payload assembled by the trusted callable. */
+data class ChurnRiskRow(
+    val instituteId: String,
+    val instituteName: String,
+    val phone: String,
+    val whatsappNumber: String,
+    val currentPlanId: String,
+    val subscriptionStatus: String,
+    val currentPeriodEndMs: Long,
+    val lastActiveAtMs: Long,
+    val daysSinceActive: Int?,
+    val smsBalance: Int,
+    val studentsAdded30d: Int,
+    val studentsLost30d: Int,
+    val lastCollectionAtMs: Long,
+    val lastAttendanceAtMs: Long,
+    val pendingPaymentRequestCount: Int,
+    val risk: String,
+    val reasons: List<String>
+)
+
+data class InstituteRankingRow(
+    val instituteId: String,
+    val instituteName: String,
+    val value: Double
+)
+
+data class InstituteRankings(
+    val topRevenue: List<InstituteRankingRow> = emptyList(),
+    val topOutstanding: List<InstituteRankingRow> = emptyList(),
+    val topSmsConsumers: List<InstituteRankingRow> = emptyList(),
+    val fastestGrowing: List<InstituteRankingRow> = emptyList()
+)
+
+data class ForecastMonth(
+    val monthKey: String,
+    val collectedBdt: Double
+)
+
+data class SubscriptionForecast(
+    val trailingMonths: List<ForecastMonth> = emptyList(),
+    val forecast7dBdt: Double = 0.0,
+    val forecast30dBdt: Double = 0.0,
+    val confidence: String = "low"
+)
+
+data class SmsForecast(
+    val monthSms: Int = 0,
+    val dailyBurnSms: Int = 0,
+    val outstandingSms: Int = 0,
+    val centralCapacitySms: Int? = null,
+    val daysOfCentralCapacityLeft: Int? = null,
+    val suggestedReorderSms: Int? = null,
+    val suggestedReorderAmountBdt: Double? = null,
+    val providerError: String = ""
+)
+
+data class PlatformBusinessIntelligence(
+    val snapshotAtMs: Long = 0L,
+    val churnRisk: List<ChurnRiskRow> = emptyList(),
+    val rankings: InstituteRankings = InstituteRankings(),
+    val subscriptionForecast: SubscriptionForecast = SubscriptionForecast(),
+    val smsForecast: SmsForecast = SmsForecast()
 )
 
 /** Safe, credential-free representation returned only by the trusted platform service. */
@@ -516,7 +587,31 @@ class PlatformAdminRepository(
             totalStaff = data.number("totalStaff").toInt(),
             lifetimeRevenue = data.number("lifetimeRevenue").toDouble(),
             thisMonthRevenue = data.number("thisMonthRevenue").toDouble(),
-            canonicalReceiptCount = data.number("canonicalReceiptCount").toInt()
+            canonicalReceiptCount = data.number("canonicalReceiptCount").toInt(),
+            // Added after the original dashboard fields shipped; keep safe
+            // defaults so an older deployed function never breaks the screen.
+            newInstitutesThisMonth = (data["newInstitutesThisMonth"] as? Number)?.toInt() ?: 0,
+            pendingSubscriptionAmountBdt = (data["pendingSubscriptionAmountBdt"] as? Number)?.toDouble() ?: 0.0,
+            pendingSubscriptionCount = (data["pendingSubscriptionCount"] as? Number)?.toInt() ?: 0,
+            paymentRequestApprovalRate = (data["paymentRequestApprovalRate"] as? Number)?.toDouble(),
+            paymentRequestApprovedCount = (data["paymentRequestApprovedCount"] as? Number)?.toInt() ?: 0,
+            paymentRequestRejectedCount = (data["paymentRequestRejectedCount"] as? Number)?.toInt() ?: 0
+        )
+    }
+
+    /** Root-only BI payload: churn risk, rankings, and forecasts. */
+    suspend fun businessIntelligence(): PlatformBusinessIntelligence {
+        val data = call("get_business_intelligence", UUID.randomUUID().toString(), emptyMap())
+        return PlatformBusinessIntelligence(
+            snapshotAtMs = (data["snapshotAtMs"] as? Number)?.toLong() ?: 0L,
+            churnRisk = (data["churnRisk"] as? List<*>).orEmpty().mapNotNull { raw ->
+                (raw as? Map<*, *>)?.toChurnRiskRow()
+            },
+            rankings = (data["rankings"] as? Map<*, *>)?.toInstituteRankings() ?: InstituteRankings(),
+            subscriptionForecast = ((data["forecast"] as? Map<*, *>)?.get("subscription") as? Map<*, *>)
+                ?.toSubscriptionForecast() ?: SubscriptionForecast(),
+            smsForecast = ((data["forecast"] as? Map<*, *>)?.get("sms") as? Map<*, *>)
+                ?.toSmsForecast() ?: SmsForecast()
         )
     }
 
@@ -925,3 +1020,71 @@ private fun Map<*, *>.period(key: String): SmsProfitPeriod {
         averageSmsSaleRatePaisa = number("averageSmsSaleRatePaisa")
     )
 }
+
+private fun Map<*, *>.toChurnRiskRow(): ChurnRiskRow {
+    fun string(key: String): String = this[key] as? String ?: ""
+    fun long(key: String): Long = (this[key] as? Number)?.toLong() ?: 0L
+    fun int(key: String): Int = (this[key] as? Number)?.toInt() ?: 0
+    return ChurnRiskRow(
+        instituteId = string("instituteId"),
+        instituteName = string("instituteName"),
+        phone = string("phone"),
+        whatsappNumber = string("whatsappNumber"),
+        currentPlanId = string("currentPlanId"),
+        subscriptionStatus = string("subscriptionStatus"),
+        currentPeriodEndMs = long("currentPeriodEndMs"),
+        lastActiveAtMs = long("lastActiveAtMs"),
+        daysSinceActive = (this["daysSinceActive"] as? Number)?.toInt(),
+        smsBalance = int("smsBalance"),
+        studentsAdded30d = int("studentsAdded30d"),
+        studentsLost30d = int("studentsLost30d"),
+        lastCollectionAtMs = long("lastCollectionAtMs"),
+        lastAttendanceAtMs = long("lastAttendanceAtMs"),
+        pendingPaymentRequestCount = int("pendingPaymentRequestCount"),
+        risk = string("risk").ifBlank { "low" },
+        reasons = (this["reasons"] as? List<*>)?.mapNotNull { it as? String }.orEmpty()
+    )
+}
+
+private fun Map<*, *>.toRankingList(key: String): List<InstituteRankingRow> =
+    (this[key] as? List<*>).orEmpty().mapNotNull { raw ->
+        (raw as? Map<*, *>)?.let {
+            InstituteRankingRow(
+                instituteId = it["instituteId"] as? String ?: "",
+                instituteName = it["instituteName"] as? String ?: "",
+                value = (it["value"] as? Number)?.toDouble() ?: 0.0
+            )
+        }
+    }
+
+private fun Map<*, *>.toInstituteRankings() = InstituteRankings(
+    topRevenue = toRankingList("topRevenue"),
+    topOutstanding = toRankingList("topOutstanding"),
+    topSmsConsumers = toRankingList("topSmsConsumers"),
+    fastestGrowing = toRankingList("fastestGrowing")
+)
+
+private fun Map<*, *>.toSubscriptionForecast() = SubscriptionForecast(
+    trailingMonths = (this["trailingMonths"] as? List<*>).orEmpty().mapNotNull { raw ->
+        (raw as? Map<*, *>)?.let {
+            ForecastMonth(
+                monthKey = it["monthKey"] as? String ?: "",
+                collectedBdt = (it["collectedBdt"] as? Number)?.toDouble() ?: 0.0
+            )
+        }
+    },
+    forecast7dBdt = (this["forecast7dBdt"] as? Number)?.toDouble() ?: 0.0,
+    forecast30dBdt = (this["forecast30dBdt"] as? Number)?.toDouble() ?: 0.0,
+    confidence = this["confidence"] as? String ?: "low"
+)
+
+private fun Map<*, *>.toSmsForecast() = SmsForecast(
+    monthSms = (this["monthSms"] as? Number)?.toInt() ?: 0,
+    dailyBurnSms = (this["dailyBurnSms"] as? Number)?.toInt() ?: 0,
+    outstandingSms = (this["outstandingSms"] as? Number)?.toInt() ?: 0,
+    centralCapacitySms = (this["centralCapacitySms"] as? Number)?.toInt(),
+    daysOfCentralCapacityLeft = (this["daysOfCentralCapacityLeft"] as? Number)?.toInt(),
+    suggestedReorderSms = (this["suggestedReorderSms"] as? Number)?.toInt(),
+    suggestedReorderAmountBdt = (this["suggestedReorderAmountBdt"] as? Number)?.toDouble(),
+    providerError = this["providerError"] as? String ?: ""
+)

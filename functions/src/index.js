@@ -77,6 +77,7 @@ const {
   createSmsWalletHandler,
 } = require("./smsWallet");
 const { createZendSmsProvider } = require("./zendSmsProvider");
+const { createDueAutomationHandler, createDueAutomationRunner } = require("./dueAutomation");
 const {
   activityActorLabel,
   resolveTenantActor,
@@ -102,6 +103,7 @@ const {
 } = require("./subscriptionPolicy");
 const { planFromSnapshot } = require("./defaultSubscriptionPlans");
 const { createTenantOperationalSummaryHandler } = require("./tenantOperationalSummary");
+const { createAttendanceSignalHandler } = require("./activitySignal");
 const { resolveTrustedCreationReplay, trustedCreationHash } = require("./trustedCreationCore");
 const {
   mapWithConcurrency,
@@ -170,6 +172,7 @@ const publicRegistrationHandler = createPublicRegistrationHandler({
   rateLimitSecret: registrationRateLimitSecret,
 });
 const tenantOperationalSummaryHandler = createTenantOperationalSummaryHandler({ db });
+const attendanceSignalHandler = createAttendanceSignalHandler({ db });
 const questionBankFoundationHandler = createQuestionBankFoundationHandler({
   db,
   authorize: assertCanManageTenantResource,
@@ -2490,6 +2493,30 @@ exports.cleanupInstituteOwnerLoginActivity = onSchedule(
     return result;
   }),
 );
+// Smart Due Automation sweep: runs hourly (Asia/Dhaka), checks each institute's
+// reminder policy and send window, then sends credit-checked SMS through the
+// trusted provider. The owner's phone never has to be online.
+exports.runDueAutomationSweep = onSchedule(
+  {
+    region: REGION,
+    schedule: "every 1 hours",
+    timeZone: "Asia/Dhaka",
+    timeoutSeconds: 540,
+    memory: "512MiB",
+    secrets: [zendSmsApiKey, zendSmsSenderId],
+  },
+  async () => runMonitoredScheduledJob("due_automation_sweep", async () => {
+    const result = await createDueAutomationRunner({
+      db,
+      smsProvider: createZendSmsProvider({
+        apiKey: () => zendSmsApiKey.value(),
+        senderId: () => zendSmsSenderId.value(),
+      }),
+    })();
+    logger.info("Due automation sweep completed", result);
+    return result;
+  }),
+);
 exports.createEntitledStudent = onCall(
   { ...callableOptions, timeoutSeconds: 60 },
   guarded(createEntitledStudentHandler, "registration_approval"),
@@ -2549,6 +2576,10 @@ exports.reconcileBatchOperationalSummary = onDocumentWritten(
 exports.reconcileStaffOperationalSummary = onDocumentWritten(
   { region: REGION, document: "institutes/{instituteId}/staffs/{entityId}", memory: "256MiB" },
   tenantOperationalSummaryHandler,
+);
+exports.reconcileAttendanceActivitySignal = onDocumentWritten(
+  { region: REGION, document: "institutes/{instituteId}/attendance/{attendanceId}", memory: "256MiB" },
+  attendanceSignalHandler,
 );
 exports.syncFinalizedQuestionToGlobalPending = onDocumentWritten(
   {
@@ -2636,8 +2667,22 @@ exports.commitSubscriptionOperation = onCall(
   guarded(createSubscriptionBillingHandler({ db, FieldValue })),
 );
 exports.commitPlatformAdminOperation = onCall(
-  { ...callableOptions, timeoutSeconds: 60 },
-  guarded(createPlatformAdminHandler({ db, adminAuth })),
+  {
+    ...callableOptions,
+    timeoutSeconds: 60,
+    // The root-only business-intelligence action reads the Zend gateway
+    // balance for the SMS run-rate forecast. Access stays server-side; the
+    // secrets are never exposed to any client.
+    secrets: [zendSmsApiKey, zendSmsSenderId],
+  },
+  guarded(createPlatformAdminHandler({
+    db,
+    adminAuth,
+    smsProvider: createZendSmsProvider({
+      apiKey: () => zendSmsApiKey.value(),
+      senderId: () => zendSmsSenderId.value(),
+    }),
+  })),
 );
 // Notice delivery and product feedback have their own narrow callable. It
 // grants a tenant account no platform-administration privileges.
@@ -2735,6 +2780,12 @@ exports.refreshMySmsDelivery = onCall(
       senderId: () => zendSmsSenderId.value(),
     }),
   }), "tenant_sms_dlr_refresh"),
+);
+// Smart Due Automation. The owner edits the reminder policy; the hourly sweep
+// below performs the actual sends, so automation never depends on the app.
+exports.commitDueAutomationOperation = onCall(
+  { ...callableOptions, timeoutSeconds: 120, memory: "256MiB" },
+  guarded(createDueAutomationHandler({ db }), "due_automation"),
 );
 // Root-only dashboard. It owns the Zend credentials because it reads the
 // provider balance and reconciles trusted delivery reports; no client gets a

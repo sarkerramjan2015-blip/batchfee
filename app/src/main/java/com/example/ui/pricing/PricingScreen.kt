@@ -425,7 +425,9 @@ fun PricingScreen(
             Spacer(Modifier.height(8.dp))
 
             val corporateStudentLimit = corporateStudentLimitInput.toIntOrNull()
-            val corporateEligible = activeStudentCount >= CORPORATE_MIN_STUDENTS
+            // Corporate is a 501+ capacity offer, not a 501-active-student gate.
+            // A growing institute may buy the capacity before its enrolment reaches it.
+            val corporateEligible = true
             val corporateCapacityValid = corporateStudentLimit != null &&
                 corporateStudentLimit >= CORPORATE_MIN_STUDENTS &&
                 corporateStudentLimit >= activeStudentCount
@@ -1258,9 +1260,14 @@ private fun CorporateOfferCard(
     val shape = RoundedCornerShape(18.dp)
     val durationLabels = listOf("1 Month", "6 Months", "12 Months")
     val durationMonths = listOf(1, 6, 12)[durationIndex]
+    val requestedCapacity = studentCapacityInput.toIntOrNull()
+    val hasMinimumCapacity = requestedCapacity != null && requestedCapacity >= CORPORATE_MIN_STUDENTS
+    val hasEnoughCapacityForCurrentStudents = requestedCapacity == null || requestedCapacity >= activeStudentCount
+    val canPreviewQuote = hasMinimumCapacity && hasEnoughCapacityForCurrentStudents
     val message = when {
-        !isEligible -> "Available from 501 active students"
         studentCapacityInput.isBlank() -> "Enter your student capacity"
+        requestedCapacity == null || requestedCapacity < CORPORATE_MIN_STUDENTS -> "Enter at least 501 student seats"
+        !hasEnoughCapacityForCurrentStudents -> "Capacity must cover your $activeStudentCount active students"
         !isCapacityValid -> "Capacity must cover all active students"
         else -> "$durationMonths month${if (durationMonths > 1) "s" else ""} total: BDT ${"%.2f".format(total)}"
     }
@@ -1312,7 +1319,7 @@ private fun CorporateOfferCard(
                 Spacer(Modifier.width(9.dp))
                 Column(Modifier.weight(1f)) {
                     Text("Corporate Offer", color = TextWhite, fontSize = 17.sp, fontWeight = FontWeight.Bold)
-                    Text("501+ student institutes", color = Color(0xFFFDE68A), fontSize = 10.sp)
+                    Text("For 501+ student capacity", color = Color(0xFFFDE68A), fontSize = 10.sp)
                 }
             }
             Text("BDT 1.50", color = Color(0xFFFBBF24), fontSize = 20.sp, fontWeight = FontWeight.Bold)
@@ -1324,7 +1331,6 @@ private fun CorporateOfferCard(
                     if (value.length <= 6 && value.all(Char::isDigit)) onStudentCapacityChange(value)
                 },
                 modifier = Modifier.fillMaxWidth(),
-                enabled = isEligible,
                 singleLine = true,
                 label = { Text("Student capacity", fontSize = 10.sp) },
                 placeholder = { Text("Min. ${maxOf(activeStudentCount, CORPORATE_MIN_STUDENTS)}", fontSize = 10.sp) },
@@ -1358,7 +1364,7 @@ private fun CorporateOfferCard(
                             .weight(1f)
                             .clip(RoundedCornerShape(7.dp))
                             .background(if (selected) Color(0xFF7C3AED) else Color.Transparent)
-                            .clickable(enabled = isEligible) { onDurationSelected(index) }
+                            .clickable { onDurationSelected(index) }
                             .padding(vertical = 6.dp),
                         contentAlignment = Alignment.Center
                     ) {
@@ -1366,7 +1372,15 @@ private fun CorporateOfferCard(
                     }
                 }
             }
-            Text(message, color = if (isCapacityValid) Color(0xFFFDE68A) else TextMuted, fontSize = 10.sp)
+            Text(
+                text = if (canPreviewQuote && total != null) {
+                    "$durationMonths month${if (durationMonths > 1) "s" else ""} total: BDT ${"%.2f".format(total)}"
+                } else {
+                    message
+                },
+                color = if (canPreviewQuote) Color(0xFFFDE68A) else TextMuted,
+                fontSize = 10.sp
+            )
             Box(
                 Modifier
                     .fillMaxWidth()
@@ -1383,7 +1397,9 @@ private fun CorporateOfferCard(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    if (isEligible && isCapacityValid) "Choose Corporate" else "Corporate Plan",
+                    if (isEligible && isCapacityValid) "Choose Corporate"
+                    else if (canPreviewQuote) "Choose Corporate"
+                    else "Corporate Plan",
                     color = if (isEligible && isCapacityValid) Color.White else TextMuted,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold

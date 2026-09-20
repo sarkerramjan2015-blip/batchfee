@@ -24,6 +24,8 @@ class QuestionFinalizationRepository(
         questionType: String,
         questions: List<ReviewableQuestion>,
         operationId: String = UUID.randomUUID().toString(),
+        sourceType: String = "ai_assisted",
+        manualSetup: QuestionGenerationSetup? = null,
     ): QuestionFinalizationResult {
         val selectedQuestions = questions.filter { it.selected }
         require(selectedQuestions.isNotEmpty()) { "Select at least one valid question." }
@@ -33,6 +35,18 @@ class QuestionFinalizationRepository(
                 "generationOperationId" to generationOperationId,
                 "operationId" to operationId,
                 "questionType" to questionType,
+                "sourceType" to sourceType,
+                "manualSetup" to manualSetup?.let { setup ->
+                    mapOf(
+                        "examName" to setup.examName,
+                        "totalMarks" to setup.totalMarks,
+                        "durationMinutes" to setup.durationMinutes,
+                        "className" to setup.className,
+                        "subject" to setup.subject,
+                        "chapter" to setup.chapter,
+                        "language" to setup.language,
+                    )
+                },
                 "questions" to selectedQuestions.map { question ->
                     mapOf(
                         "sourceQuestionId" to question.sourceQuestionId,
@@ -42,6 +56,7 @@ class QuestionFinalizationRepository(
                         "explanation" to question.explanation.trim(),
                         "difficulty" to question.difficulty,
                         "marks" to question.marks,
+                        "imageReference" to question.imageReference,
                     )
                 },
             ),

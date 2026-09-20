@@ -245,9 +245,9 @@ test("request rejects a plan that cannot support legacy active students without 
   );
 });
 
-test("Corporate Offer quotes 501+ seats on the server and locks the approved seat limit", async () => {
+test("Corporate Offer can be purchased before 501 active students and locks the approved seat limit", async () => {
   const db = seededDb(Date.now());
-  for (let index = 0; index < 501; index += 1) {
+  for (let index = 0; index < 50; index += 1) {
     db.documents.set(`institutes/institute-a/students/corporate-${index}`, { status: "active" });
   }
   const handler = handlerFor(db);

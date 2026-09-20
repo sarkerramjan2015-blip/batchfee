@@ -1,5 +1,6 @@
 package com.batchfee.edu.ui.dashboard
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -7,6 +8,8 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -17,6 +20,7 @@ import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -1030,6 +1034,7 @@ fun DashboardScreen(
 
     var showFabMenu by remember { mutableStateOf(false) }
     var showProfilePopup by remember { mutableStateOf(false) }
+    var showQuestionPathPicker by rememberSaveable { mutableStateOf(false) }
     val snappbarcoroutineScope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
     val financialSummary by viewModel.financialSummary.collectAsState()
@@ -1044,7 +1049,7 @@ fun DashboardScreen(
     val currentRole by SessionManager.currentUserRole.collectAsState()
     val currentStaffPermissions by SessionManager.currentStaffPermissions.collectAsState()
     val hasAddActions = remember(currentRole, currentStaffPermissions) {
-        listOf("AddStudentRoute", "AddStaffRoute", "AddBatchRoute", "CreateExamRoute", "AddExpenseRoute", "UnifiedCollectRoute")
+        listOf("AddStudentRoute", "AddStaffRoute", "AddBatchRoute", "CreateExamRoute", "QuestionBankFoundationRoute", "AddExpenseRoute", "UnifiedCollectRoute")
             .any { AccessControl.canAccessRoute(it) }
     }
 
@@ -1155,9 +1160,10 @@ fun DashboardScreen(
     var selectedBatchId by remember { mutableStateOf<String?>(null) }
 
     val safeNavigate: (String) -> Unit = { route ->
-        if (!AccessControl.isKnownRoute(route)) {
+        val accessRoute = route.substringBefore('|')
+        if (!AccessControl.isKnownRoute(accessRoute)) {
             snappbarcoroutineScope.launch { snackbarHostState.showSnackbar("Coming soon") }
-        } else if (AccessControl.canAccessRoute(route)) {
+        } else if (AccessControl.canAccessRoute(accessRoute)) {
             onNavigate(route)
         } else {
             snappbarcoroutineScope.launch { snackbarHostState.showSnackbar("You do not have permission for this feature.") }
@@ -1474,6 +1480,7 @@ fun DashboardScreen(
                         enquirySummary = enquirySummary,
                         compactLayout = compactLayout,
                         onOpenExams = { safeNavigate("ExamsRoute") },
+                        onOpenQuestionGenerator = { showQuestionPathPicker = true },
                         onOpenBirthdays = { safeNavigate("BirthdayReminderRoute") },
                         onOpenHomeWorks = { safeNavigate("HomeworkListRoute") },
                         onOpenAssignments = { safeNavigate("AssignmentListRoute") },
@@ -1579,6 +1586,10 @@ fun DashboardScreen(
         ) {
             AddNewMenuPanel(
                 onClose = { showFabMenu = false },
+                onOpenQuestionPicker = {
+                    showFabMenu = false
+                    showQuestionPathPicker = true
+                },
                 onNavigate = { route ->
                     showFabMenu = false
                     safeNavigate(route)
@@ -2260,6 +2271,17 @@ fun DashboardScreen(
             containerColor = Color(0xFF0F1629)
         )
     }
+
+    if (showQuestionPathPicker) {
+        AcademicQuestionPathDialog(
+            onDismiss = { showQuestionPathPicker = false },
+            onSelected = { className, subject ->
+                // Keep the chooser in this back-stack entry. When the user leaves
+                // setup with Back, they return to this selection instead of Home.
+                safeNavigate("QuestionBankFoundationRoute|$className|$subject")
+            }
+        )
+    }
 }
 }
 }
@@ -2435,6 +2457,7 @@ private fun CuteAddFab(
 @Composable
 private fun AddNewMenuPanel(
     onClose: () -> Unit,
+    onOpenQuestionPicker: () -> Unit,
     onNavigate: (String) -> Unit
 ) {
     val currentRole by SessionManager.currentUserRole.collectAsState()
@@ -2445,6 +2468,7 @@ private fun AddNewMenuPanel(
             AddMenuOption("Staff", "Add a teacher or staff member", Icons.Filled.PersonAddAlt1, "AddStaffRoute"),
             AddMenuOption("Batch or Class", "Create a batch or class schedule", Icons.Filled.Groups, "AddBatchRoute"),
             AddMenuOption("Exams", "Schedule an exam or result entry", Icons.Filled.Assignment, "CreateExamRoute"),
+            AddMenuOption("Create Questions", "Create academic questions from your syllabus", Icons.Filled.MenuBook, "QuestionBankFoundationRoute"),
             AddMenuOption("Expense", "Record an institute expense", Icons.Filled.ReceiptLong, "AddExpenseRoute"),
             AddMenuOption("Collection Fee", "Collect student fee payment", Icons.Filled.Payments, "UnifiedCollectRoute")
         ).filter { AccessControl.canAccessRoute(it.route) }
@@ -2536,7 +2560,10 @@ private fun AddNewMenuPanel(
             addMenuItems.forEachIndexed { index, item ->
                 AddMenuActionRow(
                     item = item,
-                    onClick = { onNavigate(item.route) }
+                    onClick = {
+                        if (item.route == "QuestionBankFoundationRoute") onOpenQuestionPicker()
+                        else onNavigate(item.route)
+                    }
                 )
                 if (index != addMenuItems.lastIndex) {
                     HorizontalDivider(
@@ -2923,6 +2950,7 @@ private fun HomeEngagementSection(
     enquirySummary: EnquirySummary,
     compactLayout: Boolean,
     onOpenExams: () -> Unit,
+    onOpenQuestionGenerator: () -> Unit,
     onOpenBirthdays: () -> Unit,
     onOpenHomeWorks: () -> Unit,
     onOpenAssignments: () -> Unit,
@@ -2946,6 +2974,11 @@ private fun HomeEngagementSection(
                     icon = Icons.Filled.Assignment,
                     modifier = Modifier.fillMaxWidth(),
                     onClick = onOpenExams
+                )
+                HomeFullActionTile(
+                    title = "Create Questions",
+                    icon = Icons.Filled.MenuBook,
+                    onClick = onOpenQuestionGenerator
                 )
             }
             if (canSeeBirthdays) {
@@ -3007,6 +3040,13 @@ private fun HomeEngagementSection(
                         )
                     }
                 }
+            }
+            if (canSeeExams) {
+                HomeFullActionTile(
+                    title = "Create Questions",
+                    icon = Icons.Filled.MenuBook,
+                    onClick = onOpenQuestionGenerator
+                )
             }
 
             if (canSeeHomework || canSeeAssignments) {
@@ -3120,6 +3160,361 @@ private fun HomeFullActionTile(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
+        }
+    }
+}
+
+@Composable
+private fun AcademicQuestionPathDialog(
+    onDismiss: () -> Unit,
+    onSelected: (className: String, subject: String) -> Unit,
+) {
+    var selectedLevel by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedGroup by rememberSaveable { mutableStateOf<String?>(null) }
+    val level = selectedLevel
+    val group = selectedGroup
+
+    BackHandler {
+        when {
+            selectedGroup != null -> selectedGroup = null
+            selectedLevel != null -> selectedLevel = null
+            else -> onDismiss()
+        }
+    }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            shape = RoundedCornerShape(26.dp),
+            colors = CardDefaults.cardColors(containerColor = DashboardCardAlt),
+            border = BorderStroke(1.dp, AccentCyan.copy(alpha = 0.28f)),
+        ) {
+            Column(Modifier.padding(20.dp)) {
+                if (level == null) {
+                    Icon(
+                        Icons.Filled.MenuBook,
+                        contentDescription = null,
+                        tint = AccentCyan,
+                        modifier = Modifier.size(30.dp),
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Text("Create Questions", color = TextPrimary, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "Choose the academic level to begin.",
+                        color = TextSecondary,
+                        fontSize = 13.sp,
+                    )
+                    Spacer(Modifier.height(18.dp))
+                    AcademicLevelChoice(
+                        badge = "SSC",
+                        title = "SSC",
+                        subtitle = "Secondary academic questions",
+                        onClick = { selectedLevel = "SSC" },
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    AcademicLevelChoice(
+                        badge = "HSC",
+                        title = "HSC",
+                        subtitle = "Higher secondary academic questions",
+                        onClick = { selectedLevel = "HSC" },
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    AcademicLevelChoice(
+                        badge = "3–8",
+                        title = "Classes 3–8",
+                        subtitle = "Choose a school class",
+                        onClick = { selectedLevel = "SCHOOL" },
+                    )
+                } else if (group != null) {
+                    val selectedClassName = if (level == "SCHOOL") group else "$level - $group"
+                    val subjects = academicSubjects(level.orEmpty(), group)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = { selectedGroup = null }) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = TextPrimary)
+                        }
+                        Column(Modifier.weight(1f)) {
+                            Text(selectedClassName, color = TextPrimary, fontSize = 21.sp, fontWeight = FontWeight.Bold)
+                            Text("Choose a subject", color = TextSecondary, fontSize = 13.sp)
+                        }
+                    }
+                    Spacer(Modifier.height(14.dp))
+                    LazyColumn(
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 410.dp),
+                        verticalArrangement = Arrangement.spacedBy(9.dp),
+                    ) {
+                        items(subjects, key = { it }) { subject ->
+                            AcademicSubjectChoice(
+                                subject = subject,
+                                onClick = { onSelected(selectedClassName, subject) },
+                            )
+                        }
+                    }
+                } else if (level == "SCHOOL") {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = { selectedLevel = null }) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = TextPrimary)
+                        }
+                        Column {
+                            Text("Classes 3–8", color = TextPrimary, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                            Text("Choose a class", color = TextSecondary, fontSize = 13.sp)
+                        }
+                    }
+                    Spacer(Modifier.height(18.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        AcademicClassChoice("3", "Class 3", Modifier.weight(1f)) { selectedGroup = "Class 3" }
+                        AcademicClassChoice("4", "Class 4", Modifier.weight(1f)) { selectedGroup = "Class 4" }
+                        AcademicClassChoice("5", "Class 5", Modifier.weight(1f)) { selectedGroup = "Class 5" }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        AcademicClassChoice("6", "Class 6", Modifier.weight(1f)) { selectedGroup = "Class 6" }
+                        AcademicClassChoice("7", "Class 7", Modifier.weight(1f)) { selectedGroup = "Class 7" }
+                        AcademicClassChoice("8", "Class 8", Modifier.weight(1f)) { selectedGroup = "Class 8" }
+                    }
+                } else {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = { selectedLevel = null }) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = TextPrimary)
+                        }
+                        Column {
+                            Text("$level Academic", color = TextPrimary, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                            Text("Choose your group", color = TextSecondary, fontSize = 13.sp)
+                        }
+                    }
+                    Spacer(Modifier.height(18.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        AcademicGroupChoice("Science", Icons.Filled.School, Modifier.weight(1f)) {
+                            selectedGroup = "Science"
+                        }
+                        AcademicGroupChoice("Humanities", Icons.Filled.MenuBook, Modifier.weight(1f)) {
+                            selectedGroup = "Humanities"
+                        }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        AcademicGroupChoice("Business Studies", Icons.Filled.AccountBalance, Modifier.weight(1f)) {
+                            selectedGroup = "Business Studies"
+                        }
+                        AcademicGroupChoice("General", Icons.Filled.Groups, Modifier.weight(1f)) {
+                            selectedGroup = "General"
+                        }
+                    }
+                }
+                Spacer(Modifier.height(18.dp))
+                TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) {
+                    Text("Cancel", color = TextSecondary)
+                }
+            }
+        }
+    }
+}
+
+private fun academicSubjects(level: String, group: String): List<String> = when (level) {
+    "SCHOOL" -> when (group) {
+        "Class 3", "Class 4", "Class 5" -> listOf(
+            "Bangla", "English", "Mathematics", "Primary Science",
+            "Bangladesh & Global Studies", "Religion & Moral Education",
+            "Arts & Crafts", "Physical Education & Health",
+        )
+        else -> listOf(
+            "Bangla", "Bangla Grammar & Composition", "English", "English Grammar & Composition",
+            "Mathematics", "Science", "Bangladesh & Global Studies",
+            "Information & Communication Technology", "Religion & Moral Education",
+            "Agriculture Studies", "Home Science", "Arts & Crafts",
+            "Physical Education & Health", "Career Education & Life Skills",
+        )
+    }
+    "SSC" -> when (group) {
+        "Science" -> listOf(
+            "Bangla 1st Paper", "Bangla 2nd Paper", "English 1st Paper", "English 2nd Paper",
+            "Mathematics", "Physics", "Chemistry", "Biology", "Higher Mathematics",
+            "Bangladesh & Global Studies", "Information & Communication Technology",
+            "Religion & Moral Education", "Career Education", "Physical Education, Health & Sports",
+        )
+        "Humanities" -> listOf(
+            "Bangla 1st Paper", "Bangla 2nd Paper", "English 1st Paper", "English 2nd Paper",
+            "Mathematics", "History of Bangladesh & World Civilization", "Geography & Environment",
+            "Economics", "Civics & Citizenship", "Science", "Bangladesh & Global Studies",
+            "Information & Communication Technology", "Religion & Moral Education", "Career Education",
+        )
+        "Business Studies" -> listOf(
+            "Bangla 1st Paper", "Bangla 2nd Paper", "English 1st Paper", "English 2nd Paper",
+            "Mathematics", "Accounting", "Finance & Banking", "Business Entrepreneurship",
+            "Science", "Bangladesh & Global Studies", "Information & Communication Technology",
+            "Religion & Moral Education", "Career Education",
+        )
+        else -> listOf(
+            "Bangla 1st Paper", "Bangla 2nd Paper", "English 1st Paper", "English 2nd Paper",
+            "Mathematics", "General Science", "Bangladesh & Global Studies",
+            "Information & Communication Technology", "Religion & Moral Education",
+            "Agriculture Studies", "Home Science", "Career Education", "Physical Education, Health & Sports",
+        )
+    }
+    else -> when (group) {
+        "Science" -> listOf(
+            "Bangla 1st Paper", "Bangla 2nd Paper", "English 1st Paper", "English 2nd Paper",
+            "Information & Communication Technology", "Physics 1st Paper", "Physics 2nd Paper",
+            "Chemistry 1st Paper", "Chemistry 2nd Paper", "Biology 1st Paper", "Biology 2nd Paper",
+            "Higher Mathematics 1st Paper", "Higher Mathematics 2nd Paper",
+            "Statistics 1st Paper", "Statistics 2nd Paper",
+        )
+        "Humanities" -> listOf(
+            "Bangla 1st Paper", "Bangla 2nd Paper", "English 1st Paper", "English 2nd Paper",
+            "Information & Communication Technology", "History 1st Paper", "History 2nd Paper",
+            "Economics 1st Paper", "Economics 2nd Paper", "Civics & Good Governance 1st Paper",
+            "Civics & Good Governance 2nd Paper", "Geography 1st Paper", "Geography 2nd Paper",
+            "Logic 1st Paper", "Logic 2nd Paper", "Social Work 1st Paper", "Social Work 2nd Paper",
+            "Sociology 1st Paper", "Sociology 2nd Paper", "Islamic History & Culture 1st Paper",
+            "Islamic History & Culture 2nd Paper", "Psychology 1st Paper", "Psychology 2nd Paper",
+        )
+        "Business Studies" -> listOf(
+            "Bangla 1st Paper", "Bangla 2nd Paper", "English 1st Paper", "English 2nd Paper",
+            "Information & Communication Technology", "Accounting 1st Paper", "Accounting 2nd Paper",
+            "Finance, Banking & Insurance 1st Paper", "Finance, Banking & Insurance 2nd Paper",
+            "Business Organization & Management 1st Paper", "Business Organization & Management 2nd Paper",
+            "Production Management & Marketing 1st Paper", "Production Management & Marketing 2nd Paper",
+            "Economics 1st Paper", "Economics 2nd Paper", "Statistics 1st Paper", "Statistics 2nd Paper",
+        )
+        else -> listOf(
+            "Bangla 1st Paper", "Bangla 2nd Paper", "English 1st Paper", "English 2nd Paper",
+            "Information & Communication Technology", "Economics 1st Paper", "Economics 2nd Paper",
+            "Statistics 1st Paper", "Statistics 2nd Paper", "Logic 1st Paper", "Logic 2nd Paper",
+            "Psychology 1st Paper", "Psychology 2nd Paper", "Social Work 1st Paper", "Social Work 2nd Paper",
+        )
+    }
+}
+
+@Composable
+private fun AcademicSubjectChoice(
+    subject: String,
+    onClick: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth().height(66.dp).premiumClickable(onClick),
+        shape = RoundedCornerShape(15.dp),
+        colors = CardDefaults.cardColors(containerColor = DashboardCard),
+        border = BorderStroke(1.dp, DashboardStroke),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier.size(37.dp).clip(RoundedCornerShape(11.dp))
+                    .background(AccentCyan.copy(alpha = 0.13f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.Filled.MenuBook, null, tint = AccentCyan, modifier = Modifier.size(20.dp))
+            }
+            Spacer(Modifier.width(12.dp))
+            Text(
+                subject,
+                color = TextPrimary,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Icon(Icons.Filled.ChevronRight, null, tint = AccentCyan, modifier = Modifier.size(20.dp))
+        }
+    }
+}
+
+@Composable
+private fun AcademicLevelChoice(
+    badge: String,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth().height(86.dp).premiumClickable(onClick),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = DashboardCard),
+        border = BorderStroke(1.dp, AccentCyan.copy(alpha = 0.28f)),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 15.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier.size(44.dp).clip(RoundedCornerShape(13.dp))
+                    .background(AccentCyan.copy(alpha = 0.14f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(badge, color = AccentCyan, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1)
+            }
+            Spacer(Modifier.width(13.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, color = TextPrimary, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                Text(subtitle, color = TextSecondary, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Icon(Icons.Filled.ChevronRight, null, tint = AccentCyan)
+        }
+    }
+}
+
+@Composable
+private fun AcademicGroupChoice(
+    title: String,
+    icon: ImageVector,
+    modifier: Modifier,
+    onClick: () -> Unit,
+) {
+    Card(
+        modifier = modifier.height(132.dp).premiumClickable(onClick),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = DashboardCard),
+        border = BorderStroke(1.dp, DashboardStroke),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize().padding(14.dp),
+            verticalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Box(
+                modifier = Modifier.size(36.dp).clip(RoundedCornerShape(11.dp))
+                    .background(AccentCyan.copy(alpha = 0.13f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(icon, null, tint = AccentCyan, modifier = Modifier.size(21.dp))
+            }
+            Text(
+                title,
+                color = TextPrimary,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+private fun AcademicClassChoice(
+    number: String,
+    label: String,
+    modifier: Modifier,
+    onClick: () -> Unit,
+) {
+    Card(
+        modifier = modifier.height(100.dp).premiumClickable(onClick),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = DashboardCard),
+        border = BorderStroke(1.dp, DashboardStroke),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize().padding(10.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(number, color = AccentCyan, fontSize = 30.sp, fontWeight = FontWeight.ExtraBold)
+            Spacer(Modifier.height(3.dp))
+            Text(label, color = TextPrimary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
         }
     }
 }
