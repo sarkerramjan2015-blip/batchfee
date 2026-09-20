@@ -61,6 +61,7 @@ import com.batchfee.edu.ui.navigation.*
 import com.batchfee.edu.ui.pricing.PricingScreen
 import com.batchfee.edu.ui.superadmin.SuperAdminScreen
 import com.batchfee.edu.ui.superadmin.QuestionCurationScreen
+import com.batchfee.edu.ui.superadmin.QuestionBankAdminScreen
 import com.batchfee.edu.ui.subscription.SubscriptionExpiredScreen
 import com.batchfee.edu.ui.theme.MyApplicationTheme
 import com.batchfee.edu.ui.update.ForceUpdateScreen
@@ -1139,6 +1140,7 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
             SuperAdminScreen(
                 db = appDb,
                 onOpenQuestionCuration = { navController.navigate(QuestionCurationRoute) },
+                onOpenQuestionBankAdmin = { navController.navigate(QuestionBankAdminRoute) },
                 onLogout = {
                     SessionManager.logout()
                     navController.navigate(AuthRoute) {
@@ -1150,6 +1152,13 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
 
         composable<QuestionCurationRoute> {
             QuestionCurationScreen(onBack = { navController.popBackStack() })
+        }
+
+        composable<QuestionBankAdminRoute> {
+            QuestionBankAdminScreen(
+                onBack = { navController.popBackStack() },
+                onOpenModeration = { navController.navigate(QuestionCurationRoute) },
+            )
         }
 
         composable<SubscriptionExpiredRoute> {

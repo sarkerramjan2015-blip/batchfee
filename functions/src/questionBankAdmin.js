@@ -1,0 +1,216 @@
+"use strict";
+
+const { randomUUID } = require("node:crypto");
+const { HttpsError } = require("firebase-functions/v2/https");
+const { QUESTION_SCHEMA_VERSION } = require("./questionBankFoundation");
+const { publicQuestionDto } = require("./questionCuration");
+
+const SETTINGS_COLLECTION = "platform_question_bank_settings";
+const SETTINGS_DOCUMENT = "default";
+const MAX_PAGE_SIZE = 50;
+
+const DEFAULT_QUESTION_BANK_SETTINGS = Object.freeze({
+  generationEnabled: true,
+  contributionEnabled: true,
+  actorDailyPreviewLimit: 5,
+  instituteDailyPreviewLimit: 25,
+  platformDailyPreviewLimit: 100,
+  maxQuestionsPerRequest: 30,
+});
+
+function validId(value) {
+  return typeof value === "string" && /^[A-Za-z0-9_-]{8,100}$/.test(value);
+}
+
+function requiredId(value, label) {
+  if (!validId(value)) throw new HttpsError("invalid-argument", `Invalid ${label}.`);
+  return value;
+}
+
+function numberInRange(value, fallback, min, max, label) {
+  if (value == null) return fallback;
+  const number = Number(value);
+  if (!Number.isSafeInteger(number) || number < min || number > max) {
+    throw new HttpsError("invalid-argument", `Invalid ${label}.`);
+  }
+  return number;
+}
+
+function booleanValue(value, fallback, label) {
+  if (value == null) return fallback;
+  if (typeof value !== "boolean") throw new HttpsError("invalid-argument", `Invalid ${label}.`);
+  return value;
+}
+
+function settingsDto(data) {
+  const source = data && typeof data === "object" ? data : {};
+  return {
+    generationEnabled: source.generationEnabled !== false,
+    contributionEnabled: source.contributionEnabled !== false,
+    actorDailyPreviewLimit: numberInRange(source.actorDailyPreviewLimit, 5, 1, 20, "actor preview limit"),
+    instituteDailyPreviewLimit: numberInRange(source.instituteDailyPreviewLimit, 25, 1, 500, "institute preview limit"),
+    platformDailyPreviewLimit: numberInRange(source.platformDailyPreviewLimit, 100, 1, 10_000, "platform preview limit"),
+    maxQuestionsPerRequest: numberInRange(source.maxQuestionsPerRequest, 30, 1, 30, "question request limit"),
+  };
+}
+
+function requestedSettings(data) {
+  const source = data && typeof data === "object" ? data : {};
+  return {
+    generationEnabled: booleanValue(source.generationEnabled, DEFAULT_QUESTION_BANK_SETTINGS.generationEnabled, "generation setting"),
+    contributionEnabled: booleanValue(source.contributionEnabled, DEFAULT_QUESTION_BANK_SETTINGS.contributionEnabled, "contribution setting"),
+    actorDailyPreviewLimit: numberInRange(source.actorDailyPreviewLimit, DEFAULT_QUESTION_BANK_SETTINGS.actorDailyPreviewLimit, 1, 20, "actor preview limit"),
+    instituteDailyPreviewLimit: numberInRange(source.instituteDailyPreviewLimit, DEFAULT_QUESTION_BANK_SETTINGS.instituteDailyPreviewLimit, 1, 500, "institute preview limit"),
+    platformDailyPreviewLimit: numberInRange(source.platformDailyPreviewLimit, DEFAULT_QUESTION_BANK_SETTINGS.platformDailyPreviewLimit, 1, 10_000, "platform preview limit"),
+    maxQuestionsPerRequest: numberInRange(source.maxQuestionsPerRequest, DEFAULT_QUESTION_BANK_SETTINGS.maxQuestionsPerRequest, 1, 30, "question request limit"),
+  };
+}
+
+async function loadQuestionBankSettings(db) {
+  const snapshot = await db.collection(SETTINGS_COLLECTION).doc(SETTINGS_DOCUMENT).get();
+  return settingsDto(snapshot.exists ? snapshot.data() : null);
+}
+
+function adminQuestionDto(id, data) {
+  return {
+    ...publicQuestionDto(id, data),
+    status: typeof data.status === "string" ? data.status : "",
+    curatedAtMs: Number.isSafeInteger(data.curatedAtMs) ? data.curatedAtMs : 0,
+  };
+}
+
+/** Root-only control plane. It returns academic content and configuration only. */
+function createQuestionBankAdminHandler({ db, authorizeRoot, now = Date.now, randomId = randomUUID }) {
+  return async function commitQuestionBankAdminOperation(request) {
+    await authorizeRoot(request.auth);
+    const uid = request.auth && request.auth.uid;
+    const data = request.data || {};
+    const action = data.action;
+    const settingsRef = db.collection(SETTINGS_COLLECTION).doc(SETTINGS_DOCUMENT);
+
+    if (action === "get_settings") return { settings: await loadQuestionBankSettings(db) };
+
+    if (action === "list_questions") {
+      const status = typeof data.status === "string" ? data.status : "curated";
+      if (!["curated", "retired"].includes(status)) {
+        throw new HttpsError("invalid-argument", "Invalid question bank status.");
+      }
+      const requested = Number(data.limit);
+      const limit = Number.isSafeInteger(requested) ? Math.min(Math.max(requested, 1), MAX_PAGE_SIZE) : 25;
+      const snapshot = await db.collection("global_question_bank")
+        .where("status", "==", status)
+        .limit(limit)
+        .get();
+      const questions = snapshot.docs
+        .map((document) => adminQuestionDto(document.id, document.data()))
+        .filter((question) => question.questionText)
+        .sort((left, right) => right.curatedAtMs - left.curatedAtMs);
+      return { questions, limit };
+    }
+
+    if (!["update_settings", "retire_question", "restore_question"].includes(action)) {
+      throw new HttpsError("invalid-argument", "Invalid question bank admin action.");
+    }
+    const operationId = requiredId(data.operationId, "admin operation");
+    const operationRef = db.collection("question_bank_admin_operations").doc(operationId);
+
+    if (action === "update_settings") {
+      const settings = requestedSettings(data.settings);
+      return db.runTransaction(async (tx) => {
+        const previous = await tx.get(operationRef);
+        if (previous.exists) {
+          const saved = previous.data();
+          if (saved.actorUid !== uid || saved.action !== action) {
+            throw new HttpsError("already-exists", "Operation ID belongs to another request.");
+          }
+          return saved.result;
+        }
+        const timestamp = now();
+        const result = { action, settings, updatedAtMs: timestamp };
+        tx.set(settingsRef, {
+          schemaVersion: QUESTION_SCHEMA_VERSION,
+          ...settings,
+          updatedAtMs: timestamp,
+          updatedBy: uid,
+        });
+        tx.create(operationRef, {
+          schemaVersion: QUESTION_SCHEMA_VERSION,
+          operationId,
+          actorUid: uid,
+          action,
+          auditToken: randomId(),
+          createdAtMs: timestamp,
+          result,
+        });
+        return result;
+      });
+    }
+
+    const questionId = requiredId(data.questionId, "question");
+    const questionRef = db.collection("global_question_bank").doc(questionId);
+    return db.runTransaction(async (tx) => {
+      const [previous, questionSnap] = await Promise.all([tx.get(operationRef), tx.get(questionRef)]);
+      if (previous.exists) {
+        const saved = previous.data();
+        if (saved.actorUid !== uid || saved.action !== action || saved.questionId !== questionId) {
+          throw new HttpsError("already-exists", "Operation ID belongs to another request.");
+        }
+        return saved.result;
+      }
+      if (!questionSnap.exists) throw new HttpsError("not-found", "Question was not found.");
+      const question = questionSnap.data();
+      const desiredStatus = action === "retire_question" ? "retired" : "curated";
+      if (question.status !== (action === "retire_question" ? "curated" : "retired")) {
+        throw new HttpsError("failed-precondition", "Question is not in a state that can be changed.");
+      }
+      const fingerprint = typeof question.questionFingerprint === "string" ? question.questionFingerprint : "";
+      const duplicateRef = fingerprint ? db.collection("global_question_dedup").doc(fingerprint) : null;
+      const duplicate = duplicateRef ? await tx.get(duplicateRef) : null;
+      if (action === "restore_question" && duplicate && duplicate.exists &&
+          duplicate.get("globalQuestionId") !== questionId) {
+        throw new HttpsError("already-exists", "An identical active academic question already exists.");
+      }
+      const timestamp = now();
+      const result = { action, questionId, status: desiredStatus, updatedAtMs: timestamp };
+      tx.update(questionRef, {
+        status: desiredStatus,
+        lifecycleUpdatedAtMs: timestamp,
+        lifecycleUpdatedBy: uid,
+        ...(action === "retire_question" ? { retiredAtMs: timestamp } : { restoredAtMs: timestamp }),
+      });
+      if (duplicateRef && action === "retire_question" && duplicate && duplicate.exists &&
+          duplicate.get("globalQuestionId") === questionId) {
+        tx.delete(duplicateRef);
+      }
+      if (duplicateRef && action === "restore_question" && (!duplicate || !duplicate.exists)) {
+        tx.create(duplicateRef, {
+          schemaVersion: QUESTION_SCHEMA_VERSION,
+          globalQuestionId: questionId,
+          publishedAtMs: question.publishedAtMs || timestamp,
+          restoredAtMs: timestamp,
+        });
+      }
+      tx.create(operationRef, {
+        schemaVersion: QUESTION_SCHEMA_VERSION,
+        operationId,
+        actorUid: uid,
+        action,
+        questionId,
+        auditToken: randomId(),
+        createdAtMs: timestamp,
+        result,
+      });
+      return result;
+    });
+  };
+}
+
+module.exports = {
+  DEFAULT_QUESTION_BANK_SETTINGS,
+  SETTINGS_COLLECTION,
+  SETTINGS_DOCUMENT,
+  settingsDto,
+  requestedSettings,
+  loadQuestionBankSettings,
+  createQuestionBankAdminHandler,
+};

@@ -82,6 +82,7 @@ object BillingRoute
 @Serializable object QuestionBankFoundationRoute
 @Serializable object CuratedQuestionBankRoute
 @Serializable object QuestionCurationRoute
+@Serializable object QuestionBankAdminRoute
 @Serializable object CreateExamRoute
 @Serializable data class EditExamRoute(val examId: String)
 @Serializable data class ExamDetailRoute(val examId: String)

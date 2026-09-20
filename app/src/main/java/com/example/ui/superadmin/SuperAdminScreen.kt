@@ -1939,6 +1939,7 @@ fun SuperAdminScreen(
     db: AppDatabase,
     onLogout: () -> Unit,
     onOpenQuestionCuration: () -> Unit = {},
+    onOpenQuestionBankAdmin: () -> Unit = {},
 ) {
     val viewModel: SuperAdminViewModel = viewModel(factory = SuperAdminViewModelFactory(db))
     val platformRole by viewModel.platformRole.collectAsState()
@@ -2180,9 +2181,12 @@ fun SuperAdminScreen(
                         Spacer(Modifier.width(10.dp))
                         Column(Modifier.weight(1f)) {
                             Text("Question Bank Moderation", color = TextWhite, fontWeight = FontWeight.Bold)
-                            Text("Review anonymous AI question contributions before publishing them globally.", color = TextMuted, fontSize = 11.sp)
+                            Text("Control AI access, limits and anonymous question moderation.", color = TextMuted, fontSize = 11.sp)
                         }
-                        TextButton(onClick = onOpenQuestionCuration) { Text("Review", color = AccentGreen) }
+                        Column(horizontalAlignment = Alignment.End) {
+                            TextButton(onClick = onOpenQuestionBankAdmin) { Text("Controls", color = AccentCyan) }
+                            TextButton(onClick = onOpenQuestionCuration) { Text("Review", color = AccentGreen) }
+                        }
                     }
                 }
             }

@@ -67,6 +67,9 @@ const {
   createQuestionBankLibraryHandler,
 } = require("./questionBankLibrary");
 const {
+  createQuestionBankAdminHandler,
+} = require("./questionBankAdmin");
+const {
   createPlatformSmsAnalyticsHandler,
   createPlatformSmsTopupHandler,
   createServerSmsHandler,
@@ -192,6 +195,10 @@ const questionCurationHandler = createQuestionCurationHandler({
 const questionBankLibraryHandler = createQuestionBankLibraryHandler({
   db,
   authorize: assertCanManageTenantResource,
+});
+const questionBankAdminHandler = createQuestionBankAdminHandler({
+  db,
+  authorizeRoot: assertPlatformRoot,
 });
 
 function requireString(data, field, maxLength = 128) {
@@ -2673,6 +2680,10 @@ exports.commitQuestionCurationOperation = onCall(
 exports.commitQuestionBankLibraryOperation = onCall(
   { ...callableOptions, timeoutSeconds: 60, memory: "512MiB" },
   guarded(questionBankLibraryHandler, "question_bank_library"),
+);
+exports.commitQuestionBankAdminOperation = onCall(
+  { ...callableOptions, timeoutSeconds: 60, memory: "512MiB" },
+  guarded(questionBankAdminHandler, "question_bank_admin"),
 );
 // Multi-tenant SMS wallet reads and the owner-only send-method setting. Wallet
 // counters are server-authoritative and can never be forged by a client.

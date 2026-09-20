@@ -537,6 +537,12 @@ service cloud.firestore {
     match /question_curation_operations/{document=**} {
       allow read, write: if false;
     }
+    match /platform_question_bank_settings/{document=**} {
+      allow read, write: if false;
+    }
+    match /question_bank_admin_operations/{document=**} {
+      allow read, write: if false;
+    }
 
     match /institutes/{instituteId}/staffs/{staffId} {
       allow read: if (isActiveStaff(instituteId) && request.auth.uid == staffId)

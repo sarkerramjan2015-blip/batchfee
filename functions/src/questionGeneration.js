@@ -3,6 +3,12 @@
 const { createHash } = require("node:crypto");
 const { HttpsError } = require("firebase-functions/v2/https");
 const { CONTRIBUTION_POLICY_VERSION, QUESTION_SCHEMA_VERSION } = require("./questionBankFoundation");
+const {
+  loadQuestionBankSettings,
+  SETTINGS_COLLECTION,
+  SETTINGS_DOCUMENT,
+  settingsDto,
+} = require("./questionBankAdmin");
 
 const DEFAULT_MODEL = "gemini-3.8-flash";
 const MAX_SOURCE_PAGES = 2;
@@ -242,6 +248,19 @@ function createQuestionGenerationHandler({
     if (!uid) throw new HttpsError("unauthenticated", "Sign in is required.");
     const input = canonicalGenerationRequest(request.data || {});
     await authorize(request.auth, input.instituteId, "manage_exams", true);
+    const controls = await loadQuestionBankSettings(db);
+    if (!controls.generationEnabled) {
+      throw new HttpsError("failed-precondition", "AI question generation is temporarily disabled by BatchFee.");
+    }
+    if (!controls.contributionEnabled) {
+      throw new HttpsError("failed-precondition", "AI question contribution is temporarily disabled by BatchFee.");
+    }
+    if (input.questionCount > controls.maxQuestionsPerRequest) {
+      throw new HttpsError(
+        "invalid-argument",
+        `Choose no more than ${controls.maxQuestionsPerRequest} questions in one request.`,
+      );
+    }
     // Resolve the Secret Manager credential only inside the bound callable.
     // Configuration errors must not consume a teacher's daily preview quota.
     const client = typeof ai === "function" ? ai() : ai;
@@ -258,11 +277,12 @@ function createQuestionGenerationHandler({
     const instituteQuotaRef = instituteRef.collection("question_generation_daily_usage")
       .doc(`${currentDay}_institute`);
     const platformQuotaRef = db.collection("question_generation_platform_daily_usage").doc(currentDay);
+    const controlsRef = db.collection(SETTINGS_COLLECTION).doc(SETTINGS_DOCUMENT);
 
     const replay = await db.runTransaction(async (tx) => {
-      const [jobSnap, consentSnap, actorQuotaSnap, instituteQuotaSnap, platformQuotaSnap] = await Promise.all([
+      const [jobSnap, consentSnap, actorQuotaSnap, instituteQuotaSnap, platformQuotaSnap, controlsSnap] = await Promise.all([
         tx.get(jobRef), tx.get(consentRef), tx.get(actorQuotaRef), tx.get(instituteQuotaRef),
-        tx.get(platformQuotaRef),
+        tx.get(platformQuotaRef), tx.get(controlsRef),
       ]);
       if (jobSnap.exists) {
         if (jobSnap.get("actorUid") !== uid || jobSnap.get("requestHash") !== input.requestHash) {
@@ -280,14 +300,26 @@ function createQuestionGenerationHandler({
           consent.policyVersion !== CONTRIBUTION_POLICY_VERSION) {
         throw new HttpsError("failed-precondition", "Review and accept the current AI contribution terms first.");
       }
+      // Read settings inside the transaction as well. A concurrent Super Admin
+      // pause or quota change retries this transaction against the new value.
+      const enforcedControls = settingsDto(controlsSnap.exists ? controlsSnap.data() : null);
+      if (!enforcedControls.generationEnabled || !enforcedControls.contributionEnabled) {
+        throw new HttpsError("failed-precondition", "AI question generation is temporarily disabled by BatchFee.");
+      }
+      if (input.questionCount > enforcedControls.maxQuestionsPerRequest) {
+        throw new HttpsError(
+          "invalid-argument",
+          `Choose no more than ${enforcedControls.maxQuestionsPerRequest} questions in one request.`,
+        );
+      }
       const actorCount = actorQuotaSnap.exists ? Number(actorQuotaSnap.get("attemptCount")) || 0 : 0;
       const instituteCount = instituteQuotaSnap.exists ?
         Number(instituteQuotaSnap.get("attemptCount")) || 0 : 0;
       const platformCount = platformQuotaSnap.exists ?
         Number(platformQuotaSnap.get("attemptCount")) || 0 : 0;
-      if (actorCount >= ACTOR_DAILY_PREVIEW_LIMIT ||
-          instituteCount >= INSTITUTE_DAILY_PREVIEW_LIMIT ||
-          platformCount >= PLATFORM_DAILY_PREVIEW_LIMIT) {
+      if (actorCount >= enforcedControls.actorDailyPreviewLimit ||
+          instituteCount >= enforcedControls.instituteDailyPreviewLimit ||
+          platformCount >= enforcedControls.platformDailyPreviewLimit) {
         throw new HttpsError(
           "resource-exhausted",
           "Phase 2 preview limit reached for today. Try again tomorrow.",
@@ -317,6 +349,7 @@ function createQuestionGenerationHandler({
           language: input.language,
         },
         sourcePageCount: input.sourcePages.length,
+        controlSnapshot: enforcedControls,
         billingStatus: "phase2_preview_no_wallet_charge",
         status: "processing",
         createdAtMs: timestamp,

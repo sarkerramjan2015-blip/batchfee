@@ -119,6 +119,21 @@ test("requires auth and current consent before calling Gemini", async () => {
   assert.equal(f.calls, 0);
 });
 
+test("platform controls can pause AI generation before any quota or model call", async () => {
+  const fixture = fixtures();
+  fixture.db.records.set("platform_question_bank_settings/default", {
+    generationEnabled: false,
+    contributionEnabled: true,
+    actorDailyPreviewLimit: 5,
+    instituteDailyPreviewLimit: 25,
+    platformDailyPreviewLimit: 100,
+    maxQuestionsPerRequest: 30,
+  });
+  await assert.rejects(fixture.handler(request()), { code: "failed-precondition" });
+  assert.equal(fixture.calls, 0);
+  assert.equal(fixture.db.records.has("institutes/institute-1/question_generation_jobs/operation-1"), false);
+});
+
 test("resolves the server secret client only after authorization and before quota use", async () => {
   const db = memoryDb();
   const consentPath = "institutes/institute-1/question_contribution_consents/teacher-1";
