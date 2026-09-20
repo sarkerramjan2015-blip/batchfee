@@ -43,12 +43,15 @@ import androidx.navigation.toRoute
 import com.batchfee.edu.domain.AccessControl
 import com.batchfee.edu.domain.ForceUpdateChecker
 import com.batchfee.edu.domain.PasswordHasher
+import com.batchfee.edu.domain.ReviewFlowLauncher
+import com.batchfee.edu.domain.ReviewPromptPreferences
 import com.batchfee.edu.domain.SessionManager
 import com.batchfee.edu.domain.StudentSessionManager
 import com.batchfee.edu.domain.ThemePreferences
 import com.batchfee.edu.notifications.NoticePushRegistration
 import com.batchfee.edu.data.firestore.InstituteRealtimeSyncManager
 import com.batchfee.edu.data.firebase.FirebaseFailureReporter
+import com.batchfee.edu.data.repository.NoticeCenterRepository
 import com.batchfee.edu.ui.auth.AuthScreen
 import com.batchfee.edu.ui.billing.BillingScreen
 import com.batchfee.edu.ui.dashboard.DashboardScreen
@@ -59,6 +62,8 @@ import com.batchfee.edu.ui.legal.PrivacyPolicyScreen
 import com.batchfee.edu.ui.legal.TermsConditionsScreen
 import com.batchfee.edu.ui.navigation.*
 import com.batchfee.edu.ui.pricing.PricingScreen
+import com.batchfee.edu.ui.review.InAppReviewDialog
+import com.batchfee.edu.ui.review.ReviewThanksDialog
 import com.batchfee.edu.ui.superadmin.SuperAdminScreen
 import com.batchfee.edu.ui.superadmin.QuestionCurationScreen
 import com.batchfee.edu.ui.superadmin.QuestionBankAdminScreen
@@ -320,6 +325,49 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
                 showNotificationEducation = false
             }
         )
+    }
+
+    // Soft review prompt: appears ~1 month after install, re-asks every 3 days
+    // if skipped, and stops permanently once a rating is posted.
+    var showReviewDialog by rememberSaveable { mutableStateOf(false) }
+    var showReviewThanks by rememberSaveable { mutableStateOf(false) }
+
+    LaunchedEffect(isLoggedIn, studentSessionId, restoredStudentSession) {
+        val anyLoggedIn = isLoggedIn != null || (restoredStudentSession && studentSessionId != null)
+        if (anyLoggedIn) {
+            delay(2500)
+            if (ReviewPromptPreferences.shouldShow(context, System.currentTimeMillis())) {
+                showReviewDialog = true
+            }
+        }
+    }
+
+    if (showReviewDialog) {
+        InAppReviewDialog(
+            onPost = { stars, comment ->
+                ReviewPromptPreferences.markRated(context)
+                ReviewPromptPreferences.markShown(context, System.currentTimeMillis())
+                showReviewDialog = false
+                if (stars >= 4) {
+                    sessionScope.launch {
+                        (context as? Activity)?.let { ReviewFlowLauncher.openPlayReview(it) }
+                    }
+                } else {
+                    sessionScope.launch {
+                        runCatching { NoticeCenterRepository().submitReviewFeedback(stars, comment) }
+                    }
+                    showReviewThanks = true
+                }
+            },
+            onDismiss = {
+                ReviewPromptPreferences.markShown(context, System.currentTimeMillis())
+                showReviewDialog = false
+            },
+        )
+    }
+
+    if (showReviewThanks) {
+        ReviewThanksDialog(onDone = { showReviewThanks = false })
     }
 
     // Navigation is derived directly from session state. The previous implementation used a

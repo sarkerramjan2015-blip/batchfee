@@ -118,6 +118,19 @@ class NoticeCenterRepository(
         return response["itemId"] as? String ?: error("Invalid support-item response.")
     }
 
+    suspend fun submitReviewFeedback(stars: Int, comment: String): String {
+        require(stars in 1..5) { "Invalid rating." }
+        val response = call(
+            action = "submit_support_item",
+            values = mapOf(
+                "type" to "suggestion",
+                "title" to "App rating: $stars stars",
+                "body" to comment.trim().ifBlank { "No comment." }
+            )
+        )
+        return response["itemId"] as? String ?: error("Invalid review-feedback response.")
+    }
+
     suspend fun platformNotices(pageSize: Int = 50): List<AppNotice> {
         require(pageSize in setOf(25, 50, 100)) { "Invalid notice page size." }
         val response = call("list_platform_notices", values = mapOf("pageSize" to pageSize))
