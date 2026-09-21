@@ -20,10 +20,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavHostController
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import com.batchfee.edu.data.activity.StudentActivityTracker
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -146,7 +148,16 @@ fun StudentMainScaffold(onLogout: () -> Unit) {
                     }
                 )
             }
-            composable("student_pay?month={month}") { backStackEntry ->
+            composable(
+                route = "student_pay?month={month}",
+                arguments = listOf(
+                    navArgument("month") {
+                        type = NavType.StringType
+                        nullable = true
+                        defaultValue = null
+                    }
+                ),
+            ) { backStackEntry ->
                 StudentPaymentRequestScreen(
                     preselectedMonth = backStackEntry.arguments?.getString("month"),
                     onBack = { navController.popBackStack() }

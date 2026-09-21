@@ -459,6 +459,7 @@ fun UnifiedCollectScreen(
                     payment.id to (db.receiptDao().getReceiptByPaymentIdOnce(instId, payment.id)?.dueAmount ?: 0.0)
                 }
             }
+            val paymentCountByReceipt = payments.groupingBy { it.receiptNumber }.eachCount()
 
             studentAllFees = allFees
             studentBatches = batches
@@ -635,7 +636,14 @@ fun UnifiedCollectScreen(
                     baseAmount = fee?.baseAmount ?: payment.amount,
                     discountAmount = fee?.discountAmount ?: 0.0,
                     totalAmount = fee?.totalAmount ?: payment.amount,
-                    remainingDue = receiptDueByPayment[payment.id] ?: fee?.dueAmount ?: 0.0
+                    // A grouped receipt stores its aggregate due only against
+                    // the primary payment. Using that header beside the other
+                    // monthly fee dues would count part of the balance twice.
+                    remainingDue = if ((paymentCountByReceipt[payment.receiptNumber] ?: 0) > 1) {
+                        fee?.dueAmount ?: 0.0
+                    } else {
+                        receiptDueByPayment[payment.id] ?: fee?.dueAmount ?: 0.0
+                    }
                 )
             }
             paymentHistory = paymentLines.groupBy { it.payment.receiptNumber }
@@ -1565,11 +1573,19 @@ fun UnifiedCollectScreen(
                         return@launch
                     }
                     try {
-                        feeRepository.ownerDeletePayment(
-                            paymentId = item.payment.id,
-                            instituteId = instId,
-                            reason = "Deleted by institute owner"
-                        )
+                        if (item.isGroupedReceipt) {
+                            feeRepository.ownerDeleteGroupedPayment(
+                                receiptNumber = item.payment.receiptNumber,
+                                instituteId = instId,
+                                reason = "Deleted by institute owner"
+                            )
+                        } else {
+                            feeRepository.ownerDeletePayment(
+                                paymentId = item.payment.id,
+                                instituteId = instId,
+                                reason = "Deleted by institute owner"
+                            )
+                        }
                         deletingHistoryItem = null
                         editingHistoryItem = null
                         loadStudentLedger(student)
@@ -2106,15 +2122,13 @@ private fun PaymentEditDialog(
                     ) {
                         Text("Close", color = TextMuted, fontSize = 12.sp)
                     }
-                    if (!item.isGroupedReceipt) {
-                        TextButton(
-                            onClick = onDelete,
-                            enabled = !isSubmitting,
-                            modifier = Modifier.weight(1f),
-                            contentPadding = PaddingValues(horizontal = 2.dp, vertical = 4.dp)
-                        ) {
-                            Text("Delete", color = AccentRed, fontSize = 12.sp)
-                        }
+                    TextButton(
+                        onClick = onDelete,
+                        enabled = !isSubmitting,
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(horizontal = 2.dp, vertical = 4.dp)
+                    ) {
+                        Text(if (item.isGroupedReceipt) "Delete receipt" else "Delete", color = AccentRed, fontSize = 12.sp)
                     }
                 }
             }
@@ -2134,11 +2148,15 @@ private fun PaymentPermanentDeleteDialog(
         onDismissRequest = onDismiss,
         containerColor = CardBg,
         shape = RoundedCornerShape(20.dp),
-        title = { Text("Delete Payment?", color = TextWhite, fontSize = 18.sp, fontWeight = FontWeight.Bold) },
+        title = { Text(if (item.isGroupedReceipt) "Delete Grouped Receipt?" else "Delete Payment?", color = TextWhite, fontSize = 18.sp, fontWeight = FontWeight.Bold) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    "The payment and receipt will be removed. If the fee is still applicable, it will return to Due Fees.",
+                    if (item.isGroupedReceipt) {
+                        "All ${item.groupedLines.size} monthly payments and this receipt will be removed together. Their outstanding fees will return to Due Fees. This cannot be undone."
+                    } else {
+                        "The payment and receipt will be removed. If the fee is still applicable, it will return to Due Fees."
+                    },
                     color = TextMuted,
                     fontSize = 12.sp
                 )
@@ -2149,7 +2167,14 @@ private fun PaymentPermanentDeleteDialog(
                 ) {
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                         Text(item.payment.receiptNumber, color = TextWhite, fontWeight = FontWeight.Bold)
-                        Text("BDT ${formatSmartAmount(item.payment.amount)} • ${item.feePeriod}", color = TextMuted, fontSize = 12.sp)
+                        if (item.isGroupedReceipt) {
+                            item.groupedLines.forEach { line ->
+                                Text("${line.feePeriod}: BDT ${formatSmartAmount(line.payment.amount)}", color = TextMuted, fontSize = 12.sp)
+                            }
+                            Text("Total: BDT ${formatSmartAmount(item.collectedAmount)}", color = TextWhite, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        } else {
+                            Text("BDT ${formatSmartAmount(item.payment.amount)} • ${item.feePeriod}", color = TextMuted, fontSize = 12.sp)
+                        }
                     }
                 }
             }
@@ -3241,6 +3266,12 @@ private fun buildHistoryReceiptText(institute: InstituteInfo, student: StudentEn
         appendLine("Batch   : ${item.batchName ?: "Direct"}")
         appendLine("Period  : ${receiptPeriodDetails(item)}")
         appendLine("Date    : ${formatDate(item.payment.paymentDateMs)}")
+        if (item.isGroupedReceipt) {
+            appendLine("Monthly payments:")
+            item.groupedLines.forEach { line ->
+                appendLine("  ${line.feePeriod}: BDT ${formatSmartAmount(line.payment.amount)}")
+            }
+        }
         appendLine("________________________________")
         appendLine("Fee Amount  : BDT ${formatSmartAmount(item.baseAmount)}")
         if (item.discountAmount > 0.0) {
@@ -3347,7 +3378,10 @@ private suspend fun generateReceiptPdf(context: Context, institute: InstituteInf
     val pageWidth = 440f
     val headerH = 125f
     val studentH = 72f
-    val feeH = if (hasDiscount) 116f else 92f
+    val monthlyLineCount = if (item.isGroupedReceipt) item.groupedLines.size else 0
+    val feeH = if (item.isGroupedReceipt) {
+        114f + monthlyLineCount * 18f + if (hasDiscount) 20f else 0f
+    } else if (hasDiscount) 116f else 92f
     val paymentH = 92f
     val remarkH = if (hasRemark) 54f else 0f
     val sigH = 46f
@@ -3454,12 +3488,27 @@ private suspend fun generateReceiptPdf(context: Context, institute: InstituteInf
     card(canvas, fill, stroke, 28f, y, right, feeH)
     sectionLabel(canvas, text, "FEE DETAILS", 46f, y + 16f)
     row(canvas, text, bold, "Period", receiptPeriodSummary(item), 46f, y + 36f, right - 28f)
-    row(canvas, text, bold, "Fee amount", "BDT ${formatSmartAmount(item.baseAmount)}", 46f, y + 56f, right - 28f)
-    if (hasDiscount) {
-        row(canvas, text, bold, "Discount", "−BDT ${formatSmartAmount(item.discountAmount)}", 46f, y + 76f, right - 28f, green)
-        row(canvas, text, bold, "Payable", "BDT ${formatSmartAmount(item.totalAmount)}", 46f, y + 96f, right - 28f)
+    if (item.isGroupedReceipt) {
+        sectionLabel(canvas, text, "MONTH-WISE PAYMENTS", 46f, y + 58f)
+        item.groupedLines.forEachIndexed { index, line ->
+            row(canvas, text, bold, pdfSafe(line.feePeriod, 27),
+                "BDT ${formatSmartAmount(line.payment.amount)}", 46f, y + 76f + index * 18f, right - 28f)
+        }
+        val totalsY = y + 78f + monthlyLineCount * 18f
+        row(canvas, text, bold, "Fee amount", "BDT ${formatSmartAmount(item.baseAmount)}", 46f, totalsY, right - 28f)
+        if (hasDiscount) {
+            row(canvas, text, bold, "Discount", "−BDT ${formatSmartAmount(item.discountAmount)}", 46f, totalsY + 20f, right - 28f, green)
+        }
+        row(canvas, text, bold, "Payable", "BDT ${formatSmartAmount(item.totalAmount)}", 46f,
+            totalsY + if (hasDiscount) 40f else 20f, right - 28f)
     } else {
-        row(canvas, text, bold, "Payable", "BDT ${formatSmartAmount(item.totalAmount)}", 46f, y + 76f, right - 28f)
+        row(canvas, text, bold, "Fee amount", "BDT ${formatSmartAmount(item.baseAmount)}", 46f, y + 56f, right - 28f)
+        if (hasDiscount) {
+            row(canvas, text, bold, "Discount", "−BDT ${formatSmartAmount(item.discountAmount)}", 46f, y + 76f, right - 28f, green)
+            row(canvas, text, bold, "Payable", "BDT ${formatSmartAmount(item.totalAmount)}", 46f, y + 96f, right - 28f)
+        } else {
+            row(canvas, text, bold, "Payable", "BDT ${formatSmartAmount(item.totalAmount)}", 46f, y + 76f, right - 28f)
+        }
     }
     y += feeH + gap
 

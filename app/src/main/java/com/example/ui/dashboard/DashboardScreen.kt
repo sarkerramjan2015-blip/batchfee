@@ -4953,25 +4953,183 @@ fun MoreScreen(
     }
 
     if (showLogoutConfirmation) {
-        AlertDialog(
+        PremiumLogoutDialog(
             onDismissRequest = { showLogoutConfirmation = false },
-            containerColor = DashboardCard,
-            title = { Text("Log out?", color = TextPrimary, fontWeight = FontWeight.Bold) },
-            text = { Text("You will need to sign in again to access this institute.", color = TextSecondary) },
-            confirmButton = {
-                TextButton(onClick = {
-                    showLogoutConfirmation = false
-                    onLogout()
-                }) {
-                    Text("Logout", color = AccentRed, fontWeight = FontWeight.Bold)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showLogoutConfirmation = false }) {
-                    Text("Cancel", color = TextSecondary)
-                }
+            onConfirm = {
+                showLogoutConfirmation = false
+                onLogout()
             }
         )
+    }
+}
+
+@Composable
+private fun PremiumLogoutDialog(
+    onDismissRequest: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    val motion = rememberInfiniteTransition(label = "logoutDialogMotion")
+    val iconScale by motion.animateFloat(
+        initialValue = 0.96f,
+        targetValue = 1.04f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1_500, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "logoutIconScale",
+    )
+    val glowAlpha by motion.animateFloat(
+        initialValue = 0.12f,
+        targetValue = 0.24f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1_500, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "logoutGlowAlpha",
+    )
+
+    Dialog(
+        onDismissRequest = onDismissRequest,
+        properties = DialogProperties(
+            dismissOnBackPress = true,
+            dismissOnClickOutside = true,
+            usePlatformDefaultWidth = false,
+        ),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp)
+                .shadow(28.dp, RoundedCornerShape(28.dp))
+                .background(
+                    brush = Brush.linearGradient(
+                        listOf(
+                            AccentRed.copy(alpha = 0.72f),
+                            AccentViolet.copy(alpha = 0.46f),
+                            AccentCyan.copy(alpha = 0.42f),
+                        )
+                    ),
+                    shape = RoundedCornerShape(28.dp),
+                )
+                .padding(1.dp),
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(27.dp))
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(Color(0xFF131C31), DashboardCard, Color(0xFF0C1526))
+                        )
+                    )
+                    .padding(horizontal = 22.dp, vertical = 24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(78.dp)
+                        .graphicsLayer {
+                            scaleX = iconScale
+                            scaleY = iconScale
+                        }
+                        .background(AccentRed.copy(alpha = glowAlpha), CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(58.dp)
+                            .background(
+                                Brush.linearGradient(
+                                    listOf(Color(0xFFFB7185), AccentRed, Color(0xFFDC2626))
+                                ),
+                                CircleShape,
+                            )
+                            .border(1.dp, Color.White.copy(alpha = 0.18f), CircleShape),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.ExitToApp,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(27.dp),
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(17.dp))
+                Text(
+                    "Sign out of BatchFee?",
+                    color = TextPrimary,
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    textAlign = TextAlign.Center,
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "You will need to sign in again to access this institute.",
+                    color = TextSecondary,
+                    fontSize = 13.sp,
+                    lineHeight = 19.sp,
+                    textAlign = TextAlign.Center,
+                )
+
+                Spacer(Modifier.height(17.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(13.dp))
+                        .background(AccentCyan.copy(alpha = 0.07f))
+                        .border(1.dp, AccentCyan.copy(alpha = 0.16f), RoundedCornerShape(13.dp))
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        Icons.Filled.Shield,
+                        contentDescription = null,
+                        tint = AccentCyan,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(9.dp))
+                    Text(
+                        "Your institute data will remain safe and unchanged.",
+                        color = Color(0xFFCBD5E1),
+                        fontSize = 11.sp,
+                        lineHeight = 16.sp,
+                    )
+                }
+
+                Spacer(Modifier.height(22.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    OutlinedButton(
+                        onClick = onDismissRequest,
+                        modifier = Modifier.weight(1f).height(48.dp),
+                        shape = RoundedCornerShape(14.dp),
+                        border = BorderStroke(1.dp, Color(0xFF475569)),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimary),
+                    ) {
+                        Text("Cancel", fontWeight = FontWeight.SemiBold)
+                    }
+                    Button(
+                        onClick = onConfirm,
+                        modifier = Modifier.weight(1.25f).height(48.dp),
+                        shape = RoundedCornerShape(14.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = AccentRed),
+                        elevation = ButtonDefaults.buttonElevation(defaultElevation = 5.dp),
+                    ) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.ExitToApp,
+                            contentDescription = null,
+                            modifier = Modifier.size(17.dp),
+                        )
+                        Spacer(Modifier.width(7.dp))
+                        Text("Sign out", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
     }
 }
 

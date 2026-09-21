@@ -37,6 +37,7 @@ const SUPPORT_ITEM_STATUSES = new Set(["open", "in_progress", "resolved"]);
 const TUTORIAL_STATUSES = new Set(["published", "archived"]);
 const PAGE_SIZES = new Set([25, 50, 100]);
 const MAX_NOTICE_LIST_WINDOW = 100;
+const MAX_RECIPIENT_NOTICE_SCAN = 500;
 const MAX_NOTICE_PUSH_TOKENS = 10_000;
 const MAX_PUSH_AGE_MS = 90 * 86_400_000;
 
@@ -269,6 +270,44 @@ function stateId(uid, noticeId) {
   return `${uid}_${noticeId}`;
 }
 
+function isMissingNoticeIndexError(error) {
+  const code = error && error.code;
+  const message = error && typeof error.message === "string" ? error.message : "";
+  return [9, "9", "failed-precondition", "FAILED_PRECONDITION"].includes(code) && /index/i.test(message);
+}
+
+/**
+ * Reads newest notices through the efficient composite index. A newly deployed
+ * index can remain in Firestore's BUILDING state for a while, so keep a bounded
+ * equality-only fallback instead of making the entire inbox unavailable.
+ */
+async function loadNoticeDocs(db, status) {
+  const baseQuery = db.collection("platform_notices").where("status", "==", status);
+  try {
+    const snapshot = await baseQuery
+      .orderBy("publishedAtMs", "desc")
+      .limit(MAX_RECIPIENT_NOTICE_SCAN)
+      .get();
+    return snapshot.docs;
+  } catch (error) {
+    if (!isMissingNoticeIndexError(error)) throw error;
+    const fallback = await baseQuery.limit(MAX_RECIPIENT_NOTICE_SCAN).get();
+    return [...fallback.docs].sort(
+      (left, right) => safeMillis(right.data()?.publishedAtMs) - safeMillis(left.data()?.publishedAtMs),
+    );
+  }
+}
+
+function eligibleArchivedNotice(data, recipient, now) {
+  return data && data.status === "archived" && isEligibleForNotice({
+    ...data,
+    status: "published",
+    // Archiving is an explicit platform action. A past visibility expiry must
+    // not hide that archived record from an otherwise eligible recipient.
+    expiresAtMs: 0,
+  }, recipient, now);
+}
+
 async function listMyNotices({ db, request }) {
   const recipient = await resolveTenantRecipient(db, request.auth);
   const tab = optionalString(request.data, "tab", 16).toLowerCase() || "all";
@@ -277,30 +316,41 @@ async function listMyNotices({ db, request }) {
   if (!PAGE_SIZES.has(requestedSize)) throw new HttpsError("invalid-argument", "Invalid notice page size.");
   const now = Date.now();
   const status = tab === "archived" ? "archived" : "published";
-  const snapshot = await db.collection("platform_notices")
-    .where("status", "==", status)
-    .orderBy("publishedAtMs", "desc")
-    .limit(MAX_NOTICE_LIST_WINDOW)
-    .get();
-  const eligible = snapshot.docs.filter((doc) => {
+  const tabDocs = await loadNoticeDocs(db, status);
+  const publishedDocs = status === "published" ? tabDocs : await loadNoticeDocs(db, "published");
+  const eligible = tabDocs.filter((doc) => {
     const data = doc.data();
     return tab === "archived"
-      ? data && data.audience && isEligibleForNotice({ ...data, status: "published", expiresAtMs: 0 }, recipient, now)
+      ? eligibleArchivedNotice(data, recipient, now)
       : isEligibleForNotice(data, recipient, now);
   });
-  const states = eligible.length
-    ? await db.getAll(...eligible.map((doc) => db.collection("platform_notice_states").doc(stateId(recipient.uid, doc.id))))
+  const publishedEligible = status === "published"
+    ? eligible
+    : publishedDocs.filter((doc) => isEligibleForNotice(doc.data(), recipient, now));
+  const stateDocs = new Map(
+    [...eligible, ...publishedEligible].map((doc) => [doc.id, doc]),
+  );
+  const states = stateDocs.size
+    ? await db.getAll(...[...stateDocs.values()].map(
+      (doc) => db.collection("platform_notice_states").doc(stateId(recipient.uid, doc.id)),
+    ))
     : [];
   const stateByNotice = new Map(states.filter((doc) => doc.exists).map((doc) => [doc.get("noticeId"), doc.data() || {}]));
-  const notices = eligible
+  const visible = eligible
     .map((doc) => publicNotice(doc.id, doc.data() || {}, stateByNotice.get(doc.id)?.isRead === true))
-    .filter((notice) => tab !== "unread" || !notice.isRead)
-    .slice(0, requestedSize);
-  const unreadCount = eligible.reduce((count, doc) => count + (stateByNotice.get(doc.id)?.isRead === true ? 0 : 1), 0);
+    .filter((notice) => tab !== "unread" || !notice.isRead);
+  const notices = visible.slice(0, requestedSize);
+  const unreadCount = publishedEligible.reduce(
+    (count, doc) => count + (stateByNotice.get(doc.id)?.isRead === true ? 0 : 1),
+    0,
+  );
   return {
     notices,
     unreadCount,
-    hasMore: eligible.length > notices.length,
+    // If the bounded scan filled completely there may still be older eligible
+    // records. Keep this conservative so a future pagination UI never claims
+    // that the result is exhaustive.
+    hasMore: visible.length > requestedSize || tabDocs.length === MAX_RECIPIENT_NOTICE_SCAN,
     checkedAtMs: now,
   };
 }
@@ -899,7 +949,9 @@ module.exports = {
   createNoticeCenterHandler,
   extractYouTubeVideoId,
   hasCredentialMaterial,
+  isMissingNoticeIndexError,
   isEligibleForNotice,
+  loadNoticeDocs,
   normalizeAudience,
   normalizeSupportItem,
   publicAdminNotice,

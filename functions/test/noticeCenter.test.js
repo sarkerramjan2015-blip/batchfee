@@ -11,13 +11,19 @@ const {
   TUTORIAL_STATUSES,
   extractYouTubeVideoId,
   hasCredentialMaterial,
+  isMissingNoticeIndexError,
   isEligibleForNotice,
+  loadNoticeDocs,
   normalizeAudience,
   normalizeSupportItem,
   publicAdminNotice,
   publicNotice,
   publicSupportItem,
 } = require("../src/noticeCenter");
+
+function noticeDoc(id, publishedAtMs) {
+  return { id, data: () => ({ status: "published", publishedAtMs }) };
+}
 
 test("notice centre exposes only explicit categories, recipient roles and actions", () => {
   assert.deepEqual([...NOTICE_CATEGORIES].sort(), ["billing", "feature", "important", "maintenance", "update"]);
@@ -118,4 +124,64 @@ test("feedback accepts a concise title and rejects incomplete submissions", () =
     () => normalizeSupportItem({ type: "complaint", title: "Bug", body: "too short" }),
     /at least 10/i,
   );
+});
+
+test("notice query recognises only missing composite-index failures", () => {
+  assert.equal(isMissingNoticeIndexError({ code: 9, message: "The query requires an index." }), true);
+  assert.equal(isMissingNoticeIndexError({ code: "failed-precondition", message: "Index is building." }), true);
+  assert.equal(isMissingNoticeIndexError({ code: 9, message: "Another precondition failed." }), false);
+  assert.equal(isMissingNoticeIndexError({ code: 14, message: "Service unavailable." }), false);
+});
+
+test("notice query falls back while the composite index is building and keeps newest first", async () => {
+  const older = noticeDoc("older", 10);
+  const newer = noticeDoc("newer", 20);
+  let fallbackCalls = 0;
+  const baseQuery = {
+    orderBy() {
+      return {
+        limit() {
+          return {
+            get: async () => {
+              const error = new Error("The query requires an index that is still building.");
+              error.code = 9;
+              throw error;
+            },
+          };
+        },
+      };
+    },
+    limit() {
+      return {
+        get: async () => {
+          fallbackCalls += 1;
+          return { docs: [older, newer] };
+        },
+      };
+    },
+  };
+  const db = {
+    collection: () => ({ where: () => baseQuery }),
+  };
+
+  const docs = await loadNoticeDocs(db, "published");
+  assert.equal(fallbackCalls, 1);
+  assert.deepEqual(docs.map((doc) => doc.id), ["newer", "older"]);
+});
+
+test("notice query does not hide unrelated backend failures", async () => {
+  const baseQuery = {
+    orderBy() {
+      return {
+        limit() {
+          return { get: async () => { throw Object.assign(new Error("Database unavailable."), { code: 14 }); } };
+        },
+      };
+    },
+    limit() {
+      throw new Error("Fallback must not run.");
+    },
+  };
+  const db = { collection: () => ({ where: () => baseQuery }) };
+  await assert.rejects(() => loadNoticeDocs(db, "published"), /Database unavailable/);
 });

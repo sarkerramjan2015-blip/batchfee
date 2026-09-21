@@ -69,6 +69,7 @@ fun PaymentSettingsScreen(db: AppDatabase, onBack: () -> Unit) {
     var allowPartial by remember { mutableStateOf(true) }
     var qrRef by remember { mutableStateOf<String?>(null) }
     var qrPreviewUri by remember { mutableStateOf<String?>(null) }
+    var qrSelectionChanged by remember { mutableStateOf(false) }
     var loaded by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
 
@@ -115,6 +116,7 @@ fun PaymentSettingsScreen(db: AppDatabase, onBack: () -> Unit) {
                 try {
                     val cached = FirebaseStorageImageUploadHelper.cacheSelectedImage(context, uri, "payment_qr")
                     qrPreviewUri = cached.toString()
+                    qrSelectionChanged = true
                 } catch (error: Exception) {
                     snackbarHostState.showSnackbar(error.message ?: "Could not load that image.")
                 }
@@ -127,7 +129,7 @@ fun PaymentSettingsScreen(db: AppDatabase, onBack: () -> Unit) {
         scope.launch {
             saving = true
             try {
-                val uploadedQr = if (qrPreviewUri != null) {
+                val uploadedQr = if (qrSelectionChanged && qrPreviewUri != null) {
                     FirebaseStorageImageUploadHelper.uploadPaymentQr(
                         context, Uri.parse(qrPreviewUri!!), qrRef,
                     )
@@ -164,6 +166,8 @@ fun PaymentSettingsScreen(db: AppDatabase, onBack: () -> Unit) {
                 FirebaseFirestore.getInstance()
                     .collection("institutes").document(instituteId)
                     .collection("payment_settings").document("config").set(doc).await()
+                qrRef = uploadedQr
+                qrSelectionChanged = false
                 snackbarHostState.showSnackbar("Online payment settings saved.")
             } catch (error: Exception) {
                 snackbarHostState.showSnackbar(error.message ?: "Failed to save settings.")
@@ -251,7 +255,11 @@ fun PaymentSettingsScreen(db: AppDatabase, onBack: () -> Unit) {
                     }
                 }
                 if (qrPreviewUri != null) {
-                    TextButton(onClick = { qrPreviewUri = null; qrRef = null }) {
+                    TextButton(onClick = {
+                        qrPreviewUri = null
+                        qrRef = null
+                        qrSelectionChanged = true
+                    }) {
                         Text("Remove QR", color = PsRed, fontSize = 12.sp)
                     }
                 }

@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.Lightbulb
 import androidx.compose.material.icons.filled.MarkEmailRead
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.NotificationsNone
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.ReportProblem
 import androidx.compose.material.icons.filled.Unsubscribe
 import androidx.compose.material3.AlertDialog
@@ -37,6 +38,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -72,7 +74,7 @@ import com.batchfee.edu.data.firebase.FirebaseFailureReporter
 import com.batchfee.edu.data.repository.AppNotice
 import com.batchfee.edu.data.repository.NoticeCenterRepository
 import com.batchfee.edu.domain.SessionManager
-import kotlinx.coroutines.delay
+import com.google.firebase.functions.FirebaseFunctionsException
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -99,15 +101,11 @@ fun NoticeBellButton(onOpen: () -> Unit, compact: Boolean = false) {
 
     LaunchedEffect(userId) {
         if (userId == null) return@LaunchedEffect
-        while (true) {
-            runCatching { repository.myNotices(tab = "all", pageSize = 50).unreadCount }
-                .onSuccess { unreadCount = it }
-                .onFailure { error ->
-                    FirebaseFailureReporter.report(error, operation = "notice bell refresh", permissionDeniedIsExpected = true)
-                }
-            delay(60_000)
-            if (SessionManager.currentUserId.value != userId) break
-        }
+        runCatching { repository.myNotices(tab = "all", pageSize = 50).unreadCount }
+            .onSuccess { unreadCount = it }
+            .onFailure { error ->
+                FirebaseFailureReporter.report(error, operation = "notice bell refresh", permissionDeniedIsExpected = true)
+            }
     }
 
     Box(contentAlignment = Alignment.TopEnd) {
@@ -161,20 +159,29 @@ fun AdminNoticeCenterScreen(onBack: () -> Unit) {
     var notices by remember { mutableStateOf<List<AppNotice>>(emptyList()) }
     var unreadCount by remember { mutableIntStateOf(0) }
     var loading by remember { mutableStateOf(true) }
+    var loadError by remember { mutableStateOf<String?>(null) }
     var selectedNotice by remember { mutableStateOf<AppNotice?>(null) }
+    var savingNoticeId by remember { mutableStateOf<String?>(null) }
 
     suspend fun refresh() {
         loading = true
-        runCatching { repository.myNotices(tab = tab, pageSize = 50) }
-            .onSuccess { inbox ->
-                notices = inbox.notices
-                unreadCount = inbox.unreadCount
-            }
-            .onFailure { error ->
-                FirebaseFailureReporter.report(error, operation = "load notice centre", permissionDeniedIsExpected = true)
-                snackbarHostState.showSnackbar(error.message ?: "Could not load notices. Please try again.")
-            }
-        loading = false
+        loadError = null
+        notices = emptyList()
+        var failureMessage: String? = null
+        try {
+            val inbox = repository.myNotices(tab = tab, pageSize = 50)
+            notices = inbox.notices
+            unreadCount = inbox.unreadCount
+        } catch (error: Throwable) {
+            FirebaseFailureReporter.report(error, operation = "load notice centre", permissionDeniedIsExpected = true)
+            failureMessage = noticeUserMessage(error)
+            loadError = failureMessage
+        } finally {
+            // Always leave the progress state before a snackbar suspends this
+            // coroutine, otherwise the page appears stuck behind the message.
+            loading = false
+        }
+        failureMessage?.let { snackbarHostState.showSnackbar(it) }
     }
     LaunchedEffect(tab) { refresh() }
 
@@ -185,7 +192,7 @@ fun AdminNoticeCenterScreen(onBack: () -> Unit) {
             TopAppBar(
                 title = {
                     Column {
-                        Text("Admin Notices", color = NoticeText, fontWeight = FontWeight.Bold)
+                        Text("BatchFee Notices", color = NoticeText, fontWeight = FontWeight.Bold)
                         Text("Quiet in-app updates from BatchFee Team", color = NoticeMuted, fontSize = 11.sp)
                     }
                 },
@@ -210,8 +217,23 @@ fun AdminNoticeCenterScreen(onBack: () -> Unit) {
             Spacer(Modifier.height(12.dp))
             when {
                 loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
-                    Text("Loading notices…", color = NoticeMuted, modifier = Modifier.padding(top = 46.dp))
+                    Column(
+                        modifier = Modifier.padding(top = 46.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        CircularProgressIndicator(
+                            color = NoticeCyan,
+                            strokeWidth = 2.dp,
+                            modifier = Modifier.size(28.dp)
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        Text("Loading notices…", color = NoticeMuted)
+                    }
                 }
+                loadError != null -> NoticeLoadError(
+                    message = loadError.orEmpty(),
+                    onRetry = { scope.launch { refresh() } }
+                )
                 notices.isEmpty() -> NoticeEmptyState(tab)
                 else -> LazyColumn(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -220,15 +242,28 @@ fun AdminNoticeCenterScreen(onBack: () -> Unit) {
                     items(notices, key = { it.noticeId }) { notice ->
                         NoticeCard(notice = notice, onOpen = {
                             selectedNotice = notice
-                            if (!notice.isRead && tab != "archived") {
-                                notices = notices.map { if (it.noticeId == notice.noticeId) it.copy(isRead = true) else it }
-                                unreadCount = (unreadCount - 1).coerceAtLeast(0)
+                            if (!notice.isRead && tab != "archived" && savingNoticeId != notice.noticeId) {
+                                savingNoticeId = notice.noticeId
                                 scope.launch {
                                     runCatching { repository.markNoticeState(notice.noticeId, true) }
+                                        .onSuccess {
+                                            notices = if (tab == "unread") {
+                                                notices.filterNot { it.noticeId == notice.noticeId }
+                                            } else {
+                                                notices.map {
+                                                    if (it.noticeId == notice.noticeId) it.copy(isRead = true) else it
+                                                }
+                                            }
+                                            unreadCount = (unreadCount - 1).coerceAtLeast(0)
+                                            selectedNotice = selectedNotice?.let {
+                                                if (it.noticeId == notice.noticeId) it.copy(isRead = true) else it
+                                            }
+                                        }
                                         .onFailure { error ->
                                             FirebaseFailureReporter.report(error, operation = "mark notice read", permissionDeniedIsExpected = true)
-                                            snackbarHostState.showSnackbar("Could not save read status. It will retry next time.")
+                                            snackbarHostState.showSnackbar("Could not save read status. Please try again.")
                                         }
+                                    savingNoticeId = null
                                 }
                             }
                         })
@@ -241,17 +276,32 @@ fun AdminNoticeCenterScreen(onBack: () -> Unit) {
     selectedNotice?.let { notice ->
         NoticeDetailDialog(
             notice = notice,
+            saving = savingNoticeId == notice.noticeId,
+            canChangeReadState = tab != "archived",
             onDismiss = { selectedNotice = null },
             onToggleRead = { nextRead ->
-                notices = notices.map { if (it.noticeId == notice.noticeId) it.copy(isRead = nextRead) else it }
-                unreadCount = if (nextRead) (unreadCount - 1).coerceAtLeast(0) else unreadCount + 1
-                selectedNotice = notice.copy(isRead = nextRead)
+                if (savingNoticeId == notice.noticeId) return@NoticeDetailDialog
+                savingNoticeId = notice.noticeId
                 scope.launch {
                     runCatching { repository.markNoticeState(notice.noticeId, nextRead) }
+                        .onSuccess {
+                            notices = notices.map {
+                                if (it.noticeId == notice.noticeId) it.copy(isRead = nextRead) else it
+                            }
+                            unreadCount = if (nextRead) {
+                                (unreadCount - 1).coerceAtLeast(0)
+                            } else {
+                                unreadCount + 1
+                            }
+                            selectedNotice = selectedNotice?.let {
+                                if (it.noticeId == notice.noticeId) it.copy(isRead = nextRead) else it
+                            }
+                        }
                         .onFailure { error ->
                             FirebaseFailureReporter.report(error, operation = "toggle notice state", permissionDeniedIsExpected = true)
                             snackbarHostState.showSnackbar("Could not save notice state.")
                         }
+                    savingNoticeId = null
                 }
             }
         )
@@ -294,6 +344,34 @@ private fun NoticeEmptyState(tab: String) {
         Text(label, color = NoticeText, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(4.dp))
         Text("Updates will appear here without interrupting your work.", color = NoticeMuted, fontSize = 12.sp)
+    }
+}
+
+@Composable
+private fun NoticeLoadError(message: String, onRetry: () -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(top = 64.dp, start = 24.dp, end = 24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            modifier = Modifier.size(52.dp).clip(CircleShape).background(NoticeRed.copy(alpha = 0.13f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(Icons.Filled.ErrorOutline, null, tint = NoticeRed, modifier = Modifier.size(26.dp))
+        }
+        Spacer(Modifier.height(14.dp))
+        Text("Notices could not be loaded", color = NoticeText, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(6.dp))
+        Text(message, color = NoticeMuted, fontSize = 12.sp)
+        Spacer(Modifier.height(18.dp))
+        Button(
+            onClick = onRetry,
+            colors = ButtonDefaults.buttonColors(containerColor = NoticeCyan)
+        ) {
+            Icon(Icons.Filled.Refresh, null, tint = NoticeScreenBg, modifier = Modifier.size(17.dp))
+            Spacer(Modifier.width(7.dp))
+            Text("Try again", color = NoticeScreenBg, fontWeight = FontWeight.Bold)
+        }
     }
 }
 
@@ -346,7 +424,13 @@ private fun NoticeCategoryChip(category: String) {
 }
 
 @Composable
-private fun NoticeDetailDialog(notice: AppNotice, onDismiss: () -> Unit, onToggleRead: (Boolean) -> Unit) {
+private fun NoticeDetailDialog(
+    notice: AppNotice,
+    saving: Boolean,
+    canChangeReadState: Boolean,
+    onDismiss: () -> Unit,
+    onToggleRead: (Boolean) -> Unit
+) {
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = NoticeScreenCard,
@@ -369,10 +453,15 @@ private fun NoticeDetailDialog(notice: AppNotice, onDismiss: () -> Unit, onToggl
             }
         },
         confirmButton = {
-            TextButton(onClick = { onToggleRead(!notice.isRead) }) {
-                Icon(if (notice.isRead) Icons.Filled.Unsubscribe else Icons.Filled.MarkEmailRead, null, tint = NoticeCyan, modifier = Modifier.size(17.dp))
-                Spacer(Modifier.width(5.dp))
-                Text(if (notice.isRead) "Mark unread" else "Mark read", color = NoticeCyan)
+            if (canChangeReadState) {
+                TextButton(onClick = { onToggleRead(!notice.isRead) }, enabled = !saving) {
+                    Icon(if (notice.isRead) Icons.Filled.Unsubscribe else Icons.Filled.MarkEmailRead, null, tint = NoticeCyan, modifier = Modifier.size(17.dp))
+                    Spacer(Modifier.width(5.dp))
+                    Text(
+                        if (saving) "Saving…" else if (notice.isRead) "Mark unread" else "Mark read",
+                        color = if (saving) NoticeMuted else NoticeCyan
+                    )
+                }
             }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Close", color = NoticeMuted) } }
@@ -517,4 +606,18 @@ private fun noticeCategoryColor(category: String): Color = when (category) {
 
 private fun noticeDateLabel(millis: Long): String = if (millis <= 0L) "" else {
     SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault()).format(Date(millis))
+}
+
+private fun noticeUserMessage(error: Throwable): String {
+    val functionsError = generateSequence(error as Throwable?) { it.cause }
+        .filterIsInstance<FirebaseFunctionsException>()
+        .firstOrNull()
+    return when (functionsError?.code) {
+        FirebaseFunctionsException.Code.UNAVAILABLE,
+        FirebaseFunctionsException.Code.DEADLINE_EXCEEDED,
+        FirebaseFunctionsException.Code.INTERNAL ->
+            "The notice service is temporarily unavailable. Check your connection and try again."
+        else -> error.message?.takeIf { it.isNotBlank() }
+            ?: "Could not load notices. Please try again."
+    }
 }

@@ -311,6 +311,48 @@ class FeeCollectionRepositoryTest {
     }
 
     @Test
+    fun ownerDeleteGroupedReceiptRemovesEveryLineAndRestoresBothDues() = runTest {
+        val june = fee(id = "fee-delete-june", businessKey = "delete-june-key")
+            .copy(feePeriod = "Jun 2026", paidAmount = 400.0, dueAmount = 600.0, status = "partially_paid")
+        val july = fee(id = "fee-delete-july", businessKey = "delete-july-key")
+            .copy(feePeriod = "Jul 2026", paidAmount = 300.0, dueAmount = 700.0, status = "partially_paid")
+        val first = payment(id = "payment-delete-june", feeId = june.id).copy(amount = 400.0)
+        val second = payment(id = "payment-delete-july", feeId = july.id).copy(amount = 300.0)
+        val grouped = receipt(id = "receipt-delete-group", paymentId = first.id, feeId = june.id)
+            .copy(paidAmount = 700.0, totalAmount = 2_000.0, dueAmount = 1_300.0)
+        listOf(june, july).forEach { db.feeDao().insertFee(it) }
+        listOf(first, second).forEach { db.paymentDao().insertPayment(it) }
+        db.receiptDao().insertReceipt(grouped)
+        gateway.responder = {
+            FinancialOperationResult(
+                operationId = OPERATION_ID,
+                action = "owner_delete_grouped_payment",
+                fees = listOf(
+                    june.copy(paidAmount = 0.0, dueAmount = 1_000.0, status = "unpaid"),
+                    july.copy(paidAmount = 0.0, dueAmount = 1_000.0, status = "unpaid")
+                ),
+                deletedPaymentIds = listOf(first.id, second.id),
+                deletedReceiptIds = listOf(grouped.id)
+            )
+        }
+
+        repository.ownerDeleteGroupedPayment(
+            receiptNumber = grouped.receiptNumber,
+            instituteId = INSTITUTE_ID,
+            reason = "Duplicate receipt corrected",
+            now = 4_000L,
+            operationId = OPERATION_ID
+        )
+
+        assertEquals("owner_delete_grouped_payment", gateway.requests.single()["action"])
+        assertNull(db.paymentDao().getPaymentById(first.id, INSTITUTE_ID))
+        assertNull(db.paymentDao().getPaymentById(second.id, INSTITUTE_ID))
+        assertNull(db.receiptDao().getReceiptByPaymentIdOnce(INSTITUTE_ID, first.id))
+        assertEquals(1_000.0, db.feeDao().getFeeById(june.id, INSTITUTE_ID)?.dueAmount ?: -1.0, MONEY_DELTA)
+        assertEquals(1_000.0, db.feeDao().getFeeById(july.id, INSTITUTE_ID)?.dueAmount ?: -1.0, MONEY_DELTA)
+    }
+
+    @Test
     fun trustedRejectionIsNotRetriedAutomatically() = runTest {
         gateway.responder = {
             throw FinancialOperationRejectedException("Duplicate fee")

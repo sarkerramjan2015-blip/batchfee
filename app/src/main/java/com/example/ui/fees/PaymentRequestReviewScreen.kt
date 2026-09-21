@@ -390,8 +390,11 @@ private fun PaymentRequestDetailDialog(
                     FirebaseFailureReporter.report(error, operation = "payment request review")
                 }
                 onError(message)
+            } finally {
+                // Validation returns above must never leave the review dialog
+                // permanently locked in its loading state.
+                busy = false
             }
-            busy = false
         }
     }
 

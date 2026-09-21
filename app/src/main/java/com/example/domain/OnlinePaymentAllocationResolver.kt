@@ -12,6 +12,11 @@ import kotlinx.coroutines.tasks.await
  */
 object OnlinePaymentAllocationResolver {
 
+    private val monthNames = listOf(
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    )
+
     data class MonthAllocation(
         val feeId: String?,
         val batchId: String,
@@ -29,12 +34,11 @@ object OnlinePaymentAllocationResolver {
         studentId: String,
         months: List<String>
     ): List<MonthAllocation> {
-        val requested = months.map { it.trim() }.filter { it.isNotBlank() }
+        val requested = months.map { it.trim().lowercase() }.filter { it.isNotBlank() }.toSet()
         if (instituteId.isBlank() || studentId.isBlank() || requested.isEmpty()) return emptyList()
-        val all = computeAll(instituteId, studentId)
-        return requested.mapNotNull { month ->
-            all.firstOrNull { it.feePeriod.equals(month, ignoreCase = true) }
-        }
+        return computeAll(instituteId, studentId)
+            .filter { it.feePeriod.trim().lowercase() in requested }
+            .sortedWith(allocationOrder)
     }
 
     /** Every outstanding monthly period for the student, oldest first. */
@@ -42,7 +46,20 @@ object OnlinePaymentAllocationResolver {
         instituteId: String,
         studentId: String
     ): List<MonthAllocation> = computeAll(instituteId, studentId)
-        .sortedBy { it.feePeriod }
+        .sortedWith(allocationOrder)
+
+    private val allocationOrder = compareBy<MonthAllocation>(
+        { periodSortKey(it.feePeriod) },
+        { it.feePeriod },
+        { it.batchId },
+    )
+
+    private fun periodSortKey(value: String): Int {
+        val covered = MonthlyDueCalculator.billingPeriodsCoveredBy(value).firstOrNull() ?: value
+        val month = monthNames.indexOfFirst { covered.startsWith(it, ignoreCase = true) }
+        val year = Regex("\\d{4}").find(covered)?.value?.toIntOrNull()
+        return if (month >= 0 && year != null) year * 12 + month else Int.MAX_VALUE
+    }
 
     private suspend fun computeAll(
         instituteId: String,
@@ -110,12 +127,15 @@ object OnlinePaymentAllocationResolver {
         }
 
         val result = mutableListOf<MonthAllocation>()
-        val seen = mutableSetOf<String>()
+        val seenAllocationKeys = mutableSetOf<String>()
         for (enrollment in enrollments) {
             val batch = batches[enrollment.batchId] ?: continue
             if (batch.monthlyFeeAmount <= 0.0) continue
             val existingMonthly = existingFees.filter {
-                it.batchId == batch.id && MonthlyDueCalculator.isMonthlyFeeType(it.feeType)
+                it.batchId == batch.id &&
+                    MonthlyDueCalculator.isMonthlyFeeType(it.feeType) &&
+                    it.cancelledAtMs == null &&
+                    !it.status.equals("cancelled", ignoreCase = true)
             }
             val billingStartMs = MonthlyDueCalculator.effectiveBillingStartMs(
                 admissionDateMs,
@@ -135,42 +155,51 @@ object OnlinePaymentAllocationResolver {
                 customFeePolicyTimeline = enrollment.customFeePolicyTimeline,
                 billingEndedAtMs = enrollment.leftAtMs,
             )
+
+            // Saved fee rows are deliberately excluded by
+            // computeMonthlyOutstandingItems. Add their outstanding amounts
+            // explicitly before adding virtual months, otherwise a real fee
+            // disappears from Online Payment as soon as it is persisted.
+            for (fee in existingMonthly) {
+                if (!MonthlyDueCalculator.isMonthlyInstallmentDue(fee.feeType, fee.feePeriod)) continue
+                if (!MonthlyDueCalculator.isMonthlyFeeWithinEnrollmentWindow(
+                        feePeriod = fee.feePeriod,
+                        studentAdmissionDateMs = admissionDateMs,
+                        enrollmentJoinedAtMs = enrollment.joinedAtMs,
+                        firstMonthFeePeriod = enrollment.firstMonthFeePeriod,
+                        billingEndedAtMs = enrollment.leftAtMs,
+                    )
+                ) continue
+                val feeDue = (fee.totalAmount - fee.paidAmount).coerceAtLeast(0.0)
+                if (feeDue <= 0.0 || !seenAllocationKeys.add("fee:${fee.id}")) continue
+                result += MonthAllocation(
+                    feeId = fee.id,
+                    batchId = batch.id,
+                    feePeriod = fee.feePeriod,
+                    feeType = fee.feeType,
+                    dueDateMs = fee.dueDateMs,
+                    baseAmount = fee.baseAmount,
+                    discountAmount = fee.discountAmount,
+                    lateFeeAmount = fee.lateFeeAmount,
+                    dueAmount = feeDue,
+                )
+            }
+
             for (item in items) {
                 if (item.outstanding <= 0.0) continue
                 val month = item.period
-                if (!seen.add(month)) continue
-                val existingFee = existingFees.firstOrNull {
-                    it.batchId == batch.id &&
-                        it.feePeriod.equals(month, ignoreCase = true) &&
-                        it.cancelledAtMs == null
-                }
-                if (existingFee != null) {
-                    val feeDue = (existingFee.totalAmount - existingFee.paidAmount).coerceAtLeast(0.0)
-                    if (feeDue <= 0.0) continue
-                    result += MonthAllocation(
-                        feeId = existingFee.id,
-                        batchId = batch.id,
-                        feePeriod = month,
-                        feeType = existingFee.feeType,
-                        dueDateMs = existingFee.dueDateMs,
-                        baseAmount = existingFee.baseAmount,
-                        discountAmount = existingFee.discountAmount,
-                        lateFeeAmount = existingFee.lateFeeAmount,
-                        dueAmount = feeDue,
-                    )
-                } else {
-                    result += MonthAllocation(
-                        feeId = null,
-                        batchId = batch.id,
-                        feePeriod = month,
-                        feeType = "monthly_fee",
-                        dueDateMs = System.currentTimeMillis(),
-                        baseAmount = item.monthlyFeeAmount,
-                        discountAmount = 0.0,
-                        lateFeeAmount = 0.0,
-                        dueAmount = item.outstanding,
-                    )
-                }
+                if (!seenAllocationKeys.add("virtual:${batch.id}:$month")) continue
+                result += MonthAllocation(
+                    feeId = null,
+                    batchId = batch.id,
+                    feePeriod = month,
+                    feeType = "monthly_fee",
+                    dueDateMs = System.currentTimeMillis(),
+                    baseAmount = item.monthlyFeeAmount,
+                    discountAmount = 0.0,
+                    lateFeeAmount = 0.0,
+                    dueAmount = item.outstanding,
+                )
             }
         }
         return result

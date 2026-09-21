@@ -289,6 +289,32 @@ object FinanceSyncHelper {
             val feesById = fees.associateBy { it.id }
             val paymentsById = payments.associateBy { it.id }
             val receiptsByPaymentId = receipts.groupBy { it.paymentId }
+            // Grouped collections have one canonical receipt for multiple
+            // monthly payments. Room stores its header, while Firestore keeps
+            // paymentIds/lineItems; validate those before local reconciliation.
+            val groupedReceiptDocs = receiptDocuments.filter { it.getBoolean("grouped") == true }
+            val groupedReceiptByPaymentId = mutableMapOf<String, ReceiptEntity>()
+            groupedReceiptDocs.forEach { doc ->
+                val receipt = receipts.firstOrNull { it.id == doc.id }
+                    ?: error("Financial reconciliation: grouped receipt is incomplete.")
+                val paymentIds = (doc.get("paymentIds") as? List<*>)?.filterIsInstance<String>().orEmpty()
+                val lineItems = (doc.get("lineItems") as? List<*>)?.filterIsInstance<Map<*, *>>().orEmpty()
+                check(paymentIds.isNotEmpty() && paymentIds.distinct().size == paymentIds.size &&
+                    lineItems.size == paymentIds.size && receipt.paymentId in paymentIds) {
+                    "Financial reconciliation: grouped receipt lines are inconsistent."
+                }
+                val groupPayments = paymentIds.map { paymentsById[it] ?: error("Financial reconciliation: grouped payment missing.") }
+                check(groupPayments.all { it.receiptNumber == receipt.receiptNumber && it.studentId == receipt.studentId } &&
+                    kotlin.math.abs(groupPayments.sumOf { it.amount } - receipt.paidAmount) <= 0.001 &&
+                    lineItems.mapNotNull { it["feeId"] as? String }.toSet() == groupPayments.map { it.feeId }.toSet()) {
+                    "Financial reconciliation: grouped receipt totals do not match payments."
+                }
+                paymentIds.forEach { paymentId ->
+                    check(groupedReceiptByPaymentId.put(paymentId, receipt) == null) {
+                        "Financial reconciliation: payment belongs to multiple receipts."
+                    }
+                }
+            }
             val canonicalBusinessKeys = fees.filter { it.ledgerVersion >= 1 }
                 .mapNotNull { fee -> fee.businessKey?.let { fee.instituteId to it } }
             check(canonicalBusinessKeys.size == canonicalBusinessKeys.distinct().size) {
@@ -308,11 +334,13 @@ object FinanceSyncHelper {
                 val fee = feesById[payment.feeId]
                 val matchingReceipts = receiptsByPaymentId[payment.id].orEmpty()
                     .filter { it.ledgerVersion >= 1 }
+                    .ifEmpty { listOfNotNull(groupedReceiptByPaymentId[payment.id]) }
                 check(fee != null && fee.ledgerVersion >= 1 && fee.studentId == payment.studentId) {
                     "Financial reconciliation: canonical payment has no canonical fee."
                 }
                 check(matchingReceipts.size == 1 &&
-                    matchingReceipts.single().feeId == payment.feeId &&
+                    (matchingReceipts.single().feeId == payment.feeId ||
+                        groupedReceiptByPaymentId[payment.id]?.id == matchingReceipts.single().id) &&
                     matchingReceipts.single().studentId == payment.studentId &&
                     matchingReceipts.single().receiptNumber == payment.receiptNumber) {
                     "Financial reconciliation: canonical payment/receipt mismatch."

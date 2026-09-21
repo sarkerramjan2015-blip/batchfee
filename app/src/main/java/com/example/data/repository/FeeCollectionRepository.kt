@@ -483,6 +483,25 @@ class FeeCollectionRepository(
         )
     }
 
+    /** Deletes a complete grouped receipt, never an individual monthly line. */
+    suspend fun ownerDeleteGroupedPayment(
+        receiptNumber: String,
+        instituteId: String,
+        reason: String,
+        now: Long = System.currentTimeMillis(),
+        operationId: String = UUID.randomUUID().toString()
+    ) {
+        require(receiptNumber.isNotBlank()) { "A receipt number is required." }
+        require(reason.trim().length >= 3) { "A deletion reason is required." }
+        execute(
+            request = baseRequest(operationId, instituteId, "owner_delete_grouped_payment") + mapOf(
+                "receiptNumber" to receiptNumber,
+                "reason" to reason.trim()
+            ),
+            queuedAtMs = now
+        )
+    }
+
     suspend fun replayPendingOperations(instituteId: String) {
         db.financialLedgerDao().getPendingOperations(instituteId).forEach { pending ->
             try {
@@ -752,6 +771,13 @@ class FeeCollectionRepository(
             "owner_delete_payment" -> {
                 check(result.fees.size == 1 && result.payments.isEmpty() && result.receipts.isEmpty())
                 check(result.reversals.isEmpty() && result.deletedPaymentIds == listOf(request["paymentId"] as String))
+            }
+            "owner_delete_grouped_payment" -> {
+                check(result.fees.size >= 2 && result.payments.isEmpty() && result.receipts.isEmpty())
+                check(result.reversals.isEmpty() && result.deletedReceiptIds.size == 1)
+                check(result.deletedPaymentIds.size == result.fees.size)
+                check(result.deletedPaymentIds.distinct().size == result.fees.size)
+                check(result.fees.map { it.id }.distinct().size == result.fees.size)
             }
             "set_custom_monthly_fee" -> {
                 check(result.payments.isEmpty() && result.receipts.isEmpty() && result.reversals.isEmpty())

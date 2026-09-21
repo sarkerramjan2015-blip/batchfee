@@ -198,6 +198,64 @@ test("owner can correct every line of one grouped receipt atomically", async () 
   assert.equal([...db.documents.keys()].filter((key) => key.includes("/grouped_payment_corrections/")).length, 1);
 });
 
+test("owner deletes a complete grouped receipt and reopens every monthly due exactly once", async () => {
+  const db = seededDb();
+  const handler = createFinancialLedgerHandler({ db });
+  const collected = await handler({ auth: { uid: "owner" }, data: {
+    instituteId: "i", action: "collect_grouped_payment", operationId: "grouped-delete-source-0001",
+    studentId: "s", paymentMethod: "cash", paymentDateMs: 1_788_000_000_000,
+    allocations: [
+      { batchId: "b", feePeriod: "Jun 2026", feeType: "monthly_fee", dueDateMs: 1_788_000_000_000, baseAmount: 1000, discountAmount: 0, lateFeeAmount: 0, amount: 1000 },
+      { batchId: "b", feePeriod: "Jul 2026", feeType: "monthly_fee", dueDateMs: 1_788_000_000_000, baseAmount: 1000, discountAmount: 0, lateFeeAmount: 0, amount: 500 },
+    ],
+  } });
+  const request = { auth: { uid: "owner" }, data: {
+    instituteId: "i", action: "owner_delete_grouped_payment", operationId: "grouped-delete-whole-0001",
+    receiptNumber: collected.receipts[0].receiptNumber, reason: "Duplicate collection corrected",
+  } };
+  const deleted = await handler(request);
+  assert.deepEqual(await handler(request), deleted, "same operation must be idempotent");
+  assert.deepEqual(new Set(deleted.deletedPaymentIds), new Set(collected.payments.map((payment) => payment.id)));
+  assert.deepEqual(deleted.deletedReceiptIds, [collected.receipts[0].id]);
+  assert.deepEqual(deleted.fees.map((fee) => [fee.paidAmount, fee.dueAmount, fee.status]),
+    [[0, 1000, "unpaid"], [0, 1000, "unpaid"]]);
+  assert.equal([...db.documents.keys()].filter((key) => key.includes("/payments/")).length, 0);
+  assert.equal([...db.documents.keys()].filter((key) => key.includes("/receipts/")).length, 0);
+  const audits = [...db.documents.entries()].filter(([path]) => path.includes("/grouped_payment_deletions/"));
+  assert.equal(audits.length, 1);
+  assert.equal(audits[0][1].lines.length, 2);
+  const activity = [...db.documents.values()].filter((entry) => entry.action === "grouped_payment_deleted");
+  assert.equal(activity.length, 1);
+});
+
+test("grouped deletion refuses missing lines and approved online requests without changing fees", async () => {
+  const db = seededDb();
+  const handler = createFinancialLedgerHandler({ db });
+  const collected = await handler({ auth: { uid: "owner" }, data: {
+    instituteId: "i", action: "collect_grouped_payment", operationId: "grouped-delete-guard-source-0001",
+    studentId: "s", paymentMethod: "cash", paymentDateMs: 1_788_000_000_000,
+    allocations: [
+      { batchId: "b", feePeriod: "Jun 2026", feeType: "monthly_fee", dueDateMs: 1_788_000_000_000, baseAmount: 1000, discountAmount: 0, lateFeeAmount: 0, amount: 1000 },
+      { batchId: "b", feePeriod: "Jul 2026", feeType: "monthly_fee", dueDateMs: 1_788_000_000_000, baseAmount: 1000, discountAmount: 0, lateFeeAmount: 0, amount: 1000 },
+    ],
+  } });
+  const receiptNumberValue = collected.receipts[0].receiptNumber;
+  db.documents.set("institutes/i/payment_requests/linked", { receiptNumber: receiptNumberValue, status: "approved" });
+  await assert.rejects(handler({ auth: { uid: "owner" }, data: {
+    instituteId: "i", action: "owner_delete_grouped_payment", operationId: "grouped-linked-delete-0001",
+    receiptNumber: receiptNumberValue, reason: "Correct online request",
+  } }), /online payment request/i);
+  db.documents.delete("institutes/i/payment_requests/linked");
+  db.documents.delete(`institutes/i/payments/${collected.payments[1].id}`);
+  await assert.rejects(handler({ auth: { uid: "owner" }, data: {
+    instituteId: "i", action: "owner_delete_grouped_payment", operationId: "grouped-missing-delete-0001",
+    receiptNumber: receiptNumberValue, reason: "Correct missing line",
+  } }), /lines have changed/i);
+  assert.equal(db.documents.has(`institutes/i/receipts/${collected.receipts[0].id}`), true);
+  assert.equal(db.documents.get(`institutes/i/fees/${collected.fees[0].id}`).paidAmount, 1000);
+  assert.equal([...db.documents.keys()].filter((key) => key.includes("/grouped_payment_deletions/")).length, 0);
+});
+
 test("invalid grouped correction cannot partially change any month", async () => {
   const db = seededDb();
   const handler = createFinancialLedgerHandler({ db });

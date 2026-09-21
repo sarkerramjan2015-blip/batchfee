@@ -7,13 +7,13 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
@@ -67,7 +67,8 @@ private data class ActivePaymentMethods(
     val branch: String? = null,
     val routing: String? = null,
     val instructions: String? = null,
-    val qrAssetRef: String? = null
+    val qrAssetRef: String? = null,
+    val allowPartialPayments: Boolean = true,
 ) {
     val activeCodes: List<String> = buildList {
         if (bkashNumber != null) add("bkash")
@@ -86,7 +87,16 @@ private data class MyRequestRow(
     val status: String,
     val submittedAtMs: Long?,
     val reviewNote: String?,
-    val receiptNumber: String?
+    val receiptNumber: String?,
+    val senderNumber: String,
+    val paymentDateMs: Long?,
+    val note: String?,
+    val screenshotRef: String?,
+)
+
+private data class DuePeriodRow(
+    val period: String,
+    val dueAmount: Double,
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -105,6 +115,8 @@ fun StudentPaymentRequestScreen(preselectedMonth: String?, onBack: () -> Unit) {
     var myRequests by remember { mutableStateOf<List<MyRequestRow>>(emptyList()) }
     var studentName by remember { mutableStateOf("") }
     var loading by remember { mutableStateOf(true) }
+    var loadingError by remember { mutableStateOf<String?>(null) }
+    var requestSyncError by remember { mutableStateOf<String?>(null) }
     var qrUrl by remember { mutableStateOf<String?>(null) }
 
     var selectedMonths by remember { mutableStateOf<Set<String>>(emptySet()) }
@@ -120,10 +132,16 @@ fun StudentPaymentRequestScreen(preselectedMonth: String?, onBack: () -> Unit) {
     var submitting by remember { mutableStateOf(false) }
 
     LaunchedEffect(studentId, instituteId) {
-        if (studentId.isBlank() || instituteId.isBlank()) return@LaunchedEffect
+        if (studentId.isBlank() || instituteId.isBlank()) {
+            loadingError = "Your student session is no longer available. Please sign in again."
+            loading = false
+            return@LaunchedEffect
+        }
         try {
             dueMonths = OnlinePaymentAllocationResolver.dueMonths(instituteId, studentId)
-        } catch (_: Exception) { }
+        } catch (_: Exception) {
+            loadingError = "Could not load your current dues. Check your connection and try again."
+        }
         try {
             val snap = FirebaseFirestore.getInstance()
                 .collection("institutes").document(instituteId)
@@ -138,23 +156,36 @@ fun StudentPaymentRequestScreen(preselectedMonth: String?, onBack: () -> Unit) {
             val rocket = methods["rocket"] as? Map<String, Any?> ?: emptyMap()
             @Suppress("UNCHECKED_CAST")
             val bank = methods["bank"] as? Map<String, Any?> ?: emptyMap()
+            val bkashActive = bkash["active"] == true
+            val nagadActive = nagad["active"] == true
+            val rocketActive = rocket["active"] == true
+            val bankActive = bank["active"] == true
             settings = ActivePaymentMethods(
-                bkashNumber = bkash["number"] as? String,
+                bkashNumber = (bkash["number"] as? String)?.trim()
+                    ?.takeIf { bkashActive && it.isNotBlank() },
                 bkashType = bkash["type"] as? String,
-                nagadNumber = nagad["number"] as? String,
-                rocketNumber = rocket["number"] as? String,
+                nagadNumber = (nagad["number"] as? String)?.trim()
+                    ?.takeIf { nagadActive && it.isNotBlank() },
+                rocketNumber = (rocket["number"] as? String)?.trim()
+                    ?.takeIf { rocketActive && it.isNotBlank() },
                 bankName = bank["bankName"] as? String,
-                accountName = bank["accountName"] as? String,
-                accountNumber = bank["accountNumber"] as? String,
+                accountName = (bank["accountName"] as? String)?.trim()
+                    ?.takeIf { bankActive && it.isNotBlank() },
+                accountNumber = (bank["accountNumber"] as? String)?.trim()
+                    ?.takeIf { bankActive && it.isNotBlank() },
                 branch = bank["branch"] as? String,
                 routing = bank["routing"] as? String,
                 instructions = snap.getString("instructions"),
                 qrAssetRef = snap.getString("qrAssetRef"),
+                allowPartialPayments = snap.getBoolean("allowPartialPayments") ?: true,
             )
             settings?.qrAssetRef?.let { ref ->
                 qrUrl = FirebaseStorageImageUploadHelper.resolveForDirectRead(context, ref)
             }
-        } catch (_: Exception) { }
+        } catch (_: Exception) {
+            loadingError = loadingError
+                ?: "Could not load the institute's payment methods. Try again shortly."
+        }
         try {
             val studentSnap = FirebaseFirestore.getInstance()
                 .collection("institutes").document(instituteId)
@@ -169,7 +200,12 @@ fun StudentPaymentRequestScreen(preselectedMonth: String?, onBack: () -> Unit) {
         val listener: ListenerRegistration = FirebaseFirestore.getInstance()
             .collection("institutes").document(instituteId)
             .collection("payment_requests").whereEqualTo("studentId", studentId)
-            .addSnapshotListener { snap, _ ->
+            .addSnapshotListener { snap, error ->
+                if (error != null) {
+                    requestSyncError = "Payment request history could not be refreshed."
+                    return@addSnapshotListener
+                }
+                requestSyncError = null
                 myRequests = snap?.documents?.mapNotNull { doc ->
                     MyRequestRow(
                         id = doc.id,
@@ -181,6 +217,10 @@ fun StudentPaymentRequestScreen(preselectedMonth: String?, onBack: () -> Unit) {
                         submittedAtMs = (doc.get("submittedAtMs") as? Number)?.toLong(),
                         reviewNote = doc.getString("reviewNote"),
                         receiptNumber = doc.getString("receiptNumber"),
+                        senderNumber = doc.getString("senderNumber").orEmpty(),
+                        paymentDateMs = (doc.get("paymentDateMs") as? Number)?.toLong(),
+                        note = doc.getString("note"),
+                        screenshotRef = doc.getString("screenshotRef"),
                     )
                 }.orEmpty().sortedByDescending { it.submittedAtMs ?: 0L }
             }
@@ -194,7 +234,30 @@ fun StudentPaymentRequestScreen(preselectedMonth: String?, onBack: () -> Unit) {
         }
     }
 
-    val selectedDue = dueMonths.filter { it.feePeriod in selectedMonths }.sumOf { it.dueAmount }
+    val selectedDue = dueMonths
+        .filter { allocation -> selectedMonths.any { it.equals(allocation.feePeriod, ignoreCase = true) } }
+        .sumOf { it.dueAmount }
+    val duePeriodRows = remember(dueMonths) {
+        dueMonths
+            .groupBy { it.feePeriod.trim().lowercase(Locale.US) }
+            .values
+            .map { allocations ->
+                DuePeriodRow(
+                    period = allocations.first().feePeriod,
+                    dueAmount = allocations.sumOf { it.dueAmount },
+                )
+            }
+    }
+
+    LaunchedEffect(selectedMonths, selectedDue, settings?.allowPartialPayments) {
+        if (settings?.allowPartialPayments == false && selectedMonths.isNotEmpty()) {
+            amount = if (selectedDue % 1.0 == 0.0) {
+                "%.0f".format(Locale.US, selectedDue)
+            } else {
+                "%.2f".format(Locale.US, selectedDue)
+            }
+        }
+    }
 
     val screenshotPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) {
@@ -212,12 +275,14 @@ fun StudentPaymentRequestScreen(preselectedMonth: String?, onBack: () -> Unit) {
     fun startEdit(request: MyRequestRow) {
         editingRequestId = request.id
         selectedMonths = request.months.toSet()
-        amount = "%.0f".format(request.amount)
+        amount = "%.0f".format(Locale.US, request.amount)
         method = request.method
         transactionId = request.transactionId
+        senderNumber = request.senderNumber
+        paymentDate = request.paymentDateMs ?: System.currentTimeMillis()
+        note = request.note.orEmpty()
         screenshotUri = null
-        screenshotRef = null
-        note = ""
+        screenshotRef = request.screenshotRef
     }
 
     fun submit() {
@@ -231,7 +296,27 @@ fun StudentPaymentRequestScreen(preselectedMonth: String?, onBack: () -> Unit) {
             scope.launch { snackbarHostState.showSnackbar("Select at least one month.") }
             return
         }
-        if (method == null) {
+        val selectedAllocationCount = dueMonths.count { allocation ->
+            selectedMonths.any { it.equals(allocation.feePeriod, ignoreCase = true) }
+        }
+        if (selectedAllocationCount == 0 || selectedDue <= 0.0) {
+            scope.launch { snackbarHostState.showSnackbar("The selected months no longer have an outstanding due.") }
+            return
+        }
+        if (selectedAllocationCount > 24) {
+            scope.launch { snackbarHostState.showSnackbar("Select fewer months and submit another request for the rest.") }
+            return
+        }
+        if (settings?.allowPartialPayments == false && amountValue + 0.001 < selectedDue) {
+            scope.launch {
+                snackbarHostState.showSnackbar(
+                    "Partial payments are disabled. Send the full selected due amount."
+                )
+            }
+            return
+        }
+        val activeMethods = settings?.activeCodes.orEmpty()
+        if (method == null || method !in activeMethods) {
             scope.launch { snackbarHostState.showSnackbar("Select a payment method.") }
             return
         }
@@ -249,10 +334,7 @@ fun StudentPaymentRequestScreen(preselectedMonth: String?, onBack: () -> Unit) {
                 } else screenshotRef
                 val now = System.currentTimeMillis()
                 val months = selectedMonths.sortedBy { period -> dueMonths.indexOfFirst { it.feePeriod == period } }
-                val payload = mapOf(
-                    "instituteId" to instituteId,
-                    "studentId" to studentId,
-                    "studentName" to studentName,
+                val editablePayload = mapOf(
                     "amount" to amountValue,
                     "months" to months,
                     "transactionId" to transactionId.trim(),
@@ -262,16 +344,24 @@ fun StudentPaymentRequestScreen(preselectedMonth: String?, onBack: () -> Unit) {
                     "note" to note.trim().takeIf { it.isNotBlank() },
                     "screenshotRef" to proof,
                     "status" to "pending",
-                    "submittedAtMs" to now,
                     "updatedAtMs" to now,
                 )
                 val collection = FirebaseFirestore.getInstance()
                     .collection("institutes").document(instituteId)
                     .collection("payment_requests")
                 if (editingRequestId != null) {
-                    collection.document(editingRequestId!!).update(payload).await()
+                    // The original submission time and identity are immutable.
+                    // Updating only correction-safe fields matches Firestore rules.
+                    collection.document(editingRequestId!!).update(editablePayload).await()
                 } else {
-                    collection.add(payload).await()
+                    collection.add(
+                        editablePayload + mapOf(
+                            "instituteId" to instituteId,
+                            "studentId" to studentId,
+                            "studentName" to studentName,
+                            "submittedAtMs" to now,
+                        )
+                    ).await()
                 }
                 snackbarHostState.showSnackbar(if (editingRequestId != null) "Payment request resubmitted." else "Payment request submitted. The institute will review it shortly.")
                 editingRequestId = null
@@ -312,6 +402,22 @@ fun StudentPaymentRequestScreen(preselectedMonth: String?, onBack: () -> Unit) {
             contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
+            loadingError?.let { message ->
+                item {
+                    Card(
+                        Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(14.dp),
+                        colors = CardDefaults.cardColors(containerColor = SpCard),
+                        border = BorderStroke(1.dp, SpRed.copy(alpha = 0.45f)),
+                    ) {
+                        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Filled.CloudOff, null, tint = SpRed, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(9.dp))
+                            Text(message, color = SpRed, fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
             val active = settings
             if (active == null || active.activeCodes.isEmpty()) {
                 item {
@@ -358,19 +464,19 @@ fun StudentPaymentRequestScreen(preselectedMonth: String?, onBack: () -> Unit) {
                             if (dueMonths.isEmpty()) {
                                 Text("No monthly due is available to pay online.", color = SpMuted, fontSize = 12.sp)
                             }
-                            dueMonths.forEach { month ->
-                                val selected = month.feePeriod in selectedMonths
+                            duePeriodRows.forEach { month ->
+                                val selected = month.period in selectedMonths
                                 Row(
                                     Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
                                         .background(if (selected) SpCyan.copy(alpha = 0.14f) else SpCardAlt)
                                         .border(1.dp, if (selected) SpCyan.copy(alpha = 0.6f) else SpStroke, RoundedCornerShape(10.dp))
                                         .clickable {
-                                            selectedMonths = if (selected) selectedMonths - month.feePeriod else selectedMonths + month.feePeriod
+                                            selectedMonths = if (selected) selectedMonths - month.period else selectedMonths + month.period
                                         }
                                         .padding(10.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
-                                    Text(month.feePeriod, color = SpWhite, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                                    Text(month.period, color = SpWhite, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                                     Text("৳${"%.0f".format(month.dueAmount)}", color = SpAmber, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                     Spacer(Modifier.width(8.dp))
                                     Icon(
@@ -392,7 +498,14 @@ fun StudentPaymentRequestScreen(preselectedMonth: String?, onBack: () -> Unit) {
                         Column(Modifier.padding(14.dp)) {
                             Text("Payment details", color = SpWhite, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                             Spacer(Modifier.height(8.dp))
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).height(40.dp).padding(bottom = 4.dp)) {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(40.dp)
+                                    .horizontalScroll(rememberScrollState())
+                                    .padding(bottom = 4.dp),
+                            ) {
                                 active.activeCodes.forEach { code ->
                                     val selected = method == code
                                     Box(
@@ -408,6 +521,14 @@ fun StudentPaymentRequestScreen(preselectedMonth: String?, onBack: () -> Unit) {
                             }
                             Spacer(Modifier.height(6.dp))
                             SpField("Amount sent (৳)", amount, { amount = it.filter { c -> c.isDigit() || c == '.' } }, decimal = true)
+                            if (!active.allowPartialPayments) {
+                                Text(
+                                    "Full payment is required for the selected months.",
+                                    color = SpAmber,
+                                    fontSize = 11.sp,
+                                    modifier = Modifier.padding(bottom = 8.dp),
+                                )
+                            }
                             SpField("Transaction ID", transactionId, { transactionId = it })
                             SpField("Sender number", senderNumber, { senderNumber = it })
                             SpField("Note (optional)", note, { note = it })
@@ -516,6 +637,9 @@ fun StudentPaymentRequestScreen(preselectedMonth: String?, onBack: () -> Unit) {
                         }
                     }
                 }
+            }
+            requestSyncError?.let { message ->
+                item { Text(message, color = SpAmber, fontSize = 11.sp) }
             }
             item { Spacer(Modifier.height(80.dp)) }
         }
