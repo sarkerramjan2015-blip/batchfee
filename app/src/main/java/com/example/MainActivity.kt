@@ -12,7 +12,13 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -24,6 +30,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -194,6 +201,19 @@ private fun NotificationPermissionEducationDialog(
     onEnable: () -> Unit,
     onNotNow: () -> Unit,
 ) {
+    val animation = rememberInfiniteTransition(label = "notificationPrompt")
+    val bellRotation by animation.animateFloat(
+        initialValue = -7f,
+        targetValue = 7f,
+        animationSpec = infiniteRepeatable(tween(850), RepeatMode.Reverse),
+        label = "notificationBell",
+    )
+    val borderShift by animation.animateFloat(
+        initialValue = -1.2f,
+        targetValue = 1.2f,
+        animationSpec = infiniteRepeatable(tween(2_200), RepeatMode.Restart),
+        label = "notificationButtonBorder",
+    )
     AlertDialog(
         onDismissRequest = onNotNow,
         containerColor = Color(0xFF101B31),
@@ -201,8 +221,8 @@ private fun NotificationPermissionEducationDialog(
         icon = {
             Box(
                 modifier = Modifier
-                    .size(60.dp)
-                    .clip(RoundedCornerShape(20.dp))
+                    .size(52.dp)
+                    .clip(RoundedCornerShape(17.dp))
                     .background(Brush.linearGradient(listOf(Color(0xFF2563EB), Color(0xFF22D3EE)))),
                 contentAlignment = Alignment.Center,
             ) {
@@ -210,7 +230,9 @@ private fun NotificationPermissionEducationDialog(
                     imageVector = Icons.Filled.NotificationsActive,
                     contentDescription = null,
                     tint = Color.White,
-                    modifier = Modifier.size(30.dp),
+                    modifier = Modifier
+                        .size(30.dp)
+                        .graphicsLayer { rotationZ = bellRotation },
                 )
             }
         },
@@ -219,27 +241,32 @@ private fun NotificationPermissionEducationDialog(
                 text = "Stay updated with BatchFee",
                 color = Color(0xFFF8FAFC),
                 fontWeight = FontWeight.ExtraBold,
-                fontSize = 21.sp,
+                fontSize = 19.sp,
             )
         },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
                     text = "Enable alerts so important institute notices are never missed.",
                     color = Color(0xFFCBD5E1),
                     fontSize = 14.sp,
-                    lineHeight = 20.sp,
+                    lineHeight = 19.sp,
                 )
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(14.dp))
                         .background(Color(0xFF172641))
-                        .padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    Text("You will receive", color = Color(0xFF67E8F9), fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                    Text("• Super Admin notices\n• Account and subscription updates\n• Important service alerts", color = Color(0xFFCBD5E1), fontSize = 12.sp, lineHeight = 18.sp)
+                    Text(
+                        "Super Admin notices • Account updates • Service alerts",
+                        color = Color(0xFFBAE6FD),
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 11.sp,
+                        lineHeight = 16.sp,
+                    )
                 }
                 Text(
                     text = "You can change this anytime from phone settings.",
@@ -251,7 +278,22 @@ private fun NotificationPermissionEducationDialog(
         confirmButton = {
             Button(
                 onClick = onEnable,
-                modifier = Modifier.fillMaxWidth().height(48.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(46.dp)
+                    .border(
+                        width = 1.5.dp,
+                        brush = Brush.linearGradient(
+                            colors = listOf(
+                                Color.Transparent,
+                                Color.White.copy(alpha = 0.78f),
+                                Color.Transparent,
+                            ),
+                            start = androidx.compose.ui.geometry.Offset(borderShift * 420f, 0f),
+                            end = androidx.compose.ui.geometry.Offset(borderShift * 420f + 170f, 46f),
+                        ),
+                        shape = RoundedCornerShape(14.dp),
+                    ),
                 shape = RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = Color(0xFF22C7E8),
@@ -294,18 +336,25 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
     val notificationPromptPreferences = remember(context) {
         context.getSharedPreferences("batchfee_notification_prompt", Context.MODE_PRIVATE)
     }
+    val notificationPromptKey = remember(sessionInstituteId) {
+        sessionInstituteId?.takeIf { it.isNotBlank() }?.let { "institute_$it" } ?: "device"
+    }
     var showNotificationEducation by rememberSaveable { mutableStateOf(false) }
     var hadStudentSession by rememberSaveable { mutableStateOf(StudentSessionManager.isLoggedIn()) }
 
     // Each authenticated owner/staff device registers through the trusted
     // callable. On Android 13+ we explain the benefit in BatchFee's own UI
     // before opening the system-controlled permission sheet.
-    LaunchedEffect(isLoggedIn, sessionRole, sessionInstituteId) {
+    LaunchedEffect(isLoggedIn, sessionRole, sessionInstituteId, notificationPromptKey) {
+        showNotificationEducation = false
         val tenantRole = sessionRole in setOf("InstituteOwner", "InstituteAdmin", "Staff")
         if (isLoggedIn != null && tenantRole && !sessionInstituteId.isNullOrBlank()) {
+            val explainedKey = "${notificationPromptKey}_explained"
+            val notNowUntilKey = "${notificationPromptKey}_not_now_until"
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
                 ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED &&
-                !notificationPromptPreferences.getBoolean("has_explained", false)
+                !notificationPromptPreferences.getBoolean(explainedKey, false) &&
+                System.currentTimeMillis() >= notificationPromptPreferences.getLong(notNowUntilKey, 0L)
             ) {
                 showNotificationEducation = true
             }
@@ -316,12 +365,20 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
     if (showNotificationEducation) {
         NotificationPermissionEducationDialog(
             onEnable = {
-                notificationPromptPreferences.edit().putBoolean("has_explained", true).apply()
+                notificationPromptPreferences.edit()
+                    .putBoolean("${notificationPromptKey}_explained", true)
+                    .remove("${notificationPromptKey}_not_now_until")
+                    .apply()
                 showNotificationEducation = false
                 notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
             },
             onNotNow = {
-                notificationPromptPreferences.edit().putBoolean("has_explained", true).apply()
+                notificationPromptPreferences.edit()
+                    .putLong(
+                        "${notificationPromptKey}_not_now_until",
+                        System.currentTimeMillis() + 7L * 24L * 60L * 60L * 1_000L,
+                    )
+                    .apply()
                 showNotificationEducation = false
             }
         )

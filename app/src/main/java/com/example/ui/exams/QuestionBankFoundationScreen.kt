@@ -106,13 +106,23 @@ fun QuestionBankFoundationScreen(
     var totalMarks by rememberSaveable { mutableStateOf("") }
     var durationMinutes by rememberSaveable { mutableStateOf("") }
     var questionCount by rememberSaveable { mutableStateOf("5") }
+    var shortQuestionMarks by rememberSaveable { mutableStateOf("2") }
     var className by rememberSaveable(initialClassName) { mutableStateOf(initialClassName.orEmpty()) }
     var subject by rememberSaveable(initialSubject) { mutableStateOf(initialSubject.orEmpty()) }
-    var chapter by rememberSaveable { mutableStateOf("") }
+    var chapterNumber by rememberSaveable { mutableStateOf("") }
+    var chapterName by rememberSaveable { mutableStateOf("") }
+    var topicName by rememberSaveable { mutableStateOf("") }
+    val chapter = canonicalQuestionChapter(chapterNumber)
     var questionType by rememberSaveable { mutableStateOf("mcq") }
+    var patternKey by rememberSaveable { mutableStateOf("standard") }
+    var patternVariant by rememberSaveable { mutableStateOf("") }
     var sourceMode by rememberSaveable { mutableStateOf("ai") }
     var manualQuestionText by rememberSaveable { mutableStateOf("") }
     var manualStimulus by rememberSaveable { mutableStateOf("") }
+    var manualKa by rememberSaveable { mutableStateOf("") }
+    var manualKha by rememberSaveable { mutableStateOf("") }
+    var manualGa by rememberSaveable { mutableStateOf("") }
+    var manualGha by rememberSaveable { mutableStateOf("") }
     var manualOptionA by rememberSaveable { mutableStateOf("") }
     var manualOptionB by rememberSaveable { mutableStateOf("") }
     var manualOptionC by rememberSaveable { mutableStateOf("") }
@@ -130,6 +140,15 @@ fun QuestionBankFoundationScreen(
     var generationOperationId by rememberSaveable { mutableStateOf(UUID.randomUUID().toString()) }
     var finalizationOperationId by rememberSaveable { mutableStateOf(UUID.randomUUID().toString()) }
 
+    LaunchedEffect(subject) {
+        if (patternKey == "standard") {
+            questionPatternProfile(subject)?.let { profile ->
+                patternKey = profile.defaultKey
+                patternVariant = profile.defaultVariant
+            }
+        }
+    }
+
     fun resetGeneration() {
         preview = null
         reviewQuestions = emptyList()
@@ -143,8 +162,14 @@ fun QuestionBankFoundationScreen(
     fun manualDraftQuestion(imageReference: String? = null): ReviewableQuestion {
         val prompt = manualQuestionText.trim()
         val stimulus = manualStimulus.trim()
-        val questionText = if (questionType == "creative" && stimulus.isNotBlank()) {
-            "Uddipok:\n$stimulus\n\nQuestion:\n$prompt"
+        val questionText = if (questionType == "creative") {
+            buildString {
+                if (stimulus.isNotBlank()) append("Uddipok:\n$stimulus\n\n")
+                append("ক) ${manualKa.trim()}\n")
+                append("খ) ${manualKha.trim()}\n")
+                append("গ) ${manualGa.trim()}\n")
+                append("ঘ) ${manualGha.trim()}")
+            }
         } else {
             prompt
         }
@@ -159,7 +184,11 @@ fun QuestionBankFoundationScreen(
             correctAnswer = manualAnswer,
             explanation = manualExplanation,
             difficulty = manualDifficulty,
-            marks = manualMarks.toIntOrNull() ?: 0,
+            marks = when (questionType) {
+                "mcq" -> 1
+                "creative" -> 10
+                else -> manualMarks.toIntOrNull() ?: 0
+            },
             imageReference = imageReference,
         )
     }
@@ -167,13 +196,21 @@ fun QuestionBankFoundationScreen(
     fun clearManualQuestionForm() {
         manualQuestionText = ""
         manualStimulus = ""
+        manualKa = ""
+        manualKha = ""
+        manualGa = ""
+        manualGha = ""
         manualOptionA = ""
         manualOptionB = ""
         manualOptionC = ""
         manualOptionD = ""
         manualAnswer = ""
         manualExplanation = ""
-        manualMarks = "1"
+        manualMarks = when (questionType) {
+            "mcq" -> "1"
+            "creative" -> "10"
+            else -> shortQuestionMarks.ifBlank { "2" }
+        }
         manualDifficulty = "medium"
         manualImageUri = null
     }
@@ -223,6 +260,10 @@ fun QuestionBankFoundationScreen(
     }
 
     fun addManualQuestion() {
+        if (questionType == "creative" && listOf(manualKa, manualKha, manualGa, manualGha).any { it.isBlank() }) {
+            error = "CQ needs all four sub-questions: ক, খ, গ and ঘ."
+            return
+        }
         val validation = QuestionReviewPolicy.validate(questionType, manualDraftQuestion())
         if (!validation.isValid) {
             error = validation.message
@@ -344,6 +385,12 @@ fun QuestionBankFoundationScreen(
                                                     chapter = chapter.trim(),
                                                     questionType = questionType,
                                                     questionCount = reviewQuestions.count { it.selected },
+                                                    language = questionLanguageForSubject(subject),
+                                                    shortQuestionMarks = shortQuestionMarks.toIntOrNull()?.coerceIn(1, 100) ?: 2,
+                                                    chapterName = chapterName.trim(),
+                                                    topic = topicName.trim(),
+                                                    patternKey = patternKey,
+                                                    patternVariant = patternVariant.trim(),
                                                 )
                                             } else null,
                                         )
@@ -410,20 +457,44 @@ fun QuestionBankFoundationScreen(
                 className = className,
                 onClassNameChange = {
                     className = it.take(80)
-                    chapter = ""
+                    chapterNumber = ""
+                    chapterName = ""
+                    topicName = ""
+                    patternKey = "standard"
+                    patternVariant = ""
                     resetGeneration()
                 },
                 subject = subject,
                 onSubjectChange = {
                     subject = it.take(120)
-                    chapter = ""
+                    chapterNumber = ""
+                    chapterName = ""
+                    topicName = ""
+                    val profile = questionPatternProfile(it)
+                    patternKey = profile?.defaultKey ?: "standard"
+                    patternVariant = profile?.defaultVariant.orEmpty()
                     resetGeneration()
                 },
-                chapter = chapter,
-                onChapterChange = { chapter = it.take(160); resetGeneration() },
+                chapterNumber = chapterNumber,
+                onChapterNumberChange = { chapterNumber = it.filter(Char::isDigit).trimStart('0').take(3); resetGeneration() },
+                chapterName = chapterName,
+                onChapterNameChange = { chapterName = it.take(160); resetGeneration() },
+                topicName = topicName,
+                onTopicNameChange = { topicName = it.take(160); resetGeneration() },
+                shortQuestionMarks = shortQuestionMarks,
+                onShortQuestionMarksChange = { shortQuestionMarks = it.filter(Char::isDigit).take(3); if (questionType == "short") manualMarks = shortQuestionMarks; resetGeneration() },
+                patternKey = patternKey,
+                onPatternKeyChange = { patternKey = it; patternVariant = ""; resetGeneration() },
+                patternVariant = patternVariant,
+                onPatternVariantChange = { patternVariant = it; resetGeneration() },
                 questionType = questionType,
                 onQuestionTypeChange = {
                     questionType = it
+                    manualMarks = when (it) {
+                        "mcq" -> "1"
+                        "creative" -> "10"
+                        else -> shortQuestionMarks.ifBlank { "2" }
+                    }
                     manualAddedQuestions = emptyList()
                     clearManualQuestionForm()
                     resetGeneration()
@@ -434,6 +505,16 @@ fun QuestionBankFoundationScreen(
                 onManualQuestionTextChange = { manualQuestionText = it.take(8_000); resetGeneration() },
                 manualStimulus = manualStimulus,
                 onManualStimulusChange = { manualStimulus = it.take(8_000); resetGeneration() },
+                creativeSubQuestions = listOf(manualKa, manualKha, manualGa, manualGha),
+                onCreativeSubQuestionChange = { index, value ->
+                    when (index) {
+                        0 -> manualKa = value.take(4_000)
+                        1 -> manualKha = value.take(4_000)
+                        2 -> manualGa = value.take(4_000)
+                        3 -> manualGha = value.take(4_000)
+                    }
+                    resetGeneration()
+                },
                 manualOptions = listOf(manualOptionA, manualOptionB, manualOptionC, manualOptionD),
                 onManualOptionChange = { index, value ->
                     when (index) {
@@ -449,7 +530,11 @@ fun QuestionBankFoundationScreen(
                 manualExplanation = manualExplanation,
                 onManualExplanationChange = { manualExplanation = it.take(4_000); resetGeneration() },
                 manualMarks = manualMarks,
-                onManualMarksChange = { manualMarks = it.filter(Char::isDigit).take(3); resetGeneration() },
+                onManualMarksChange = {
+                    manualMarks = it.filter(Char::isDigit).take(3)
+                    if (questionType == "short") shortQuestionMarks = manualMarks
+                    resetGeneration()
+                },
                 manualDifficulty = manualDifficulty,
                 onManualDifficultyChange = { manualDifficulty = it; resetGeneration() },
                 manualImageUri = manualImageUri,
@@ -524,6 +609,11 @@ fun QuestionBankFoundationScreen(
                                         examName.trim(), totalMarks.toInt(), durationMinutes.toInt(),
                                         className.trim(), subject.trim(), chapter.trim(),
                                         questionType, questionCount.toInt(),
+                                        language = questionLanguageForSubject(subject),
+                                        shortQuestionMarks = shortQuestionMarks.toIntOrNull()?.coerceIn(1, 100) ?: 2,
+                                        chapterName = chapterName.trim(), topic = topicName.trim(),
+                                        patternKey = patternKey,
+                                        patternVariant = patternVariant.trim(),
                                     ),
                                     pageUris = scannedPages,
                                     operationId = requestedOperationId,
@@ -596,7 +686,7 @@ fun QuestionBankFoundationScreen(
             examName = examName,
             className = className,
             subject = subject,
-            chapter = chapter,
+            chapter = displayQuestionChapter(chapter, chapterName, topicName),
             totalMarks = totalMarks.toIntOrNull() ?: 0,
             durationMinutes = durationMinutes.toIntOrNull() ?: 0,
             questions = reviewQuestions.filter { it.selected },
@@ -662,12 +752,22 @@ private fun ExamSetupContent(
     onDurationChange: (String) -> Unit,
     questionCount: String,
     onQuestionCountChange: (String) -> Unit,
+    shortQuestionMarks: String,
+    onShortQuestionMarksChange: (String) -> Unit,
     className: String,
     onClassNameChange: (String) -> Unit,
     subject: String,
     onSubjectChange: (String) -> Unit,
-    chapter: String,
-    onChapterChange: (String) -> Unit,
+    chapterNumber: String,
+    onChapterNumberChange: (String) -> Unit,
+    chapterName: String,
+    onChapterNameChange: (String) -> Unit,
+    topicName: String,
+    onTopicNameChange: (String) -> Unit,
+    patternKey: String,
+    onPatternKeyChange: (String) -> Unit,
+    patternVariant: String,
+    onPatternVariantChange: (String) -> Unit,
     questionType: String,
     onQuestionTypeChange: (String) -> Unit,
     sourceMode: String,
@@ -676,6 +776,8 @@ private fun ExamSetupContent(
     onManualQuestionTextChange: (String) -> Unit,
     manualStimulus: String,
     onManualStimulusChange: (String) -> Unit,
+    creativeSubQuestions: List<String>,
+    onCreativeSubQuestionChange: (Int, String) -> Unit,
     manualOptions: List<String>,
     onManualOptionChange: (Int, String) -> Unit,
     manualAnswer: String,
@@ -766,11 +868,14 @@ private fun ExamSetupContent(
             SectionTitle("Academic information")
             BankTextField(className, onClassNameChange, "Class", Modifier.fillMaxWidth())
             BankTextField(subject, onSubjectChange, "Subject", Modifier.fillMaxWidth())
-            ChapterDropdown(
-                className = className,
+            ChapterReferenceFields(
                 subject = subject,
-                value = chapter,
-                onValueChange = onChapterChange,
+                number = chapterNumber,
+                onNumberChange = onChapterNumberChange,
+                name = chapterName,
+                onNameChange = onChapterNameChange,
+                topic = topicName,
+                onTopicChange = onTopicNameChange,
             )
             Text("Question type", color = BankMuted, fontSize = 13.sp)
             Row(
@@ -796,6 +901,24 @@ private fun ExamSetupContent(
                             ),
                         )
                     }
+            }
+            SubjectPatternSection(
+                subject = subject,
+                patternKey = patternKey,
+                onPatternKeyChange = onPatternKeyChange,
+                patternVariant = patternVariant,
+                onPatternVariantChange = onPatternVariantChange,
+            )
+            when (questionType) {
+                "mcq" -> Text("MCQ marks: 1 per question", color = BankMuted, fontSize = 12.sp)
+                "short" -> BankTextField(
+                    shortQuestionMarks,
+                    onShortQuestionMarksChange,
+                    "Marks per short question",
+                    Modifier.fillMaxWidth(),
+                    KeyboardType.Number,
+                )
+                "creative" -> Text("CQ structure: উদ্দীপক + ক(১) + খ(২) + গ(৩) + ঘ(৪) = ১০ marks", color = BankMuted, fontSize = 12.sp)
             }
         }
 
@@ -831,6 +954,8 @@ private fun ExamSetupContent(
                 onQuestionTextChange = onManualQuestionTextChange,
                 stimulus = manualStimulus,
                 onStimulusChange = onManualStimulusChange,
+                creativeSubQuestions = creativeSubQuestions,
+                onCreativeSubQuestionChange = onCreativeSubQuestionChange,
                 options = manualOptions,
                 onOptionChange = onManualOptionChange,
                 answer = manualAnswer,
@@ -964,97 +1089,290 @@ private fun ExamSetupContent(
 
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
-private fun ChapterDropdown(
-    className: String,
+private fun ChapterReferenceFields(
     subject: String,
-    value: String,
-    onValueChange: (String) -> Unit,
+    number: String,
+    onNumberChange: (String) -> Unit,
+    name: String,
+    onNameChange: (String) -> Unit,
+    topic: String,
+    onTopicChange: (String) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
-    var customChapter by remember(value) { mutableStateOf(value.isNotBlank() && value !in chapterOptionsFor(className, subject)) }
-    val options = chapterOptionsFor(className, subject)
-    if (customChapter) {
-        BankTextField(
-            value = value,
-            onValueChange = onValueChange,
-            label = "Chapter name",
-            modifier = Modifier.fillMaxWidth(),
-        )
-        TextButton(onClick = { customChapter = false; onValueChange("") }) {
-            Text("Choose from chapter list", color = BankCyan)
-        }
-    } else {
-        ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }) {
+    val sectionSuggestions = banglaFirstPaperSections(subject)
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        ExposedDropdownMenuBox(
+            expanded = expanded,
+            onExpandedChange = { expanded = !expanded },
+            modifier = Modifier.weight(0.38f),
+        ) {
             OutlinedTextField(
-                value = value,
-                onValueChange = {},
-                readOnly = true,
-                label = { Text("Chapter") },
-                placeholder = { Text("Select chapter") },
+                value = number,
+                onValueChange = onNumberChange,
+                label = { Text("Chapter #") },
+                placeholder = { Text("1, 2, 3...") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-                modifier = Modifier.fillMaxWidth().menuAnchor(),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedTextColor = BankText,
-                    unfocusedTextColor = BankText,
-                    focusedBorderColor = BankCyan,
-                    unfocusedBorderColor = BankBorder,
-                    focusedLabelColor = BankCyan,
-                    unfocusedLabelColor = BankMuted,
-                ),
+                modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryEditable),
+                colors = chapterFieldColors(),
             )
             DropdownMenu(
                 expanded = expanded,
                 onDismissRequest = { expanded = false },
-                modifier = Modifier
-                    .exposedDropdownSize()
-                    .heightIn(max = 330.dp),
-                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.exposedDropdownSize().heightIn(max = 300.dp),
+                shape = RoundedCornerShape(14.dp),
                 containerColor = BankCard,
-                tonalElevation = 0.dp,
-                shadowElevation = 12.dp,
                 border = BorderStroke(1.dp, BankBorder),
             ) {
-                Text(
-                    text = "AVAILABLE CHAPTERS  •  ${options.size}",
-                    color = BankCyan,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(start = 16.dp, top = 14.dp, bottom = 8.dp),
-                )
-                options.forEach { chapter ->
+                (1..30).forEach { chapterNumber ->
                     DropdownMenuItem(
-                        text = {
-                            Text(
-                                chapter,
-                                color = if (chapter == value) BankCyan else BankText,
-                                fontWeight = if (chapter == value) FontWeight.SemiBold else FontWeight.Normal,
-                            )
-                        },
-                        leadingIcon = if (chapter == value) {
-                            { Icon(Icons.Filled.CheckCircle, null, tint = BankCyan, modifier = Modifier.size(18.dp)) }
-                        } else null,
-                        modifier = if (chapter == value) {
-                            Modifier
-                                .padding(horizontal = 6.dp)
-                                .background(BankCyan.copy(alpha = 0.12f), RoundedCornerShape(10.dp))
-                        } else Modifier.padding(horizontal = 6.dp),
-                        onClick = { onValueChange(chapter); expanded = false },
+                        text = { Text("Chapter $chapterNumber", color = BankText) },
+                        onClick = { onNumberChange(chapterNumber.toString()); expanded = false },
                     )
                 }
-                HorizontalDivider(color = BankBorder, modifier = Modifier.padding(vertical = 6.dp))
-                DropdownMenuItem(
-                    text = {
-                        Column {
-                            Text("Add custom chapter", color = BankCyan, fontWeight = FontWeight.SemiBold)
-                            Text("Use when your syllabus differs", color = BankMuted, fontSize = 11.sp)
-                        }
-                    },
-                    leadingIcon = { Icon(Icons.Filled.MenuBook, null, tint = BankCyan) },
-                    onClick = { customChapter = true; expanded = false; onValueChange("") },
+            }
+        }
+        OutlinedTextField(
+            value = name,
+            onValueChange = onNameChange,
+            label = { Text("Chapter title / section") },
+            placeholder = { Text("Optional") },
+            singleLine = true,
+            modifier = Modifier.weight(0.62f),
+            colors = chapterFieldColors(),
+        )
+    }
+    if (sectionSuggestions.isNotEmpty()) {
+        Text("Bangla 1st Paper section", color = BankMuted, fontSize = 11.sp)
+        Row(
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
+        ) {
+            sectionSuggestions.forEach { section ->
+                FilterChip(
+                    selected = name.equals(section, ignoreCase = true),
+                    onClick = { onNameChange(section) },
+                    label = { Text(section, fontSize = 11.sp) },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = BankCyan.copy(alpha = 0.18f),
+                        selectedLabelColor = BankCyan,
+                        containerColor = BankBg,
+                        labelColor = BankMuted,
+                    ),
+                    border = FilterChipDefaults.filterChipBorder(
+                        enabled = true,
+                        selected = name.equals(section, ignoreCase = true),
+                        borderColor = BankBorder,
+                        selectedBorderColor = BankCyan,
+                    ),
                 )
             }
         }
-        Text("Chapter list follows the selected subject. Use custom only when your syllabus differs.", color = BankMuted, fontSize = 11.sp)
+    }
+    OutlinedTextField(
+        value = topic,
+        onValueChange = onTopicChange,
+        label = { Text("Topic name (optional)") },
+        placeholder = { Text("A specific topic in this chapter") },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth(),
+        colors = chapterFieldColors(),
+    )
+    Text("Select Chapter 1–30, or type another number. Chapter name and topic are optional.", color = BankMuted, fontSize = 11.sp)
+}
+
+@Composable
+private fun chapterFieldColors() = OutlinedTextFieldDefaults.colors(
+    focusedTextColor = BankText,
+    unfocusedTextColor = BankText,
+    focusedBorderColor = BankCyan,
+    unfocusedBorderColor = BankBorder,
+    focusedLabelColor = BankCyan,
+    unfocusedLabelColor = BankMuted,
+)
+
+internal fun banglaFirstPaperSections(subject: String): List<String> =
+    if (subject.trim().lowercase().contains("bangla 1st")) {
+        listOf("Prose (Gadya)", "Poetry (Padya)", "Anandapath", "Novel", "Drama")
+    } else {
+        emptyList()
+    }
+
+private data class PatternChoice(val key: String, val label: String)
+
+private data class QuestionPatternProfile(
+    val title: String,
+    val description: String,
+    val defaultKey: String,
+    val defaultVariant: String,
+    val choices: List<PatternChoice>,
+)
+
+private fun questionPatternProfile(subject: String): QuestionPatternProfile? {
+    val value = subject.trim().lowercase()
+    return when {
+        value.contains("english 1st") -> QuestionPatternProfile(
+            title = "English 1st Paper format",
+            description = "Choose the reading or writing task style. The source passage will guide the generated question.",
+            defaultKey = "english_1st_seen_comprehension",
+            defaultVariant = "Comprehension questions",
+            choices = listOf(
+                PatternChoice("english_1st_seen_comprehension", "Seen passage"),
+                PatternChoice("english_1st_unseen_comprehension", "Unseen passage"),
+                PatternChoice("english_1st_writing", "Writing task"),
+            ),
+        )
+        value.contains("english 2nd") -> QuestionPatternProfile(
+            title = "English 2nd Paper format",
+            description = "Select a grammar/composition focus and choose sentence or passage practice.",
+            defaultKey = "english_2nd_grammar",
+            defaultVariant = "Right form of verbs|Sentence practice",
+            choices = listOf(
+                PatternChoice("english_2nd_grammar", "Grammar"),
+                PatternChoice("english_2nd_composition", "Composition"),
+            ),
+        )
+        value.contains("bangla 2nd") -> QuestionPatternProfile(
+            title = "Bangla 2nd Paper format",
+            description = "Use a focused board-style grammar or written question format.",
+            defaultKey = "bangla_2nd_grammar_mcq",
+            defaultVariant = "Grammar MCQ",
+            choices = listOf(
+                PatternChoice("bangla_2nd_grammar_mcq", "Grammar MCQ"),
+                PatternChoice("bangla_2nd_written", "Written practice"),
+            ),
+        )
+        else -> null
+    }
+}
+
+private fun questionLanguageForSubject(subject: String): String =
+    if (subject.trim().lowercase().contains("english")) "en" else "bn"
+
+private fun patternVariantParts(value: String): Pair<String, String> {
+    val parts = value.split("|", limit = 2)
+    return parts.firstOrNull().orEmpty() to parts.getOrNull(1).orEmpty()
+}
+
+private fun patternVariantLabel(value: String): String = value.replace("|", " · ")
+
+private fun patternVariantsFor(key: String): List<String> = when (key) {
+    "english_1st_seen_comprehension" -> listOf("Comprehension questions", "MCQ from passage", "Short answers from passage")
+    "english_1st_unseen_comprehension" -> listOf("Information transfer", "Summary writing", "Comprehension questions")
+    "english_1st_writing" -> listOf("Story completion", "Dialogue writing", "Paragraph writing")
+    "english_2nd_grammar" -> listOf("Right form of verbs", "Prepositions", "Completing sentences", "Transformation of sentences", "Narration", "Voice", "Tag questions", "Connectors", "Punctuation")
+    "english_2nd_composition" -> listOf("Paragraph", "Email / letter", "Application", "Composition")
+    "bangla_2nd_grammar_mcq" -> listOf("Grammar MCQ", "Spelling and usage", "Parts of speech")
+    "bangla_2nd_written" -> listOf("Grammar written", "Paragraph / composition", "Letter / application")
+    else -> emptyList()
+}
+
+@Composable
+private fun SubjectPatternSection(
+    subject: String,
+    patternKey: String,
+    onPatternKeyChange: (String) -> Unit,
+    patternVariant: String,
+    onPatternVariantChange: (String) -> Unit,
+) {
+    val profile = questionPatternProfile(subject) ?: return
+    val (focus, format) = patternVariantParts(patternVariant)
+    val variants = patternVariantsFor(patternKey)
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(profile.title, color = BankText, fontWeight = FontWeight.SemiBold)
+        Text(profile.description, color = BankMuted, fontSize = 12.sp)
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            profile.choices.forEach { choice ->
+                FilterChip(
+                    selected = patternKey == choice.key,
+                    onClick = {
+                        onPatternKeyChange(choice.key)
+                        onPatternVariantChange(patternVariantsFor(choice.key).firstOrNull().orEmpty())
+                    },
+                    label = { Text(choice.label) },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = BankCyan.copy(alpha = 0.18f),
+                        selectedLabelColor = BankCyan,
+                        labelColor = BankMuted,
+                    ),
+                    border = FilterChipDefaults.filterChipBorder(
+                        enabled = true,
+                        selected = patternKey == choice.key,
+                        borderColor = BankBorder,
+                        selectedBorderColor = BankCyan,
+                    ),
+                )
+            }
+        }
+        if (patternKey == "english_2nd_grammar") {
+            PatternDropdown(
+                label = "Grammar focus",
+                value = focus.ifBlank { variants.firstOrNull().orEmpty() },
+                options = variants,
+                onSelect = { selected -> onPatternVariantChange("$selected|${format.ifBlank { "Sentence practice" }}") },
+            )
+            Text("Question context", color = BankMuted, fontSize = 12.sp)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("Sentence practice", "Passage / cloze").forEach { option ->
+                    FilterChip(
+                        selected = format == option,
+                        onClick = { onPatternVariantChange("${focus.ifBlank { variants.firstOrNull().orEmpty() }}|$option") },
+                        label = { Text(option) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = BankCyan.copy(alpha = 0.18f),
+                            selectedLabelColor = BankCyan,
+                            labelColor = BankMuted,
+                        ),
+                    )
+                }
+            }
+        } else if (variants.isNotEmpty()) {
+            PatternDropdown(
+                label = "Specific focus",
+                value = focus.ifBlank { patternVariant }.ifBlank { variants.first() },
+                options = variants,
+                onSelect = onPatternVariantChange,
+            )
+        }
+        Text(
+            "The preset guides format. MCQ/CQ marks follow the structure; short-question marks are configurable.",
+            color = BankMuted,
+            fontSize = 11.sp,
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PatternDropdown(
+    label: String,
+    value: String,
+    options: List<String>,
+    onSelect: (String) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }) {
+        OutlinedTextField(
+            value = patternVariantLabel(value),
+            onValueChange = {},
+            readOnly = true,
+            label = { Text(label) },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
+            modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
+            colors = chapterFieldColors(),
+        )
+        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            options.forEach { option ->
+                DropdownMenuItem(
+                    text = { Text(option, color = BankText) },
+                    onClick = { onSelect(option); expanded = false },
+                )
+            }
+        }
     }
 }
 
@@ -1065,6 +1383,8 @@ private fun ManualQuestionEntrySection(
     onQuestionTextChange: (String) -> Unit,
     stimulus: String,
     onStimulusChange: (String) -> Unit,
+    creativeSubQuestions: List<String>,
+    onCreativeSubQuestionChange: (Int, String) -> Unit,
     options: List<String>,
     onOptionChange: (Int, String) -> Unit,
     answer: String,
@@ -1135,16 +1455,21 @@ private fun ManualQuestionEntrySection(
                 onValueChange = onStimulusChange,
                 label = "Uddipok / stimulus",
             )
+            listOf("ক (1 mark)", "খ (2 marks)", "গ (3 marks)", "ঘ (4 marks)").forEachIndexed { index, label ->
+                BankMultilineField(
+                    value = creativeSubQuestions.getOrElse(index) { "" },
+                    onValueChange = { onCreativeSubQuestionChange(index, it) },
+                    label = "Sub-question $label",
+                )
+            }
         }
-        BankMultilineField(
-            value = questionText,
-            onValueChange = onQuestionTextChange,
-            label = when (questionType) {
-                "mcq" -> "MCQ question"
-                "creative" -> "Creative question / instruction"
-                else -> "Short question"
-            },
-        )
+        if (questionType != "creative") {
+            BankMultilineField(
+                value = questionText,
+                onValueChange = onQuestionTextChange,
+                label = if (questionType == "mcq") "MCQ question" else "Short question",
+            )
+        }
         if (questionType == "mcq") {
             options.take(4).forEachIndexed { index, option ->
                 BankTextField(
@@ -1172,6 +1497,7 @@ private fun ManualQuestionEntrySection(
                 label = "Marks",
                 modifier = Modifier.weight(0.34f),
                 keyboardType = KeyboardType.Number,
+                enabled = questionType == "short",
             )
             Column(Modifier.weight(0.66f)) {
                 Text("Difficulty", color = BankMuted, fontSize = 12.sp)
@@ -1262,60 +1588,11 @@ private fun ManualQuestionQueue(
     }
 }
 
-private fun chapterOptionsFor(className: String, subject: String): List<String> {
-    val normalized = subject.trim().lowercase()
-    val known = when {
-        normalized.contains("physics") -> listOf(
-            "Physical quantities and measurement", "Motion", "Force", "Work, power and energy",
-            "States of matter and pressure", "Heat", "Waves and sound", "Light", "Electricity",
-            "Atomic structure", "Astronomy",
-        )
-        normalized.contains("chemistry") -> listOf(
-            "Matter and its properties", "Structure of matter", "Periodic table", "Chemical bonding",
-            "Mole concept and chemical calculations", "Chemical reactions", "Acids, bases and salts",
-            "Metals and non-metals", "Organic chemistry",
-        )
-        normalized.contains("biology") || normalized.contains("life science") -> listOf(
-            "Cell and its structure", "Cell division", "Plant tissues", "Animal tissues", "Genetics",
-            "Reproduction", "Environment and ecosystem", "Human health and disease", "Evolution",
-        )
-        normalized.contains("mathematics") || normalized == "mathematics" -> listOf(
-            "Sets and functions", "Algebra", "Geometry", "Trigonometry", "Coordinate geometry",
-            "Statistics", "Probability", "Mensuration",
-        )
-        normalized.contains("bangla") -> listOf(
-            "Prose", "Poetry", "Supplementary reading", "Grammar", "Composition",
-        )
-        normalized.contains("english") -> listOf(
-            "Reading", "Vocabulary", "Grammar", "Writing", "Listening and speaking",
-        )
-        normalized.contains("information") || normalized == "ict" -> listOf(
-            "Information and communication technology", "Communication systems and networking",
-            "Number systems and digital devices", "Web design", "Programming", "Database and spreadsheet",
-        )
-        normalized.contains("accounting") -> listOf(
-            "Introduction to accounting", "Journal", "Ledger", "Cash book", "Trial balance",
-            "Financial statements", "Depreciation", "Partnership accounts",
-        )
-        normalized.contains("economics") -> listOf(
-            "Basic concepts of economics", "Demand and supply", "Production", "Market", "National income",
-            "Money and banking", "International trade", "Development economics",
-        )
-        normalized.contains("history") -> listOf(
-            "Historical background", "Ancient Bengal", "Medieval Bengal", "British period",
-            "Language movement", "Liberation war", "Bangladesh after independence",
-        )
-        normalized.contains("geography") -> listOf(
-            "Earth and environment", "Map reading", "Climate", "Population", "Natural resources",
-            "Bangladesh geography", "Disaster management",
-        )
-        normalized.contains("science") -> listOf(
-            "Living world", "Matter", "Force and energy", "Earth and universe", "Environment", "Health and safety",
-        )
-        else -> emptyList()
-    }
-    return if (known.isNotEmpty()) known else (1..20).map { "Chapter $it" }
-}
+internal fun canonicalQuestionChapter(number: String): String =
+    number.toIntOrNull()?.takeIf { it in 1..999 }?.let { "Chapter $it" }.orEmpty()
+
+internal fun displayQuestionChapter(chapter: String, name: String, topic: String): String =
+    listOf(chapter, name.trim(), topic.trim()).filter(String::isNotBlank).joinToString(" · ")
 
 @Composable
 private fun QuestionReviewContent(
@@ -1482,7 +1759,7 @@ private fun ReviewQuestionCard(
                     label = "Marks",
                     modifier = Modifier.weight(0.34f),
                     keyboardType = KeyboardType.Number,
-                    enabled = question.selected,
+                    enabled = question.selected && questionType == "short",
                 )
                 Column(Modifier.weight(0.66f)) {
                     Text("Difficulty", color = BankMuted, fontSize = 12.sp)

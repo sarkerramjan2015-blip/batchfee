@@ -1,0 +1,207 @@
+
+D:\batchfee>if "Windows_NT" == "Windows_NT" setlocal
+
+D:\batchfee>set DIRNAME=D:\batchfee\ 
+
+D:\batchfee>if "D:\batchfee\" == "" set DIRNAME=. 
+
+D:\batchfee>set APP_BASE_NAME=gradlew 
+
+D:\batchfee>set APP_HOME=D:\batchfee\ 
+
+D:\batchfee>for %i in ("D:\batchfee\") do set APP_HOME=%~fi 
+
+D:\batchfee>set APP_HOME=D:\batchfee\ 
+
+D:\batchfee>set DEFAULT_JVM_OPTS="-Xmx64m" "-Xms64m" 
+
+D:\batchfee>if defined JAVA_HOME goto findJavaFromJavaHome 
+
+D:\batchfee>set JAVA_HOME=C:\Users\User\AppData\Local\BatchFeeTools\temurin-21.0.12.1\jdk-21.0.12.1+1 
+
+D:\batchfee>set JAVA_EXE=C:\Users\User\AppData\Local\BatchFeeTools\temurin-21.0.12.1\jdk-21.0.12.1+1/bin/java.exe 
+
+D:\batchfee>if exist "C:\Users\User\AppData\Local\BatchFeeTools\temurin-21.0.12.1\jdk-21.0.12.1+1/bin/java.exe" goto execute 
+
+D:\batchfee>set CLASSPATH=D:\batchfee\\gradle\wrapper\gradle-wrapper.jar 
+
+D:\batchfee>"C:\Users\User\AppData\Local\BatchFeeTools\temurin-21.0.12.1\jdk-21.0.12.1+1/bin/java.exe" "-Xmx64m" "-Xms64m"   "-Dorg.gradle.appname=gradlew" -classpath "D:\batchfee\\gradle\wrapper\gradle-wrapper.jar" org.gradle.wrapper.GradleWrapperMain :app:compileDebugKotlin --no-daemon 
+To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/9.3.1/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
+Daemon will be stopped at the end of the build 
+Reusing configuration cache.
+> Task :app:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:generateDebugBuildConfig UP-TO-DATE
+> Task :app:processDebugGoogleServices UP-TO-DATE
+> Task :app:injectCrashlyticsMappingFileIdDebug UP-TO-DATE
+> Task :app:generateDebugResValues UP-TO-DATE
+> Task :app:generateDebugResources UP-TO-DATE
+> Task :app:mapDebugSourceSetPaths UP-TO-DATE
+> Task :app:packageDebugResources UP-TO-DATE
+> Task :app:mergeDebugResources UP-TO-DATE
+> Task :app:processDebugNavigationResources UP-TO-DATE
+> Task :app:createDebugCompatibleScreenManifests UP-TO-DATE
+> Task :app:checkDebugAarMetadata UP-TO-DATE
+> Task :app:compileDebugNavigationResources UP-TO-DATE
+> Task :app:extractDeepLinksDebug UP-TO-DATE
+> Task :app:parseDebugLocalResources UP-TO-DATE
+> Task :app:processDebugMainManifest UP-TO-DATE
+> Task :app:processDebugManifest UP-TO-DATE
+> Task :app:processDebugManifestForPackage UP-TO-DATE
+> Task :app:processDebugResources UP-TO-DATE
+> Task :app:kspDebugKotlin
+> Task :app:compileDebugKotlin
+w: file:///D:/batchfee/app/src/main/java/com/batchfee/edu/ui/assignments/AddAssignmentScreen.kt:97:171 'val Icons.Filled.Assignment: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Assignment.
+w: file:///D:/batchfee/app/src/main/java/com/batchfee/edu/ui/assignments/AddAssignmentScreen.kt:105:273 'fun Modifier.menuAnchor(): Modifier' is deprecated. Use overload that takes MenuAnchorType and enabled parameters.
+w: file:///D:/batchfee/app/src/main/java/com/batchfee/edu/ui/assignments/AddAssignmentScreen.kt:121:295 'fun Modifier.menuAnchor(): Modifier' is deprecated. Use overload that takes MenuAnchorType and enabled parameters.
+w: file:///D:/batchfee/app/src/main/java/com/batchfee/edu/ui/assignments/AddAssignmentScreen.kt:133:301 'fun Modifier.menuAnchor(): Modifier' is deprecated. Use overload that takes MenuAnchorType and enabled parameters.
+w: file:///D:/batchfee/app/src/main/java/com/batchfee/edu/ui/assignments/AddAssignmentScreen.kt:141:300 'fun Modifier.menuAnchor(): Modifier' is deprecated. Use overload that takes MenuAnchorType and enabled parameters.
+w: file:///D:/batchfee/app/src/main/java/com/batchfee/edu/ui/assignments/AssignmentListScreen.kt:96:163 'val Icons.Filled.Assignment: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Assignment.
+w: file:///D:/batchfee/app/src/main/java/com/batchfee/edu/ui/assignments/AssignmentListScreen.kt:104:192 'val Icons.Filled.Assignment: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Assignment.
+w: file:///D:/batchfee/app/src/main/java/com/batchfee/edu/ui/components/SquarePhotoCropDialog.kt:218:64 'val Icons.Filled.RotateLeft: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.RotateLeft.
+w: file:///D:/batchfee/app/src/main/java/com/batchfee/edu/ui/components/SquarePhotoCropDialog.kt:231:65 'val Icons.Filled.RotateRight: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.RotateRight.
+w: file:///D:/batchfee/app/src/main/java/com/batchfee/edu/ui/studentapp/StudentDashboardScreen.kt:377:66 'val Icons.Filled.Assignment: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Assignment.
+w: file:///D:/batchfee/app/src/main/java/com/batchfee/edu/ui/studentapp/StudentDocumentsScreen.kt:300:96 'val Icons.Filled.ReceiptLong: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.ReceiptLong.
+w: file:///D:/batchfee/app/src/main/java/com/batchfee/edu/ui/studentapp/StudentDocumentsScreen.kt:305:45 'val Icons.Filled.ReceiptLong: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.ReceiptLong.
+w: file:///D:/batchfee/app/src/main/java/com/batchfee/edu/ui/studentapp/StudentFeeScreen.kt:358:188 'val Icons.Filled.ReceiptLong: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.ReceiptLong.
+w: file:///D:/batchfee/app/src/main/java/com/batchfee/edu/ui/studentapp/StudentHomeWorkScreen.kt:111:189 'val Icons.Filled.Assignment: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Assignment.
+w: file:///D:/batchfee/app/src/main/java/com/batchfee/edu/ui/studentapp/StudentProfileScreen.kt:162:35 'val Icons.Filled.Logout: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Logout.
+w: file:///D:/batchfee/app/src/main/java/com/batchfee/edu/ui/studentapp/StudentWorksScreen.kt:166:183 'val Icons.Filled.Assignment: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Assignment.
+w: file:///D:/batchfee/app/src/main/java/com/batchfee/edu/ui/studentapp/StudentWorksScreen.kt:185:220 'val Icons.Filled.Assignment: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Assignment.
+w: file:///D:/batchfee/app/src/main/java/com/batchfee/edu/ui/studentapp/StudentWorksScreen.kt:198:39 'val Icons.Filled.MenuBook: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.MenuBook.
+w: file:///D:/batchfee/app/src/main/java/com/batchfee/edu/ui/works/AddWorkScreen.kt:62:87 'val Icons.Filled.Assignment: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Assignment.
+w: file:///D:/batchfee/app/src/main/java/com/batchfee/edu/ui/works/AddWorkScreen.kt:75:56 'fun Modifier.menuAnchor(): Modifier' is deprecated. Use overload that takes MenuAnchorType and enabled parameters.
+w: file:///D:/batchfee/app/src/main/java/com/batchfee/edu/ui/works/WorksListScreen.kt:57:102 'val Icons.Filled.Assignment: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Assignment.
+w: file:///D:/batchfee/app/src/main/java/com/batchfee/edu/ui/works/WorksViewModel.kt:90:96 Unchecked cast of 'WorksViewModel' to 'T (of fun <T : ViewModel> create)'.
+w: file:///D:/batchfee/app/src/main/java/com/example/BatchFeeApp.kt:34:18 'fun setPersistenceEnabled(p0: Boolean): FirebaseFirestoreSettings.Builder' is deprecated. Deprecated in Java.
+w: file:///D:/batchfee/app/src/main/java/com/example/BatchFeeApp.kt:35:18 'fun setCacheSizeBytes(p0: Long): FirebaseFirestoreSettings.Builder' is deprecated. Deprecated in Java.
+w: file:///D:/batchfee/app/src/main/java/com/example/MainActivity.kt:172:26 'val LocalLifecycleOwner: ProvidableCompositionLocal<LifecycleOwner>' is deprecated. Moved to lifecycle-runtime-compose library in androidx.lifecycle.compose package.
+w: file:///D:/batchfee/app/src/main/java/com/example/data/database/AppDatabase.kt:706:29 'fun fallbackToDestructiveMigration(): RoomDatabase.Builder<AppDatabase>' is deprecated. Replace by overloaded version with parameter to indicate if all tables should be dropped or not.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/attendance/AttendanceScreens.kt:393:26 'val LocalLifecycleOwner: ProvidableCompositionLocal<LifecycleOwner>' is deprecated. Moved to lifecycle-runtime-compose library in androidx.lifecycle.compose package.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/attendance/AttendanceScreens.kt:583:39 'val Icons.Filled.Message: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Message.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/attendance/AttendanceScreens.kt:731:58 'val Icons.Filled.Message: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Message.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/attendance/AttendanceScreens.kt:773:64 'val Icons.Filled.Message: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Message.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/attendance/AttendanceScreens.kt:804:73 'val Icons.Filled.Message: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Message.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/attendance/AttendanceScreens.kt:1293:39 'val Icons.Filled.Undo: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Undo.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/attendance/AttendanceScreens.kt:1306:59 'val Icons.Filled.Message: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Message.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/attendance/AttendanceScreens.kt:1307:53 'val Icons.Filled.Message: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Message.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/attendance/AttendanceViewModel.kt:728:105 Unchecked cast of 'AttendanceViewModel' to 'T (of fun <T : ViewModel> create)'.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/auth/AuthScreen.kt:873:31 'val Icons.Filled.Chat: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Chat.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/auth/AuthScreen.kt:1032:48 'fun Modifier.menuAnchor(): Modifier' is deprecated. Use overload that takes MenuAnchorType and enabled parameters.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/auth/AuthScreen.kt:1075:93 'val Icons.Filled.MenuBook: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.MenuBook.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/auth/AuthScreen.kt:1928:42 'val Icons.Filled.ArrowForward: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.ArrowForward.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/batches/BatchDetailScreen.kt:164:26 'val LocalLifecycleOwner: ProvidableCompositionLocal<LifecycleOwner>' is deprecated. Moved to lifecycle-runtime-compose library in androidx.lifecycle.compose package.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/batches/BatchDetailScreen.kt:479:48 'val Icons.Filled.Message: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Message.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/batches/BatchDetailScreen.kt:737:45 'val Icons.Filled.Message: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Message.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/batches/BatchDetailScreen.kt:781:45 'val Icons.Filled.Message: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Message.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/batches/BatchDetailScreen.kt:985:47 'val Icons.Filled.KeyboardArrowLeft: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.KeyboardArrowLeft.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/batches/BatchDetailScreen.kt:989:47 'val Icons.Filled.KeyboardArrowRight: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.KeyboardArrowRight.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/batches/BatchDetailScreen.kt:1154:31 'val Icons.Filled.KeyboardArrowLeft: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.KeyboardArrowLeft.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/batches/BatchDetailScreen.kt:1158:31 'val Icons.Filled.KeyboardArrowRight: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.KeyboardArrowRight.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/batches/BatchDetailScreen.kt:1526:51 'val Icons.Filled.Message: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Message.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/batches/BatchPaymentViewModel.kt:161:110 Unchecked cast of 'BatchPaymentViewModel' to 'T (of fun <T : ViewModel> create)'.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/batches/BatchViewModel.kt:276:95 Unchecked cast of 'BatchViewModel' to 'T (of fun <T : ViewModel> create)'.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/batches/CustomRoutineScreens.kt:707:84 'val Icons.Filled.KeyboardArrowRight: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.KeyboardArrowRight.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/batches/RoutineScreen.kt:253:64 'fun Modifier.menuAnchor(): Modifier' is deprecated. Use overload that takes MenuAnchorType and enabled parameters.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/batches/RoutineScreen.kt:415:31 'val Icons.Filled.KeyboardArrowRight: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.KeyboardArrowRight.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/billing/BillingScreen.kt:215:100 Unchecked cast of 'BillingViewModel' to 'T (of fun <T : ViewModel> create)'.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/billing/BillingScreen.kt:473:51 'val Icons.Filled.ReceiptLong: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.ReceiptLong.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/billing/BillingScreen.kt:520:59 'val Icons.Filled.Chat: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Chat.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/dashboard/DashboardScreen.kt:788:104 Unchecked cast of 'DashboardViewModel' to 'T (of fun <T : ViewModel> create)'.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/dashboard/DashboardScreen.kt:2447:85 'val Icons.Filled.Assignment: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Assignment.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/dashboard/DashboardScreen.kt:2448:82 'val Icons.Filled.ReceiptLong: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.ReceiptLong.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/dashboard/DashboardScreen.kt:2811:48 'val Icons.Filled.ReceiptLong: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.ReceiptLong.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/dashboard/DashboardScreen.kt:2946:41 'val Icons.Filled.Assignment: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Assignment.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/dashboard/DashboardScreen.kt:2962:41 'val Icons.Filled.ListAlt: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.ListAlt.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/dashboard/DashboardScreen.kt:2971:41 'val Icons.Filled.ListAlt: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.ListAlt.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/dashboard/DashboardScreen.kt:2997:49 'val Icons.Filled.Assignment: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Assignment.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/dashboard/DashboardScreen.kt:3021:49 'val Icons.Filled.ListAlt: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.ListAlt.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/dashboard/DashboardScreen.kt:3030:49 'val Icons.Filled.ListAlt: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.ListAlt.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/dashboard/DashboardScreen.kt:3765:41 'val Icons.Filled.MenuBook: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.MenuBook.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/dashboard/DashboardScreen.kt:4362:30 'val Icons.Filled.TrendingUp: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.TrendingUp.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/dashboard/DashboardScreen.kt:4448:31 'val Icons.Filled.Logout: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Logout.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/dashboard/GlobalNotificationCard.kt:122:46 'val Icons.Filled.KeyboardArrowLeft: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.KeyboardArrowLeft.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/dashboard/GlobalNotificationCard.kt:129:46 'val Icons.Filled.KeyboardArrowRight: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.KeyboardArrowRight.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/dashboard/SettingsScreen.kt:154:63 'val Icons.Filled.Chat: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Chat.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/enquiries/EnquiryListScreen.kt:430:39 'val Icons.Filled.Notes: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Notes.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/enquiries/EnquiryViewModel.kt:220:99 Unchecked cast of 'EnquiryViewModel' to 'T (of fun <T : ViewModel> create)'.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/exams/ExamScreen.kt:699:55 'val LocalLifecycleOwner: ProvidableCompositionLocal<LifecycleOwner>' is deprecated. Moved to lifecycle-runtime-compose library in androidx.lifecycle.compose package.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/exams/ExamScreen.kt:1230:53 'val Icons.Filled.Chat: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Chat.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/exams/ExamViewModel.kt:515:93 Unchecked cast of 'ExamViewModel' to 'T (of fun <T : ViewModel> create)'.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/exams/FinalExamScreens.kt:691:89 'val Icons.Filled.KeyboardArrowRight: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.KeyboardArrowRight.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/expenses/ExpenseScreen.kt:61:47 'val Icons.Filled.MenuBook: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.MenuBook.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/expenses/ExpenseScreen.kt:62:42 'val Icons.Filled.ReceiptLong: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.ReceiptLong.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/expenses/ExpenseScreen.kt:138:47 'val Icons.Filled.ReceiptLong: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.ReceiptLong.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/expenses/ExpenseViewModel.kt:201:99 Unchecked cast of 'ExpenseViewModel' to 'T (of fun <T : ViewModel> create)'.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/fees/DueFeeListScreen.kt:185:25 'val LocalLifecycleOwner: ProvidableCompositionLocal<LifecycleOwner>' is deprecated. Moved to lifecycle-runtime-compose library in androidx.lifecycle.compose package.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/fees/DueFeeListScreen.kt:447:89 'val Icons.Filled.TrendingUp: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.TrendingUp.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/fees/DueFeeListScreen.kt:766:38 'val Icons.Filled.ReceiptLong: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.ReceiptLong.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/fees/DueFeeListScreen.kt:852:34 'val Icons.Filled.ReceiptLong: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.ReceiptLong.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/fees/FeeDashboardScreen.kt:357:55 'val Icons.Filled.Chat: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Chat.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/fees/FeeDashboardScreen.kt:478:39 'val Icons.Filled.ReceiptLong: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.ReceiptLong.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/fees/FeeScreens.kt:789:47 'val Icons.Filled.Chat: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Chat.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/fees/FeeScreens.kt:806:47 'val Icons.Filled.Message: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Message.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/fees/FeeViewModel.kt:589:36 Unchecked cast of 'FeeViewModel' to 'T (of fun <T : ViewModel> create)'.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/fees/UnifiedCollectScreen.kt:1776:78 'val Icons.Filled.Message: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Message.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/fees/UnifiedCollectScreen.kt:1779:77 'val Icons.Filled.Message: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Message.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/homework/AddHomeworkScreen.kt:113:56 'fun Modifier.menuAnchor(): Modifier' is deprecated. Use overload that takes MenuAnchorType and enabled parameters.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/legal/LegalScreens.kt:90:34 'val Icons.Filled.ArrowBack: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.ArrowBack.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/pricing/PricingScreen.kt:192:100 Unchecked cast of 'PricingViewModel' to 'T (of fun <T : ViewModel> create)'.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/registrations/RegistrationListViewModel.kt:258:49 Unchecked cast of 'RegistrationListViewModel' to 'T (of fun <T : ViewModel> create)'.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/reminders/ReminderTemplateViewModel.kt:77:117 Unchecked cast of 'ReminderTemplateViewModel' to 'T (of fun <T : ViewModel> create)'.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/reports/ProfitLossScreen.kt:96:63 'val Icons.Filled.TrendingUp: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.TrendingUp.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/reports/ProfitLossScreen.kt:96:92 'val Icons.Filled.TrendingDown: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.TrendingDown.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/reports/ProfitLossViewModel.kt:48:105 Unchecked cast of 'ProfitLossViewModel' to 'T (of fun <T : ViewModel> create)'.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/reports/ReportsScreen.kt:46:46 'constructor(p0: String!, p1: String!): Locale' is deprecated. Deprecated in Java.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/reports/ReportsScreen.kt:382:31 'val Icons.Filled.ReceiptLong: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.ReceiptLong.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/reports/ReportsViewModel.kt:186:107 Unchecked cast of 'ReportsViewModel' to 'T (of fun <T : ViewModel> create)'.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/staff/AddEditStaffScreen.kt:444:47 Condition is always 'true'.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/staff/SalaryScreen.kt:281:59 'val Icons.Filled.ReceiptLong: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.ReceiptLong.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/staff/SalaryScreen.kt:769:39 'val Icons.Filled.ReceiptLong: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.ReceiptLong.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/staff/SalaryViewModel.kt:411:97 Unchecked cast of 'SalaryViewModel' to 'T (of fun <T : ViewModel> create)'.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/staff/StaffActivityScreen.kt:287:65 'val Icons.Filled.Login: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Login.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/staff/StaffAttendanceScreen.kt:697:34 'val Icons.Filled.KeyboardArrowRight: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.KeyboardArrowRight.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/staff/StaffProfileScreen.kt:393:73 'val Icons.Filled.Login: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Login.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/students/BirthdayReminderScreen.kt:522:45 'val Icons.Filled.Chat: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Chat.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/students/BirthdayViewModel.kt:146:101 Unchecked cast of 'BirthdayViewModel' to 'T (of fun <T : ViewModel> create)'.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/students/StudentActivityScreen.kt:487:75 'val Icons.Filled.Login: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Login.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/students/StudentListScreen.kt:118:26 'val LocalLifecycleOwner: ProvidableCompositionLocal<LifecycleOwner>' is deprecated. Moved to lifecycle-runtime-compose library in androidx.lifecycle.compose package.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/students/StudentListScreen.kt:541:49 'val Icons.Filled.Message: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Message.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/students/StudentProfileScreen.kt:2478:106 'val Icons.Filled.Article: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Article.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/students/StudentProfileScreen.kt:2479:115 'val Icons.Filled.Article: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Article.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/students/StudentProfileScreen.kt:2480:124 'val Icons.Filled.Article: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Article.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/students/StudentProfileScreen.kt:3815:31 'val Icons.Filled.ReceiptLong: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.ReceiptLong.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/students/StudentProfileScreen.kt:4009:35 'val Icons.Filled.MenuBook: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.MenuBook.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/students/StudentViewModel.kt:556:99 Unchecked cast of 'StudentViewModel' to 'T (of fun <T : ViewModel> create)'.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/subscription/SubscriptionExpiredScreen.kt:228:40 'val outlinedButtonBorder: BorderStroke' is deprecated. Please use the version that takes an `enabled` param to get the `BorderStroke` with the correct opacity.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/subscription/SubscriptionExpiredScreen.kt:231:34 'val Icons.Filled.Logout: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Logout.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/superadmin/NoticeAdministrationSections.kt:173:35 'val Icons.Filled.Send: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Send.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/superadmin/SuperAdminScreen.kt:1927:106 Unchecked cast of 'SuperAdminViewModel' to 'T (of fun <T : ViewModel> create)'.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/superadmin/SuperAdminScreen.kt:2211:259 'val Icons.Filled.TrendingUp: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.TrendingUp.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/superadmin/SuperAdminScreen.kt:2715:39 'val Icons.Filled.ReceiptLong: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.ReceiptLong.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/superadmin/SuperAdminScreen.kt:2764:39 'val Icons.Filled.Chat: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Chat.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/superadmin/SuperAdminScreen.kt:2970:38 'val Icons.Filled.TrendingUp: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.TrendingUp.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/superadmin/SuperAdminScreen.kt:3499:35 'val Icons.Filled.ReceiptLong: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.ReceiptLong.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/superadmin/SuperAdminScreen.kt:3666:35 'val Icons.Filled.Chat: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Chat.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/superadmin/SuperAdminScreen.kt:3696:43 'val Icons.Filled.ReceiptLong: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.ReceiptLong.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/superadmin/SuperAdminScreen.kt:4207:109 'val Icons.Filled.Login: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Login.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/superadmin/SuperAdminScreen.kt:5709:47 'val Icons.Filled.Chat: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Chat.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/superadmin/SuperAdminScreen.kt:5778:45 'val outlinedButtonBorder: BorderStroke' is deprecated. Please use the version that takes an `enabled` param to get the `BorderStroke` with the correct opacity.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/superadmin/SuperAdminScreen.kt:5792:45 'val outlinedButtonBorder: BorderStroke' is deprecated. Please use the version that takes an `enabled` param to get the `BorderStroke` with the correct opacity.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/superadmin/SuperAdminScreen.kt:5805:45 'val outlinedButtonBorder: BorderStroke' is deprecated. Please use the version that takes an `enabled` param to get the `BorderStroke` with the correct opacity.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/superadmin/SuperAdminScreen.kt:5823:45 'val outlinedButtonBorder: BorderStroke' is deprecated. Please use the version that takes an `enabled` param to get the `BorderStroke` with the correct opacity.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/superadmin/SuperAdminScreen.kt:5904:45 'val outlinedButtonBorder: BorderStroke' is deprecated. Please use the version that takes an `enabled` param to get the `BorderStroke` with the correct opacity.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/superadmin/SuperAdminScreen.kt:5950:45 'val outlinedButtonBorder: BorderStroke' is deprecated. Please use the version that takes an `enabled` param to get the `BorderStroke` with the correct opacity.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/superadmin/SuperAdminScreen.kt:6039:47 'val Icons.Filled.Chat: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Chat.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/superadmin/SuperAdminScreen.kt:6179:43 'val Icons.Filled.ReceiptLong: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.ReceiptLong.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/superadmin/SuperAdminScreen.kt:6490:51 'val Icons.Filled.TrendingUp: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.TrendingUp.
+w: file:///D:/batchfee/app/src/main/java/com/example/ui/superadmin/SuperAdminScreen.kt:7061:39 'val Icons.Filled.Send: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Send.
+
+BUILD SUCCESSFUL in 1m 56s
+20 actionable tasks: 2 executed, 18 up-to-date
+Configuration cache entry reused.
+
+D:\batchfee>if 0 EQU 0 goto mainEnd 
+
+D:\batchfee>if "Windows_NT" == "Windows_NT" endlocal

@@ -1,0 +1,22 @@
+<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+<hierarchy rotation="0">
+<node index="0" text="" resource-id="android:id/content" class="android.view.ViewGroup" package="com.batchfee.edu" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[55,978][672,1418]" drawing-order="0" hint="">
+<node index="0" text="" resource-id="" class="android.view.View" package="com.batchfee.edu" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[55,978][672,1418]" drawing-order="0" hint="">
+<node index="0" text="" resource-id="" class="android.view.View" package="com.batchfee.edu" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[55,978][672,1418]" drawing-order="0" hint="">
+<node index="0" text="" resource-id="" class="android.view.View" package="com.batchfee.edu" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[55,978][672,1418]" drawing-order="0" hint="">
+<node index="0" text="" resource-id="" class="android.widget.ScrollView" package="com.batchfee.edu" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[55,1000][672,1396]" drawing-order="0" hint="">
+<node index="0" text="" resource-id="" class="android.view.View" package="com.batchfee.edu" content-desc="" checkable="false" checked="false" clickable="true" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[55,1000][672,1132]" drawing-order="0" hint="">
+<node index="0" text="WhatsApp Support Group" resource-id="" class="android.widget.TextView" package="com.batchfee.edu" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[187,1039][593,1094]" drawing-order="0" hint="" />
+</node>
+<node index="1" text="" resource-id="" class="android.view.View" package="com.batchfee.edu" content-desc="" checkable="false" checked="false" clickable="true" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[55,1132][672,1264]" drawing-order="0" hint="">
+<node index="0" text="Facebook Community Group" resource-id="" class="android.widget.TextView" package="com.batchfee.edu" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[187,1171][639,1226]" drawing-order="0" hint="" />
+</node>
+<node index="2" text="" resource-id="" class="android.view.View" package="com.batchfee.edu" content-desc="" checkable="false" checked="false" clickable="true" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[55,1264][672,1396]" drawing-order="0" hint="">
+<node index="0" text="Facebook Page" resource-id="" class="android.widget.TextView" package="com.batchfee.edu" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[187,1303][433,1358]" drawing-order="0" hint="" />
+</node>
+</node>
+</node>
+</node>
+</node>
+</node>
+</hierarchy>

@@ -389,6 +389,12 @@ private fun CuratedQuestionCard(question: CuratedQuestion, selected: Boolean, on
                     Text("${question.type.uppercase()}  •  ${question.difficulty}  •  ${question.marks} mark${if (question.marks == 1) "" else "s"}", color = LibraryMuted, fontSize = 11.sp)
                 }
             }
+            if (question.chapterName.isNotBlank()) {
+                Text("Chapter title: ${question.chapterName}", color = LibraryMuted, fontSize = 11.sp)
+            }
+            if (question.patternKey != "standard" || question.patternVariant.isNotBlank()) {
+                Text("Pattern: ${question.patternKey} ${question.patternVariant.replace("|", " · ")}".trim(), color = LibraryMuted, fontSize = 11.sp)
+            }
             Text(question.questionText, color = LibraryText, fontWeight = FontWeight.SemiBold)
             question.options.forEachIndexed { index, option ->
                 Text("${('A'.code + index).toChar()}. $option", color = LibraryMuted, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)

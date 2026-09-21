@@ -109,7 +109,7 @@ class NoticeCenterRepository(
 
     suspend fun submitFeedback(type: String, title: String, body: String): String {
         require(type in setOf("suggestion", "complaint")) { "Invalid feedback type." }
-        require(title.trim().length >= 3) { "Write a short title." }
+        require(title.trim().length >= 2) { "Write a short title (at least 2 characters)." }
         require(body.trim().length >= 10) { "Please add a little more detail." }
         val response = call(
             action = "submit_support_item",

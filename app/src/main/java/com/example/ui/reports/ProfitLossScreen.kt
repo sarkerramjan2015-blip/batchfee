@@ -194,16 +194,73 @@ private fun OtherIncomeDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = PLCard,
-        title = { Text("Add Income", color = PLWhite, fontWeight = FontWeight.Bold) },
+        shape = RoundedCornerShape(24.dp),
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(42.dp)
+                        .clip(RoundedCornerShape(13.dp))
+                        .background(PLGreen.copy(alpha = 0.16f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Filled.Add, null, tint = PLGreen, modifier = Modifier.size(23.dp))
+                }
+                Spacer(Modifier.width(12.dp))
+                Column {
+                    Text("Add Income", color = PLWhite, fontWeight = FontWeight.Bold, fontSize = 21.sp)
+                    Text("Record non-fee income", color = PLMuted, fontSize = 11.sp)
+                }
+            }
+        },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Use this only for non-fee income. Student fees must be collected through Collection Fee so the student ledger stays correct.", color = PLMuted, fontSize = 12.sp)
-                OutlinedTextField(title, { title = it }, label = { Text("Income title", color = PLMuted) }, placeholder = { Text("e.g. Book sale", color = PLDim) }, singleLine = true, modifier = Modifier.fillMaxWidth(), colors = plFieldColors())
-                OutlinedTextField(amount, { if (it.isEmpty() || it.matches(Regex("^\\d*\\.?\\d{0,2}$"))) amount = it }, label = { Text("Amount (BDT)", color = PLMuted) }, singleLine = true, modifier = Modifier.fillMaxWidth(), colors = plFieldColors())
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    listOf("Admission", "Books", "Event", "Donation", "Other income").forEach { item ->
-                        FilterChip(selected = category == item, onClick = { category = item }, label = { Text(item, fontSize = 10.sp) })
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Surface(
+                    color = PLBlue.copy(alpha = 0.10f),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, PLBlue.copy(alpha = 0.22f))
+                ) {
+                    Row(Modifier.padding(11.dp), verticalAlignment = Alignment.Top) {
+                        Icon(Icons.Filled.Info, null, tint = PLCyan, modifier = Modifier.size(17.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            "For non-fee income only. Use Collection Fee for student payments so their ledger stays correct.",
+                            color = PLMuted,
+                            fontSize = 11.sp,
+                            lineHeight = 16.sp
+                        )
                     }
+                }
+                OutlinedTextField(
+                    title,
+                    { title = it },
+                    label = { Text("Income title", color = PLMuted) },
+                    placeholder = { Text("e.g. Book sale", color = PLDim) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = plFieldColors()
+                )
+                OutlinedTextField(
+                    amount,
+                    { if (it.isEmpty() || it.matches(Regex("^\\d*\\.?\\d{0,2}$"))) amount = it },
+                    label = { Text("Amount (BDT)", color = PLMuted) },
+                    placeholder = { Text("0.00", color = PLDim) },
+                    leadingIcon = { Text("৳", color = PLGreen, fontWeight = FontWeight.Bold, fontSize = 18.sp) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = plFieldColors()
+                )
+                Text("Income category", color = PLMuted, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        IncomeCategoryChip("Admission", category == "Admission", Modifier.weight(1f)) { category = "Admission" }
+                        IncomeCategoryChip("Books", category == "Books", Modifier.weight(1f)) { category = "Books" }
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        IncomeCategoryChip("Event", category == "Event", Modifier.weight(1f)) { category = "Event" }
+                        IncomeCategoryChip("Donation", category == "Donation", Modifier.weight(1f)) { category = "Donation" }
+                    }
+                    IncomeCategoryChip("Other income", category == "Other income", Modifier.fillMaxWidth()) { category = "Other income" }
                 }
                 error?.let { Text(it, color = PLRed, fontSize = 11.sp) }
             }
@@ -220,6 +277,38 @@ private fun OtherIncomeDialog(
                 TextButton(onClick = onDismiss) { Text("Cancel", color = PLMuted) }
             }
         }
+    )
+}
+
+@Composable
+private fun IncomeCategoryChip(
+    label: String,
+    selected: Boolean,
+    modifier: Modifier,
+    onClick: () -> Unit,
+) {
+    FilterChip(
+        selected = selected,
+        onClick = onClick,
+        modifier = modifier.height(42.dp),
+        label = { Text(label, fontSize = 11.sp, maxLines = 1) },
+        leadingIcon = if (selected) {
+            { Icon(Icons.Filled.Check, null, modifier = Modifier.size(15.dp)) }
+        } else null,
+        shape = RoundedCornerShape(11.dp),
+        colors = FilterChipDefaults.filterChipColors(
+            containerColor = PLCardAlt,
+            labelColor = PLMuted,
+            selectedContainerColor = PLGreen.copy(alpha = 0.17f),
+            selectedLabelColor = PLGreen,
+            selectedLeadingIconColor = PLGreen
+        ),
+        border = FilterChipDefaults.filterChipBorder(
+            enabled = true,
+            selected = selected,
+            borderColor = PLStroke,
+            selectedBorderColor = PLGreen.copy(alpha = 0.60f)
+        )
     )
 }
 

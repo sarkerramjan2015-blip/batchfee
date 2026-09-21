@@ -265,6 +265,14 @@ private fun CurationQuestionCard(
                 Spacer(Modifier.height(3.dp))
                 Text(question.topic, color = CurationMuted, fontSize = 12.sp)
             }
+            if (question.chapterName.isNotBlank()) {
+                Spacer(Modifier.height(3.dp))
+                Text("Teacher chapter title: ${question.chapterName}", color = CurationMuted, fontSize = 12.sp)
+            }
+            if (question.patternKey != "standard" || question.patternVariant.isNotBlank()) {
+                Spacer(Modifier.height(3.dp))
+                Text("Pattern: ${question.patternKey} ${question.patternVariant.replace("|", " · ")}".trim(), color = CurationMuted, fontSize = 12.sp)
+            }
             Spacer(Modifier.height(10.dp))
             Text(question.questionText, color = CurationText, fontWeight = FontWeight.SemiBold)
             if (question.options.isNotEmpty()) {

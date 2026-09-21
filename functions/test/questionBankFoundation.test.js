@@ -109,11 +109,14 @@ test("anonymous payload strictly excludes tenant and teacher identity", () => {
   const payload = anonymousQuestionPayload({
     instituteId: "secret-school", instituteName: "Secret School", createdBy: "teacher-a",
     teacherName: "Teacher A", className: "Class 8", subject: "Science", chapter: "Light",
+    chapterName: "Light reflection", topic: "Laws of reflection",
     type: "mcq", language: "en", questionText: "What is reflection?",
     options: ["A", "B"], correctAnswer: "A", sourceUrl: "private://book-page",
   }, 9_999);
   assert.equal(payload.questionText, "What is reflection?");
   assert.equal(payload.anonymous, true);
+  assert.equal(payload.chapterName, "Light reflection");
+  assert.equal(payload.topic, "Laws of reflection");
   assert.equal(payload.moderationStatus, "pending");
   for (const forbidden of ["instituteId", "instituteName", "createdBy", "teacherName", "sourceUrl"]) {
     assert.equal(Object.hasOwn(payload, forbidden), false);

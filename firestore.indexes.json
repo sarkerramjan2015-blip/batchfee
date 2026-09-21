@@ -31,6 +31,22 @@
         { "fieldPath": "status", "order": "ASCENDING" },
         { "fieldPath": "curatedAtMs", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "platform_notices",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "publishedAtMs", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "platform_support_items",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "updatedAtMs", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": [

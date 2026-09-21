@@ -42,6 +42,12 @@ object QuestionReviewPolicy {
             return ReviewValidation(false, "Choose easy, medium, or hard.")
         }
         if (question.marks !in 1..100) return ReviewValidation(false, "Marks must be between 1 and 100.")
+        if (questionType == "mcq" && question.marks != 1) {
+            return ReviewValidation(false, "Every MCQ must carry 1 mark.")
+        }
+        if (questionType == "creative" && question.marks != 10) {
+            return ReviewValidation(false, "Every CQ must carry 10 marks: 1 + 2 + 3 + 4.")
+        }
         if (questionType == "mcq") {
             if (question.options.size != 4 || question.options.any { it.trim().isEmpty() }) {
                 return ReviewValidation(false, "An MCQ needs four non-empty options.")

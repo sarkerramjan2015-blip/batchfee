@@ -3419,29 +3419,34 @@ private fun CustomMonthlyFeeDialogV18(
 
     AlertDialog(
         onDismissRequest = { if (!isSaving) onDismiss() },
-        containerColor = CardBg,
-        shape = RoundedCornerShape(28.dp),
-        tonalElevation = 8.dp,
-        icon = {
-            Surface(shape = CircleShape, color = ElectricBlue.copy(alpha = 0.16f)) {
-                Icon(
-                    Icons.Filled.Payments,
-                    contentDescription = null,
-                    tint = Cyan,
-                    modifier = Modifier.padding(11.dp).size(26.dp),
-                )
-            }
-        },
+        containerColor = Color(0xFF182238),
+        shape = RoundedCornerShape(26.dp),
+        tonalElevation = 4.dp,
         title = {
-            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text("Set Monthly Fee", color = TextWhite, fontWeight = FontWeight.ExtraBold, fontSize = 24.sp)
-                Text("Set a custom fee for this student.", color = TextMuted, fontSize = 13.sp)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Surface(
+                    shape = RoundedCornerShape(13.dp),
+                    color = Color(0xFF25445A),
+                    border = BorderStroke(1.dp, Cyan.copy(alpha = 0.30f))
+                ) {
+                    Icon(
+                        Icons.Filled.Payments,
+                        contentDescription = null,
+                        tint = Color(0xFF79E0F0),
+                        modifier = Modifier.padding(10.dp).size(22.dp),
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("Set Monthly Fee", color = Color(0xFFF6F8FF), fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                    Text("Custom fee for this student", color = Color(0xFFAAB9D2), fontSize = 12.sp)
+                }
             }
         },
         text = {
             Column(
                 modifier = Modifier.fillMaxWidth().heightIn(max = 520.dp).verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 if (monthlyEnrollments.size > 1) {
                     Text("Choose a batch", color = TextMuted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
@@ -3469,7 +3474,12 @@ private fun CustomMonthlyFeeDialogV18(
                 if (selectedEnrollment == null || selectedBatch == null) {
                     Text("No active monthly batch was found for this student.", color = DangerRed)
                 } else {
-                    Text("${selectedBatch.name}  •  Default fee: BDT ${selectedBatch.monthlyFeeAmount.toLong()}/month", color = TextMuted, fontSize = 12.sp)
+                    Text(
+                        "${selectedBatch.name}  •  Default BDT ${selectedBatch.monthlyFeeAmount.toLong()}/month",
+                        color = Color(0xFFB8C6DD),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium
+                    )
                     OutlinedTextField(
                         value = amountText,
                         onValueChange = { amountText = it; errorMessage = null },
@@ -3478,59 +3488,50 @@ private fun CustomMonthlyFeeDialogV18(
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         modifier = Modifier.fillMaxWidth(),
-                        colors = darkFieldColors()
+                        shape = RoundedCornerShape(14.dp),
+                        leadingIcon = { Icon(Icons.Filled.CurrencyExchange, contentDescription = null, modifier = Modifier.size(20.dp)) },
+                        colors = monthlyFeeFieldColors()
                     )
                     val enteredAmount = amountText.trim().toDoubleOrNull()?.takeIf { it > 0.0 }
                     Surface(
                         modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp),
-                        color = ElectricBlue.copy(alpha = 0.10f),
-                        border = BorderStroke(1.dp, SkyBlue.copy(alpha = 0.38f))
+                        shape = RoundedCornerShape(16.dp),
+                        color = Color(0xFF193449),
+                        border = BorderStroke(1.dp, Cyan.copy(alpha = 0.34f))
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 13.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column {
-                                Text("CURRENT FEE", color = TextMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                                Text("BDT ${selectedBatch.monthlyFeeAmount.toLong()}", color = TextWhite, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                Text("CURRENT FEE", color = Color(0xFF9FB5CE), fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.6.sp)
+                                Text("BDT ${selectedBatch.monthlyFeeAmount.toLong()}", color = Color(0xFFF6F8FF), fontWeight = FontWeight.Bold, fontSize = 17.sp)
                             }
                             Column(horizontalAlignment = Alignment.End) {
-                                Text("NEW FEE", color = TextMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                Text("NEW FEE", color = Color(0xFF9FB5CE), fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.6.sp)
                                 Text(
                                     enteredAmount?.let { "BDT ${it.toLong()}" } ?: "Enter amount",
-                                    color = if (enteredAmount != null) Cyan else TextMuted,
+                                    color = if (enteredAmount != null) Color(0xFF81E8F2) else Color(0xFFAAB9D2),
                                     fontWeight = FontWeight.Bold,
-                                    fontSize = 16.sp,
+                                    fontSize = 17.sp,
                                 )
                             }
                         }
                     }
-                    Text("Effective from", color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                    listOf(
-                        "CURRENT" to "This month — $currentPeriod",
-                        "NEXT" to "Next month — $nextPeriod",
-                        "FUTURE" to "Choose a future month"
-                    ).forEach { (choice, label) ->
-                        FilterChip(
-                            selected = effectiveChoice == choice,
-                            onClick = { effectiveChoice = choice; errorMessage = null },
-                            label = { Text(label) },
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = ElectricBlue.copy(alpha = 0.24f),
-                                selectedLabelColor = TextWhite,
-                                containerColor = CardBgAlt,
-                                labelColor = TextMuted,
-                            ),
-                            border = FilterChipDefaults.filterChipBorder(
-                                enabled = true,
+                    Text("Effective from", color = Color(0xFFF6F8FF), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                        listOf(
+                            "CURRENT" to "This month — $currentPeriod",
+                            "NEXT" to "Next month — $nextPeriod",
+                            "FUTURE" to "Choose a future month"
+                        ).forEach { (choice, label) ->
+                            MonthlyFeeChoice(
+                                label = label,
                                 selected = effectiveChoice == choice,
-                                borderColor = BorderSub,
-                                selectedBorderColor = SkyBlue.copy(alpha = 0.82f),
-                            ),
-                        )
+                                onClick = { effectiveChoice = choice; errorMessage = null }
+                            )
+                        }
                     }
                     if (effectiveChoice == "FUTURE") {
                         Box(Modifier.fillMaxWidth()) {
@@ -3547,36 +3548,40 @@ private fun CustomMonthlyFeeDialogV18(
                             }
                         }
                     }
-                    Text("Reason for change", color = TextWhite, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                    Text("Choose one reason", color = TextMuted, fontSize = 11.sp)
-                    templates.chunked(2).forEach { row ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                            row.forEach { template ->
-                                FilterChip(
-                                    selected = reasonText.equals(template, ignoreCase = true),
-                                    onClick = { reasonText = template; errorMessage = null },
-                                    label = {
-                                        Text(
-                                            text = if (reasonText.equals(template, ignoreCase = true)) "✓ $template" else template,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            fontSize = 11.sp
-                                        )
-                                    },
-                                    modifier = Modifier.weight(1f),
-                                    colors = FilterChipDefaults.filterChipColors(
-                                        selectedContainerColor = ElectricBlue.copy(alpha = 0.24f),
-                                        selectedLabelColor = TextWhite,
-                                        containerColor = CardBgAlt,
-                                        labelColor = TextMuted
-                                    ),
-                                    border = FilterChipDefaults.filterChipBorder(
-                                        enabled = true,
-                                        selected = reasonText.equals(template, ignoreCase = true),
-                                        borderColor = BorderSub,
-                                        selectedBorderColor = SkyBlue.copy(alpha = 0.82f),
-                                    ),
-                                )
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text("Reason for change", color = Color(0xFFF6F8FF), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        Text("Choose one reason", color = Color(0xFFAAB9D2), fontSize = 11.sp)
+                    }
+                    Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                        templates.chunked(2).forEach { row ->
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                                row.forEach { template ->
+                                    val selected = reasonText.equals(template, ignoreCase = true)
+                                    Surface(
+                                        onClick = { reasonText = template; errorMessage = null },
+                                        modifier = Modifier.weight(1f).heightIn(min = 44.dp),
+                                        shape = RoundedCornerShape(11.dp),
+                                        color = if (selected) Color(0xFF25445A) else Color(0xFF121C2D),
+                                        border = BorderStroke(1.dp, if (selected) Cyan.copy(alpha = 0.74f) else Color(0xFF34445C))
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 9.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                        ) {
+                                            if (selected) Icon(Icons.Filled.Check, contentDescription = null, tint = Color(0xFF82E7EF), modifier = Modifier.size(14.dp))
+                                            Text(
+                                                template,
+                                                color = if (selected) Color(0xFFF5FBFF) else Color(0xFFBCC9DD),
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis,
+                                                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                                                fontSize = 11.sp,
+                                                lineHeight = 14.sp
+                                            )
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -3587,13 +3592,20 @@ private fun CustomMonthlyFeeDialogV18(
                         placeholder = { Text("Add a short note if needed") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
-                        colors = darkFieldColors()
+                        shape = RoundedCornerShape(14.dp),
+                        colors = monthlyFeeFieldColors()
                     )
-                    Text(
-                        "Past months cannot be changed. Paid or partly paid months are protected.",
-                        color = TextMuted,
-                        fontSize = 11.sp
-                    )
+                    Surface(shape = RoundedCornerShape(12.dp), color = Color(0xFF202D40)) {
+                        Row(Modifier.padding(11.dp), verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Icon(Icons.Filled.Info, contentDescription = null, tint = Color(0xFF93B8DD), modifier = Modifier.size(16.dp))
+                            Text(
+                                "Past months cannot be changed. Paid or partly paid months are protected.",
+                                color = Color(0xFFB8C6DD),
+                                fontSize = 11.sp,
+                                lineHeight = 16.sp
+                            )
+                        }
+                    }
                 }
                 errorMessage?.let { Text(it, color = DangerRed, fontSize = 12.sp) }
             }
@@ -3621,9 +3633,13 @@ private fun CustomMonthlyFeeDialogV18(
                         )
                     }
                 },
-                shape = RoundedCornerShape(14.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = SkyBlue, contentColor = BgColor)
-            ) { Text("Review change", fontWeight = FontWeight.Bold) }
+                shape = RoundedCornerShape(13.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF65D4EB), contentColor = Color(0xFF102030))
+            ) {
+                Text("Review change", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                Spacer(Modifier.width(5.dp))
+                Icon(Icons.Filled.ArrowForward, contentDescription = null, modifier = Modifier.size(16.dp))
+            }
         },
         dismissButton = {
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -3641,11 +3657,60 @@ private fun CustomMonthlyFeeDialogV18(
                         )
                     }) { Text("Use default fee", color = AccentAmber) }
                 }
-                TextButton(onClick = onDismiss) { Text("Cancel", color = TextMuted) }
+                TextButton(onClick = onDismiss) { Text("Cancel", color = Color(0xFFB8C6DD), fontWeight = FontWeight.SemiBold) }
             }
         }
     )
 }
+
+@Composable
+private fun MonthlyFeeChoice(label: String, selected: Boolean, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        color = if (selected) Color(0xFF223D59) else Color(0xFF121C2D),
+        border = BorderStroke(1.dp, if (selected) Color(0xFF69D4EA) else Color(0xFF34445C))
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 13.dp, vertical = 11.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Icon(
+                if (selected) Icons.Filled.RadioButtonChecked else Icons.Filled.RadioButtonUnchecked,
+                contentDescription = null,
+                tint = if (selected) Color(0xFF79E0F0) else Color(0xFF8192AB),
+                modifier = Modifier.size(18.dp)
+            )
+            Text(
+                label,
+                color = if (selected) Color(0xFFF5FBFF) else Color(0xFFBCC9DD),
+                fontSize = 13.sp,
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+@Composable
+private fun monthlyFeeFieldColors() = OutlinedTextFieldDefaults.colors(
+    focusedTextColor = TextWhite,
+    unfocusedTextColor = TextWhite,
+    focusedLabelColor = Color(0xFF81E8F2),
+    unfocusedLabelColor = Color(0xFFB8C6DD),
+    focusedPlaceholderColor = Color(0xFF8FA0B9),
+    unfocusedPlaceholderColor = Color(0xFF8FA0B9),
+    focusedLeadingIconColor = Color(0xFF81E8F2),
+    unfocusedLeadingIconColor = Color(0xFF9FB5CE),
+    focusedBorderColor = Color(0xFF69D4EA),
+    unfocusedBorderColor = Color(0xFF34445C),
+    focusedContainerColor = Color(0xFF111C2D),
+    unfocusedContainerColor = Color(0xFF111C2D),
+    cursorColor = Color(0xFF81E8F2)
+)
 
 @Composable
 private fun CustomMonthlyFeeDialog(

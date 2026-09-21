@@ -22,7 +22,8 @@ const QUESTION_TAXONOMY = Object.freeze({
   languages: ["bn", "en"],
   sourceTypes: ["manual", "teacher_note", "licensed_material", "ai_assisted"],
   reviewStatuses: ["draft", "teacher_reviewed", "pending_curation", "curated", "retired"],
-  requiredAcademicFields: ["curriculum", "syllabusYear", "className", "subject", "chapter", "topic"],
+  requiredAcademicFields: ["className", "subject", "chapter"],
+  optionalAcademicFields: ["curriculum", "syllabusYear", "chapterName", "topic"],
 });
 
 const CONTRIBUTION_TERMS = [
@@ -169,7 +170,11 @@ function anonymousQuestionPayload(question, nowMs) {
     className: cleanString(question.className, 120),
     subject: cleanString(question.subject, 160),
     chapter: cleanString(question.chapter, 200),
+    chapterName: cleanString(question.chapterName, 160),
     topic: cleanString(question.topic, 200),
+    patternKey: cleanString(question.patternKey, 80) || "standard",
+    patternVariant: cleanString(question.patternVariant, 120),
+    shortQuestionMarks: Number.isSafeInteger(question.shortQuestionMarks) ? question.shortQuestionMarks : 2,
     type: cleanString(question.type, 30),
     language: cleanString(question.language, 10),
     difficulty: cleanString(question.difficulty, 30),

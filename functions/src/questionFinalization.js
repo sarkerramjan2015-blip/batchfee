@@ -11,6 +11,16 @@ const {
 } = require("./questionBilling");
 
 const PROPOSED_RATE_POISHA = QUESTION_RATE_POISHA;
+const SUPPORTED_PATTERN_KEYS = new Set([
+  "standard",
+  "english_1st_seen_comprehension",
+  "english_1st_unseen_comprehension",
+  "english_1st_writing",
+  "english_2nd_grammar",
+  "english_2nd_composition",
+  "bangla_2nd_grammar_mcq",
+  "bangla_2nd_written",
+]);
 
 function cleanString(value, maxLength) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
@@ -29,6 +39,11 @@ function requiredString(value, label, maxLength) {
   const result = cleanString(value, maxLength);
   if (!result) throw new HttpsError("invalid-argument", `Invalid ${label}.`);
   return result;
+}
+
+function normalizePatternKey(value) {
+  const key = cleanString(value, 80).toLowerCase();
+  return SUPPORTED_PATTERN_KEYS.has(key) ? key : "standard";
 }
 
 function proposedCostPoisha(questionType, count) {
@@ -71,11 +86,15 @@ function normalizeQuestion(raw, questionType, instituteId) {
 function normalizeManualSetup(raw) {
   const totalMarks = Number(raw && raw.totalMarks);
   const durationMinutes = Number(raw && raw.durationMinutes);
+  const shortQuestionMarks = Number(raw && raw.shortQuestionMarks || 2);
   if (!Number.isSafeInteger(totalMarks) || totalMarks < 1 || totalMarks > 1000) {
     throw new HttpsError("invalid-argument", "Manual question setup requires total marks between 1 and 1000.");
   }
   if (!Number.isSafeInteger(durationMinutes) || durationMinutes < 1 || durationMinutes > 1440) {
     throw new HttpsError("invalid-argument", "Manual question setup requires a valid duration.");
+  }
+  if (!Number.isSafeInteger(shortQuestionMarks) || shortQuestionMarks < 1 || shortQuestionMarks > 100) {
+    throw new HttpsError("invalid-argument", "Short-question marks must be between 1 and 100.");
   }
   const language = cleanString(raw && raw.language, 10).toLowerCase() || "bn";
   if (!["bn", "en"].includes(language)) {
@@ -85,9 +104,14 @@ function normalizeManualSetup(raw) {
     examName: requiredString(raw && raw.examName, "exam name", 120),
     totalMarks,
     durationMinutes,
+    shortQuestionMarks,
     className: requiredString(raw && raw.className, "class name", 120),
     subject: requiredString(raw && raw.subject, "subject", 160),
     chapter: requiredString(raw && raw.chapter, "chapter", 200),
+    chapterName: cleanString(raw && raw.chapterName, 160),
+    topic: cleanString(raw && raw.topic, 160),
+    patternKey: normalizePatternKey(raw && raw.patternKey),
+    patternVariant: cleanString(raw && raw.patternVariant, 120),
     language,
   };
 }
@@ -196,6 +220,11 @@ function createQuestionFinalizationHandler({ db, authorize, now = Date.now }) {
         setup = input.manualSetup;
       }
       const totalMarks = input.questions.reduce((sum, question) => sum + question.marks, 0);
+      const expectedMarks = input.questionType === "mcq" ? 1 :
+        input.questionType === "creative" ? 10 : setup.shortQuestionMarks || 2;
+      if (input.questions.some((question) => question.marks !== expectedMarks)) {
+        throw new HttpsError("invalid-argument", `Each ${input.questionType} question must use ${expectedMarks} mark(s).`);
+      }
       if (!Number.isSafeInteger(setup.totalMarks) || totalMarks > setup.totalMarks) {
         throw new HttpsError("invalid-argument", "Selected question marks exceed the exam total.");
       }
@@ -243,7 +272,11 @@ function createQuestionFinalizationHandler({ db, authorize, now = Date.now }) {
           className: setup.className,
           subject: setup.subject,
           chapter: setup.chapter,
-          topic: "",
+          chapterName: setup.chapterName || "",
+          topic: setup.topic || "",
+          patternKey: setup.patternKey || "standard",
+          patternVariant: setup.patternVariant || "",
+          shortQuestionMarks: setup.shortQuestionMarks || 2,
           language: setup.language || "bn",
           type: input.questionType,
           ...question,

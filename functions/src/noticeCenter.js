@@ -104,6 +104,17 @@ function assertNoCredentialMaterial(value) {
   }
 }
 
+function normalizeSupportItem(data) {
+  const type = requiredString(data, "type", 24).toLowerCase();
+  if (!SUPPORT_ITEM_TYPES.has(type)) throw new HttpsError("invalid-argument", "Invalid feedback type.");
+  const title = requiredString(data, "title", 120);
+  const body = requiredString(data, "body", 2_000);
+  if (title.length < 2) throw new HttpsError("invalid-argument", "Write a short title (at least 2 characters).");
+  if (body.length < 10) throw new HttpsError("invalid-argument", "Please add a little more detail (at least 10 characters).");
+  assertNoCredentialMaterial(`${title}\n${body}`);
+  return { type, title, body };
+}
+
 function parseList(value, field, maxItems, maxLength = 128) {
   if (value == null) return [];
   if (!Array.isArray(value) || value.length > maxItems) {
@@ -615,11 +626,7 @@ async function listPlatformTutorials({ db, request }) {
 async function submitSupportItem({ db, request, operationId, requestHash, now }) {
   const recipient = await resolveTenantRecipient(db, request.auth);
   if (recipient.role !== "owner") throw new HttpsError("permission-denied", "Only an institute owner can submit product feedback.");
-  const type = requiredString(request.data, "type", 24).toLowerCase();
-  if (!SUPPORT_ITEM_TYPES.has(type)) throw new HttpsError("invalid-argument", "Invalid feedback type.");
-  const title = requiredString(request.data, "title", 120);
-  const body = requiredString(request.data, "body", 2_000);
-  assertNoCredentialMaterial(`${title}\n${body}`);
+  const { type, title, body } = normalizeSupportItem(request.data);
   const itemId = randomUUID();
   const itemRef = db.collection("platform_support_items").doc(itemId);
   const operationRef = db.collection("notice_center_operations").doc(operationId);
@@ -894,6 +901,7 @@ module.exports = {
   hasCredentialMaterial,
   isEligibleForNotice,
   normalizeAudience,
+  normalizeSupportItem,
   publicAdminNotice,
   publicNotice,
   publicSupportItem,

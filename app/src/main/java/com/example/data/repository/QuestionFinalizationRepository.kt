@@ -47,6 +47,11 @@ class QuestionFinalizationRepository(
                         "className" to setup.className,
                         "subject" to setup.subject,
                         "chapter" to setup.chapter,
+                        "chapterName" to setup.chapterName,
+                        "topic" to setup.topic,
+                        "patternKey" to setup.patternKey,
+                        "patternVariant" to setup.patternVariant,
+                        "shortQuestionMarks" to setup.shortQuestionMarks,
                         "language" to setup.language,
                     )
                 },

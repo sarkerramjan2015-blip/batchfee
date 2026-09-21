@@ -1,0 +1,44 @@
+
+D:\batchfee>if "Windows_NT" == "Windows_NT" setlocal
+
+D:\batchfee>set DIRNAME=D:\batchfee\ 
+
+D:\batchfee>if "D:\batchfee\" == "" set DIRNAME=. 
+
+D:\batchfee>set APP_BASE_NAME=gradlew 
+
+D:\batchfee>set APP_HOME=D:\batchfee\ 
+
+D:\batchfee>for %i in ("D:\batchfee\") do set APP_HOME=%~fi 
+
+D:\batchfee>set APP_HOME=D:\batchfee\ 
+
+D:\batchfee>set DEFAULT_JVM_OPTS="-Xmx64m" "-Xms64m" 
+
+D:\batchfee>if defined JAVA_HOME goto findJavaFromJavaHome 
+
+D:\batchfee>set JAVA_HOME=C:\Users\User\AppData\Local\BatchFeeTools\temurin-21.0.12.1\jdk-21.0.12.1+1 
+
+D:\batchfee>set JAVA_EXE=C:\Users\User\AppData\Local\BatchFeeTools\temurin-21.0.12.1\jdk-21.0.12.1+1/bin/java.exe 
+
+D:\batchfee>if exist "C:\Users\User\AppData\Local\BatchFeeTools\temurin-21.0.12.1\jdk-21.0.12.1+1/bin/java.exe" goto execute 
+
+D:\batchfee>set CLASSPATH=D:\batchfee\\gradle\wrapper\gradle-wrapper.jar 
+
+D:\batchfee>"C:\Users\User\AppData\Local\BatchFeeTools\temurin-21.0.12.1\jdk-21.0.12.1+1/bin/java.exe" "-Xmx64m" "-Xms64m"   "-Dorg.gradle.appname=gradlew" -classpath "D:\batchfee\\gradle\wrapper\gradle-wrapper.jar" org.gradle.wrapper.GradleWrapperMain :app:compileDebugKotlin --console=plain 
+Downloading https://services.gradle.org/distributions/gradle-9.3.1-bin.zip
+
+
+D:\batchfee>if 1 EQU 0 goto mainEnd 
+
+D:\batchfee>rem Set variable GRADLE_EXIT_CONSOLE if you need the _script_ return code instead of 
+
+D:\batchfee>rem the _cmd.exe /c_ return code! 
+
+D:\batchfee>set EXIT_CODE=1 
+
+D:\batchfee>if 1 EQU 0 set EXIT_CODE=1 
+
+D:\batchfee>if not "" == "" exit 1 
+
+D:\batchfee>exit /b 1 

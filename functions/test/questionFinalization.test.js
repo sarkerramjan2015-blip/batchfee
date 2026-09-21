@@ -52,6 +52,8 @@ function seedPreview(db, actorUid = "teacher-a", billingMode = "lifetime_free") 
       className: "Class 8",
       subject: "Science",
       chapter: "Light",
+      chapterName: "Light reflection",
+      topic: "Laws of reflection",
       language: "bn",
     },
     result: { questions: [{ id: "generated_01" }, { id: "generated_02" }] },
@@ -209,6 +211,8 @@ test("manual authoring saves without an AI preview or AI charge", async () => {
       className: "Class 8",
       subject: "Science",
       chapter: "Light",
+      chapterName: "Light reflection",
+      topic: "Laws of reflection",
       language: "bn",
     },
   }));
@@ -227,6 +231,9 @@ test("manual authoring saves without an AI preview or AI charge", async () => {
   assert.equal(saved.sourceType, "manual");
   assert.equal(saved.generationOperationId, null);
   assert.equal(saved.pricing.quotedCostPoisha, 0);
+  assert.equal(saved.chapter, "Light");
+  assert.equal(saved.chapterName, "Light reflection");
+  assert.equal(saved.topic, "Laws of reflection");
   assert.deepEqual(await handler(request([mcq("manual_question_01")], {
     generationOperationId: "manual_session_0001",
     operationId: "manual_finalize_0001",

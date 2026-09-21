@@ -319,6 +319,7 @@ private fun AdminQuestionCard(question: AdminBankQuestion, changing: Boolean, on
     Card(colors = CardDefaults.cardColors(containerColor = AdminCard), border = BorderStroke(1.dp, AdminBorder)) {
         Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(listOf(question.className, question.subject, question.chapter).filter(String::isNotBlank).joinToString(" · "), color = AdminCyan, fontSize = 12.sp)
+            if (question.chapterName.isNotBlank()) Text("Chapter title: ${question.chapterName}", color = AdminMuted, fontSize = 12.sp)
             Text(question.questionText, color = AdminText, fontWeight = FontWeight.SemiBold, maxLines = 3, overflow = TextOverflow.Ellipsis)
             Text("${question.type.uppercase()} · ${question.difficulty} · ${question.marks} mark(s)", color = AdminMuted, fontSize = 12.sp)
             OutlinedButton(

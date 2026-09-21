@@ -13,6 +13,7 @@ const {
   hasCredentialMaterial,
   isEligibleForNotice,
   normalizeAudience,
+  normalizeSupportItem,
   publicAdminNotice,
   publicNotice,
   publicSupportItem,
@@ -102,4 +103,19 @@ test("credential material is rejected from notices and feedback", () => {
   assert.equal(hasCredentialMaterial("Please reset a password"), true);
   assert.equal(hasCredentialMaterial("OTP is 123456"), true);
   assert.equal(hasCredentialMaterial("Need help with fee collection"), false);
+});
+
+test("feedback accepts a concise title and rejects incomplete submissions", () => {
+  assert.deepEqual(
+    normalizeSupportItem({ type: "suggestion", title: " hi ", body: " Useful feedback here. " }),
+    { type: "suggestion", title: "hi", body: "Useful feedback here." },
+  );
+  assert.throws(
+    () => normalizeSupportItem({ type: "suggestion", title: "h", body: "Useful feedback here." }),
+    /at least 2/i,
+  );
+  assert.throws(
+    () => normalizeSupportItem({ type: "complaint", title: "Bug", body: "too short" }),
+    /at least 10/i,
+  );
 });

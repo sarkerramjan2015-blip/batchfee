@@ -69,7 +69,7 @@ function matchesFilters(question, filters) {
       !equal(question.chapter, filters.chapter) || !equal(question.type, filters.type) ||
       !equal(question.difficulty, filters.difficulty)) return false;
   if (!filters.search) return true;
-  const haystack = [question.questionText, question.topic, question.chapter, question.subject]
+  const haystack = [question.questionText, question.topic, question.chapterName, question.chapter, question.subject]
     .map((value) => cleanString(value, 8000).toLocaleLowerCase()).join(" ");
   return haystack.includes(filters.search);
 }

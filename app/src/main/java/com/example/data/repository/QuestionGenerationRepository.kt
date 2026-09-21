@@ -41,18 +41,55 @@ data class QuestionGenerationSetup(
     val questionType: String,
     val questionCount: Int,
     val language: String = "bn",
+    val shortQuestionMarks: Int = 2,
+    val chapterName: String = "",
+    val topic: String = "",
+    val patternKey: String = "standard",
+    val patternVariant: String = "",
+    val questionLevel: String = "balanced",
 )
 
 /** Server-authorized AI generation. No client Storage permission or AI credential is needed. */
 class QuestionGenerationRepository(
     private val functions: FirebaseFunctions = FirebaseFunctions.getInstance("asia-south1"),
 ) {
+    /** Server-rendered ready-made prompt for the Create Questions chat box. No AI cost. */
+    suspend fun renderPromptPreview(
+        instituteId: String,
+        setup: QuestionGenerationSetup,
+    ): String {
+        val response = functions.getHttpsCallable("generateExamQuestions")
+            .withTimeout(20, TimeUnit.SECONDS)
+            .call(mapOf(
+                "op" to "preview_prompt",
+                "instituteId" to instituteId,
+                "examName" to setup.examName,
+                "totalMarks" to setup.totalMarks,
+                "durationMinutes" to setup.durationMinutes,
+                "className" to setup.className,
+                "subject" to setup.subject,
+                "chapter" to setup.chapter,
+                "chapterName" to setup.chapterName,
+                "topic" to setup.topic,
+                "patternKey" to setup.patternKey,
+                "patternVariant" to setup.patternVariant,
+                "questionType" to setup.questionType,
+                "questionCount" to setup.questionCount,
+                "language" to setup.language,
+                "shortQuestionMarks" to setup.shortQuestionMarks,
+                "questionLevel" to setup.questionLevel,
+            )).await()
+        val body = response.data as? Map<*, *> ?: error("Invalid prompt preview response.")
+        return body["prompt"] as? String ?: error("Missing prompt preview.")
+    }
+
     suspend fun generate(
         context: Context,
         instituteId: String,
         setup: QuestionGenerationSetup,
         pageUris: List<String>,
         operationId: String = UUID.randomUUID().toString(),
+        promptText: String? = null,
     ): QuestionGenerationPreview {
         require(pageUris.size in 1..2) { "Scan one or two pages first." }
         val sourcePages = withContext(Dispatchers.IO) {
@@ -75,9 +112,16 @@ class QuestionGenerationRepository(
                 "className" to setup.className,
                 "subject" to setup.subject,
                 "chapter" to setup.chapter,
+                "chapterName" to setup.chapterName,
+                "topic" to setup.topic,
+                "patternKey" to setup.patternKey,
+                "patternVariant" to setup.patternVariant,
                 "questionType" to setup.questionType,
                 "questionCount" to setup.questionCount,
                 "language" to setup.language,
+                "shortQuestionMarks" to setup.shortQuestionMarks,
+                "questionLevel" to setup.questionLevel,
+                "promptText" to promptText?.trim()?.takeIf { it.isNotBlank() },
                 "sourcePages" to sourcePages,
             )).await()
         val body = response.data as? Map<*, *> ?: error("Invalid AI generation response.")

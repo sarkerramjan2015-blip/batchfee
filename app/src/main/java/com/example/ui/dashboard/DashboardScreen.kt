@@ -65,7 +65,6 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import com.batchfee.edu.ui.components.BatchFeeBottomNav
 import com.batchfee.edu.ui.components.SquarePhotoCropDialog
-import com.example.ui.components.ShimmerBorderCard
 import com.batchfee.edu.domain.AccessControl
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -3136,37 +3135,113 @@ private fun HomeFullActionTile(
     icon: ImageVector,
     onClick: () -> Unit
 ) {
-    ShimmerBorderCard(
+    val shape = RoundedCornerShape(18.dp)
+    val violet = Color(0xFFAA9CFF)
+    val transition = rememberInfiniteTransition(label = "createQuestionsLight")
+    val lightPosition by transition.animateFloat(
+        initialValue = -0.35f,
+        targetValue = 1.35f,
+        animationSpec = infiniteRepeatable(tween(4400, easing = LinearEasing), RepeatMode.Restart),
+        label = "createQuestionsLightPosition"
+    )
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val pressScale by animateFloatAsState(
+        targetValue = if (pressed) 0.985f else 1f,
+        animationSpec = tween(150, easing = FastOutSlowInEasing),
+        label = "createQuestionsPress"
+    )
+
+    Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(58.dp),
-        shape = RoundedCornerShape(14.dp),
-        containerColor = DashboardCardAlt,
-        borderStops = listOf(
-            0f to Color.Transparent,
-            0.3f to AccentCyan.copy(alpha = 0.14f),
-            0.37f to AccentCyan,
-            0.44f to AccentCyan.copy(alpha = 0.14f),
-            0.5f to Color.Transparent,
-            0.8f to AccentBlue.copy(alpha = 0.14f),
-            0.87f to AccentBlue,
-            0.94f to AccentBlue.copy(alpha = 0.14f),
-            1f to Color.Transparent
-        ),
-        glowColor = AccentCyan,
-        contentPadding = PaddingValues(horizontal = 14.dp),
-        onClick = onClick
+            .height(74.dp)
+            .graphicsLayer(scaleX = pressScale, scaleY = pressScale)
+            .shadow(10.dp, shape, spotColor = violet.copy(alpha = 0.22f))
+            .clip(shape)
+            .background(
+                Brush.horizontalGradient(
+                    listOf(Color(0xFF181C38), Color(0xFF21294A), Color(0xFF151D34))
+                )
+            )
+            .clickable(interactionSource = interactionSource, indication = null, onClick = onClick)
     ) {
-        Icon(icon, contentDescription = null, tint = AccentCyan, modifier = Modifier.size(23.dp))
-        Spacer(Modifier.width(12.dp))
-        Text(
-            title,
-            color = TextPrimary,
-            fontSize = 16.sp,
-            fontWeight = FontWeight.Bold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
+        Canvas(Modifier.matchParentSize()) {
+            val x = size.width * lightPosition
+            val radius = 18.dp.toPx()
+            drawRect(
+                brush = Brush.linearGradient(
+                    colors = listOf(
+                        Color.Transparent,
+                        violet.copy(alpha = 0.075f),
+                        Color.White.copy(alpha = 0.11f),
+                        Color.Transparent
+                    ),
+                    start = Offset(x - 130.dp.toPx(), 0f),
+                    end = Offset(x + 40.dp.toPx(), size.height)
+                )
+            )
+            drawRoundRect(
+                color = violet.copy(alpha = 0.27f),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(radius),
+                style = Stroke(width = 1.dp.toPx())
+            )
+            drawRoundRect(
+                brush = Brush.linearGradient(
+                    colors = listOf(Color.Transparent, violet, Color(0xFF7DE4F2), Color.Transparent),
+                    start = Offset(x - 105.dp.toPx(), 0f),
+                    end = Offset(x + 105.dp.toPx(), size.height)
+                ),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(radius),
+                style = Stroke(width = 1.7.dp.toPx())
+            )
+        }
+        Row(
+            modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(43.dp)
+                    .clip(RoundedCornerShape(13.dp))
+                    .background(violet.copy(alpha = 0.14f))
+                    .border(1.dp, violet.copy(alpha = 0.33f), RoundedCornerShape(13.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(icon, contentDescription = null, tint = Color(0xFFD2C9FF), modifier = Modifier.size(24.dp))
+            }
+            Spacer(Modifier.width(13.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    title,
+                    style = androidx.compose.ui.text.TextStyle(
+                        brush = Brush.linearGradient(
+                            colors = listOf(Color(0xFFF0EEFF), Color.White, Color(0xFFF0EEFF)),
+                            start = Offset(lightPosition * 480f - 95f, 0f),
+                            end = Offset(lightPosition * 480f + 95f, 30f)
+                        ),
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 0.15.sp
+                    ),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    "Build an exam paper",
+                    color = Color(0xFFB8B7D7),
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Icon(
+                Icons.Filled.ArrowForward,
+                contentDescription = null,
+                tint = Color(0xFFD2C9FF),
+                modifier = Modifier.size(19.dp)
+            )
+        }
     }
 }
 
@@ -3235,27 +3310,34 @@ private fun AcademicQuestionPathDialog(
                         onClick = { selectedLevel = "SCHOOL" },
                     )
                 } else if (group != null) {
-                    val selectedClassName = if (level == "SCHOOL") group else "$level - $group"
+                    val selectedClassName = academicQuestionClassName(level.orEmpty(), group)
                     val subjects = academicSubjects(level.orEmpty(), group)
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         IconButton(onClick = { selectedGroup = null }) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = TextPrimary)
                         }
                         Column(Modifier.weight(1f)) {
-                            Text(selectedClassName, color = TextPrimary, fontSize = 21.sp, fontWeight = FontWeight.Bold)
+                            Text(
+                                if (level == "SCHOOL") selectedClassName else "$level - $group",
+                                color = TextPrimary,
+                                fontSize = 21.sp,
+                                fontWeight = FontWeight.Bold
+                            )
                             Text("Choose a subject", color = TextSecondary, fontSize = 13.sp)
                         }
                     }
                     Spacer(Modifier.height(14.dp))
-                    LazyColumn(
-                        modifier = Modifier.fillMaxWidth().heightIn(max = 410.dp),
-                        verticalArrangement = Arrangement.spacedBy(9.dp),
-                    ) {
-                        items(subjects, key = { it }) { subject ->
-                            AcademicSubjectChoice(
-                                subject = subject,
-                                onClick = { onSelected(selectedClassName, subject) },
-                            )
+                    key(level, group) {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxWidth().heightIn(max = 410.dp),
+                            verticalArrangement = Arrangement.spacedBy(9.dp),
+                        ) {
+                            items(subjects, key = { it }) { subject ->
+                                AcademicSubjectChoice(
+                                    subject = subject,
+                                    onClick = { onSelected(selectedClassName, subject) },
+                                )
+                            }
                         }
                     }
                 } else if (level == "SCHOOL") {
@@ -3287,10 +3369,17 @@ private fun AcademicQuestionPathDialog(
                         }
                         Column {
                             Text("$level Academic", color = TextPrimary, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                            Text("Choose your group", color = TextSecondary, fontSize = 13.sp)
+                            Text("Choose a subject category", color = TextSecondary, fontSize = 13.sp)
                         }
                     }
-                    Spacer(Modifier.height(18.dp))
+                    Spacer(Modifier.height(14.dp))
+                    AcademicLevelChoice(
+                        badge = "ALL",
+                        title = "Common Subjects",
+                        subtitle = "Bangla, English, ICT and other shared subjects",
+                        onClick = { selectedGroup = "Common Subjects" },
+                    )
+                    Spacer(Modifier.height(10.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         AcademicGroupChoice("Science", Icons.Filled.School, Modifier.weight(1f)) {
                             selectedGroup = "Science"
@@ -3304,8 +3393,8 @@ private fun AcademicQuestionPathDialog(
                         AcademicGroupChoice("Business Studies", Icons.Filled.AccountBalance, Modifier.weight(1f)) {
                             selectedGroup = "Business Studies"
                         }
-                        AcademicGroupChoice("General", Icons.Filled.Groups, Modifier.weight(1f)) {
-                            selectedGroup = "General"
+                        AcademicGroupChoice("Other Subjects", Icons.Filled.Groups, Modifier.weight(1f)) {
+                            selectedGroup = "Other Subjects"
                         }
                     }
                 }
@@ -3318,7 +3407,13 @@ private fun AcademicQuestionPathDialog(
     }
 }
 
-private fun academicSubjects(level: String, group: String): List<String> = when (level) {
+internal fun academicQuestionClassName(level: String, group: String): String = when {
+    level == "SCHOOL" -> group
+    group == "Common Subjects" || group == "Other Subjects" -> level
+    else -> "$level - $group"
+}
+
+internal fun academicSubjects(level: String, group: String): List<String> = when (level) {
     "SCHOOL" -> when (group) {
         "Class 3", "Class 4", "Class 5" -> listOf(
             "Bangla", "English", "Mathematics", "Primary Science",
@@ -3339,34 +3434,37 @@ private fun academicSubjects(level: String, group: String): List<String> = when 
             "General Mathematics", "Religion & Moral Education", "Information & Communication Technology",
         )
         when (group) {
-            "Science" -> common + listOf(
-                "Physics", "Chemistry", "Biology", "Higher Mathematics", "Bangladesh & Global Studies",
+            "Common Subjects" -> common
+            "Science" -> listOf(
+                "Physics", "Chemistry", "Biology", "Higher Mathematics",
             )
-            "Humanities" -> common + listOf(
-                "History", "Geography", "Civics", "Economics", "Sociology", "Agriculture",
+            "Humanities" -> listOf(
+                "History", "Geography", "Civics", "Economics", "Sociology",
             )
-            "Business Studies" -> common + listOf(
-                "Accounting", "Finance & Banking", "Business Entrepreneurship", "Agriculture",
+            "Business Studies" -> listOf(
+                "Accounting", "Finance & Banking", "Business Entrepreneurship",
             )
-            else -> common + listOf(
+            "Other Subjects" -> listOf(
                 "General Science", "Bangladesh & Global Studies", "Agriculture", "Home Science",
                 "Career Education", "Physical Education, Health & Sports",
             )
+            else -> emptyList()
         }
     }
-    else -> {
+    "HSC" -> {
         val common = listOf(
             "Bangla 1st Paper", "Bangla 2nd Paper", "English 1st Paper", "English 2nd Paper",
-            "Information & Communication Technology", "Statistics", "Home Science", "Agriculture",
+            "Information & Communication Technology",
         )
         when (group) {
-            "Science" -> common + listOf(
+            "Common Subjects" -> common
+            "Science" -> listOf(
                 "Physics 1st Paper", "Physics 2nd Paper",
                 "Chemistry 1st Paper", "Chemistry 2nd Paper",
                 "Biology 1st Paper", "Biology 2nd Paper",
                 "Higher Mathematics 1st Paper", "Higher Mathematics 2nd Paper",
             )
-            "Humanities" -> common + listOf(
+            "Humanities" -> listOf(
                 "History 1st Paper", "History 2nd Paper",
                 "Geography 1st Paper", "Geography 2nd Paper",
                 "Civics & Good Governance 1st Paper", "Civics & Good Governance 2nd Paper",
@@ -3377,20 +3475,21 @@ private fun academicSubjects(level: String, group: String): List<String> = when 
                 "Islamic History & Culture 1st Paper", "Islamic History & Culture 2nd Paper",
                 "Social Work 1st Paper", "Social Work 2nd Paper",
             )
-            "Business Studies" -> common + listOf(
+            "Business Studies" -> listOf(
                 "Accounting 1st Paper", "Accounting 2nd Paper",
                 "Business Organization & Management 1st Paper", "Business Organization & Management 2nd Paper",
                 "Finance, Banking & Insurance 1st Paper", "Finance, Banking & Insurance 2nd Paper",
                 "Production Management & Marketing 1st Paper", "Production Management & Marketing 2nd Paper",
             )
-            else -> common + listOf(
-                "Economics 1st Paper", "Economics 2nd Paper",
-                "Logic 1st Paper", "Logic 2nd Paper",
-                "Psychology 1st Paper", "Psychology 2nd Paper",
-                "Social Work 1st Paper", "Social Work 2nd Paper",
+            "Other Subjects" -> listOf(
+                "Statistics 1st Paper", "Statistics 2nd Paper",
+                "Home Science 1st Paper", "Home Science 2nd Paper",
+                "Agriculture 1st Paper", "Agriculture 2nd Paper",
             )
+            else -> emptyList()
         }
     }
+    else -> emptyList()
 }
 
 @Composable

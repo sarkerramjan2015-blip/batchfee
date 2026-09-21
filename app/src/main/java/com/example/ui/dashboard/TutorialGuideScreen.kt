@@ -1,9 +1,12 @@
 package com.batchfee.edu.ui.dashboard
 
 import android.graphics.Color as AndroidColor
+import android.view.View
+import android.view.ViewGroup
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -29,6 +32,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.VideoLibrary
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -45,6 +49,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -60,6 +65,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.batchfee.edu.data.firebase.FirebaseFailureReporter
 import com.batchfee.edu.data.repository.AppTutorial
 import com.batchfee.edu.data.repository.NoticeCenterRepository
@@ -291,6 +298,54 @@ private fun TutorialPlayerDialog(tutorial: AppTutorial, onDismiss: () -> Unit) {
 @Composable
 private fun EmbeddedYouTubeTutorial(videoId: String, videoLayout: String) {
     val isPortrait = videoLayout == "portrait"
+    var playerWebView by remember(videoId) { mutableStateOf<WebView?>(null) }
+    var fullScreenView by remember(videoId) { mutableStateOf<View?>(null) }
+    var fullScreenCallback by remember(videoId) {
+        mutableStateOf<WebChromeClient.CustomViewCallback?>(null)
+    }
+
+    val closeFullScreen: () -> Unit = {
+        val callback = fullScreenCallback
+        fullScreenView = null
+        fullScreenCallback = null
+        callback?.onCustomViewHidden()
+    }
+    val playerChromeClient = remember(videoId) {
+        object : WebChromeClient() {
+            override fun onShowCustomView(
+                view: View?,
+                callback: CustomViewCallback?
+            ) {
+                if (view == null || callback == null) return
+                if (fullScreenView != null) {
+                    callback.onCustomViewHidden()
+                    return
+                }
+                fullScreenView = view
+                fullScreenCallback = callback
+            }
+
+            override fun onHideCustomView() {
+                fullScreenView = null
+                fullScreenCallback = null
+            }
+        }
+    }
+
+    DisposableEffect(videoId) {
+        onDispose {
+            fullScreenCallback?.onCustomViewHidden()
+            fullScreenView = null
+            fullScreenCallback = null
+            playerWebView?.apply {
+                stopLoading()
+                loadUrl("about:blank")
+                destroy()
+            }
+            playerWebView = null
+        }
+    }
+
     Box(
         modifier = Modifier.fillMaxWidth(),
         contentAlignment = Alignment.Center
@@ -315,21 +370,98 @@ private fun EmbeddedYouTubeTutorial(videoId: String, videoLayout: String) {
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
                 settings.mediaPlaybackRequiresUserGesture = true
+                settings.allowFileAccess = false
+                settings.allowContentAccess = false
                 webViewClient = WebViewClient()
-                webChromeClient = WebChromeClient()
+                webChromeClient = playerChromeClient
                 tag = videoId
-                loadUrl(youtubeEmbedUrl(videoId))
+                loadYouTubePlayer(videoId)
+                playerWebView = this
             }
         },
         update = { webView ->
             if (webView.tag != videoId) {
                 webView.tag = videoId
-                webView.loadUrl(youtubeEmbedUrl(videoId))
+                webView.loadYouTubePlayer(videoId)
             }
         }
         )
     }
+
+    fullScreenView?.let { videoView ->
+        Dialog(
+            onDismissRequest = closeFullScreen,
+            properties = DialogProperties(
+                dismissOnBackPress = false,
+                dismissOnClickOutside = false,
+                usePlatformDefaultWidth = false,
+                decorFitsSystemWindows = false
+            )
+        ) {
+            BackHandler(onBack = closeFullScreen)
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black)
+            ) {
+                AndroidView(
+                    modifier = Modifier.fillMaxSize(),
+                    factory = {
+                        (videoView.parent as? ViewGroup)?.removeView(videoView)
+                        videoView
+                    }
+                )
+                IconButton(
+                    onClick = closeFullScreen,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(18.dp)
+                        .size(42.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Color.Black.copy(alpha = 0.58f))
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Close,
+                        contentDescription = "Exit full screen",
+                        tint = Color.White
+                    )
+                }
+            }
+        }
+    }
 }
 
-private fun youtubeEmbedUrl(videoId: String): String =
-    "https://www.youtube-nocookie.com/embed/$videoId?playsinline=1&rel=0&modestbranding=1&controls=1&fs=1&iv_load_policy=3"
+private const val YOUTUBE_PLAYER_BASE_URL = "https://batchfee-477b8.web.app/"
+
+private fun WebView.loadYouTubePlayer(videoId: String) {
+    loadDataWithBaseURL(
+        YOUTUBE_PLAYER_BASE_URL,
+        youtubePlayerHtml(videoId),
+        "text/html",
+        "UTF-8",
+        null
+    )
+}
+
+private fun youtubePlayerHtml(videoId: String): String = """
+    <!doctype html>
+    <html>
+      <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+        <meta name="referrer" content="strict-origin-when-cross-origin">
+        <style>
+          html, body { width: 100%; height: 100%; margin: 0; background: #000; overflow: hidden; }
+          iframe { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; }
+        </style>
+      </head>
+      <body>
+        <iframe
+          src="https://www.youtube-nocookie.com/embed/$videoId?playsinline=1&amp;rel=0&amp;controls=1&amp;fs=1&amp;enablejsapi=1&amp;origin=https%3A%2F%2Fbatchfee-477b8.web.app&amp;widget_referrer=https%3A%2F%2Fbatchfee-477b8.web.app%2F"
+          title="BatchFee tutorial video"
+          referrerpolicy="strict-origin-when-cross-origin"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+          allowfullscreen>
+        </iframe>
+      </body>
+    </html>
+""".trimIndent()

@@ -389,6 +389,9 @@ fun ProductFeedbackScreen(onBack: () -> Unit) {
     var title by remember { mutableStateOf("") }
     var body by remember { mutableStateOf("") }
     var sending by remember { mutableStateOf(false) }
+    val cleanTitle = title.trim()
+    val cleanBody = body.trim()
+    val canSubmit = cleanTitle.length >= 2 && cleanBody.length >= 10
 
     Scaffold(
         containerColor = NoticeScreenBg,
@@ -427,12 +430,28 @@ fun ProductFeedbackScreen(onBack: () -> Unit) {
                     OutlinedTextField(
                         value = title, onValueChange = { if (it.length <= 120) title = it },
                         label = { Text("Short title") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                        supportingText = {
+                            Text(
+                                if (title.isNotEmpty() && cleanTitle.length < 2) "Enter at least 2 characters."
+                                else "${title.length}/120"
+                            )
+                        },
+                        isError = title.isNotEmpty() && cleanTitle.length < 2,
                         colors = feedbackFieldColors()
                     )
                     OutlinedTextField(
                         value = body, onValueChange = { if (it.length <= 2_000) body = it },
                         label = { Text(if (type == "suggestion") "What would make BatchFee better?" else "What happened? Include safe steps to reproduce.") },
-                        minLines = 6, modifier = Modifier.fillMaxWidth(), colors = feedbackFieldColors()
+                        minLines = 6,
+                        modifier = Modifier.fillMaxWidth(),
+                        supportingText = {
+                            Text(
+                                if (body.isNotEmpty() && cleanBody.length < 10) "Add ${10 - cleanBody.length} more character${if (10 - cleanBody.length == 1) "" else "s"}."
+                                else "${body.length}/2000"
+                            )
+                        },
+                        isError = body.isNotEmpty() && cleanBody.length < 10,
+                        colors = feedbackFieldColors()
                     )
                     Card(
                         colors = CardDefaults.cardColors(containerColor = NoticeAmber.copy(alpha = 0.10f)),
@@ -462,7 +481,7 @@ fun ProductFeedbackScreen(onBack: () -> Unit) {
                                 sending = false
                             }
                         },
-                        enabled = !sending && title.trim().length >= 3 && body.trim().length >= 10,
+                        enabled = !sending && canSubmit,
                         modifier = Modifier.fillMaxWidth().height(48.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = NoticeBlue),
                         shape = RoundedCornerShape(12.dp)

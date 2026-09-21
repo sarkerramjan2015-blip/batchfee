@@ -1,0 +1,29 @@
+<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+<hierarchy rotation="0">
+<node index="0" text="" resource-id="" class="android.widget.FrameLayout" package="com.batchfee.edu" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[100,864][980,1546]" drawing-order="0" hint="">
+<node index="0" text="" resource-id="" class="android.widget.FrameLayout" package="com.batchfee.edu" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[100,864][980,1546]" drawing-order="1" hint="">
+<node index="0" text="" resource-id="android:id/content" class="android.widget.FrameLayout" package="com.batchfee.edu" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[100,864][980,1546]" drawing-order="1" hint="">
+<node index="0" text="" resource-id="" class="android.view.ViewGroup" package="com.batchfee.edu" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[100,864][980,1546]" drawing-order="1" hint="">
+<node index="0" text="" resource-id="" class="android.view.View" package="com.batchfee.edu" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[100,864][980,1546]" drawing-order="0" hint="">
+<node index="0" text="" resource-id="" class="android.view.View" package="com.batchfee.edu" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[100,864][980,1546]" drawing-order="0" hint="">
+<node index="0" text="" resource-id="" class="android.view.View" package="com.batchfee.edu" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[100,864][980,1546]" drawing-order="0" hint="">
+<node index="0" text="" resource-id="" class="android.view.View" package="com.batchfee.edu" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[100,864][980,1546]" drawing-order="0" hint="">
+<node index="0" text="Mark student inactive?" resource-id="" class="android.widget.TextView" package="com.batchfee.edu" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[166,930][839,1018]" drawing-order="0" hint="" />
+<node index="1" text="The student stays in the Students list with an Inactive status but leaves attendance and active student counts. Fees, receipts and complete history will remain safe." resource-id="" class="android.widget.TextView" package="com.batchfee.edu" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[166,1062][914,1282]" drawing-order="0" hint="" />
+<node index="2" text="" resource-id="" class="android.view.View" package="com.batchfee.edu" content-desc="" checkable="false" checked="false" clickable="true" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[408,1348][593,1480]" drawing-order="0" hint="">
+<node index="0" text="Cancel" resource-id="" class="android.widget.TextView" package="com.batchfee.edu" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[441,1387][560,1442]" drawing-order="0" hint="" />
+<node index="1" text="" resource-id="" class="android.widget.Button" package="com.batchfee.edu" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[408,1359][593,1469]" drawing-order="0" hint="" />
+</node>
+<node index="3" text="" resource-id="" class="android.view.View" package="com.batchfee.edu" content-desc="" checkable="false" checked="false" clickable="true" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[615,1348][914,1480]" drawing-order="0" hint="">
+<node index="0" text="Mark inactive" resource-id="" class="android.widget.TextView" package="com.batchfee.edu" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[648,1387][881,1442]" drawing-order="0" hint="" />
+<node index="1" text="" resource-id="" class="android.widget.Button" package="com.batchfee.edu" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[615,1359][914,1469]" drawing-order="0" hint="" />
+</node>
+</node>
+</node>
+</node>
+</node>
+</node>
+</node>
+</node>
+</node>
+</hierarchy>
