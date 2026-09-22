@@ -48,6 +48,18 @@ internal enum class QuestionPaperFontSize(val label: String, val points: Float) 
     LARGE("Large", 14f),
 }
 
+/** Bangla font choices for the paper. Missing asset files fall back to the system default. */
+internal enum class QuestionPaperFont(
+    val label: String,
+    val regularAsset: String?,
+    val boldAsset: String?,
+) {
+    DEFAULT("Default", null, null),
+    KALPURUSH("Kalpurush", "fonts/Kalpurush.ttf", "fonts/Kalpurush.ttf"),
+    SOLAIMAN_LIPI("SolaimanLipi", "fonts/SolaimanLipi.ttf", "fonts/SolaimanLipi.ttf"),
+    HIND_SILIGURI("Hind Siliguri", "fonts/HindSiliguri-Regular.ttf", "fonts/HindSiliguri-Bold.ttf"),
+}
+
 internal data class QuestionPaperSetup(
     val examName: String,
     val className: String,
@@ -58,8 +70,20 @@ internal data class QuestionPaperSetup(
     val paperSize: QuestionPaperSize = QuestionPaperSize.A4,
     val margin: QuestionPaperMargin = QuestionPaperMargin.STANDARD,
     val fontSize: QuestionPaperFontSize = QuestionPaperFontSize.STANDARD,
+    val font: QuestionPaperFont = QuestionPaperFont.HIND_SILIGURI,
+    val columns: Int = 1,
+    val showPageBorder: Boolean = false,
     val includeAnswerKey: Boolean = false,
 )
+
+private fun loadPaperTypeface(context: Context, asset: String?): Typeface? {
+    if (asset.isNullOrBlank()) return null
+    return try {
+        Typeface.createFromAsset(context.assets, asset)
+    } catch (_: Exception) {
+        null
+    }
+}
 
 /**
  * Generates an institute-owned question paper. The visual document intentionally
@@ -78,13 +102,16 @@ internal suspend fun generateQuestionPaperPdf(
     val pageSize = setup.paperSize
     val margin = setup.margin.points
     val contentWidth = pageSize.width - (margin * 2)
+    val faceRegular = loadPaperTypeface(context, setup.font.regularAsset) ?: Typeface.DEFAULT
+    val faceBold = loadPaperTypeface(context, setup.font.boldAsset)
+        ?: Typeface.create(faceRegular, Typeface.BOLD)
     val questionText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.rgb(15, 23, 42)
         textSize = setup.fontSize.points
-        typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
+        typeface = faceRegular
     }
-    val questionBold = Paint(questionText).apply { typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD) }
-    val muted = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(71, 85, 105); textSize = setup.fontSize.points * .78f }
+    val questionBold = Paint(questionText).apply { typeface = faceBold }
+    val muted = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(71, 85, 105); textSize = setup.fontSize.points * .78f; typeface = faceRegular }
     val generatedAt = SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault()).format(Date())
     val allQuestions = questions.filter { it.selected }
     var pageNumber = 0
@@ -99,6 +126,15 @@ internal suspend fun generateQuestionPaperPdf(
         canvas = page!!.canvas
         val target = canvas!!
         target.drawColor(Color.WHITE)
+        if (setup.showPageBorder) {
+            val border = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.rgb(8, 145, 178)
+                style = Paint.Style.STROKE
+                strokeWidth = 1.4f
+            }
+            val inset = margin * 0.55f
+            target.drawRect(inset, inset, pageSize.width - inset, pageSize.height - inset, border)
+        }
         drawQuestionPaperWatermark(target, institute.name, pageSize.width.toFloat(), pageSize.height.toFloat())
         drawQuestionPaperHeader(
             canvas = target,
@@ -108,6 +144,8 @@ internal suspend fun generateQuestionPaperPdf(
             sectionLabel = sectionLabel,
             pageWidth = pageSize.width.toFloat(),
             margin = margin,
+            faceRegular = faceRegular,
+            faceBold = faceBold,
         )
         drawQuestionPaperFooter(
             canvas = target,
@@ -127,7 +165,7 @@ internal suspend fun generateQuestionPaperPdf(
                 if (setup.totalMarks > 0) add("Total marks: ${setup.totalMarks}")
                 if (setup.durationMinutes > 0) add("Time: ${setup.durationMinutes} min")
             }
-            val infoPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(30, 41, 59); textSize = 8.5f }
+            val infoPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(30, 41, 59); textSize = 8.5f; typeface = faceRegular }
             val infoBox = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(240, 249, 255) }
             val infoStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(186, 230, 253); style = Paint.Style.STROKE; strokeWidth = 1f }
             target.drawRoundRect(RectF(margin, y, pageSize.width - margin, y + 38f), 7f, 7f, infoBox)
@@ -136,11 +174,11 @@ internal suspend fun generateQuestionPaperPdf(
             y += 54f
             val rule = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(8, 145, 178); strokeWidth = 2f }
             target.drawLine(margin, y, margin + 44f, y, rule)
-            val instruction = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(15, 23, 42); textSize = 9f; typeface = Typeface.DEFAULT_BOLD }
+            val instruction = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(15, 23, 42); textSize = 9f; typeface = faceBold }
             target.drawText("Answer all questions.", margin + 54f, y + 3f, instruction)
             y += 24f
         } else {
-            val note = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(71, 85, 105); textSize = 9f }
+            val note = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(71, 85, 105); textSize = 9f; typeface = faceRegular }
             target.drawText("For teacher use - do not distribute with the question paper.", margin, y, note)
             y += 24f
         }
@@ -151,15 +189,57 @@ internal suspend fun generateQuestionPaperPdf(
         page = null
     }
 
-    try {
-        startPage("QUESTION PAPER")
+    fun drawSingleColumn() {
         allQuestions.forEachIndexed { index, question ->
             val estimated = questionPaperQuestionHeight(question, index + 1, contentWidth, questionText, questionBold)
             if (y + estimated > pageSize.height - margin - 28f) startPage("QUESTION PAPER")
             val target = canvas ?: error("PDF page is unavailable.")
-            y = drawQuestionPaperQuestion(target, y, index + 1, question, contentWidth, margin, questionText, questionBold)
+            y = drawQuestionPaperQuestion(
+                canvas = target,
+                startY = y,
+                index = index + 1,
+                question = question,
+                columnX = margin,
+                columnWidth = contentWidth,
+                body = questionText,
+                bold = questionBold,
+            )
             y += setup.fontSize.points * .85f
         }
+    }
+
+    fun drawTwoColumns() {
+        val gap = 16f
+        val columnWidth = (contentWidth - gap) / 2f
+        val bottomLimit = pageSize.height - margin - 28f
+        var leftY = y
+        var rightY = y
+        allQuestions.forEachIndexed { index, question ->
+            val estimated = questionPaperQuestionHeight(question, index + 1, columnWidth, questionText, questionBold)
+            val fitsLeft = leftY + estimated <= bottomLimit
+            val fitsRight = rightY + estimated <= bottomLimit
+            if (!fitsLeft && !fitsRight) {
+                startPage("QUESTION PAPER")
+                leftY = y
+                rightY = y
+            }
+            val target = canvas ?: error("PDF page is unavailable.")
+            if (leftY <= rightY && leftY + estimated <= bottomLimit) {
+                leftY = drawQuestionPaperQuestion(target, leftY, index + 1, question, margin, columnWidth, questionText, questionBold)
+                leftY += setup.fontSize.points * .85f
+            } else if (rightY + estimated <= bottomLimit) {
+                rightY = drawQuestionPaperQuestion(target, rightY, index + 1, question, margin + columnWidth + gap, columnWidth, questionText, questionBold)
+                rightY += setup.fontSize.points * .85f
+            } else {
+                leftY = drawQuestionPaperQuestion(target, leftY, index + 1, question, margin, columnWidth, questionText, questionBold)
+                leftY += setup.fontSize.points * .85f
+            }
+        }
+    }
+
+    try {
+        startPage("QUESTION PAPER")
+        if (setup.columns >= 2) drawTwoColumns() else drawSingleColumn()
         if (setup.includeAnswerKey) {
             startPage("ANSWER KEY")
             allQuestions.forEachIndexed { index, question ->
@@ -187,6 +267,7 @@ internal suspend fun generateQuestionPaperPdf(
     }
 }
 
+/** Saves the generated PDF into Downloads/Question Papers. Works on API 24+. */
 internal fun downloadQuestionPaperPdf(context: Context, file: File, displayName: String): Uri {
     require(file.exists()) { "Question paper PDF is no longer available. Generate it again." }
     val name = displayName.replace(Regex("[^A-Za-z0-9_-]"), "_").take(60).ifBlank { "question_paper" } + ".pdf"
@@ -195,19 +276,27 @@ internal fun downloadQuestionPaperPdf(context: Context, file: File, displayName:
             put(MediaStore.Downloads.DISPLAY_NAME, name)
             put(MediaStore.Downloads.MIME_TYPE, "application/pdf")
             put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/Question Papers")
+            put(MediaStore.Downloads.IS_PENDING, 1)
         }
         val uri = context.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
             ?: error("Could not create the download file.")
         try {
-            context.contentResolver.openOutputStream(uri)?.use { output -> file.inputStream().use { it.copyTo(output) } }
-                ?: error("Could not save the PDF.")
+            context.contentResolver.openOutputStream(uri)?.use { output ->
+                file.inputStream().use { it.copyTo(output) }
+            } ?: error("Could not save the PDF.")
+            values.clear()
+            values.put(MediaStore.Downloads.IS_PENDING, 0)
+            context.contentResolver.update(uri, values, null, null)
             uri
         } catch (error: Throwable) {
-            context.contentResolver.delete(uri, null, null)
+            runCatching { context.contentResolver.delete(uri, null, null) }
             throw error
         }
     } else {
-        FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        val downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+        val target = File(File(downloads, "Question Papers").apply { mkdirs() }, name)
+        file.inputStream().use { input -> FileOutputStream(target).use(input::copyTo) }
+        FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", target)
     }
 }
 
@@ -231,23 +320,25 @@ private fun drawQuestionPaperHeader(
     sectionLabel: String,
     pageWidth: Float,
     margin: Float,
+    faceRegular: Typeface,
+    faceBold: Typeface,
 ) {
     val navy = Color.rgb(8, 29, 51)
     val cyan = Color.rgb(6, 182, 212)
     val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = navy }
     canvas.drawRect(0f, 0f, pageWidth, margin + 56f, fill)
     drawLogo(canvas, logo, institute.name, margin, margin - 14f, 44f, navy, cyan)
-    val institutePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; textSize = 15f; typeface = Typeface.DEFAULT_BOLD }
+    val institutePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; textSize = 15f; typeface = faceBold }
     canvas.drawText(questionPaperEllipsize(institute.name, institutePaint, pageWidth * .48f), margin + 56f, margin + 10f, institutePaint)
     val detail = listOfNotNull(
         institute.instituteCode?.takeIf { it.isNotBlank() },
         institute.phone?.takeIf { it.isNotBlank() },
     ).joinToString("  |  ")
-    val detailPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(165, 243, 252); textSize = 7.5f }
+    val detailPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(165, 243, 252); textSize = 7.5f; typeface = faceRegular }
     canvas.drawText(questionPaperEllipsize(detail, detailPaint, pageWidth * .48f), margin + 56f, margin + 25f, detailPaint)
-    val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; textSize = 13f; typeface = Typeface.DEFAULT_BOLD; textAlign = Paint.Align.RIGHT }
+    val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; textSize = 13f; typeface = faceBold; textAlign = Paint.Align.RIGHT }
     canvas.drawText(questionPaperEllipsize(title.ifBlank { "Question Paper" }, titlePaint, pageWidth * .36f), pageWidth - margin, margin + 8f, titlePaint)
-    val sectionPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(165, 243, 252); textSize = 8f; textAlign = Paint.Align.RIGHT }
+    val sectionPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(165, 243, 252); textSize = 8f; textAlign = Paint.Align.RIGHT; typeface = faceRegular }
     canvas.drawText(sectionLabel, pageWidth - margin, margin + 25f, sectionPaint)
 }
 
@@ -287,26 +378,26 @@ private fun drawQuestionPaperQuestion(
     startY: Float,
     index: Int,
     question: ReviewableQuestion,
-    contentWidth: Float,
-    margin: Float,
+    columnX: Float,
+    columnWidth: Float,
     body: Paint,
     bold: Paint,
 ): Float {
-    var y = drawQuestionPaperWrapped(canvas, "$index. ${question.questionText.trim()}", margin, startY, contentWidth, bold, body.textSize + 4f, 20)
+    var y = drawQuestionPaperWrapped(canvas, "$index. ${question.questionText.trim()}", columnX, startY, columnWidth, bold, body.textSize + 4f, 20)
     if (question.options.isNotEmpty()) {
         question.options.forEachIndexed { optionIndex, option ->
             val label = "${('A'.code + optionIndex).toChar()}. ${option.trim()}"
-            y = drawQuestionPaperWrapped(canvas, label, margin + 16f, y + 1f, contentWidth - 16f, body, body.textSize + 3f, 6)
+            y = drawQuestionPaperWrapped(canvas, label, columnX + 14f, y + 1f, columnWidth - 14f, body, body.textSize + 3f, 6)
         }
     }
     val marks = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(8, 145, 178); textSize = body.textSize * .78f; textAlign = Paint.Align.RIGHT; typeface = Typeface.DEFAULT_BOLD }
-    canvas.drawText("[${question.marks}]", margin + contentWidth, startY + body.textSize, marks)
+    canvas.drawText("[${question.marks}]", columnX + columnWidth, startY + body.textSize, marks)
     return y
 }
 
 private fun questionPaperQuestionHeight(question: ReviewableQuestion, index: Int, contentWidth: Float, body: Paint, bold: Paint): Float {
     var height = questionPaperLineCount("$index. ${question.questionText.trim()}", contentWidth, bold) * (body.textSize + 4f)
-    question.options.forEach { option -> height += questionPaperLineCount(option.trim(), contentWidth - 16f, body) * (body.textSize + 3f) }
+    question.options.forEach { option -> height += questionPaperLineCount(option.trim(), contentWidth - 14f, body) * (body.textSize + 3f) }
     return height + body.textSize * 1.8f
 }
 

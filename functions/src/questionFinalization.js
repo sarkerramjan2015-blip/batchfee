@@ -6,6 +6,7 @@ const { parseMediaReference } = require("./mediaSecurityCore");
 const {
   QUESTION_WALLET_DOCUMENT,
   QUESTION_RATE_POISHA,
+  MANUAL_QUESTION_RATE_POISHA,
   normalizedWallet,
   questionCostPoisha,
 } = require("./questionBilling");
@@ -143,7 +144,9 @@ function canonicalFinalizationRequest(data) {
     manualSetup: sourceType === "manual" ? normalizeManualSetup(data && data.manualSetup) : null,
     questionType,
     questions,
-    costPoisha: sourceType === "manual" ? 0 : proposedCostPoisha(questionType, questions.length),
+    costPoisha: sourceType === "manual" ?
+      MANUAL_QUESTION_RATE_POISHA * questions.length :
+      proposedCostPoisha(questionType, questions.length),
   };
 }
 
@@ -154,8 +157,10 @@ function finalizedQuestionId(operationId, sourceQuestionId) {
 /**
  * Saves teacher-reviewed questions to the private bank atomically and lets the
  * existing document trigger anonymously enqueue them for Super Admin review.
- * The first five lifetime AI attempts are free. Later attempts debit the
- * separate question wallet atomically when reviewed questions are finalized.
+ * The first five lifetime AI attempts are free. Later AI attempts debit the
+ * separate question wallet per the rate card. Manually created questions always
+ * pay the BDT 1.00 platform fee from the same wallet at finalization. Every
+ * wallet debit also records an immutable platform revenue event.
  */
 function createQuestionFinalizationHandler({ db, authorize, now = Date.now }) {
   return async function finalizeExamQuestions(request) {
@@ -170,10 +175,13 @@ function createQuestionFinalizationHandler({ db, authorize, now = Date.now }) {
     const finalizationRef = instituteRef.collection("question_finalization_operations").doc(input.operationId);
     const walletRef = instituteRef.collection("question_bank_wallet").doc(QUESTION_WALLET_DOCUMENT);
     const walletLedgerRef = instituteRef.collection("question_bank_wallet_ledger").doc(`debit_${input.operationId}`);
+    const revenueEventRef = db.collection("platform_question_revenue").doc(`charge_${input.operationId}`);
+    const revenueSummaryRef = db.collection("platform_question_revenue").doc("_summary");
 
     return db.runTransaction(async (tx) => {
-      const [generationSnap, consentSnap, finalizationSnap, walletSnap] = await Promise.all([
+      const [generationSnap, consentSnap, finalizationSnap, walletSnap, revenueSummarySnap] = await Promise.all([
         tx.get(generationRef), tx.get(consentRef), tx.get(finalizationRef), tx.get(walletRef),
+        tx.get(revenueSummaryRef),
       ]);
       if (finalizationSnap.exists) {
         const saved = finalizationSnap.data();
@@ -230,16 +238,20 @@ function createQuestionFinalizationHandler({ db, authorize, now = Date.now }) {
       }
 
       const timestamp = now();
-      const chargedCostPoisha = billingMode === "wallet" ? input.costPoisha : 0;
+      // Manual questions always pay the BDT 1 platform fee from the question
+      // wallet; AI questions pay the rate card only when the preview was
+      // created outside the lifetime free attempts.
+      const chargedCostPoisha = input.sourceType === "manual" ? input.costPoisha :
+        billingMode === "wallet" ? input.costPoisha : 0;
       const wallet = normalizedWallet(walletSnap.exists ? walletSnap.data() : null);
       if (chargedCostPoisha > wallet.balancePoisha) {
         throw new HttpsError(
           "resource-exhausted",
-          `Insufficient question wallet balance. Required BDT ${(chargedCostPoisha / 100).toFixed(2)}, available BDT ${(wallet.balancePoisha / 100).toFixed(2)}.`,
+          `Insufficient question wallet balance. Required BDT ${(chargedCostPoisha / 100).toFixed(2)}, available BDT ${(wallet.balancePoisha / 100).toFixed(2)}. Top up the question wallet to continue.`,
         );
       }
       const remainingBalancePoisha = wallet.balancePoisha - chargedCostPoisha;
-      const billingStatus = input.sourceType === "manual" ? "manual_no_ai_charge" :
+      const billingStatus = input.sourceType === "manual" ? "manual_platform_fee" :
         billingMode === "lifetime_free" ? "lifetime_free" : "wallet_debited";
       const result = {
         operationId: input.operationId,
@@ -282,8 +294,10 @@ function createQuestionFinalizationHandler({ db, authorize, now = Date.now }) {
           ...question,
           pricing: {
             currency: "BDT",
-            quotedCostPoisha: input.sourceType === "manual" ? 0 : PROPOSED_RATE_POISHA[input.questionType],
-            chargedCostPoisha: chargedCostPoisha > 0 ? PROPOSED_RATE_POISHA[input.questionType] : 0,
+            quotedCostPoisha: input.sourceType === "manual" ?
+              MANUAL_QUESTION_RATE_POISHA : PROPOSED_RATE_POISHA[input.questionType],
+            chargedCostPoisha: chargedCostPoisha > 0 ?
+              (input.sourceType === "manual" ? MANUAL_QUESTION_RATE_POISHA : PROPOSED_RATE_POISHA[input.questionType]) : 0,
             billingStatus: result.billingStatus,
           },
         });
@@ -310,6 +324,31 @@ function createQuestionFinalizationHandler({ db, authorize, now = Date.now }) {
           questionCount: input.questions.length,
           createdAtMs: timestamp,
         });
+        const summarySource = revenueSummarySnap.exists ? revenueSummarySnap.data() : {};
+        const safeInt = (value) => Number.isSafeInteger(value) ? value : 0;
+        tx.create(revenueEventRef, {
+          schemaVersion: QUESTION_SCHEMA_VERSION,
+          kind: "question_charge",
+          amountPoisha: chargedCostPoisha,
+          instituteId: input.instituteId,
+          actorUid: uid,
+          sourceType: input.sourceType,
+          questionType: input.questionType,
+          questionCount: input.questions.length,
+          finalizationOperationId: input.operationId,
+          createdAtMs: timestamp,
+        });
+        const nextRevenueSummary = {
+          schemaVersion: QUESTION_SCHEMA_VERSION,
+          totalQuestionChargesPoisha: safeInt(summarySource.totalQuestionChargesPoisha) + chargedCostPoisha,
+          totalTopupFeePoisha: safeInt(summarySource.totalTopupFeePoisha),
+          totalTopupCreditPoisha: safeInt(summarySource.totalTopupCreditPoisha),
+          topupCount: safeInt(summarySource.topupCount),
+          chargeCount: safeInt(summarySource.chargeCount) + 1,
+          updatedAtMs: timestamp,
+        };
+        if (revenueSummarySnap.exists) tx.update(revenueSummaryRef, nextRevenueSummary);
+        else tx.create(revenueSummaryRef, nextRevenueSummary);
       }
       if (input.sourceType === "ai_assisted") {
         tx.update(generationRef, {

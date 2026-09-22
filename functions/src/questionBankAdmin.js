@@ -95,6 +95,31 @@ function adminQuestionDto(id, data) {
   };
 }
 
+function adminTopupDto(id, data) {
+  return {
+    requestId: id,
+    instituteId: cleanString(data && data.instituteId, 128),
+    amountPoisha: Number.isSafeInteger(data && data.amountPoisha) ? data.amountPoisha : 0,
+    feePoisha: Number.isSafeInteger(data && data.feePoisha) ? data.feePoisha : 0,
+    payablePoisha: Number.isSafeInteger(data && data.payablePoisha) ? data.payablePoisha : 0,
+    paymentMethod: cleanString(data && data.paymentMethod, 16) || "bkash",
+    senderNumber: cleanString(data && data.senderNumber, 20) || "",
+    requestedAtMs: Number.isSafeInteger(data && data.requestedAtMs) ? data.requestedAtMs : 0,
+  };
+}
+
+function revenueSummaryDto(data) {
+  const source = data && typeof data === "object" ? data : {};
+  const safe = (value) => Number.isSafeInteger(value) ? value : 0;
+  return {
+    totalQuestionChargesPoisha: safe(source.totalQuestionChargesPoisha),
+    totalTopupFeePoisha: safe(source.totalTopupFeePoisha),
+    totalTopupCreditPoisha: safe(source.totalTopupCreditPoisha),
+    topupCount: safe(source.topupCount),
+    chargeCount: safe(source.chargeCount),
+  };
+}
+
 /** Root-only control plane. It returns academic content and configuration only. */
 function createQuestionBankAdminHandler({ db, authorizeRoot, now = Date.now, randomId = randomUUID }) {
   return async function commitQuestionBankAdminOperation(request) {
@@ -135,11 +160,146 @@ function createQuestionBankAdminHandler({ db, authorizeRoot, now = Date.now, ran
       return { questions, limit };
     }
 
-    if (!["update_settings", "credit_institute_wallet", "retire_question", "restore_question"].includes(action)) {
+    if (action === "list_pending_topups") {
+      const snapshot = await db.collectionGroup("question_bank_topup_requests")
+        .where("kind", "==", "history")
+        .where("status", "==", "pending")
+        .limit(50)
+        .get();
+      const requests = snapshot.docs
+        .map((document) => adminTopupDto(document.id, document.data()))
+        .sort((left, right) => right.requestedAtMs - left.requestedAtMs);
+      return { requests };
+    }
+
+    if (action === "get_revenue_summary") {
+      const snapshot = await db.collection("platform_question_revenue").doc("_summary").get();
+      return revenueSummaryDto(snapshot.exists ? snapshot.data() : null);
+    }
+
+    if (!["update_settings", "credit_institute_wallet", "retire_question", "restore_question",
+      "approve_topup", "reject_topup"].includes(action)) {
       throw new HttpsError("invalid-argument", "Invalid question bank admin action.");
     }
     const operationId = requiredId(data.operationId, "admin operation");
     const operationRef = db.collection("question_bank_admin_operations").doc(operationId);
+
+    if (action === "approve_topup" || action === "reject_topup") {
+      const instituteId = requiredId(data.instituteId, "institute");
+      const requestId = requiredId(data.requestId, "top-up request");
+      const instituteRef = db.collection("institutes").doc(instituteId);
+      const requestRef = instituteRef.collection("question_bank_topup_requests").doc(requestId);
+      const pendingRef = instituteRef.collection("question_bank_topup_requests").doc("pending");
+      const walletRef = instituteRef.collection("question_bank_wallet").doc(QUESTION_WALLET_DOCUMENT);
+      const ledgerRef = instituteRef.collection("question_bank_wallet_ledger").doc(`topup_${requestId}`);
+      const revenueRef = db.collection("platform_question_revenue").doc(`topup_${requestId}`);
+      const revenueSummaryRef = db.collection("platform_question_revenue").doc("_summary");
+      return db.runTransaction(async (tx) => {
+        const [previous, requestSnap, pendingSnap, walletSnap, revenueSummarySnap] = await Promise.all([
+          tx.get(operationRef), tx.get(requestRef), tx.get(pendingRef), tx.get(walletRef),
+          tx.get(revenueSummaryRef),
+        ]);
+        if (previous.exists) {
+          const saved = previous.data();
+          if (saved.actorUid !== uid || saved.action !== action || saved.instituteId !== instituteId ||
+              saved.requestId !== requestId) {
+            throw new HttpsError("already-exists", "Operation ID belongs to another top-up decision.");
+          }
+          return saved.result;
+        }
+        if (!requestSnap.exists || requestSnap.get("status") !== "pending" ||
+            requestSnap.get("kind") !== "history") {
+          throw new HttpsError("failed-precondition", "Top-up request is no longer pending.");
+        }
+        const amountPoisha = Number(requestSnap.get("amountPoisha"));
+        const feePoisha = Number(requestSnap.get("feePoisha")) || 0;
+        if (!Number.isSafeInteger(amountPoisha) || amountPoisha <= 0) {
+          throw new HttpsError("failed-precondition", "Top-up request has an invalid amount.");
+        }
+        const wallet = normalizedWallet(walletSnap.exists ? walletSnap.data() : null);
+        const timestamp = now();
+        const status = action === "approve_topup" ? "approved" : "rejected";
+        let balancePoisha = wallet.balancePoisha;
+        if (action === "approve_topup") {
+          balancePoisha = wallet.balancePoisha + amountPoisha;
+          if (!Number.isSafeInteger(balancePoisha)) {
+            throw new HttpsError("out-of-range", "Question wallet balance is too large.");
+          }
+          const nextWallet = {
+            balancePoisha,
+            totalCreditedPoisha: wallet.totalCreditedPoisha + amountPoisha,
+            totalDebitedPoisha: wallet.totalDebitedPoisha,
+            updatedAtMs: timestamp,
+          };
+          if (walletSnap.exists) tx.update(walletRef, nextWallet);
+          else tx.create(walletRef, nextWallet);
+          tx.create(ledgerRef, {
+            schemaVersion: QUESTION_SCHEMA_VERSION,
+            type: "credit",
+            amountPoisha,
+            feePoisha,
+            balanceAfterPoisha: balancePoisha,
+            instituteId,
+            reason: "Question wallet top-up (owner payment approved)",
+            recordedBy: uid,
+            requestId,
+            operationId,
+            createdAtMs: timestamp,
+          });
+          const summary = revenueSummaryDto(revenueSummarySnap.exists ? revenueSummarySnap.data() : null);
+          tx.create(revenueRef, {
+            schemaVersion: QUESTION_SCHEMA_VERSION,
+            kind: "topup_fee",
+            amountPoisha,
+            feePoisha,
+            instituteId,
+            requestId,
+            recordedBy: uid,
+            createdAtMs: timestamp,
+          });
+          const nextSummary = {
+            schemaVersion: QUESTION_SCHEMA_VERSION,
+            totalQuestionChargesPoisha: summary.totalQuestionChargesPoisha,
+            totalTopupFeePoisha: summary.totalTopupFeePoisha + feePoisha,
+            totalTopupCreditPoisha: summary.totalTopupCreditPoisha + amountPoisha,
+            topupCount: summary.topupCount + 1,
+            chargeCount: summary.chargeCount,
+            updatedAtMs: timestamp,
+          };
+          if (revenueSummarySnap.exists) tx.update(revenueSummaryRef, nextSummary);
+          else tx.create(revenueSummaryRef, nextSummary);
+        }
+        const decision = action === "approve_topup" ?
+          { approvedBy: uid, approvedAtMs: timestamp } :
+          { rejectedBy: uid, rejectedAtMs: timestamp };
+        tx.update(requestRef, { status, updatedAtMs: timestamp, ...decision });
+        if (pendingSnap.exists && pendingSnap.get("operationId") === requestId) {
+          tx.update(pendingRef, { status, updatedAtMs: timestamp, ...decision });
+        }
+        const result = {
+          action,
+          instituteId,
+          requestId,
+          amountPoisha,
+          status,
+          balancePoisha,
+          updatedAtMs: timestamp,
+        };
+        tx.create(operationRef, {
+          schemaVersion: QUESTION_SCHEMA_VERSION,
+          operationId,
+          actorUid: uid,
+          action,
+          instituteId,
+          requestId,
+          amountPoisha,
+          auditToken: randomId(),
+          createdAtMs: timestamp,
+          result,
+        });
+        return result;
+      });
+    }
 
     if (action === "credit_institute_wallet") {
       const instituteId = requiredId(data.instituteId, "institute");
@@ -301,5 +461,7 @@ module.exports = {
   settingsDto,
   requestedSettings,
   loadQuestionBankSettings,
+  adminTopupDto,
+  revenueSummaryDto,
   createQuestionBankAdminHandler,
 };

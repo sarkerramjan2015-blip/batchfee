@@ -101,7 +101,7 @@ test("finalization saves reviewed private questions with an idempotent operation
     operationId: "finalize_0001",
     questionCount: 2,
     costPoisha: 0,
-    quotedCostPoisha: 50,
+    quotedCostPoisha: 100,
     chargedCostPoisha: 0,
     remainingBalancePoisha: 0,
     billingStatus: "lifetime_free",
@@ -112,14 +112,14 @@ test("finalization saves reviewed private questions with an idempotent operation
   assert.equal(privateQuestion.status, "finalized");
   assert.equal(privateQuestion.createdBy, "teacher-a");
   assert.equal(privateQuestion.subject, "Science");
-  assert.equal(privateQuestion.pricing.quotedCostPoisha, 25);
+  assert.equal(privateQuestion.pricing.quotedCostPoisha, 50);
   assert.equal(privateQuestion.pricing.chargedCostPoisha, 0);
   assert.equal(
     db.records.get("institutes/institute-a/question_generation_jobs/generation_0001").finalizationOperationId,
     "finalize_0001",
   );
   assert.deepEqual(await handler(request([mcq(), mcq("generated_02")])), first);
-  assert.equal(proposedCostPoisha("creative", 2), 150);
+  assert.equal(proposedCostPoisha("creative", 2), 300);
 });
 
 test("legacy previews without billing metadata remain free", async () => {
@@ -146,14 +146,14 @@ test("paid finalization debits selected questions once and records an immutable 
   const handler = createQuestionFinalizationHandler({ db, authorize: async () => {}, now: () => 55_000 });
   const first = await handler(request([mcq(), mcq("generated_02")]));
   assert.equal(first.billingStatus, "wallet_debited");
-  assert.equal(first.chargedCostPoisha, 50);
-  assert.equal(first.remainingBalancePoisha, 150);
-  assert.equal(db.records.get("institutes/institute-a/question_bank_wallet/default").balancePoisha, 150);
+  assert.equal(first.chargedCostPoisha, 100);
+  assert.equal(first.remainingBalancePoisha, 100);
+  assert.equal(db.records.get("institutes/institute-a/question_bank_wallet/default").balancePoisha, 100);
   const ledger = db.records.get("institutes/institute-a/question_bank_wallet_ledger/debit_finalize_0001");
-  assert.equal(ledger.amountPoisha, 50);
-  assert.equal(ledger.balanceAfterPoisha, 150);
+  assert.equal(ledger.amountPoisha, 100);
+  assert.equal(ledger.balanceAfterPoisha, 100);
   assert.deepEqual(await handler(request([mcq(), mcq("generated_02")])), first);
-  assert.equal(db.records.get("institutes/institute-a/question_bank_wallet/default").balancePoisha, 150);
+  assert.equal(db.records.get("institutes/institute-a/question_bank_wallet/default").balancePoisha, 100);
 });
 
 test("insufficient wallet rejects atomically without saving questions or charging", async () => {
@@ -189,11 +189,16 @@ test("finalization never accepts a generation preview owned by another actor", a
   await assert.rejects(handler(request([mcq()])), { code: "failed-precondition" });
 });
 
-test("manual authoring saves without an AI preview or AI charge", async () => {
+test("manual authoring debits the BDT 1 platform fee per question from the question wallet", async () => {
   const db = memoryDb();
   db.records.set("institutes/institute-a/question_contribution_consents/teacher-a", {
     aiTncAccepted: true,
     policyVersion: CONTRIBUTION_POLICY_VERSION,
+  });
+  db.records.set("institutes/institute-a/question_bank_wallet/default", {
+    balancePoisha: 500,
+    totalCreditedPoisha: 500,
+    totalDebitedPoisha: 0,
   });
   const handler = createQuestionFinalizationHandler({
     db,
@@ -219,18 +224,18 @@ test("manual authoring saves without an AI preview or AI charge", async () => {
   assert.deepEqual(result, {
     operationId: "manual_finalize_0001",
     questionCount: 1,
-    costPoisha: 0,
-    quotedCostPoisha: 0,
-    chargedCostPoisha: 0,
-    remainingBalancePoisha: 0,
-    billingStatus: "manual_no_ai_charge",
+    costPoisha: 100,
+    quotedCostPoisha: 100,
+    chargedCostPoisha: 100,
+    remainingBalancePoisha: 400,
+    billingStatus: "manual_platform_fee",
   });
   const saved = db.records.get(
     "institutes/institute-a/question_bank/finalized_manual_finalize_0001_manual_question_01",
   );
   assert.equal(saved.sourceType, "manual");
   assert.equal(saved.generationOperationId, null);
-  assert.equal(saved.pricing.quotedCostPoisha, 0);
+  assert.equal(saved.pricing.quotedCostPoisha, 100);
   assert.equal(saved.chapter, "Light");
   assert.equal(saved.chapterName, "Light reflection");
   assert.equal(saved.topic, "Laws of reflection");
@@ -245,11 +250,38 @@ test("manual authoring saves without an AI preview or AI charge", async () => {
   })), result);
 });
 
+test("manual authoring without wallet balance is rejected atomically", async () => {
+  const db = memoryDb();
+  db.records.set("institutes/institute-a/question_contribution_consents/teacher-a", {
+    aiTncAccepted: true,
+    policyVersion: CONTRIBUTION_POLICY_VERSION,
+  });
+  const handler = createQuestionFinalizationHandler({ db, authorize: async () => {} });
+  await assert.rejects(handler(request([mcq("manual_question_01")], {
+    generationOperationId: "manual_session_0001",
+    operationId: "manual_finalize_0001",
+    sourceType: "manual",
+    manualSetup: {
+      examName: "Teacher authored test", totalMarks: 10, durationMinutes: 30,
+      className: "Class 8", subject: "Science", chapter: "Light", language: "bn",
+    },
+  })), { code: "resource-exhausted" });
+  assert.equal(
+    db.records.has("institutes/institute-a/question_bank/finalized_manual_finalize_0001_manual_question_01"),
+    false,
+  );
+});
+
 test("manual question attachments stay tenant-scoped", async () => {
   const db = memoryDb();
   db.records.set("institutes/institute-a/question_contribution_consents/teacher-a", {
     aiTncAccepted: true,
     policyVersion: CONTRIBUTION_POLICY_VERSION,
+  });
+  db.records.set("institutes/institute-a/question_bank_wallet/default", {
+    balancePoisha: 500,
+    totalCreditedPoisha: 500,
+    totalDebitedPoisha: 0,
   });
   const handler = createQuestionFinalizationHandler({ db, authorize: async () => {} });
   const manualSetup = {

@@ -56,7 +56,13 @@ test("AI terms start unaccepted with an empty server-owned wallet and five free 
   assert.equal(result.aiBilling.walletSeparateFromSms, true);
   assert.equal(result.aiBilling.balancePoisha, 0);
   assert.equal(result.aiBilling.freeAttemptsRemaining, 5);
-  assert.equal(result.aiBilling.ratesPoisha.mcq, 25);
+  assert.equal(result.aiBilling.ratesPoisha.mcq, 50);
+  assert.equal(result.aiBilling.ratesPoisha.short, 50);
+  assert.equal(result.aiBilling.ratesPoisha.creative, 150);
+  assert.equal(result.aiBilling.manualRatePoisha, 100);
+  assert.equal(result.topupPolicy.minAmountPoisha, 5000);
+  assert.equal(result.topupPolicy.processingFeePercent, 1.8);
+  assert.equal(result.topupPolicy.pendingRequest, null);
   assert.deepEqual(result.taxonomy.questionTypes, ["mcq", "short", "creative"]);
   assert.equal(authorization[0][2], "manage_exams");
   assert.equal(db.records.size, 0);

@@ -1,9 +1,12 @@
 package com.batchfee.edu.ui.exams
 
 import android.app.Activity
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.ContextWrapper
 import android.net.Uri
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -21,6 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DocumentScanner
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.AddPhotoAlternate
@@ -28,6 +32,7 @@ import androidx.compose.material.icons.filled.AddCircleOutline
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.PictureAsPdf
+import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.PrivacyTip
 import androidx.compose.material3.*
@@ -40,11 +45,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.batchfee.edu.data.repository.QuestionBankFoundation
 import com.batchfee.edu.data.repository.QuestionBankFoundationRepository
+import com.batchfee.edu.data.repository.PreviousQuestion
+import com.batchfee.edu.data.repository.QuestionTopupRequest
 import com.batchfee.edu.data.repository.QuestionGenerationPreview
 import com.batchfee.edu.data.repository.QuestionGenerationRepository
 import com.batchfee.edu.data.repository.QuestionGenerationSetup
@@ -139,6 +147,24 @@ fun QuestionBankFoundationScreen(
     var launchingScanner by remember { mutableStateOf(false) }
     var generationOperationId by rememberSaveable { mutableStateOf(UUID.randomUUID().toString()) }
     var finalizationOperationId by rememberSaveable { mutableStateOf(UUID.randomUUID().toString()) }
+    var questionLevel by rememberSaveable { mutableStateOf("balanced") }
+    var showPromptChat by remember { mutableStateOf(false) }
+    var promptText by remember { mutableStateOf("") }
+    var promptEdited by remember { mutableStateOf(false) }
+    var promptPreviewLoading by remember { mutableStateOf(false) }
+    var promptError by remember { mutableStateOf<String?>(null) }
+    var promptResetKey by remember { mutableIntStateOf(0) }
+    var showTopupDialog by remember { mutableStateOf(false) }
+    var topupAmountText by rememberSaveable { mutableStateOf("") }
+    var requestingTopup by remember { mutableStateOf(false) }
+    var showPreviousQuestions by remember { mutableStateOf(false) }
+    var previousItems by remember { mutableStateOf<List<PreviousQuestion>>(emptyList()) }
+    var previousPage by remember { mutableIntStateOf(0) }
+    var previousHasMore by remember { mutableStateOf(false) }
+    var previousLoading by remember { mutableStateOf(false) }
+    var previousError by remember { mutableStateOf<String?>(null) }
+    var topupMethod by rememberSaveable { mutableStateOf("bkash") }
+    var topupSenderNumber by rememberSaveable { mutableStateOf("") }
 
     LaunchedEffect(subject) {
         if (patternKey == "standard") {
@@ -234,6 +260,10 @@ fun QuestionBankFoundationScreen(
                 scan?.pages.orEmpty().take(2).map { page -> page.imageUri.toString() }
             )
             resetGeneration()
+            showPromptChat = true
+            promptText = ""
+            promptEdited = false
+            promptError = null
         }
     }
 
@@ -318,8 +348,89 @@ fun QuestionBankFoundationScreen(
     val firstValidationError = selectedValidation.firstOrNull { !it.isValid }?.message
     val selectedMarks = selectedQuestions.sumOf { it.marks }
     val currentBillingMode = preview?.billingMode ?: if (reviewingManualEntry) "manual" else "wallet"
-    val proposedCostPoisha = if (reviewingManualEntry || currentBillingMode == "lifetime_free") 0 else {
-        QuestionReviewPolicy.totalPricePoisha(questionType, reviewQuestions)
+    val proposedCostPoisha = when {
+        reviewingManualEntry -> QuestionReviewPolicy.manualTotalPricePoisha(reviewQuestions)
+        currentBillingMode == "lifetime_free" -> 0
+        else -> QuestionReviewPolicy.totalPricePoisha(questionType, reviewQuestions)
+    }
+
+    fun buildGenerationSetup(): QuestionGenerationSetup = QuestionGenerationSetup(
+        examName = examName.trim(),
+        totalMarks = totalMarks.toIntOrNull() ?: 0,
+        durationMinutes = durationMinutes.toIntOrNull() ?: 0,
+        className = className.trim(),
+        subject = subject.trim(),
+        chapter = chapter.trim(),
+        questionType = questionType,
+        questionCount = questionCount.toIntOrNull() ?: 0,
+        language = questionLanguageForSubject(subject),
+        shortQuestionMarks = shortQuestionMarks.toIntOrNull()?.coerceIn(1, 100) ?: 2,
+        chapterName = chapterName.trim(),
+        topic = topicName.trim(),
+        patternKey = patternKey,
+        patternVariant = patternVariant.trim(),
+        questionLevel = questionLevel,
+    )
+
+    fun launchAiGeneration(promptOverride: String?) {
+        val id = instituteId
+        if (id == null || !canContinue) return
+        val requestedOperationId = generationOperationId
+        generating = true
+        error = null
+        scope.launch {
+            runCatching {
+                generationRepository.generate(
+                    context = context,
+                    instituteId = id,
+                    setup = buildGenerationSetup(),
+                    pageUris = scannedPages,
+                    operationId = requestedOperationId,
+                    promptText = promptOverride?.trim()?.takeIf { it.isNotBlank() },
+                )
+            }.onSuccess { result ->
+                if (generationOperationId == requestedOperationId) {
+                    preview = result
+                    foundation = foundation?.copy(
+                        freeAttemptsUsed = result.attemptNumber.coerceAtMost(
+                            foundation?.freeLifetimeAttemptLimit ?: 5,
+                        ),
+                        freeAttemptsRemaining = result.freeAttemptsRemaining,
+                    )
+                    reviewQuestions = result.questions.mapIndexed { index, question ->
+                        question.toReviewable(index)
+                    }
+                    reviewSourceMode = "ai"
+                    finalizationOperationId = UUID.randomUUID().toString()
+                    showPromptChat = false
+                }
+            }
+                .onFailure {
+                    if (generationOperationId == requestedOperationId) {
+                        error = it.message ?: "Could not generate questions. Try again."
+                    }
+                }
+            generating = false
+        }
+    }
+
+    LaunchedEffect(showPromptChat, promptResetKey) {
+        if (!showPromptChat || promptEdited) return@LaunchedEffect
+        if (!canContinue) {
+            promptError = "Complete the exam and academic fields first, then the ready-made prompt will be prepared."
+            return@LaunchedEffect
+        }
+        val id = instituteId
+        if (id == null) {
+            promptError = "Open this feature from an institute account."
+            return@LaunchedEffect
+        }
+        promptPreviewLoading = true
+        promptError = null
+        runCatching { generationRepository.renderPromptPreview(id, buildGenerationSetup()) }
+            .onSuccess { promptText = it }
+            .onFailure { promptError = it.message ?: "Could not prepare the AI prompt." }
+        promptPreviewLoading = false
     }
 
     Scaffold(
@@ -499,6 +610,8 @@ fun QuestionBankFoundationScreen(
                     clearManualQuestionForm()
                     resetGeneration()
                 },
+                questionLevel = questionLevel,
+                onQuestionLevelChange = { questionLevel = it; resetGeneration() },
                 sourceMode = sourceMode,
                 onSourceModeChange = { sourceMode = it; resetGeneration() },
                 manualQuestionText = manualQuestionText,
@@ -586,7 +699,6 @@ fun QuestionBankFoundationScreen(
                 preview = preview,
                 foundation = foundation,
                 onContinue = {
-                    val id = instituteId
                     if (sourceMode == "manual" && canContinue) {
                         preview = QuestionGenerationPreview(
                             operationId = generationOperationId,
@@ -596,54 +708,23 @@ fun QuestionBankFoundationScreen(
                         reviewQuestions = manualAddedQuestions
                         reviewSourceMode = "manual"
                         finalizationOperationId = UUID.randomUUID().toString()
-                    } else if (id != null && canContinue) {
-                        val requestedOperationId = generationOperationId
-                        generating = true
-                        error = null
-                        scope.launch {
-                            runCatching {
-                                generationRepository.generate(
-                                    context = context,
-                                    instituteId = id,
-                                    setup = QuestionGenerationSetup(
-                                        examName.trim(), totalMarks.toInt(), durationMinutes.toInt(),
-                                        className.trim(), subject.trim(), chapter.trim(),
-                                        questionType, questionCount.toInt(),
-                                        language = questionLanguageForSubject(subject),
-                                        shortQuestionMarks = shortQuestionMarks.toIntOrNull()?.coerceIn(1, 100) ?: 2,
-                                        chapterName = chapterName.trim(), topic = topicName.trim(),
-                                        patternKey = patternKey,
-                                        patternVariant = patternVariant.trim(),
-                                    ),
-                                    pageUris = scannedPages,
-                                    operationId = requestedOperationId,
-                                )
-                            }.onSuccess { result ->
-                                if (generationOperationId == requestedOperationId) {
-                                    preview = result
-                                    foundation = foundation?.copy(
-                                        freeAttemptsUsed = result.attemptNumber.coerceAtMost(
-                                            foundation?.freeLifetimeAttemptLimit ?: 5,
-                                        ),
-                                        freeAttemptsRemaining = result.freeAttemptsRemaining,
-                                    )
-                                    reviewQuestions = result.questions.mapIndexed { index, question ->
-                                        question.toReviewable(index)
-                                    }
-                                    reviewSourceMode = "ai"
-                                    finalizationOperationId = UUID.randomUUID().toString()
-                                }
-                            }
-                                .onFailure {
-                                    if (generationOperationId == requestedOperationId) {
-                                        error = it.message ?: "Could not generate questions. Try again."
-                                    }
-                                }
-                            generating = false
-                        }
+                    } else if (canContinue) {
+                        launchAiGeneration(null)
                     }
                 },
                 onNewAttempt = { resetGeneration(); error = null },
+                onOpenTopup = {
+                    topupAmountText = ""
+                    topupSenderNumber = ""
+                    showTopupDialog = true
+                },
+                onOpenPrevious = {
+                    previousItems = emptyList()
+                    previousPage = 0
+                    previousHasMore = false
+                    previousError = null
+                    showPreviousQuestions = true
+                },
             )
         }
     }
@@ -693,7 +774,133 @@ fun QuestionBankFoundationScreen(
             onDismiss = { showPaperComposer = false },
         )
     }
+    if (showPromptChat && !reviewing) {
+        AiPromptChatSheet(
+            promptText = promptText,
+            onPromptTextChange = {
+                promptText = it
+                promptEdited = true
+                promptError = null
+            },
+            loading = promptPreviewLoading,
+            error = promptError,
+            canGenerate = canContinue,
+            generating = generating,
+            onReset = {
+                promptText = ""
+                promptEdited = false
+                promptError = null
+                promptResetKey++
+            },
+            onGenerate = { launchAiGeneration(promptText) },
+            onDismiss = { showPromptChat = false },
+        )
+    }
+    if (showTopupDialog && !reviewing) {
+        TopupRequestDialog(
+            minAmountPoisha = foundation?.topupMinAmountPoisha ?: 5_000,
+            feePercent = foundation?.topupProcessingFeePercent ?: 1.8,
+            amountText = topupAmountText,
+            onAmountTextChange = { topupAmountText = it.filter(Char::isDigit).take(8) },
+            paymentMethod = topupMethod,
+            onPaymentMethodChange = { topupMethod = it },
+            senderNumber = topupSenderNumber,
+            onSenderNumberChange = { topupSenderNumber = it },
+            submitting = requestingTopup,
+            onSubmit = { amountPoisha, method, sender ->
+                val id = instituteId
+                if (id == null) {
+                    error = "Open this feature from an institute account."
+                } else {
+                    requestingTopup = true
+                    scope.launch {
+                        runCatching { repository.requestTopup(id, amountPoisha, method, sender) }
+                            .onSuccess { pending ->
+                                foundation = foundation?.copy(pendingTopup = pending)
+                                showTopupDialog = false
+                                topupAmountText = ""
+                                topupSenderNumber = ""
+                                snackbar.showSnackbar("Top-up request sent. Wait for Super Admin approval.")
+                            }
+                            .onFailure { error = it.message ?: "Could not request top-up. Try again." }
+                        requestingTopup = false
+                    }
+                }
+            },
+            onDismiss = { if (!requestingTopup) showTopupDialog = false },
+        )
+    }
+    LaunchedEffect(showPreviousQuestions) {
+        if (!showPreviousQuestions) return@LaunchedEffect
+        val id = instituteId
+        if (id == null) {
+            previousError = "Open this feature from an institute account."
+            return@LaunchedEffect
+        }
+        previousLoading = true
+        previousError = null
+        runCatching { repository.listPreviousQuestions(id, page = 0, limit = 25) }
+            .onSuccess { page ->
+                previousItems = page.questions.filter { it.type == questionType }
+                previousPage = page.page
+                previousHasMore = page.hasMore
+            }
+            .onFailure { previousError = it.message ?: "Could not load previous questions." }
+        previousLoading = false
+    }
+    if (showPreviousQuestions && !reviewing) {
+        PreviousQuestionsDialog(
+            questions = previousItems,
+            questionTypeLabel = questionTypeLabel(questionType),
+            loading = previousLoading,
+            hasMore = previousHasMore,
+            error = previousError,
+            onLoadMore = {
+                val id = instituteId
+                if (id != null && !previousLoading) {
+                    previousLoading = true
+                    scope.launch {
+                        val nextPage = previousPage + 1
+                        runCatching { repository.listPreviousQuestions(id, page = nextPage, limit = 25) }
+                            .onSuccess { page ->
+                                previousItems = previousItems + page.questions.filter { it.type == questionType }
+                                previousPage = page.page
+                                previousHasMore = page.hasMore
+                            }
+                            .onFailure { previousError = it.message ?: "Could not load more questions." }
+                        previousLoading = false
+                    }
+                }
+            },
+            onUse = { previous ->
+                manualAddedQuestions = manualAddedQuestions + previous.toReviewable(
+                    questionType = questionType,
+                    shortMarks = shortQuestionMarks.toIntOrNull()?.coerceIn(1, 100) ?: 2,
+                )
+                sourceMode = "manual"
+                showPreviousQuestions = false
+                error = null
+                scope.launch { snackbar.showSnackbar("Question added to the review queue. Review it before finalizing.") }
+            },
+            onDismiss = { showPreviousQuestions = false },
+        )
+    }
 }
+
+private fun PreviousQuestion.toReviewable(questionType: String, shortMarks: Int): ReviewableQuestion =
+    ReviewableQuestion(
+        sourceQuestionId = "prev_$id",
+        questionText = questionText,
+        options = if (questionType == "mcq") options.take(4) else emptyList(),
+        correctAnswer = correctAnswer,
+        explanation = explanation,
+        difficulty = difficulty.lowercase().ifBlank { "medium" },
+        marks = when (questionType) {
+            "mcq" -> 1
+            "creative" -> 10
+            else -> shortMarks
+        },
+    )
 
 @Composable
 private fun AiTermsDialog(
@@ -770,6 +977,8 @@ private fun ExamSetupContent(
     onPatternVariantChange: (String) -> Unit,
     questionType: String,
     onQuestionTypeChange: (String) -> Unit,
+    questionLevel: String,
+    onQuestionLevelChange: (String) -> Unit,
     sourceMode: String,
     onSourceModeChange: (String) -> Unit,
     manualQuestionText: String,
@@ -806,6 +1015,8 @@ private fun ExamSetupContent(
     foundation: QuestionBankFoundation?,
     onContinue: () -> Unit,
     onNewAttempt: () -> Unit,
+    onOpenTopup: () -> Unit,
+    onOpenPrevious: () -> Unit,
 ) {
     Column(
         modifier.fillMaxSize().verticalScroll(rememberScrollState())
@@ -844,10 +1055,31 @@ private fun ExamSetupContent(
                 }
             }
             Text(
-                "After the first ${foundation?.freeLifetimeAttemptLimit ?: 5} AI attempts, only selected questions are charged: MCQ BDT 0.25, Short BDT 0.50, Creative BDT 0.75. Manual entry is free.",
+                "After the first ${foundation?.freeLifetimeAttemptLimit ?: 5} AI attempts, only selected questions are charged: MCQ BDT 0.50, Short BDT 0.50, Creative BDT 1.50. Manual questions cost BDT 1 each.",
                 color = BankMuted,
                 fontSize = 12.sp,
             )
+            foundation?.pendingTopup?.let { pending ->
+                Text(
+                    "Top-up pending: ${bdtFromPoisha(pending.amountPoisha)} · pay ${bdtFromPoisha(pending.payablePoisha)} (incl. fee) to BatchFee. Super Admin approval credits your wallet.",
+                    color = Color(0xFFFBBF24),
+                    fontSize = 12.sp,
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = onOpenTopup,
+                    enabled = foundation != null,
+                    modifier = Modifier.weight(1f),
+                    border = BorderStroke(1.dp, BankCyan),
+                ) { Text("Top up wallet", color = BankCyan) }
+                OutlinedButton(
+                    onClick = onOpenPrevious,
+                    enabled = foundation != null,
+                    modifier = Modifier.weight(1f),
+                    border = BorderStroke(1.dp, BankBorder),
+                ) { Text("Previous questions", maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 13.sp, color = BankText) }
+            }
         }
 
         BankSection {
@@ -901,6 +1133,35 @@ private fun ExamSetupContent(
                             ),
                         )
                     }
+            }
+            Text("Question level", color = BankMuted, fontSize = 13.sp)
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                listOf(
+                    "balanced" to "Balanced",
+                    "easy" to "Easy",
+                    "medium" to "Medium",
+                    "hard" to "Hard",
+                ).forEach { (value, label) ->
+                    FilterChip(
+                        selected = questionLevel == value,
+                        onClick = { onQuestionLevelChange(value) },
+                        label = { Text(label) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = BankCyan.copy(alpha = 0.18f),
+                            selectedLabelColor = BankCyan,
+                            labelColor = BankMuted,
+                        ),
+                        border = FilterChipDefaults.filterChipBorder(
+                            enabled = true,
+                            selected = questionLevel == value,
+                            borderColor = BankBorder,
+                            selectedBorderColor = BankCyan,
+                        ),
+                    )
+                }
             }
             SubjectPatternSection(
                 subject = subject,
@@ -1800,7 +2061,7 @@ private fun ReviewCostBar(
     validationError: String?,
     onFinalize: () -> Unit,
 ) {
-    val isFree = manualEntry || billingMode == "lifetime_free"
+    val isFree = billingMode == "lifetime_free"
     val hasEnoughBalance = isFree || walletBalancePoisha >= costPoisha
     Surface(color = BankCard, tonalElevation = 8.dp, shadowElevation = 12.dp) {
         Column(
@@ -1811,7 +2072,7 @@ private fun ReviewCostBar(
                 Column(Modifier.weight(1f)) {
                     Text(
                         when {
-                            manualEntry -> "Manual entry - no AI charge"
+                            manualEntry -> "Manual entry · ${bdtFromPoisha(costPoisha)} platform fee"
                             billingMode == "lifetime_free" -> "Lifetime free attempt - no charge"
                             else -> "Final charge: ${bdtFromPoisha(costPoisha)}"
                         },
@@ -1839,10 +2100,10 @@ private fun ReviewCostBar(
             }
             Text(
                 when {
-                    manualEntry -> "Manual questions use the same reviewed and secure question-bank save flow."
+                    manualEntry -> "BDT 1 per manual question, debited from the question wallet once. Top up if needed."
                     billingMode == "lifetime_free" -> "This entire AI attempt is free, including every selected question."
                     hasEnoughBalance -> "Wallet ${bdtFromPoisha(walletBalancePoisha)} · The server debits once when finalization succeeds."
-                    else -> "Insufficient wallet balance. Available ${bdtFromPoisha(walletBalancePoisha)}; required ${bdtFromPoisha(costPoisha)}."
+                    else -> "Insufficient wallet balance. Available ${bdtFromPoisha(walletBalancePoisha)}; required ${bdtFromPoisha(costPoisha)}. Top up from exam setup."
                 },
                 color = if (hasEnoughBalance) BankMuted else Color(0xFFFBBF24),
                 fontSize = 11.sp,
@@ -1867,7 +2128,7 @@ private fun FinalizationSuccessDialog(
                 Text("${result.questionCount} reviewed question(s) are now in your private question bank.", color = BankText)
                 Text(
                     when (result.billingStatus) {
-                        "manual_no_ai_charge" -> "Manual entry · No AI charge"
+                        "manual_platform_fee" -> "Manual platform fee · ${bdtFromPoisha(result.chargedCostPoisha)}"
                         "lifetime_free" -> "Lifetime free attempt · No charge"
                         else -> "Wallet charged: ${bdtFromPoisha(result.chargedCostPoisha)}"
                     },
@@ -1875,7 +2136,7 @@ private fun FinalizationSuccessDialog(
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    if (result.billingStatus == "wallet_debited") {
+                    if (result.billingStatus == "wallet_debited" || result.billingStatus == "manual_platform_fee") {
                         "Remaining question wallet balance: ${bdtFromPoisha(result.remainingBalancePoisha)}. Consented content is queued anonymously for moderation."
                     } else {
                         "No wallet debit was made. Consented content is queued anonymously for Super Admin moderation."
@@ -2013,6 +2274,9 @@ internal fun QuestionPaperComposerDialog(
     var margin by rememberSaveable { mutableStateOf(QuestionPaperMargin.STANDARD.name) }
     var fontSize by rememberSaveable { mutableStateOf(QuestionPaperFontSize.STANDARD.name) }
     var includeAnswerKey by rememberSaveable { mutableStateOf(false) }
+    var font by rememberSaveable { mutableStateOf(QuestionPaperFont.HIND_SILIGURI.name) }
+    var columns by rememberSaveable { mutableStateOf(1) }
+    var showPageBorder by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(db, instituteId) {
         loadingInstitute = true
@@ -2030,6 +2294,9 @@ internal fun QuestionPaperComposerDialog(
         paperSize = QuestionPaperSize.valueOf(paperSize),
         margin = QuestionPaperMargin.valueOf(margin),
         fontSize = QuestionPaperFontSize.valueOf(fontSize),
+        font = QuestionPaperFont.valueOf(font),
+        columns = columns,
+        showPageBorder = showPageBorder,
         includeAnswerKey = includeAnswerKey,
     )
 
@@ -2121,6 +2388,38 @@ internal fun QuestionPaperComposerDialog(
                         )
                     }
                 }
+                Text("Bangla font", color = BankText, fontWeight = FontWeight.SemiBold)
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    QuestionPaperFont.entries.forEach { option ->
+                        FilterChip(
+                            selected = font == option.name,
+                            onClick = { font = option.name; generatedFile = null },
+                            label = { Text(option.label) },
+                            colors = FilterChipDefaults.filterChipColors(selectedContainerColor = BankCyan.copy(alpha = .18f), selectedLabelColor = BankCyan, labelColor = BankMuted),
+                        )
+                    }
+                }
+                Text("Columns", color = BankText, fontWeight = FontWeight.SemiBold)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(1 to "One column", 2 to "Two columns").forEach { (value, label) ->
+                        FilterChip(
+                            selected = columns == value,
+                            onClick = { columns = value; generatedFile = null },
+                            label = { Text(label) },
+                            colors = FilterChipDefaults.filterChipColors(selectedContainerColor = BankCyan.copy(alpha = .18f), selectedLabelColor = BankCyan, labelColor = BankMuted),
+                        )
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Page border", color = BankText, fontWeight = FontWeight.SemiBold)
+                        Text("Draws a thin border around every page.", color = BankMuted, fontSize = 12.sp)
+                    }
+                    Switch(
+                        checked = showPageBorder,
+                        onCheckedChange = { showPageBorder = it; generatedFile = null },
+                    )
+                }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("Include answer key", color = BankText, fontWeight = FontWeight.SemiBold)
@@ -2143,13 +2442,12 @@ internal fun QuestionPaperComposerDialog(
                             Text(institute?.name ?: "Institute", color = Color(0xFF0F172A), fontWeight = FontWeight.Bold)
                             Text(examName.ifBlank { "Question Paper" }, color = Color(0xFF0369A1), fontWeight = FontWeight.SemiBold)
                             Text("$className  |  $subject  |  Marks: $totalMarks  |  Time: $durationMinutes min", color = Color(0xFF475569), fontSize = 10.sp)
-                            questions.take(2).forEachIndexed { index, question ->
-                                Text("${index + 1}. ${question.questionText}", color = Color(0xFF0F172A), fontSize = 11.sp, maxLines = 3)
+                            questions.forEachIndexed { index, question ->
+                                Text("${index + 1}. ${question.questionText}", color = Color(0xFF0F172A), fontSize = 11.sp)
                                 question.options.take(4).forEachIndexed { optionIndex, option ->
-                                    Text("   ${('A'.code + optionIndex).toChar()}. $option", color = Color(0xFF475569), fontSize = 10.sp, maxLines = 1)
+                                    Text("   ${('A'.code + optionIndex).toChar()}. $option", color = Color(0xFF475569), fontSize = 10.sp)
                                 }
                             }
-                            if (questions.size > 2) Text("+ ${questions.size - 2} more question(s)", color = Color(0xFF0369A1), fontSize = 10.sp)
                             Text(institute?.name ?: "Institute", color = Color(0xFFCBD5E1), fontSize = 14.sp, fontWeight = FontWeight.Bold)
                         }
                     }
@@ -2185,7 +2483,10 @@ internal fun QuestionPaperComposerDialog(
                             onClick = {
                                 runCatching {
                                     downloadQuestionPaperPdf(context, file, examName.ifBlank { "question_paper" })
-                                }.onSuccess { notice = "PDF saved to Downloads/Question Papers." }
+                                }.onSuccess {
+                                    notice = "PDF saved to Downloads/Question Papers."
+                                    Toast.makeText(context, "PDF saved to Downloads/Question Papers.", Toast.LENGTH_SHORT).show()
+                                }
                                     .onFailure { error = it.message ?: "Could not download PDF." }
                             },
                         ) {
@@ -2211,6 +2512,313 @@ internal fun QuestionPaperComposerDialog(
             }
         }
     }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AiPromptChatSheet(
+    promptText: String,
+    onPromptTextChange: (String) -> Unit,
+    loading: Boolean,
+    error: String?,
+    canGenerate: Boolean,
+    generating: Boolean,
+    onReset: () -> Unit,
+    onGenerate: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    ModalBottomSheet(
+        onDismissRequest = { if (!generating) onDismiss() },
+        containerColor = BankCard,
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.AutoAwesome, null, tint = BankCyan)
+                Spacer(Modifier.width(8.dp))
+                Text("AI prompt", color = BankText, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            }
+            Text(
+                "This ready-made prompt is shared for every board so the AI answers consistently and API cost stays low. Class, chapter, topic, question count, level and type are filled in automatically from your selections. Edit any part if needed.",
+                color = BankMuted,
+                fontSize = 12.sp,
+            )
+            if (loading) {
+                Box(
+                    Modifier.fillMaxWidth().height(180.dp),
+                    contentAlignment = Alignment.Center,
+                ) { CircularProgressIndicator(color = BankCyan) }
+            } else {
+                OutlinedTextField(
+                    value = promptText,
+                    onValueChange = { onPromptTextChange(it.take(1_200)) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 180.dp),
+                    textStyle = androidx.compose.ui.text.TextStyle(color = BankText, fontSize = 13.sp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = BankCyan,
+                        unfocusedBorderColor = BankBorder,
+                        cursorColor = BankCyan,
+                    ),
+                )
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("${promptText.length}/1200", color = BankMuted, fontSize = 11.sp)
+                    TextButton(onClick = onReset, enabled = !generating) {
+                        Text("Reset to default", color = BankCyan, fontSize = 12.sp)
+                    }
+                }
+            }
+            error?.let { Text(it, color = Color(0xFFFCA5A5), fontSize = 12.sp) }
+            Button(
+                onClick = onGenerate,
+                enabled = canGenerate && promptText.isNotBlank() && !loading,
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = BankCyan,
+                    contentColor = BankBg,
+                    disabledContainerColor = BankBorder,
+                    disabledContentColor = BankMuted,
+                ),
+            ) {
+                if (generating) {
+                    CircularProgressIndicator(Modifier.size(18.dp), color = BankBg, strokeWidth = 2.dp)
+                    Spacer(Modifier.width(8.dp))
+                }
+                Text(if (generating) "Generating questions..." else "Generate questions", fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+@Composable
+private fun TopupRequestDialog(
+    minAmountPoisha: Int,
+    feePercent: Double,
+    amountText: String,
+    onAmountTextChange: (String) -> Unit,
+    paymentMethod: String,
+    onPaymentMethodChange: (String) -> Unit,
+    senderNumber: String,
+    onSenderNumberChange: (String) -> Unit,
+    submitting: Boolean,
+    onSubmit: (Int, String, String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val context = LocalContext.current
+    val amountTaka = amountText.toDoubleOrNull() ?: 0.0
+    val amountPoisha = (amountTaka * 100).toInt()
+    val feeTaka = amountTaka * feePercent / 100.0
+    val payableTaka = amountTaka + feeTaka
+    val payNumber = if (paymentMethod == "bkash") "01777408383" else "01518657869"
+    val payLabel = if (paymentMethod == "bkash") "bKash (Send Money)" else "Nagad"
+    val senderValid = senderNumber.replace(Regex("\\D"), "").length >= 11
+    AlertDialog(
+        onDismissRequest = { if (!submitting) onDismiss() },
+        containerColor = BankCard,
+        title = { Text("Top up question wallet", color = BankText, fontWeight = FontWeight.Bold) },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()).heightIn(max = 440.dp).imePadding(),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    "Send Money to the number below, then submit your request. Super Admin verifies your payment and credits this wallet.",
+                    color = BankMuted,
+                    fontSize = 13.sp,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("bkash" to "bKash", "nagad" to "Nagad").forEach { (value, label) ->
+                        FilterChip(
+                            selected = paymentMethod == value,
+                            onClick = { onPaymentMethodChange(value) },
+                            label = { Text(label) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = BankCyan.copy(alpha = 0.18f),
+                                selectedLabelColor = BankCyan,
+                                labelColor = BankMuted,
+                            ),
+                            border = FilterChipDefaults.filterChipBorder(
+                                enabled = true,
+                                selected = paymentMethod == value,
+                                borderColor = BankBorder,
+                                selectedBorderColor = BankCyan,
+                            ),
+                        )
+                    }
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(BankBg)
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(payLabel, color = BankMuted, fontSize = 11.sp)
+                        Text(payNumber, color = BankText, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    }
+                    IconButton(
+                        onClick = {
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            clipboard.setPrimaryClip(ClipData.newPlainText("number", payNumber))
+                            Toast.makeText(context, "Number copied!", Toast.LENGTH_SHORT).show()
+                        }
+                    ) {
+                        Icon(
+                            Icons.Filled.ContentCopy,
+                            contentDescription = "Copy",
+                            tint = BankCyan,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
+                }
+                OutlinedTextField(
+                    value = amountText,
+                    onValueChange = onAmountTextChange,
+                    label = { Text("Amount (BDT, minimum 50)") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    enabled = !submitting,
+                    modifier = Modifier.fillMaxWidth(),
+                    textStyle = androidx.compose.ui.text.TextStyle(color = BankText, fontSize = 14.sp),
+                )
+                Text(
+                    "Amount: BDT ${"%.2f".format(amountTaka)} Â· Processing fee (${feePercent}%): BDT ${"%.2f".format(feeTaka)}",
+                    color = BankMuted,
+                    fontSize = 12.sp,
+                )
+                Text(
+                    "You pay: BDT ${"%.2f".format(payableTaka)}",
+                    color = BankCyan,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp,
+                )
+                OutlinedTextField(
+                    value = senderNumber,
+                    onValueChange = { input ->
+                        if (input.length <= 20 && input.all { it.isDigit() || it == '+' }) onSenderNumberChange(input)
+                    },
+                    label = { Text("Your ${if (paymentMethod == "bkash") "bKash" else "Nagad"} number") },
+                    placeholder = { Text("e.g. 01712345678") },
+                    supportingText = {
+                        Text(
+                            "The number the money was sent from. Super Admin verifies this before approving.",
+                            color = BankMuted,
+                            fontSize = 10.sp,
+                        )
+                    },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                    enabled = !submitting,
+                    modifier = Modifier.fillMaxWidth(),
+                    leadingIcon = { Icon(Icons.Filled.Phone, contentDescription = null, tint = BankCyan) },
+                )
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss, enabled = !submitting) { Text("Cancel") } },
+        confirmButton = {
+            Button(
+                onClick = { onSubmit(amountPoisha, paymentMethod, senderNumber.trim()) },
+                enabled = !submitting && amountPoisha >= minAmountPoisha && senderValid,
+                colors = ButtonDefaults.buttonColors(containerColor = BankCyan, contentColor = BankBg),
+            ) { Text(if (submitting) "Sending..." else "Request top-up") }
+        },
+    )
+}
+
+@Composable
+private fun PreviousQuestionsDialog(
+    questions: List<PreviousQuestion>,
+    questionTypeLabel: String,
+    loading: Boolean,
+    hasMore: Boolean,
+    error: String?,
+    onLoadMore: () -> Unit,
+    onUse: (PreviousQuestion) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = BankCard,
+        title = { Text("Previous questions", color = BankText, fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "Reuse your saved $questionTypeLabel questions in a new exam. Tap Use again, then review and edit before finalizing.",
+                    color = BankMuted,
+                    fontSize = 12.sp,
+                )
+                when {
+                    loading && questions.isEmpty() -> Box(
+                        Modifier.fillMaxWidth().height(120.dp),
+                        contentAlignment = Alignment.Center,
+                    ) { CircularProgressIndicator(color = BankCyan) }
+                    questions.isEmpty() && error == null -> Text(
+                        "No saved $questionTypeLabel questions yet.",
+                        color = BankMuted,
+                        fontSize = 13.sp,
+                    )
+                    else -> LazyColumn(
+                        modifier = Modifier.heightIn(max = 360.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        itemsIndexed(questions) { _, question ->
+                            Surface(
+                                color = BankBg,
+                                shape = RoundedCornerShape(10.dp),
+                                border = BorderStroke(1.dp, BankBorder),
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text(
+                                        question.questionText.take(180) + if (question.questionText.length > 180) "…" else "",
+                                        color = BankText,
+                                        fontSize = 13.sp,
+                                    )
+                                    Text(
+                                        "${question.className} · ${question.subject} · ${question.chapter}",
+                                        color = BankMuted,
+                                        fontSize = 11.sp,
+                                    )
+                                    Text(
+                                        question.examName,
+                                        color = BankCyan,
+                                        fontSize = 11.sp,
+                                    )
+                                    TextButton(
+                                        onClick = { onUse(question) },
+                                        modifier = Modifier.align(Alignment.End),
+                                    ) { Text("Use again", color = BankCyan) }
+                                }
+                            }
+                        }
+                        if (hasMore) {
+                            item {
+                                TextButton(
+                                    onClick = onLoadMore,
+                                    enabled = !loading,
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) { Text(if (loading) "Loading..." else "Load more", color = BankCyan) }
+                            }
+                        }
+                    }
+                }
+                error?.let { Text(it, color = Color(0xFFFCA5A5), fontSize = 12.sp) }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+    )
 }
 
 private tailrec fun Context.findActivity(): Activity? = when (this) {

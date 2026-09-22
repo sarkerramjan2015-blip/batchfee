@@ -47,6 +47,14 @@
         { "fieldPath": "status", "order": "ASCENDING" },
         { "fieldPath": "updatedAtMs", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "question_bank",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "finalizedAtMs", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": [

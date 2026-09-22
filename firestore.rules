@@ -505,6 +505,7 @@ service cloud.firestore {
         && collection != 'question_bank_wallet'
         && collection != 'question_bank_wallet_ledger'
         && collection != 'question_bank_usage'
+        && collection != 'question_bank_topup_requests'
         && collection != 'payment_settings'
         && collection != 'payment_requests'
         && collection != 'payment_request_audit'
@@ -558,6 +559,11 @@ service cloud.firestore {
     match /institutes/{instituteId}/question_bank_usage/{document=**} {
       allow read, write: if false;
     }
+    // Owner top-up requests and approvals are callable-only; the generic tenant
+    // rule must never let a client forge a pending request or wallet credit.
+    match /institutes/{instituteId}/question_bank_topup_requests/{document=**} {
+      allow read, write: if false;
+    }
 
     // Only a future curation callable may publish reviewed contributions.
     // Never let a teacher or owner insert directly into the global asset.
@@ -579,6 +585,10 @@ service cloud.firestore {
       allow read, write: if false;
     }
     match /question_bank_admin_operations/{document=**} {
+      allow read, write: if false;
+    }
+    // Platform revenue events from question wallet charges and top-up fees.
+    match /platform_question_revenue/{document=**} {
       allow read, write: if false;
     }
 

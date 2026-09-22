@@ -22,15 +22,22 @@ data class ReviewValidation(
 object QuestionReviewPolicy {
     // Client display mirrors the public rate card; the trusted callable always
     // recalculates and performs the authoritative debit in integer poisha.
+    // 2026-09-21 owner-approved rates: MCQ 0.50, Short 0.50, CQ 1.50 taka.
     fun unitPricePoisha(questionType: String): Int = when (questionType.lowercase()) {
-        "mcq" -> 25
+        "mcq" -> 50
         "short" -> 50
-        "creative" -> 75
+        "creative" -> 150
         else -> 0
     }
 
+    /** Platform fee for manually created questions: BDT 1.00 per finalized question. */
+    const val MANUAL_UNIT_PRICE_POISHA: Int = 100
+
     fun totalPricePoisha(questionType: String, questions: List<ReviewableQuestion>): Int =
         unitPricePoisha(questionType) * questions.count { it.selected }
+
+    fun manualTotalPricePoisha(questions: List<ReviewableQuestion>): Int =
+        MANUAL_UNIT_PRICE_POISHA * questions.count { it.selected }
 
     fun validate(questionType: String, question: ReviewableQuestion): ReviewValidation {
         if (question.questionText.trim().isEmpty()) return ReviewValidation(false, "Question text is required.")

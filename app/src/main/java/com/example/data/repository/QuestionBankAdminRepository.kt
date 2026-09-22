@@ -32,6 +32,33 @@ data class QuestionWalletCreditResult(
     val balancePoisha: Int,
 )
 
+data class QuestionTopupDecision(
+    val requestId: String,
+    val instituteId: String,
+    val amountPoisha: Int,
+    val status: String,
+    val balancePoisha: Int,
+)
+
+data class PendingQuestionTopup(
+    val requestId: String,
+    val instituteId: String,
+    val amountPoisha: Int,
+    val feePoisha: Int,
+    val payablePoisha: Int,
+    val requestedAtMs: Long,
+    val paymentMethod: String = "bkash",
+    val senderNumber: String = "",
+)
+
+data class QuestionRevenueSummary(
+    val totalQuestionChargesPoisha: Int = 0,
+    val totalTopupFeePoisha: Int = 0,
+    val totalTopupCreditPoisha: Int = 0,
+    val topupCount: Int = 0,
+    val chargeCount: Int = 0,
+)
+
 /** Root-only callable transport for global question-bank operational controls. */
 class QuestionBankAdminRepository(
     private val functions: FirebaseFunctions = FirebaseFunctions.getInstance("asia-south1"),
@@ -82,6 +109,58 @@ class QuestionBankAdminRepository(
                 "questionId" to questionId,
                 "operationId" to UUID.randomUUID().toString(),
             ),
+        )
+    }
+
+    suspend fun pendingTopups(): List<PendingQuestionTopup> {
+        val body = call(mapOf("action" to "list_pending_topups"))
+        return (body["requests"] as? List<*>).orEmpty()
+            .mapNotNull { it as? Map<*, *> }
+            .map { value ->
+                PendingQuestionTopup(
+                    requestId = value["requestId"] as? String ?: "",
+                    instituteId = value["instituteId"] as? String ?: "",
+                    amountPoisha = (value["amountPoisha"] as? Number)?.toInt() ?: 0,
+                    feePoisha = (value["feePoisha"] as? Number)?.toInt() ?: 0,
+                    payablePoisha = (value["payablePoisha"] as? Number)?.toInt() ?: 0,
+                    requestedAtMs = (value["requestedAtMs"] as? Number)?.toLong() ?: 0L,
+                    paymentMethod = value["paymentMethod"] as? String ?: "bkash",
+                    senderNumber = value["senderNumber"] as? String ?: "",
+                )
+            }
+    }
+
+    suspend fun revenueSummary(): QuestionRevenueSummary {
+        val body = call(mapOf("action" to "get_revenue_summary"))
+        return QuestionRevenueSummary(
+            totalQuestionChargesPoisha = (body["totalQuestionChargesPoisha"] as? Number)?.toInt() ?: 0,
+            totalTopupFeePoisha = (body["totalTopupFeePoisha"] as? Number)?.toInt() ?: 0,
+            totalTopupCreditPoisha = (body["totalTopupCreditPoisha"] as? Number)?.toInt() ?: 0,
+            topupCount = (body["topupCount"] as? Number)?.toInt() ?: 0,
+            chargeCount = (body["chargeCount"] as? Number)?.toInt() ?: 0,
+        )
+    }
+
+    suspend fun decideTopup(
+        instituteId: String,
+        requestId: String,
+        approve: Boolean,
+    ): QuestionTopupDecision {
+        require(instituteId.isNotBlank() && requestId.isNotBlank()) { "Invalid top-up request." }
+        val body = call(
+            mapOf(
+                "action" to if (approve) "approve_topup" else "reject_topup",
+                "operationId" to UUID.randomUUID().toString(),
+                "instituteId" to instituteId,
+                "requestId" to requestId,
+            ),
+        )
+        return QuestionTopupDecision(
+            requestId = body["requestId"] as? String ?: requestId,
+            instituteId = body["instituteId"] as? String ?: instituteId,
+            amountPoisha = (body["amountPoisha"] as? Number)?.toInt() ?: 0,
+            status = body["status"] as? String ?: "",
+            balancePoisha = (body["balancePoisha"] as? Number)?.toInt() ?: 0,
         )
     }
 

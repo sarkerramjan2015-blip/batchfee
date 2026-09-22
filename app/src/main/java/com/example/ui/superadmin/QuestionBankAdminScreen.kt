@@ -51,6 +51,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.batchfee.edu.data.repository.AdminBankQuestion
+import com.batchfee.edu.data.repository.PendingQuestionTopup
+import com.batchfee.edu.data.repository.QuestionRevenueSummary
 import com.batchfee.edu.data.repository.QuestionBankAdminRepository
 import com.batchfee.edu.data.repository.QuestionBankAdminSettings
 import kotlinx.coroutines.launch
@@ -84,6 +86,9 @@ fun QuestionBankAdminScreen(
     var walletAmountBdt by remember { mutableStateOf("") }
     var walletReason by remember { mutableStateOf("") }
     var creditingWallet by remember { mutableStateOf(false) }
+    var pendingTopups by remember { mutableStateOf<List<PendingQuestionTopup>>(emptyList()) }
+    var decidingId by remember { mutableStateOf<String?>(null) }
+    var revenue by remember { mutableStateOf(QuestionRevenueSummary()) }
 
     fun refresh() {
         loading = true
@@ -96,6 +101,34 @@ fun QuestionBankAdminScreen(
                 }
                 .onFailure { error = it.message ?: "Could not load question bank controls." }
             loading = false
+        }
+        scope.launch {
+            runCatching { repository.pendingTopups() }
+                .onSuccess { pendingTopups = it }
+                .onFailure { }
+        }
+        scope.launch {
+            runCatching { repository.revenueSummary() }
+                .onSuccess { revenue = it }
+                .onFailure { }
+        }
+    }
+    fun decideTopup(topup: PendingQuestionTopup, approve: Boolean) {
+        decidingId = topup.requestId
+        error = null
+        notice = null
+        scope.launch {
+            runCatching { repository.decideTopup(topup.instituteId, topup.requestId, approve) }
+                .onSuccess { decision ->
+                    pendingTopups = pendingTopups.filterNot { it.requestId == topup.requestId }
+                    notice = if (approve) {
+                        "Top-up approved. Wallet credited ${formatPoisha(decision.amountPoisha)}. New balance: ${formatPoisha(decision.balancePoisha)}."
+                    } else {
+                        "Top-up request rejected."
+                    }
+                }
+                .onFailure { error = it.message ?: "Could not decide the top-up request." }
+            decidingId = null
         }
     }
     LaunchedEffect(status) { refresh() }
@@ -232,6 +265,66 @@ fun QuestionBankAdminScreen(
                             Spacer(Modifier.width(8.dp))
                         }
                         Text(if (creditingWallet) "Crediting..." else "Credit question wallet")
+                    }
+                }
+            }
+            item {
+                ControlCard {
+                    Text("Pending question-wallet top-ups", color = AdminText, fontWeight = FontWeight.Bold)
+                    Text(
+                        "Owners request top-up from Create Questions (minimum BDT 50 + 1.8% processing fee). Verify the payment before approving.",
+                        color = AdminMuted,
+                        fontSize = 12.sp,
+                    )
+                    Text(
+                        "Question revenue: charges ${formatPoisha(revenue.totalQuestionChargesPoisha)} Â· top-up fees ${formatPoisha(revenue.totalTopupFeePoisha)} Â· top-up credit ${formatPoisha(revenue.totalTopupCreditPoisha)} (${revenue.topupCount} top-ups, ${revenue.chargeCount} charges)",
+                        color = AdminCyan,
+                        fontSize = 11.sp,
+                    )
+                    if (pendingTopups.isEmpty()) {
+                        Text("No pending top-up requests.", color = AdminMuted, fontSize = 13.sp)
+                    } else {
+                        pendingTopups.forEach { topup ->
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = AdminBg),
+                                border = BorderStroke(1.dp, AdminBorder),
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text("Institute: ${topup.instituteId}", color = AdminText, fontSize = 13.sp)
+                                    Text(
+                                        "${topup.paymentMethod} Â· sender ${topup.senderNumber}",
+                                        color = AdminMuted,
+                                        fontSize = 12.sp,
+                                    )
+                                    Text(
+                                        "Credit ${formatPoisha(topup.amountPoisha)} · Fee ${formatPoisha(topup.feePoisha)} · Owner pays ${formatPoisha(topup.payablePoisha)}",
+                                        color = AdminMuted,
+                                        fontSize = 12.sp,
+                                    )
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        OutlinedButton(
+                                            onClick = { decideTopup(topup, false) },
+                                            enabled = decidingId == null,
+                                            modifier = Modifier.weight(1f),
+                                            border = BorderStroke(1.dp, AdminRed),
+                                        ) { Text("Reject", color = AdminRed) }
+                                        Button(
+                                            onClick = { decideTopup(topup, true) },
+                                            enabled = decidingId == null,
+                                            modifier = Modifier.weight(1f),
+                                            colors = ButtonDefaults.buttonColors(containerColor = AdminGreen, contentColor = AdminBg),
+                                        ) {
+                                            if (decidingId == topup.requestId) {
+                                                CircularProgressIndicator(Modifier.width(14.dp).height(14.dp), strokeWidth = 2.dp, color = AdminBg)
+                                                Spacer(Modifier.width(6.dp))
+                                            }
+                                            Text("Approve")
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }

@@ -82,7 +82,75 @@ review, automatic balanced-paper selection, question-performance analytics.
 - Untracked debug artifacts clutter the repo root (emulator screenshots/XML
   dumps, smoke outputs, `.build-outputs/`).
 
-## Plan understood (per owner instruction)
+## E. Implemented (21 Sep 2026) — AI prompt chat box in Create Questions
 
-- Focus: finish and verify the pending Create Questions work (section A).
-- Do not implement yet; await further direction.
+Per owner instruction, implemented only this feature and touched nothing else.
+
+### Behavior
+- After a teacher adds an image in the AI flow, a bottom chat box
+  (`AiPromptChatSheet`) opens with the ready-made prompt pre-filled.
+- The prompt is one shared template rendered by the backend:
+  - expert persona ("20+ years of experience" board-standard question maker);
+  - class, chapter (number + title), topic, question count, question level and
+    question type auto-filled from the form's default selections;
+  - level chips added to the form (Balanced / Easy / Medium / Hard).
+- The teacher can edit any part of the prompt (capped at 1,200 chars) and reset
+  to the default.
+- Generation uses the edited prompt; the server always appends an immutable
+  suffix (image-safety + JSON-only instructions) that no user can remove.
+
+### Cost control (one common prompt everywhere)
+- Single shared template in [`questionGeneration.js`](functions/src/questionGeneration.js):
+  `PROMPT_EXPERT_PERSONA`, `renderPromptPreview()`, `IMMUTABLE_PROMPT_SUFFIX`.
+- `preview_prompt` op on `generateExamQuestions` renders the prompt for the chat
+  box for free — no quota reservation, no job, no Gemini credential resolution.
+- Teacher-edited prompt is bounded (`PROMPT_MAX_CHARS = 1200`); the stable
+  suffix keeps output valid and token cost predictable.
+
+### Files touched
+- [`functions/src/questionGeneration.js`](functions/src/questionGeneration.js)
+- [`functions/test/questionGeneration.test.js`](functions/test/questionGeneration.test.js)
+- [`app/src/main/java/com/example/data/repository/QuestionGenerationRepository.kt`](app/src/main/java/com/example/data/repository/QuestionGenerationRepository.kt)
+- [`app/src/main/java/com/example/ui/exams/QuestionBankFoundationScreen.kt`](app/src/main/java/com/example/ui/exams/QuestionBankFoundationScreen.kt)
+
+### Verification
+- Cloud Functions suite: 239 passed, 0 failed (5 new prompt tests included).
+- Android `compileDebugKotlin`: BUILD SUCCESSFUL.
+- Android `testDebugUnitTest`: BUILD SUCCESSFUL.
+- Firebase deployment remains intentionally separate (Phase 8 note).
+
+## F. Implemented (21 Sep 2026) — reuse, repricing, top-up
+
+Owner-approved plan, implemented end to end.
+
+### 1. Previous Questions (reuse saved questions)
+- `questionBankFoundation` callable gains `list_previous_questions` (newest-first,
+  page-based, 1–50 per page, finalized-only, owner's own institute).
+- Create Questions gains **Previous questions** button + dialog: shows saved
+  questions of the currently selected type, "Use again" loads one into the
+  review queue for editing before finalization.
+- New composite index for `question_bank` (status + finalizedAtMs).
+
+### 2. New rate card + manual platform fee
+- [`questionBilling.js`](functions/src/questionBilling.js): MCQ 50, Short 50,
+  CQ 150 poisha; new `MANUAL_QUESTION_RATE_POISHA = 100` (BDT 1).
+- Manual finalization now debits BDT 1 per question from the question wallet
+  (`manual_platform_fee`), blocked atomically when balance is insufficient.
+- UI rate texts, review cost bar, and finalization dialog updated.
+
+### 3. Question-wallet top-up
+- Owner: `request_topup` action (min BDT 50, 1.8% processing fee added to the
+  payable amount; one pending request per institute; idempotent replay).
+- Create Questions wallet card shows balance, pending request, and a Top-up
+  dialog with live fee/payable calculation.
+- Super Admin: `list_pending_topups`, `approve_topup` (credits wallet + ledger
+  entry, audited), `reject_topup`; new Pending top-ups card in
+  [`QuestionBankAdminScreen.kt`](app/src/main/java/com/example/ui/superadmin/QuestionBankAdminScreen.kt).
+- Firestore: `question_bank_topup_requests` added to the generic-tenant deny
+  list and explicitly denied to direct clients.
+
+### Verification
+- Cloud Functions suite: 248 passed, 0 failed.
+- Android `compileDebugKotlin`: BUILD SUCCESSFUL.
+- Android `testDebugUnitTest`: BUILD SUCCESSFUL.
+- Firebase deployment still intentionally separate (Phase 8 note).

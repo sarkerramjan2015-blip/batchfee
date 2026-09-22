@@ -202,7 +202,7 @@ test("sixth lifetime AI attempt is marked for selected-question wallet billing",
   assert.equal(result.billing.mode, "wallet");
   assert.equal(result.billing.attemptNumber, 6);
   assert.equal(result.billing.freeAttemptsRemaining, 0);
-  assert.equal(result.billing.maximumCostPoisha, 25);
+  assert.equal(result.billing.maximumCostPoisha, 50);
 });
 
 test("provider failure is sanitized and audited without storing source scans", async () => {

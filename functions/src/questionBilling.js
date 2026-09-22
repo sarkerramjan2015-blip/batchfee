@@ -5,11 +5,15 @@ const { HttpsError } = require("firebase-functions/v2/https");
 
 const QUESTION_WALLET_DOCUMENT = "default";
 const FREE_LIFETIME_AI_ATTEMPTS = 5;
+// 2026-09-21 owner-approved rate card (BDT): MCQ 0.50, Short 0.50, CQ 1.50.
 const QUESTION_RATE_POISHA = Object.freeze({
-  mcq: 25,
+  mcq: 50,
   short: 50,
-  creative: 75,
+  creative: 150,
 });
+// Platform fee for manually created questions: BDT 1.00 per finalized question,
+// debited from the same question wallet at finalization.
+const MANUAL_QUESTION_RATE_POISHA = 100;
 
 function actorUsageId(uid) {
   return createHash("sha256").update(String(uid)).digest("hex").slice(0, 40);
@@ -54,6 +58,7 @@ module.exports = {
   QUESTION_WALLET_DOCUMENT,
   FREE_LIFETIME_AI_ATTEMPTS,
   QUESTION_RATE_POISHA,
+  MANUAL_QUESTION_RATE_POISHA,
   actorUsageId,
   questionCostPoisha,
   normalizedWallet,
