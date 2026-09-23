@@ -31,3 +31,7 @@ keystore-credentials.txt
 /functions/node_modules/
 /functions/.env*
 !/functions/.env.example
+
+# Local release artifacts that exceed GitHub's file-size limit.
+/promotional content/*.mp4
+/releases/**/mapping.txt
