@@ -79,6 +79,8 @@ import com.batchfee.edu.data.repository.InstituteActivityEvent
 import com.batchfee.edu.data.repository.InstituteActivityPage
 import com.batchfee.edu.data.repository.ClientNote
 import com.batchfee.edu.data.repository.ClientNotesPage
+import com.batchfee.edu.data.repository.SupportCaseRow
+import com.batchfee.edu.data.repository.SupportCaseNote
 import com.batchfee.edu.data.repository.StudentSupportDetails
 import com.batchfee.edu.data.repository.StudentSupportResult
 import com.batchfee.edu.data.repository.StudentSupportPage
@@ -2379,6 +2381,10 @@ fun SuperAdminScreen(
 
             item {
                 V18SupportFeedbackInboxSection()
+            }
+
+            item {
+                SupportCaseQueueSection(isRoot = true)
             }
 
             item {
@@ -4736,6 +4742,7 @@ private fun PlatformMemberConsole(
                     }
                 }
                 "support" -> {
+                    item { SupportCaseQueueSection(isRoot = false) }
                     item { SupportOwnerRecoveryCard(onRecovery = viewModel::sendOwnerRecovery) }
                     item { SupportClientNotesCard(viewModel = viewModel) }
                     item { SupportStudentLookupCard(viewModel = viewModel) }
@@ -5015,6 +5022,295 @@ private fun SupportClientNotesCard(viewModel: SuperAdminViewModel) {
                 else -> notes!!.take(10).forEach { note ->
                     Text("${note.title.ifBlank { "Client update" }} / ${note.status.replace('_', ' ')}\n${note.body}", color = TextMuted, fontSize = 10.sp)
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SupportCaseQueueSection(isRoot: Boolean) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val repository = remember { PlatformAdminRepository() }
+    var view by remember(isRoot) { mutableStateOf(if (isRoot) "review" else "active") }
+    var searchText by remember { mutableStateOf("") }
+    var query by remember { mutableStateOf("") }
+    var refreshKey by remember { mutableIntStateOf(0) }
+    var cases by remember { mutableStateOf<List<SupportCaseRow>>(emptyList()) }
+    var total by remember { mutableIntStateOf(0) }
+    var loading by remember { mutableStateOf(false) }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var selected by remember { mutableStateOf<SupportCaseRow?>(null) }
+    var visibleCount by remember(view) { mutableIntStateOf(20) }
+    LaunchedEffect(view, query, refreshKey) {
+        loading = true
+        error = null
+        try {
+            val result = repository.querySupportQueue(view, query)
+            cases = result.cases
+            total = result.total
+        } catch (failure: Exception) {
+            error = failure.message ?: "Support queue could not be loaded."
+        } finally {
+            loading = false
+        }
+    }
+    Card(
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = CardBg),
+        border = BorderStroke(1.dp, AccentCyan.copy(alpha = 0.22f))
+    ) {
+        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.SupportAgent, null, tint = AccentCyan, modifier = Modifier.size(22.dp))
+                Spacer(Modifier.width(9.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(if (isRoot) "Support feedback review" else "Owner support queue", color = TextWhite, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    Text(if (isRoot) "Review your team's latest owner conversations" else "Contact owners, record outcomes and schedule follow-ups", color = TextMuted, fontSize = 10.sp)
+                }
+                TextButton(onClick = { refreshKey++ }, enabled = !loading) { Text("Refresh", color = AccentCyan, fontSize = 11.sp) }
+            }
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                val views = if (isRoot) listOf("review" to "Needs review", "active" to "Active", "done" to "Done")
+                    else listOf("active" to "Active", "due" to "Due today", "upcoming" to "Upcoming", "done" to "Done")
+                views.forEach { (key, label) ->
+                    FilterChip(
+                        selected = view == key,
+                        onClick = { view = key },
+                        label = { Text(label, fontSize = 10.sp) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = AccentCyan.copy(alpha = 0.2f),
+                            selectedLabelColor = AccentCyan,
+                            labelColor = TextMuted
+                        )
+                    )
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                OutlinedTextField(
+                    value = searchText,
+                    onValueChange = { if (it.length <= 120) searchText = it },
+                    label = { Text("Institute, owner or phone") },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f),
+                    colors = directoryFieldColors()
+                )
+                TextButton(onClick = { query = searchText.trim() }, enabled = searchText.isBlank() || searchText.trim().length >= 3) {
+                    Text("Find", color = AccentCyan)
+                }
+            }
+            if (loading) LinearProgressIndicator(Modifier.fillMaxWidth(), color = AccentCyan)
+            error?.let { Text(it, color = AccentRed, fontSize = 11.sp) }
+            if (!loading && error == null && cases.isEmpty()) {
+                Text(if (view == "review") "No feedback needs review." else "No institutes in this queue right now.", color = TextMuted, fontSize = 12.sp)
+            }
+            if (cases.isNotEmpty()) {
+                Text("Showing ${minOf(visibleCount, cases.size)} of $total", color = TextMuted, fontSize = 10.sp)
+            }
+            cases.take(visibleCount).forEach { row ->
+                val riskColor = when (row.risk) { "high" -> AccentRed; "medium" -> AccentAmber; else -> AccentGreen }
+                Surface(shape = RoundedCornerShape(12.dp), color = BgColor, border = BorderStroke(1.dp, BorderSub)) {
+                    Column(Modifier.fillMaxWidth().padding(11.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(row.instituteName, color = TextWhite, fontWeight = FontWeight.SemiBold, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                            Text(if (row.isFollowUpDue) "DUE" else row.risk.uppercase(), color = if (row.isFollowUpDue) AccentAmber else riskColor, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        }
+                        Text("${row.ownerName.ifBlank { "Owner" }} · ${row.subscriptionStatus.replace('_', ' ')} · ${row.status.replace('_', ' ')}", color = TextMuted, fontSize = 10.sp)
+                        if (row.reasons.isNotEmpty()) Text(row.reasons.take(2).joinToString(" · "), color = riskColor, fontSize = 10.sp)
+                        if (row.lastNote.isNotBlank()) {
+                            Text("${row.lastAgentName.ifBlank { "Support" }}: ${row.lastNote}", color = TextWhite, fontSize = 10.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                        }
+                        if (row.followUpAtMs > 0) Text("Follow-up: ${SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(row.followUpAtMs))}", color = AccentAmber, fontSize = 10.sp)
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            OutlinedButton(
+                                onClick = { openDialer(context, row.phone) }, enabled = row.phone.isNotBlank(),
+                                modifier = Modifier.weight(1f).height(36.dp), contentPadding = PaddingValues(0.dp)
+                            ) { Text("Call", fontSize = 10.sp, color = AccentCyan) }
+                            OutlinedButton(
+                                onClick = { openSupportWhatsApp(context, row) },
+                                enabled = row.whatsappNumber.isNotBlank() || row.phone.isNotBlank(),
+                                modifier = Modifier.weight(1f).height(36.dp), contentPadding = PaddingValues(0.dp)
+                            ) { Text("WhatsApp", fontSize = 10.sp, color = AccentGreen) }
+                            Button(
+                                onClick = { selected = row }, modifier = Modifier.weight(1f).height(36.dp),
+                                contentPadding = PaddingValues(0.dp), colors = ButtonDefaults.buttonColors(containerColor = AccentCyan)
+                            ) { Text(if (isRoot) "Review" else "Update", color = BgColor, fontSize = 10.sp) }
+                        }
+                    }
+                }
+            }
+            if (visibleCount < cases.size) {
+                TextButton(onClick = { visibleCount += 20 }, modifier = Modifier.fillMaxWidth()) { Text("Show more", color = AccentCyan) }
+            }
+            if (total > cases.size) Text("Only the first 200 cases are shown. Refine the queue to see other cases.", color = TextMuted, fontSize = 10.sp)
+        }
+    }
+    selected?.let { row ->
+        if (isRoot) {
+            SupportCaseReviewDialog(row, busy, onDismiss = { if (!busy) selected = null }) { decision, note ->
+                busy = true
+                scope.launch {
+                    try {
+                        repository.reviewSupportCase(row.instituteId, decision, note)
+                        selected = null
+                        refreshKey++
+                    } catch (failure: Exception) {
+                        error = failure.message ?: "Review could not be saved."
+                    } finally { busy = false }
+                }
+            }
+        } else {
+            SupportCaseUpdateDialog(row, busy, onDismiss = { if (!busy) selected = null }) { status, body, channel, followUpAtMs ->
+                busy = true
+                scope.launch {
+                    try {
+                        repository.updateSupportCase(row.instituteId, status, body, channel, followUpAtMs)
+                        selected = null
+                        refreshKey++
+                    } catch (failure: Exception) {
+                        error = failure.message ?: "Feedback could not be saved."
+                    } finally { busy = false }
+                }
+            }
+        }
+    }
+}
+
+private fun openSupportWhatsApp(context: Context, row: SupportCaseRow) {
+    val digits = row.whatsappNumber.ifBlank { row.phone }.filter(Char::isDigit)
+    val international = if (digits.startsWith("0") && digits.length == 11) "88$digits" else digits
+    if (international.isBlank()) return
+    val message = "Hello ${row.ownerName.ifBlank { "there" }}, this is BatchFee Support regarding ${row.instituteName}. How can we help?"
+    try {
+        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/$international?text=${Uri.encode(message)}")))
+    } catch (_: Exception) {
+        Toast.makeText(context, "Could not open WhatsApp.", Toast.LENGTH_SHORT).show()
+    }
+}
+
+@Composable
+private fun SupportCaseUpdateDialog(
+    row: SupportCaseRow,
+    busy: Boolean,
+    onDismiss: () -> Unit,
+    onSave: (String, String, String, Long) -> Unit
+) {
+    val context = LocalContext.current
+    var body by remember(row.instituteId) { mutableStateOf("") }
+    var channel by remember(row.instituteId) { mutableStateOf("call") }
+    var status by remember(row.instituteId) { mutableStateOf("open") }
+    var followUpAtMs by remember(row.instituteId) { mutableLongStateOf(0L) }
+    var history by remember(row.instituteId) { mutableStateOf<List<SupportCaseNote>>(emptyList()) }
+    var historyError by remember(row.instituteId) { mutableStateOf<String?>(null) }
+    LaunchedEffect(row.instituteId) {
+        try { history = PlatformAdminRepository().listSupportCaseNotes(row.instituteId) }
+        catch (failure: Exception) { historyError = failure.message ?: "History unavailable." }
+    }
+    val containsSecret = remember(body) {
+        Regex("\\b(password|passcode|otp|access[ -]?token|security[ -]?pin)\\b", RegexOption.IGNORE_CASE).containsMatchIn(body)
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Update ${row.instituteName}", color = TextWhite, fontWeight = FontWeight.Bold) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Save the actual contact outcome. Opening Call or WhatsApp alone does not mark it completed.", color = TextMuted, fontSize = 11.sp)
+                Text("Contact method", color = TextWhite, fontSize = 11.sp)
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("call", "whatsapp", "sms", "other").forEach { value ->
+                        FilterChip(selected = channel == value, onClick = { channel = value }, label = { Text(value.replaceFirstChar { it.uppercase() }, fontSize = 10.sp) })
+                    }
+                }
+                OutlinedTextField(body, { if (it.length <= 2_000) body = it }, label = { Text("What did the owner say?") }, minLines = 3, modifier = Modifier.fillMaxWidth(), colors = directoryFieldColors())
+                Text("Next step", color = TextWhite, fontSize = 11.sp)
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("open" to "Keep open", "follow_up" to "Follow-up", "done" to "Done for 7 days").forEach { (value, label) ->
+                        FilterChip(selected = status == value, onClick = { status = value }, label = { Text(label, fontSize = 10.sp) })
+                    }
+                }
+                if (status == "follow_up") {
+                    OutlinedButton(onClick = {
+                        val initial = Calendar.getInstance().apply { add(Calendar.DAY_OF_MONTH, 1) }
+                        android.app.DatePickerDialog(context, { _, year, month, day ->
+                            followUpAtMs = Calendar.getInstance().apply {
+                                set(year, month, day, 12, 0, 0)
+                                set(Calendar.MILLISECOND, 0)
+                            }.timeInMillis
+                        }, initial.get(Calendar.YEAR), initial.get(Calendar.MONTH), initial.get(Calendar.DAY_OF_MONTH)).apply {
+                            datePicker.minDate = System.currentTimeMillis()
+                            datePicker.maxDate = System.currentTimeMillis() + 365L * MILLIS_PER_DAY
+                        }.show()
+                    }, modifier = Modifier.fillMaxWidth()) {
+                        Text(if (followUpAtMs > 0) "Follow-up: ${SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(followUpAtMs))}" else "Choose follow-up date", color = AccentCyan)
+                    }
+                }
+                if (containsSecret) Text("Remove passwords, PINs or access codes before saving.", color = AccentRed, fontSize = 10.sp)
+                SupportCaseHistory(history, historyError)
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onSave(status, body, channel, if (status == "follow_up") followUpAtMs else 0L) },
+                enabled = !busy && body.trim().length >= 3 && !containsSecret && (status != "follow_up" || followUpAtMs > System.currentTimeMillis()),
+                colors = ButtonDefaults.buttonColors(containerColor = AccentCyan)
+            ) { Text(if (busy) "Saving..." else "Save feedback", color = BgColor) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss, enabled = !busy) { Text("Cancel", color = TextMuted) } },
+        containerColor = CardBg
+    )
+}
+
+@Composable
+private fun SupportCaseReviewDialog(
+    row: SupportCaseRow,
+    busy: Boolean,
+    onDismiss: () -> Unit,
+    onReview: (String, String) -> Unit
+) {
+    var note by remember(row.instituteId) { mutableStateOf("") }
+    var history by remember(row.instituteId) { mutableStateOf<List<SupportCaseNote>>(emptyList()) }
+    var historyError by remember(row.instituteId) { mutableStateOf<String?>(null) }
+    LaunchedEffect(row.instituteId) {
+        try { history = PlatformAdminRepository().listSupportCaseNotes(row.instituteId) }
+        catch (failure: Exception) { historyError = failure.message ?: "History unavailable." }
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Review support feedback", color = TextWhite) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(row.instituteName, color = AccentCyan, fontWeight = FontWeight.SemiBold)
+                Text(row.lastNote.ifBlank { "No feedback note." }, color = TextWhite, fontSize = 12.sp)
+                Text("By ${row.lastAgentName.ifBlank { "Support team" }} · ${row.lastChannel}", color = TextMuted, fontSize = 10.sp)
+                OutlinedTextField(note, { if (it.length <= 500) note = it }, label = { Text("Review note (optional)") }, modifier = Modifier.fillMaxWidth(), colors = directoryFieldColors())
+                SupportCaseHistory(history, historyError)
+            }
+        },
+        confirmButton = {
+            Row {
+                TextButton(onClick = { onReview("reopen", note) }, enabled = !busy) { Text("Reopen", color = AccentAmber) }
+                Button(onClick = { onReview("reviewed", note) }, enabled = !busy, colors = ButtonDefaults.buttonColors(containerColor = AccentCyan)) {
+                    Text(if (busy) "Saving..." else "Reviewed", color = BgColor)
+                }
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss, enabled = !busy) { Text("Close", color = TextMuted) } },
+        containerColor = CardBg
+    )
+}
+
+@Composable
+private fun SupportCaseHistory(notes: List<SupportCaseNote>, error: String?) {
+    Text("Contact history", color = TextWhite, fontWeight = FontWeight.SemiBold, fontSize = 11.sp)
+    error?.let { Text(it, color = AccentRed, fontSize = 10.sp) }
+    if (notes.isEmpty() && error == null) Text("No earlier updates.", color = TextMuted, fontSize = 10.sp)
+    notes.take(10).forEach { note ->
+        Surface(color = BgColor, shape = RoundedCornerShape(8.dp)) {
+            Column(Modifier.fillMaxWidth().padding(8.dp)) {
+                Text("${note.actorName.ifBlank { "Platform team" }} · ${note.channel} · ${note.status.replace('_', ' ')}", color = AccentCyan, fontSize = 10.sp)
+                Text(note.body, color = TextWhite, fontSize = 10.sp)
+                if (note.createdAtMs > 0) Text(SimpleDateFormat("dd MMM yyyy, HH:mm", Locale.getDefault()).format(Date(note.createdAtMs)), color = TextMuted, fontSize = 9.sp)
             }
         }
     }

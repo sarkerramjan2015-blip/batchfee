@@ -228,6 +228,38 @@ data class ClientNotesPage(
     val nextCursor: String
 )
 
+data class SupportCaseRow(
+    val instituteId: String,
+    val instituteName: String,
+    val ownerName: String,
+    val phone: String,
+    val whatsappNumber: String,
+    val subscriptionStatus: String,
+    val risk: String,
+    val reasons: List<String>,
+    val status: String,
+    val followUpAtMs: Long,
+    val hiddenUntilMs: Long,
+    val lastContactAtMs: Long,
+    val lastChannel: String,
+    val lastNote: String,
+    val lastAgentName: String,
+    val assignedToName: String,
+    val reviewStatus: String,
+    val isFollowUpDue: Boolean
+)
+
+data class SupportQueue(val cases: List<SupportCaseRow>, val total: Int)
+
+data class SupportCaseNote(
+    val body: String,
+    val channel: String,
+    val status: String,
+    val actorName: String,
+    val createdAtMs: Long,
+    val followUpAtMs: Long
+)
+
 /** Safe, allowlisted SMS recharge request row returned by the trusted wallet callable. */
 data class SmsRechargeReviewRequest(
     val requestId: String,
@@ -573,6 +605,63 @@ class PlatformAdminRepository(
             "status" to status,
             "followUpAtMs" to followUpAtMs
         )).toClientNote()
+    }
+
+    suspend fun querySupportQueue(view: String = "active", query: String = ""): SupportQueue {
+        require(view in setOf("active", "due", "upcoming", "done", "review")) { "Invalid support view." }
+        val output = call("query_support_queue", UUID.randomUUID().toString(), mapOf("view" to view, "query" to query.trim()))
+        return SupportQueue(
+            cases = (output["cases"] as? List<*>).orEmpty()
+                .mapNotNull { (it as? Map<*, *>)?.toSupportCaseRow() },
+            total = (output["total"] as? Number)?.toInt() ?: 0
+        )
+    }
+
+    suspend fun listSupportCaseNotes(instituteId: String): List<SupportCaseNote> {
+        require(instituteId.isNotBlank()) { "Institute is required." }
+        val output = call("list_support_case_notes", UUID.randomUUID().toString(), mapOf("instituteId" to instituteId))
+        return (output["notes"] as? List<*>).orEmpty().mapNotNull { raw ->
+            val values = raw as? Map<*, *> ?: return@mapNotNull null
+            SupportCaseNote(
+                body = values["body"] as? String ?: "",
+                channel = values["channel"] as? String ?: "",
+                status = values["status"] as? String ?: "",
+                actorName = values["actorName"] as? String ?: "",
+                createdAtMs = (values["createdAtMs"] as? Number)?.toLong() ?: 0L,
+                followUpAtMs = (values["followUpAtMs"] as? Number)?.toLong() ?: 0L
+            )
+        }
+    }
+
+    suspend fun updateSupportCase(
+        instituteId: String,
+        status: String,
+        body: String,
+        channel: String,
+        followUpAtMs: Long = 0L,
+        operationId: String = UUID.randomUUID().toString()
+    ): SupportCaseRow {
+        require(instituteId.isNotBlank() && body.trim().length >= 3) { "Write a contact note first." }
+        return call("update_support_case", operationId, mapOf(
+            "instituteId" to instituteId,
+            "status" to status,
+            "body" to body.trim(),
+            "channel" to channel,
+            "followUpAtMs" to followUpAtMs
+        )).toSupportCaseRow()
+    }
+
+    suspend fun reviewSupportCase(
+        instituteId: String,
+        decision: String,
+        note: String = "",
+        operationId: String = UUID.randomUUID().toString()
+    ) {
+        call("review_support_case", operationId, mapOf(
+            "instituteId" to instituteId,
+            "decision" to decision,
+            "note" to note.trim()
+        ))
     }
 
     suspend fun dashboard(): PlatformDashboardMetrics {
@@ -930,6 +1019,31 @@ private fun Map<*, *>.toClientNote(): ClientNote {
         createdAtMs = (this["createdAtMs"] as? Number)?.toLong() ?: 0L,
         createdByName = string("createdByName"),
         createdByRole = string("createdByRole")
+    )
+}
+
+private fun Map<*, *>.toSupportCaseRow(): SupportCaseRow {
+    fun string(key: String) = this[key] as? String ?: ""
+    fun long(key: String) = (this[key] as? Number)?.toLong() ?: 0L
+    return SupportCaseRow(
+        instituteId = string("instituteId"),
+        instituteName = string("instituteName"),
+        ownerName = string("ownerName"),
+        phone = string("phone"),
+        whatsappNumber = string("whatsappNumber"),
+        subscriptionStatus = string("subscriptionStatus"),
+        risk = string("risk"),
+        reasons = (this["reasons"] as? List<*>).orEmpty().mapNotNull { it as? String },
+        status = string("status"),
+        followUpAtMs = long("followUpAtMs"),
+        hiddenUntilMs = long("hiddenUntilMs"),
+        lastContactAtMs = long("lastContactAtMs"),
+        lastChannel = string("lastChannel"),
+        lastNote = string("lastNote"),
+        lastAgentName = string("lastAgentName"),
+        assignedToName = string("assignedToName"),
+        reviewStatus = string("reviewStatus"),
+        isFollowUpDue = this["isFollowUpDue"] as? Boolean ?: false
     )
 }
 

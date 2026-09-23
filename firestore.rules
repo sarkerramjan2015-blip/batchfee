@@ -1188,6 +1188,13 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    match /platform_support_cases/{instituteId} {
+      allow read, write: if false;
+      match /notes/{noteId} {
+        allow read, write: if false;
+      }
+    }
+
     // V1.8 notice centre and product-feedback data are callable-only. In
     // particular, a tenant must never be able to enumerate notices meant for
     // another institute, forge another user's read state, or read the Support

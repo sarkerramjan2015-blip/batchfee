@@ -15,6 +15,8 @@ const {
   matchesDirectoryFilters,
   matchesStudentSupportSearch,
   normalizeClientNoteRequest,
+  normalizeSupportCaseUpdate,
+  supportQueueRows,
   normalizeDirectoryRequest,
   normalizeStudentSupportRequest,
   normalizeTimelineRequest,
@@ -53,8 +55,52 @@ test("least-privilege permissions keep account authority and owner recovery sepa
   assert.ok(PERMISSIONS.root.has("get_student_support_details"));
   assert.ok(PERMISSIONS.support.has("query_student_support"));
   assert.ok(PERMISSIONS.support.has("create_client_note"));
+  assert.ok(PERMISSIONS.support.has("query_support_queue"));
+  assert.ok(PERMISSIONS.support.has("update_support_case"));
+  assert.ok(PERMISSIONS.support.has("list_support_case_notes"));
+  assert.ok(!PERMISSIONS.support.has("review_support_case"));
   assert.ok(!PERMISSIONS.support.has("query_institute_timeline"));
   assert.ok(!PERMISSIONS.support.has("get_student_support_details"));
+});
+
+test("support status validation requires a real note and future follow-up", () => {
+  const now = Date.UTC(2026, 8, 23);
+  const base = { instituteId: "inst_1", body: "Owner asked us to call tomorrow", channel: "call" };
+  assert.deepEqual(normalizeSupportCaseUpdate({ ...base, status: "follow_up", followUpAtMs: now + 86_400_000 }, now),
+    { ...base, status: "follow_up", followUpAtMs: now + 86_400_000 });
+  assert.throws(() => normalizeSupportCaseUpdate({ ...base, status: "follow_up", followUpAtMs: now }, now), /future follow-up/i);
+  assert.throws(() => normalizeSupportCaseUpdate({ ...base, status: "done", body: "Owner password 1234" }, now), /password|OTP|PIN|token/i);
+  assert.throws(() => normalizeSupportCaseUpdate({ ...base, status: "done", followUpAtMs: now + 1 }, now), /future follow-up/i);
+});
+
+test("support queue hides completed cases for seven days and resurfaces due follow-ups", () => {
+  const now = Date.UTC(2026, 8, 23);
+  const institute = (id, name) => ({ id, data: () => ({
+    instituteName: name, phone: "01711111111", createdAt: now - 40 * 86_400_000,
+    subscriptionStatus: "expired", currentPeriodEndMs: now - 86_400_000,
+  }) });
+  const institutesSnap = { docs: [institute("done", "Done Institute"), institute("due", "Due Institute"), institute("new", "New Institute")] };
+  const casesSnap = { docs: [
+    { id: "done", data: () => ({ status: "done", hiddenUntilMs: now + 86_400_000, reviewStatus: "pending" }) },
+    { id: "due", data: () => ({ status: "follow_up", followUpAtMs: now - 1, reviewStatus: "reviewed" }) },
+  ] };
+  const active = supportQueueRows({ institutesSnap, casesSnap, now, view: "active" }).map((row) => row.instituteId);
+  assert.ok(!active.includes("done"));
+  assert.ok(active.includes("due"));
+  assert.ok(active.includes("new"));
+  assert.deepEqual(supportQueueRows({ institutesSnap, casesSnap, now, view: "review" }).map((row) => row.instituteId), ["done"]);
+  assert.deepEqual(supportQueueRows({ institutesSnap, casesSnap, now, view: "due" }).map((row) => row.instituteId), ["due"]);
+  assert.ok(supportQueueRows({ institutesSnap, casesSnap, now: now + 8 * 86_400_000, view: "active" })
+    .some((row) => row.instituteId === "done"));
+  const assignedCases = { docs: [
+    { id: "done", data: () => ({ status: "done", assignedToUid: "agent_a", hiddenUntilMs: 0 }) },
+    { id: "due", data: () => ({ status: "follow_up", assignedToUid: "agent_b", followUpAtMs: now - 1 }) },
+  ] };
+  assert.deepEqual(supportQueueRows({ institutesSnap, casesSnap: assignedCases, now, view: "due", actorUid: "agent_a" }), []);
+  assert.deepEqual(supportQueueRows({ institutesSnap, casesSnap: assignedCases, now, view: "due", actorUid: "agent_b" })
+    .map((row) => row.instituteId), ["due"]);
+  assert.deepEqual(supportQueueRows({ institutesSnap, casesSnap: { docs: [] }, now, view: "active", query: "new institute" })
+    .map((row) => row.instituteId), ["new"]);
 });
 
 test("platform and institute identities cannot overwrite one another", () => {

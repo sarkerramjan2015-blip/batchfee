@@ -30,6 +30,10 @@ const ACTIONS = new Set([
   "get_student_support_details",
   "list_client_notes",
   "create_client_note",
+  "query_support_queue",
+  "update_support_case",
+  "review_support_case",
+  "list_support_case_notes",
   "get_platform_dashboard",
   "get_business_intelligence",
 ]);
@@ -40,7 +44,8 @@ const PERMISSIONS = {
   // but only Root can open a student's detail view or the institute timeline.
   support: new Set([
     "send_owner_recovery", "query_institute_directory", "query_student_support",
-    "list_client_notes", "create_client_note", "get_platform_dashboard",
+    "list_client_notes", "create_client_note", "query_support_queue",
+    "update_support_case", "list_support_case_notes", "get_platform_dashboard",
   ]),
   billing: new Set(["get_platform_dashboard"]),
   read_only: new Set(["get_platform_dashboard"]),
@@ -1167,6 +1172,246 @@ async function listClientNotes({ db, request }) {
   };
 }
 
+// Institute-owner outreach is kept separate from product feedback and tenant
+// notes. Only the trusted platform callable can read or change these cases.
+const SUPPORT_CASE_STATUSES = new Set(["open", "follow_up", "done"]);
+const SUPPORT_CONTACT_CHANNELS = new Set(["call", "whatsapp", "sms", "other"]);
+const SUPPORT_QUEUE_VIEWS = new Set(["active", "due", "upcoming", "done", "review"]);
+const SUPPORT_DONE_COOLDOWN_MS = 7 * DIRECTORY_DAY_MS;
+
+function normalizeSupportCaseUpdate(data, now) {
+  const instituteId = requiredInstituteId(data);
+  const status = requiredString(data, "status", 24);
+  if (!SUPPORT_CASE_STATUSES.has(status)) throw new HttpsError("invalid-argument", "Invalid support status.");
+  const body = requiredString(data, "body", 2_000);
+  if (body.length < 3) throw new HttpsError("invalid-argument", "Write a short contact note.");
+  const channel = requiredString(data, "channel", 24);
+  if (!SUPPORT_CONTACT_CHANNELS.has(channel)) throw new HttpsError("invalid-argument", "Invalid contact channel.");
+  const followUpAtMs = data?.followUpAtMs == null ? 0 : data.followUpAtMs;
+  if (!Number.isSafeInteger(followUpAtMs) || followUpAtMs < 0 || followUpAtMs > now + 366 * DIRECTORY_DAY_MS ||
+      (status === "follow_up" && followUpAtMs <= now) || (status !== "follow_up" && followUpAtMs !== 0)) {
+    throw new HttpsError("invalid-argument", "Choose a future follow-up date within one year.");
+  }
+  if (noteContainsCredentialMaterial(body)) {
+    throw new HttpsError("invalid-argument", "Do not place passwords, OTPs, PINs, or tokens in support notes.");
+  }
+  return { instituteId, status, body, channel, followUpAtMs };
+}
+
+function publicSupportCase(institute, risk, record, now) {
+  const status = SUPPORT_CASE_STATUSES.has(record.status) ? record.status : "open";
+  return {
+    instituteId: institute.instituteId,
+    instituteName: institute.instituteName,
+    ownerName: institute.ownerName || "",
+    phone: institute.phone || "",
+    whatsappNumber: institute.whatsappNumber || institute.phone || "",
+    subscriptionStatus: institute.subscriptionStatus || "",
+    risk: risk?.risk || "low",
+    reasons: risk?.reasons || [],
+    status,
+    followUpAtMs: safeMillis(record.followUpAtMs),
+    hiddenUntilMs: safeMillis(record.hiddenUntilMs),
+    lastContactAtMs: safeMillis(record.lastContactAtMs),
+    lastChannel: typeof record.lastChannel === "string" ? record.lastChannel : "",
+    lastNote: typeof record.lastNote === "string" ? record.lastNote.slice(0, 2_000) : "",
+    lastAgentName: typeof record.lastAgentName === "string" ? record.lastAgentName : "",
+    assignedToName: typeof record.assignedToName === "string" ? record.assignedToName : "",
+    reviewStatus: record.reviewStatus === "pending" ? "pending" : "reviewed",
+    reviewedAtMs: safeMillis(record.reviewedAtMs),
+    isFollowUpDue: status === "follow_up" && safeMillis(record.followUpAtMs) <= now,
+  };
+}
+
+function supportQueueRows({ institutesSnap, casesSnap, now, view, actorUid = "", query = "" }) {
+  const risks = churnRiskRows({
+    institutesSnap, studentsAdded: new Map(), studentsLost: new Map(),
+    pendingPaymentRequests: new Map(), now,
+  });
+  const riskById = new Map(risks.map((row) => [row.instituteId, row]));
+  const casesById = new Map(casesSnap.docs.map((doc) => [doc.id, doc.data() || {}]));
+  const rows = [];
+  for (const doc of institutesSnap.docs) {
+    const data = doc.data() || {};
+    if (data.deletionState === "retained") continue;
+    const risk = riskById.get(doc.id);
+    const record = casesById.get(doc.id) || {};
+    if (actorUid && record.assignedToUid && record.assignedToUid !== actorUid) continue;
+    if (!risk && !casesById.has(doc.id)) continue;
+    const institute = { ...publicDirectoryInstitute(doc.id, data, now),
+      whatsappNumber: typeof data.whatsappNumber === "string" ? data.whatsappNumber : "" };
+    if (query && ![doc.id, institute.instituteName, institute.ownerName, institute.phone]
+      .some((value) => normalizedText(value).includes(query))) continue;
+    const row = publicSupportCase(institute, risk, record, now);
+    const inCooldown = row.status === "done" && row.hiddenUntilMs > now;
+    const eligibleNew = !casesById.has(doc.id) && (query || (risk && risk.risk !== "low"));
+    let include = false;
+    if (view === "review") include = casesById.has(doc.id) && row.reviewStatus === "pending";
+    else if (view === "done") include = row.status === "done";
+    else if (view === "upcoming") include = row.status === "follow_up" && !row.isFollowUpDue;
+    else if (view === "due") include = row.isFollowUpDue;
+    else include = !inCooldown && (eligibleNew || row.status === "open" || row.isFollowUpDue ||
+      (row.status === "done" && risk && risk.risk !== "low"));
+    if (include) rows.push(row);
+  }
+  rows.sort((a, b) => Number(b.isFollowUpDue) - Number(a.isFollowUpDue)
+    || BI_RISK_RANK[a.risk] - BI_RISK_RANK[b.risk]
+    || a.instituteName.localeCompare(b.instituteName));
+  return rows;
+}
+
+async function querySupportQueue({ db, request, actor, now }) {
+  const view = optionalString(request.data, "view", 24) || "active";
+  const query = normalizedText(optionalString(request.data, "query", 120));
+  if (!SUPPORT_QUEUE_VIEWS.has(view) || (view === "review" && actor.role !== "root")) {
+    throw new HttpsError("permission-denied", "This support view is unavailable.");
+  }
+  const [institutesSnap, casesSnap] = await Promise.all([
+    db.collection("institutes").get(), db.collection("platform_support_cases").get(),
+  ]);
+  const rows = supportQueueRows({ institutesSnap, casesSnap, now, view,
+    actorUid: actor.role === "support" ? request.auth.uid : "", query });
+  return { cases: rows.slice(0, 200), total: rows.length, view, snapshotAtMs: now };
+}
+
+async function updateSupportCase({ db, request, actor, operationId, requestHash, now }) {
+  const values = normalizeSupportCaseUpdate(request.data, now);
+  const instituteRef = db.collection("institutes").doc(values.instituteId);
+  const caseRef = db.collection("platform_support_cases").doc(values.instituteId);
+  const noteRef = caseRef.collection("notes").doc(operationId);
+  const operationRef = db.collection("platform_admin_operations").doc(operationId);
+  const actorName = typeof actor.user.name === "string" && actor.user.name.trim()
+    ? actor.user.name.trim().slice(0, 120) : "Support team";
+  return db.runTransaction(async (transaction) => {
+    const [existing, instituteSnap, caseSnap] = await Promise.all([
+      transaction.get(operationRef), transaction.get(instituteRef), transaction.get(caseRef),
+    ]);
+    if (existing.exists) {
+      if (existing.get("requestHash") !== requestHash || existing.get("actorUid") !== request.auth.uid) {
+        throw new HttpsError("already-exists", "Operation ID was already used for another request.");
+      }
+      return existing.get("result");
+    }
+    if (!instituteSnap.exists || instituteSnap.get("deletionState") === "retained") {
+      throw new HttpsError("not-found", "Active institute not found.");
+    }
+    const previous = caseSnap.exists ? caseSnap.data() || {} : {};
+    if (actor.role === "support" && previous.assignedToUid && previous.assignedToUid !== request.auth.uid) {
+      throw new HttpsError("permission-denied", "This case is assigned to another support member.");
+    }
+    const next = {
+      instituteId: values.instituteId,
+      status: values.status,
+      followUpAtMs: values.followUpAtMs,
+      hiddenUntilMs: values.status === "done" ? now + SUPPORT_DONE_COOLDOWN_MS : 0,
+      lastContactAtMs: now,
+      lastChannel: values.channel,
+      lastNote: values.body,
+      lastAgentUid: request.auth.uid,
+      lastAgentName: actorName,
+      assignedToUid: previous.assignedToUid || request.auth.uid,
+      assignedToName: previous.assignedToName || actorName,
+      reviewStatus: "pending",
+      reviewedAtMs: 0,
+      createdAtMs: safeMillis(previous.createdAtMs, now),
+      updatedAtMs: now,
+    };
+    transaction.set(caseRef, next);
+    transaction.create(noteRef, {
+      body: values.body, channel: values.channel, status: values.status,
+      followUpAtMs: values.followUpAtMs, actorUid: request.auth.uid,
+      actorName, actorRole: actor.role, createdAtMs: now,
+    });
+    transactionActivity(transaction, db, values.instituteId, `support_${operationId}`, {
+      action: "support_case_updated", actorUid: request.auth.uid, actorRole: actor.role,
+      targetType: "support_case", targetId: values.instituteId, now,
+      summary: `Support case marked ${values.status.replace("_", " ")}`,
+    });
+    const result = publicSupportCase({
+      ...publicDirectoryInstitute(values.instituteId, instituteSnap.data() || {}, now),
+      whatsappNumber: instituteSnap.get("whatsappNumber") || "",
+    }, null, next, now);
+    transaction.create(operationRef, {
+      actorUid: request.auth.uid, requestHash, action: "update_support_case", result, createdAtMs: now,
+    });
+    return result;
+  });
+}
+
+async function reviewSupportCase({ db, request, actor, operationId, requestHash, now }) {
+  const instituteId = requiredInstituteId(request.data);
+  const decision = requiredString(request.data, "decision", 24);
+  if (!new Set(["reviewed", "reopen"]).has(decision)) {
+    throw new HttpsError("invalid-argument", "Invalid support review decision.");
+  }
+  const note = optionalString(request.data, "note", 500);
+  if (noteContainsCredentialMaterial(note)) throw new HttpsError("invalid-argument", "Do not include credentials in review notes.");
+  const operationRef = db.collection("platform_admin_operations").doc(operationId);
+  const caseRef = db.collection("platform_support_cases").doc(instituteId);
+  return db.runTransaction(async (transaction) => {
+    const [existing, caseSnap] = await Promise.all([transaction.get(operationRef), transaction.get(caseRef)]);
+    if (existing.exists) {
+      if (existing.get("requestHash") !== requestHash || existing.get("actorUid") !== request.auth.uid) {
+        throw new HttpsError("already-exists", "Operation ID was already used for another request.");
+      }
+      return existing.get("result");
+    }
+    if (!caseSnap.exists) throw new HttpsError("not-found", "Support case not found.");
+    const next = {
+      reviewStatus: "reviewed", reviewedAtMs: now, reviewedByUid: request.auth.uid,
+      reviewDecision: decision, reviewNote: note, updatedAtMs: now,
+    };
+    if (decision === "reopen") {
+      next.status = "open";
+      next.hiddenUntilMs = 0;
+      next.followUpAtMs = 0;
+      next.assignedToUid = "";
+      next.assignedToName = "";
+    }
+    transaction.update(caseRef, next);
+    transaction.create(caseRef.collection("notes").doc(operationId), {
+      body: note || (decision === "reopen" ? "Super Admin requested follow-up" : "Super Admin reviewed feedback"),
+      channel: "internal", status: decision, actorUid: request.auth.uid,
+      actorName: typeof actor.user.name === "string" ? actor.user.name.slice(0, 120) : "Super Admin",
+      actorRole: actor.role, createdAtMs: now,
+    });
+    transactionActivity(transaction, db, instituteId, `support_review_${operationId}`, {
+      action: "support_case_reviewed", actorUid: request.auth.uid, actorRole: actor.role,
+      targetType: "support_case", targetId: instituteId, now,
+      summary: decision === "reopen" ? "Super Admin reopened support case" : "Super Admin reviewed support feedback",
+    });
+    const result = { instituteId, decision, reviewedAtMs: now };
+    transaction.create(operationRef, {
+      actorUid: request.auth.uid, requestHash, action: "review_support_case", result, createdAtMs: now,
+    });
+    return result;
+  });
+}
+
+async function listSupportCaseNotes({ db, request, actor }) {
+  const instituteId = requiredInstituteId(request.data);
+  await assertActiveInstitute(db, instituteId);
+  const caseSnap = await db.collection("platform_support_cases").doc(instituteId).get();
+  if (actor.role === "support" && caseSnap.exists && caseSnap.get("assignedToUid") &&
+      caseSnap.get("assignedToUid") !== request.auth.uid) {
+    throw new HttpsError("permission-denied", "This case is assigned to another support member.");
+  }
+  const page = await db.collection("platform_support_cases").doc(instituteId)
+    .collection("notes").orderBy("createdAtMs", "desc").limit(50).get();
+  return { notes: page.docs.map((doc) => {
+    const note = doc.data() || {};
+    return {
+      noteId: doc.id,
+      body: typeof note.body === "string" ? note.body : "",
+      channel: typeof note.channel === "string" ? note.channel : "",
+      status: typeof note.status === "string" ? note.status : "",
+      actorName: typeof note.actorName === "string" ? note.actorName : "",
+      createdAtMs: safeMillis(note.createdAtMs),
+      followUpAtMs: safeMillis(note.followUpAtMs),
+    };
+  }) };
+}
+
 function studentState(data) {
   if (data.archivedAtMs != null || data.deletionState === "retained" || data.status === "archived") return "archived";
   return data.status === "inactive" || data.status === "close" || data.status === "closed" ? "inactive" : "active";
@@ -1594,6 +1839,10 @@ function createPlatformAdminHandler({ db, adminAuth, smsProvider = null }) {
     if (action === "get_student_support_details") return getStudentSupportDetails({ db, request, actor, operationId, requestHash: hash, now });
     if (action === "list_client_notes") return listClientNotes({ db, request });
     if (action === "create_client_note") return createClientNote({ db, request, actor, operationId, requestHash: hash, now });
+    if (action === "query_support_queue") return querySupportQueue({ db, request, actor, now });
+    if (action === "update_support_case") return updateSupportCase({ db, request, actor, operationId, requestHash: hash, now });
+    if (action === "review_support_case") return reviewSupportCase({ db, request, actor, operationId, requestHash: hash, now });
+    if (action === "list_support_case_notes") return listSupportCaseNotes({ db, request, actor });
     if (action === "list_platform_admins") return listPlatformAdmins({ db });
     if (action === "transfer_owner") return transferOwner({ db, adminAuth, request, actor, operationId, requestHash: hash, now });
     if (action === "send_owner_recovery") return sendOwnerRecovery({ db, adminAuth, request, actor, operationId, requestHash: hash, now });
@@ -1618,6 +1867,8 @@ module.exports = {
   isManageablePlatformMember,
   matchesDirectoryFilters,
   normalizeClientNoteRequest,
+  normalizeSupportCaseUpdate,
+  supportQueueRows,
   normalizeDirectoryRequest,
   normalizeStudentSupportRequest,
   normalizeTimelineRequest,
