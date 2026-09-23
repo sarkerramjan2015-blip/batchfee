@@ -30,6 +30,7 @@ test("platform roles are explicit and legacy SuperAdmin remains root-compatible"
   assert.deepEqual([...PLATFORM_ROLES].sort(), ["billing", "operations", "read_only", "root", "support"]);
   assert.equal(platformRoleFor({ role: "SuperAdmin", status: "active" }), "root");
   assert.equal(platformRoleFor({ role: "PlatformAdmin", platformRole: "billing", status: "active" }), "billing");
+  assert.equal(platformRoleFor({ role: "PlatformAdmin", platformRole: "root", status: "active" }), "root");
   assert.equal(platformRoleFor({ role: "PlatformAdmin", platformRole: "root", status: "suspended" }), null);
 });
 

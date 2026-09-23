@@ -1087,8 +1087,6 @@ private fun MainAppContent(appDb: com.batchfee.edu.data.database.AppDatabase) {
                 onNavigateToDetail = { examId -> navController.navigate(ExamDetailRoute(examId)) },
                 onNavigateToPricing = { navController.navigate(PricingRoute) },
                 onOpenFinalExams = { navController.navigate(FinalExamsRoute) },
-                onOpenQuestionBank = { navController.navigate(QuestionBankFoundationRoute()) },
-                onOpenCuratedQuestionBank = { navController.navigate(CuratedQuestionBankRoute) },
                 onCreateFinalExam = { navController.navigate(CreateFinalExamRoute) }
             )
         }

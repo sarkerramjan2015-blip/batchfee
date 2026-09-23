@@ -61,7 +61,6 @@ import com.example.ui.components.BulkMessageDialog
 import com.example.ui.components.BulkSmsPreviewMessage
 import com.example.ui.components.BulkSendProgressDialog
 import com.example.ui.components.SelectionBadge
-import com.example.ui.components.ShimmerBorderCard
 import com.example.ui.components.buildBulkSmsPreview
 import com.batchfee.edu.ui.components.buildWhatsAppUrl
 import coil.compose.AsyncImage
@@ -100,8 +99,6 @@ fun ExamListScreen(
     onNavigateToDetail: (String) -> Unit,
     onNavigateToPricing: () -> Unit,
     onOpenFinalExams: () -> Unit = {},
-    onOpenQuestionBank: () -> Unit = {},
-    onOpenCuratedQuestionBank: () -> Unit = {},
     onCreateFinalExam: () -> Unit = {}
 ) {
     val viewModel: ExamViewModel = viewModel(factory = ExamViewModelFactory(db))
@@ -156,51 +153,6 @@ fun ExamListScreen(
                         Text("Multi-subject exams with approval workflow", color = TextMuted, fontSize = 12.sp)
                     }
                     Icon(Icons.Filled.ChevronRight, null, tint = AccentViolet)
-                }
-            }
-
-            ShimmerBorderCard(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 2.dp),
-                shape = RoundedCornerShape(16.dp),
-                containerColor = CardBg,
-                borderStops = listOf(
-                    0f to Color.Transparent,
-                    0.3f to Cyan.copy(alpha = 0.14f),
-                    0.37f to Cyan,
-                    0.44f to Cyan.copy(alpha = 0.14f),
-                    0.5f to Color.Transparent,
-                    0.8f to AccentViolet.copy(alpha = 0.14f),
-                    0.87f to AccentViolet,
-                    0.94f to AccentViolet.copy(alpha = 0.14f),
-                    1f to Color.Transparent
-                ),
-                glowColor = Cyan,
-                onClick = onOpenQuestionBank
-            ) {
-                Icon(Icons.Filled.LibraryBooks, null, tint = Cyan, modifier = Modifier.size(28.dp))
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Text("Create Questions", color = TextWhite, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                    Text("Create academic questions from up to 2 scanned pages", color = TextMuted, fontSize = 12.sp)
-                }
-                Icon(Icons.Filled.ChevronRight, null, tint = Cyan)
-            }
-
-            Card(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 2.dp)
-                    .clickable(onClick = onOpenCuratedQuestionBank),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = CardBg),
-                border = BorderStroke(1.dp, AccentGreen.copy(alpha = 0.5f))
-            ) {
-                Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Filled.LibraryBooks, null, tint = AccentGreen, modifier = Modifier.size(28.dp))
-                    Spacer(Modifier.width(12.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text("Approved Question Bank", color = TextWhite, fontWeight = FontWeight.Bold)
-                        Text("Build a paper from Super Admin-curated questions", color = TextMuted, fontSize = 12.sp)
-                    }
-                    Icon(Icons.Filled.ChevronRight, null, tint = AccentGreen)
                 }
             }
 

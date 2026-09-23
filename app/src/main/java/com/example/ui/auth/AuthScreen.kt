@@ -365,14 +365,26 @@ class AuthViewModel(private val db: AppDatabase) : ViewModel() {
                         AppUserSyncHelper.fetchManagedUser(uid)
                     }
                 }
-                if (managedUser?.role == "PlatformAdmin") {
-                    val allowedPlatformRoles = setOf("billing", "support", "operations", "read_only")
-                    if (managedUser.status != "active") {
+                val legacyRootRoles = setOf("SuperAdmin", "superAdmin", "super_admin")
+                val platformAuthorityRecord = managedUser?.role == "PlatformAdmin" ||
+                    managedUser?.role in legacyRootRoles
+                if (platformAuthorityRecord) {
+                    val platformUser = managedUser ?: return@launch
+                    // Keep this client gate exactly aligned with the trusted
+                    // platformRoleFor() policy: a legacy SuperAdmin without an
+                    // explicit role is Root; otherwise a valid platformRole is
+                    // required. This prevents a revoked/invalid record from
+                    // opening a console whose server actions will all reject.
+                    val allowedPlatformRoles = setOf("root", "billing", "support", "operations", "read_only")
+                    if (platformUser.status != "active") {
                         try { FirebaseAuth.getInstance().signOut() } catch (_: Exception) { }
                         onError("This platform account is suspended. Contact the Root administrator.")
                         return@launch
                     }
-                    if (managedUser.platformRole !in allowedPlatformRoles) {
+                    val hasValidPlatformAccess =
+                        (platformUser.role in legacyRootRoles && platformUser.platformRole.isNullOrBlank()) ||
+                            platformUser.platformRole in allowedPlatformRoles
+                    if (!hasValidPlatformAccess) {
                         try { FirebaseAuth.getInstance().signOut() } catch (_: Exception) { }
                         onError("This platform account is not configured correctly. Contact the Root administrator.")
                         return@launch

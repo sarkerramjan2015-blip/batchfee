@@ -77,6 +77,7 @@ fun SettingsScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val isDark by ThemePreferences.isDarkMode.collectAsState()
     val currentDark = isDark ?: true
+    val isAdmin = SessionManager.isAdmin()
     var biometricEnabled by remember { mutableStateOf(BiometricAuthManager.isEnabled(context)) }
     var showExportDialog by remember { mutableStateOf(false) }
     var exportInProgress by remember { mutableStateOf(false) }
@@ -118,6 +119,10 @@ fun SettingsScreen(
                     SettingsRow("Student Registration", Icons.Filled.PersonAdd, onClick = { onNavigate("StudentRegistrationRoute") })
                     HorizontalDivider(color = BorderSub)
                     SettingsRow("Online Payments", Icons.Filled.AccountBalanceWallet, onClick = { onNavigate("PaymentSettingsRoute") })
+                    if (isAdmin) {
+                        HorizontalDivider(color = BorderSub)
+                        SettingsRow("Due Reminder Automation", Icons.Filled.Autorenew, onClick = { onNavigate("SmartDueAutomationRoute") })
+                    }
                     HorizontalDivider(color = BorderSub)
                     SettingsRow("Export All Data", Icons.Filled.FileDownload, onClick = {
                         showExportDialog = true
@@ -288,7 +293,6 @@ fun SettingsScreen(
             var showRechargeDialog by remember { mutableStateOf(false) }
             var showSmsReport by remember { mutableStateOf(false) }
             var automationState by remember { mutableStateOf<DueAutomationState?>(null) }
-            val isAdmin = SessionManager.isAdmin()
             LaunchedEffect(instituteId) {
                 val resolvedInstituteId = instituteId
                 if (isAdmin && !resolvedInstituteId.isNullOrBlank()) {
@@ -360,32 +364,6 @@ fun SettingsScreen(
                             fontSize = 10.sp,
                             modifier = Modifier.padding(start = 4.dp, top = 6.dp)
                         )
-                        Spacer(Modifier.height(8.dp))
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(10.dp))
-                                .clickable { onNavigate("SmartDueAutomationRoute") }
-                                .padding(horizontal = 10.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(Icons.Filled.Autorenew, null, tint = Cyan, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text(
-                                    "Smart Due Automation",
-                                    color = TextWhite,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Text(
-                                    if (automationState?.policy?.enabled == true) "Automatic reminders are ON" else "Automatic reminders are off",
-                                    color = if (automationState?.policy?.enabled == true) AccentGreen else TextMuted,
-                                    fontSize = 9.sp
-                                )
-                            }
-                            Icon(Icons.Filled.ChevronRight, null, tint = TextMuted, modifier = Modifier.size(18.dp))
-                        }
                         Spacer(Modifier.height(10.dp))
                         Row(
                             modifier = Modifier

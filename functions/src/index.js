@@ -128,6 +128,9 @@ const MAINTENANCE_CONCURRENCY = 10;
 const EXPIRY_MAX_PAGES_PER_RUN = 25;
 const DUMMY_SALT = Buffer.alloc(16, 7).toString("base64");
 const DUMMY_HASH = Buffer.alloc(64, 11).toString("base64");
+// Owner push tokens older than this window are ignored for payment-request
+// notifications (mirrors the notice center token-freshness policy).
+const PAYMENT_REQUEST_PUSH_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const callableOptions = {
   region: REGION,
   timeoutSeconds: 30,
@@ -2689,6 +2692,64 @@ exports.commitPlatformAdminOperation = onCall(
 exports.commitNoticeCenterOperation = onCall(
   { ...callableOptions, timeoutSeconds: 60 },
   guarded(createNoticeCenterHandler({ db, messaging })),
+);
+// When a guardian submits an online payment request, notify the institute
+// owner's registered devices. Push is best-effort; the in-app review badge and
+// the pending Firestore document remain the durable source of truth.
+exports.notifyOwnerPaymentRequest = onDocumentWritten(
+  { region: REGION, document: "institutes/{instituteId}/payment_requests/{requestId}", memory: "256MiB" },
+  async (event) => {
+    const after = event.data && event.data.after;
+    const before = event.data && event.data.before;
+    if (!after || !after.exists || (before && before.exists)) return; // create-only
+    const data = after.data() || {};
+    if (data.status !== "pending") return;
+    const instituteId = event.params.instituteId;
+    const requestId = event.params.requestId;
+    try {
+      const instituteSnap = await db.collection("institutes").doc(instituteId).get();
+      const institute = instituteSnap.exists ? instituteSnap.data() || {} : {};
+      const ownerUid = typeof institute.ownerUid === "string" && institute.ownerUid ? institute.ownerUid : "";
+      if (!ownerUid) return;
+      const now = Date.now();
+      const tokensSnap = await db.collection("notice_push_tokens")
+        .where("instituteId", "==", instituteId)
+        .where("userId", "==", ownerUid)
+        .limit(50)
+        .get();
+      const targets = tokensSnap.docs.filter((doc) => {
+        const row = doc.data() || {};
+        const token = typeof row.token === "string" ? row.token : "";
+        const updatedAtMs = Number(row.updatedAtMs) || 0;
+        return token.length >= 20 && updatedAtMs >= now - PAYMENT_REQUEST_PUSH_MAX_AGE_MS;
+      });
+      if (!targets.length) return;
+      const studentName = typeof data.studentName === "string" && data.studentName ? data.studentName.slice(0, 80) : "A guardian";
+      const amount = Number.isFinite(Number(data.amount)) ? Number(data.amount) : 0;
+      const method = typeof data.method === "string" ? data.method : "online payment";
+      const body = `New online payment request from ${studentName} — ৳${amount.toFixed(2)} (${method}).`.slice(0, 300);
+      const response = await messaging.sendEachForMulticast({
+        tokens: targets.map((doc) => doc.get("token")),
+        notification: { title: "Online payment request", body },
+        data: { type: "payment_request", requestId, instituteId, title: "Online payment request", body },
+        android: { priority: "high", notification: { channelId: "batchfee_notices", sound: "default" } },
+      });
+      const staleRefs = [];
+      response.responses.forEach((result, index) => {
+        if (!result.success) {
+          const code = result.error && result.error.code;
+          if (code === "messaging/registration-token-not-registered" || code === "messaging/invalid-registration-token") {
+            staleRefs.push(targets[index].ref);
+          }
+        }
+      });
+      await Promise.all(staleRefs.map((ref) => ref.delete().catch(() => {})));
+    } catch (error) {
+      logger.warn("Payment request push notification skipped", {
+        instituteId, requestId, errorMessage: error && error.message,
+      });
+    }
+  },
 );
 exports.questionBankFoundation = onCall(
   callableOptions,

@@ -97,8 +97,8 @@ android {
     applicationId = "com.batchfee.edu"
     minSdk = 24
     targetSdk = 36
-    versionCode = 13
-    versionName = "1.8.1"
+    versionCode = 15
+    versionName = "1.8.3"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }

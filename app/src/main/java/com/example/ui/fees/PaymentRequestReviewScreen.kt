@@ -103,23 +103,36 @@ fun PaymentRequestReviewScreen(
     var selected by remember { mutableStateOf<PaymentRequestRow?>(null) }
     var loading by remember { mutableStateOf(true) }
     var allowPartial by remember { mutableStateOf(true) }
+    var requestLoadError by remember { mutableStateOf<String?>(null) }
+    var listenerAttempt by remember { mutableStateOf(0) }
 
-    DisposableEffect(instituteId) {
+    DisposableEffect(instituteId, listenerAttempt) {
         if (instituteId.isBlank()) { onDispose { }; return@DisposableEffect onDispose { } }
         val collection = FirebaseFirestore.getInstance()
             .collection("institutes").document(instituteId).collection("payment_requests")
         val pendingListener: ListenerRegistration = collection
             .whereEqualTo("status", "pending")
             .orderBy("submittedAtMs", Query.Direction.DESCENDING)
-            .addSnapshotListener { snap, _ ->
+            .addSnapshotListener { snap, error ->
+                if (error != null) {
+                    requestLoadError = "Payment requests could not be loaded. Please try again."
+                    loading = false
+                    FirebaseFailureReporter.report(error, operation = "load pending payment requests")
+                    return@addSnapshotListener
+                }
                 requests = snap?.documents?.mapNotNull { it.toRow() }.orEmpty()
+                requestLoadError = null
                 loading = false
             }
         val reviewedListener: ListenerRegistration = collection
             .whereIn("status", listOf("approved", "rejected", "correction_requested", "cancelled"))
             .orderBy("reviewedAtMs", Query.Direction.DESCENDING)
             .limit(30)
-            .addSnapshotListener { snap, _ ->
+            .addSnapshotListener { snap, error ->
+                if (error != null) {
+                    FirebaseFailureReporter.report(error, operation = "load reviewed payment requests")
+                    return@addSnapshotListener
+                }
                 reviewed = snap?.documents?.mapNotNull { it.toRow() }.orEmpty()
             }
         onDispose { pendingListener.remove(); reviewedListener.remove() }
@@ -170,7 +183,24 @@ fun PaymentRequestReviewScreen(
                 }
             } else {
                 val list = if (showReviewed) reviewed else requests
-                if (list.isEmpty()) {
+                if (!showReviewed && requestLoadError != null) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                            modifier = Modifier.padding(24.dp),
+                        ) {
+                            Text(requestLoadError!!, color = PrMuted, fontSize = 13.sp)
+                            OutlinedButton(onClick = {
+                                requestLoadError = null
+                                loading = true
+                                listenerAttempt += 1
+                            }) {
+                                Text("Retry", color = PrCyan)
+                            }
+                        }
+                    }
+                } else if (list.isEmpty()) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Text(
                             if (showReviewed) "No reviewed requests yet." else "No pending payment requests.",

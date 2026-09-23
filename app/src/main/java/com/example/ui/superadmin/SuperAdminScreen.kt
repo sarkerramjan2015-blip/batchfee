@@ -483,12 +483,21 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
         return try {
             val record = firestore.collection("app_users").document(uid).get().await()
             val data = record.data ?: return "read_only"
-            if (data["status"] == "suspended") return "read_only"
+            // The server/rules authorize a platform identity only when its
+            // status is absent (legacy) or exactly "active". Match that
+            // fail-closed policy so a revoked record cannot receive a local
+            // Root console while every trusted action is rejected remotely.
+            val status = data["status"] as? String
+            if (status != null && status != "active") return "read_only"
+            val storedPlatformRole = data["platformRole"] as? String
             when {
-                data["role"] in setOf("SuperAdmin", "superAdmin", "super_admin") -> "root"
-                data["role"] == "PlatformAdmin" && data["platformRole"] in setOf(
-                    "billing", "support", "operations", "read_only"
-                ) -> data["platformRole"] as String
+                // Legacy SuperAdmin records remain Root only when they have
+                // not been assigned an explicit platform role. This mirrors
+                // the trusted callable's platformRoleFor() policy.
+                data["role"] in setOf("SuperAdmin", "superAdmin", "super_admin") &&
+                    storedPlatformRole.isNullOrBlank() -> "root"
+                storedPlatformRole in setOf("root", "billing", "support", "operations", "read_only") ->
+                    storedPlatformRole.orEmpty()
                 else -> "read_only"
             }
         } catch (error: Exception) {
@@ -1924,7 +1933,11 @@ class SuperAdminViewModel(private val db: AppDatabase) : ViewModel() {
             .orderBy("createdAtMs", Query.Direction.DESCENDING)
             .limit(ADMIN_LIST_WINDOW)
             .addSnapshotListener { snapshot, error ->
-            if (error != null || snapshot == null) return@addSnapshotListener
+            if (error != null || snapshot == null) {
+                error?.let { FirebaseFailureReporter.report(it, "load platform audit", permissionDeniedIsExpected = true) }
+                _operationMsg.value = "Platform audit is temporarily unavailable. Try again shortly."
+                return@addSnapshotListener
+            }
             _platformAudit.value = snapshot.documents.mapNotNull { document ->
                 val data = document.data ?: return@mapNotNull null
                 val details = data["details"] as? Map<*, *>
@@ -4720,11 +4733,6 @@ private fun SupportStudentLookupCard(viewModel: SuperAdminViewModel) {
     var nextCursor by remember { mutableStateOf("") }
     var hasMore by remember { mutableStateOf(false) }
     var loadingMore by remember { mutableStateOf(false) }
-    var selectedStudent by remember { mutableStateOf<StudentSupportResult?>(null) }
-    var reason by remember { mutableStateOf("") }
-    var details by remember { mutableStateOf<StudentSupportDetails?>(null) }
-    var detailsError by remember { mutableStateOf<String?>(null) }
-    var detailLoading by remember { mutableStateOf(false) }
     Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = CardBg)) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
             Text("Student support lookup", color = TextWhite, fontWeight = FontWeight.Bold)
@@ -4740,8 +4748,6 @@ private fun SupportStudentLookupCard(viewModel: SuperAdminViewModel) {
             Button(
                 onClick = {
                     error = null
-                    details = null
-                    selectedStudent = null
                     results = null
                     nextCursor = ""
                     hasMore = false
@@ -4767,12 +4773,11 @@ private fun SupportStudentLookupCard(viewModel: SuperAdminViewModel) {
                                 Text(result.fullName, color = TextWhite, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                                 Text("${result.instituteName} / ${result.studentCode.ifBlank { "No Student ID" }}", color = TextMuted, fontSize = 10.sp)
                                 Text("${result.status.replaceFirstChar { it.uppercase() }} / ${result.batchName}", color = AccentCyan, fontSize = 10.sp)
-                                TextButton(onClick = {
-                                    selectedStudent = result
-                                    reason = ""
-                                    details = null
-                                    detailsError = null
-                                }) { Text("View details", color = AccentCyan, fontSize = 11.sp) }
+                                // Support search is intentionally limited to
+                                // minimum data. The trusted backend keeps the
+                                // audited detail endpoint Root-only, so do not
+                                // render an action that can only fail here.
+                                Text("Detailed student access is available to Root only.", color = TextMuted, fontSize = 9.sp)
                             }
                         }
                     }
@@ -4794,43 +4799,6 @@ private fun SupportStudentLookupCard(viewModel: SuperAdminViewModel) {
                             colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentCyan)
                         ) { Text(if (loadingMore) "Loading…" else "Load more", fontSize = 11.sp) }
                     }
-                }
-            }
-            selectedStudent?.let { result ->
-                HorizontalDivider(color = BorderSub)
-                Text("Open student details", color = TextWhite, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                Text("A support reason is required and access will be recorded in Activity.", color = TextMuted, fontSize = 10.sp)
-                OutlinedTextField(
-                    value = reason,
-                    onValueChange = { if (it.length <= 300) reason = it },
-                    label = { Text("Support reason (minimum 10 characters)") },
-                    minLines = 2,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = directoryFieldColors()
-                )
-                Button(
-                    onClick = {
-                        detailLoading = true
-                        detailsError = null
-                        viewModel.openStudentSupportDetails(result, reason) { loaded, loadError ->
-                            details = loaded
-                            detailsError = loadError
-                            detailLoading = false
-                        }
-                    },
-                    enabled = reason.trim().length >= 10 && !detailLoading,
-                    colors = ButtonDefaults.buttonColors(containerColor = AccentAmber)
-                ) { Text(if (detailLoading) "Opening…" else "Open audited details", color = BgColor) }
-                detailsError?.let { Text(it, color = AccentRed, fontSize = 10.sp) }
-                details?.let { loaded ->
-                    DetailRows(listOf(
-                        "Student" to loaded.fullName,
-                        "Student ID" to loaded.studentCode,
-                        "Status" to loaded.status,
-                        "Phone" to loaded.phone.ifBlank { "Not set" },
-                        "Class" to loaded.className.ifBlank { "Not set" },
-                        "Batches" to loaded.batchNames.joinToString().ifBlank { "No active batch" }
-                    ))
                 }
             }
         }
@@ -7663,15 +7631,28 @@ private data class TrailRequestRow(
 private fun PaymentRequestTrailSection(institutes: List<InstituteCardData>) {
     val instituteNames = remember(institutes) { institutes.associate { it.entity.id to it.entity.name } }
     var rows by remember { mutableStateOf<List<TrailRequestRow>>(emptyList()) }
+    var loadError by remember { mutableStateOf<String?>(null) }
+    var listenerAttempt by remember { mutableIntStateOf(0) }
     var filter by remember { mutableStateOf("all") }
     var selected by remember { mutableStateOf<TrailRequestRow?>(null) }
     val df = remember { java.text.SimpleDateFormat("dd MMM yyyy, hh:mm a", java.util.Locale.getDefault()) }
     fun instituteLabel(id: String) = instituteNames[id] ?: id
 
-    DisposableEffect(Unit) {
+    DisposableEffect(listenerAttempt) {
+        loadError = null
         val listener = FirebaseFirestore.getInstance()
             .collectionGroup("payment_requests")
-            .addSnapshotListener { snap, _ ->
+            .addSnapshotListener { snap, error ->
+                if (error != null || snap == null) {
+                    FirebaseFailureReporter.report(
+                        error ?: IllegalStateException("Payment trail snapshot was empty."),
+                        "load platform payment trail",
+                        permissionDeniedIsExpected = true
+                    )
+                    loadError = "Online payment trail is temporarily unavailable. Try again."
+                    return@addSnapshotListener
+                }
+                loadError = null
                 rows = snap?.documents?.mapNotNull { doc ->
                     TrailRequestRow(
                         id = doc.id,
@@ -7723,6 +7704,27 @@ private fun PaymentRequestTrailSection(institutes: List<InstituteCardData>) {
             }
         }
         Spacer(Modifier.height(8.dp))
+
+        loadError?.let { message ->
+            Card(
+                Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = AccentRed.copy(alpha = 0.10f)),
+                border = BorderStroke(1.dp, AccentRed.copy(alpha = 0.35f))
+            ) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(message, color = TextMuted, fontSize = 11.sp, modifier = Modifier.weight(1f))
+                    TextButton(onClick = {
+                        rows = emptyList()
+                        listenerAttempt += 1
+                    }) { Text("Retry", color = AccentCyan, fontSize = 11.sp) }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+        }
 
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             listOf("all" to "All", "pending" to "Pending", "approved" to "Approved", "reviewed" to "Reviewed").forEach { (value, label) ->
