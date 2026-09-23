@@ -67,6 +67,7 @@ import com.batchfee.edu.data.models.SubscriptionRequest
 import com.batchfee.edu.data.repository.SafeDeletionRepository
 import com.batchfee.edu.data.repository.PermanentArchivePurgeRepository
 import com.batchfee.edu.data.repository.SmsRechargeAccounting
+import com.batchfee.edu.data.repository.SmsInstituteUsage
 import com.batchfee.edu.data.repository.SmsPlatformAnalytics
 import com.batchfee.edu.data.repository.SmsProfitPeriod
 import com.batchfee.edu.data.repository.SmsRechargeReviewRequest
@@ -3043,6 +3044,8 @@ private fun SmsRechargeReviewSection(
     var centralSmsCount by remember { mutableStateOf("") }
     var centralReference by remember { mutableStateOf("") }
     var centralNote by remember { mutableStateOf("") }
+    var smsLedgerMenuExpanded by rememberSaveable { mutableStateOf(false) }
+    var selectedSmsInstituteId by rememberSaveable { mutableStateOf<String?>(null) }
     val smsAuditDateFormat = remember { SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault()) }
     LaunchedEffect(Unit) { onLoaded() }
     // Keep the root view current while it is open without making every
@@ -3280,9 +3283,70 @@ private fun SmsRechargeReviewSection(
                         Spacer(Modifier.height(10.dp))
                         HorizontalDivider(color = BorderSub)
                         Spacer(Modifier.height(8.dp))
-                        Text("Institute SMS ledger (${report.institutes.size})", color = TextWhite, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
-                        Text("Bought, sent and remaining credits for every institute", color = TextMuted, fontSize = 9.sp)
-                        report.institutes.forEach { institute ->
+                        val smsBuyers = report.institutes
+                            .filter { it.totalSmsPurchased > 0 || it.lifetimeSms > 0 || it.walletBalance > 0 }
+                            .sortedWith(compareByDescending<SmsInstituteUsage> { it.totalSmsPurchased }
+                                .thenBy { it.instituteName.lowercase(Locale.getDefault()) })
+                        val selectedSmsInstitute = selectedSmsInstituteId?.let { id ->
+                            report.institutes.firstOrNull { it.instituteId == id }
+                        }
+                        val visibleSmsInstitutes = selectedSmsInstitute?.let { listOf(it) } ?: smsBuyers
+                        Text("Institute SMS ledger (${smsBuyers.size} active)", color = TextWhite, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                        Text("Showing institutes with SMS purchases or usage", color = TextMuted, fontSize = 9.sp)
+                        Spacer(Modifier.height(7.dp))
+                        Box {
+                            OutlinedButton(
+                                onClick = { smsLedgerMenuExpanded = true },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(9.dp),
+                                border = BorderStroke(1.dp, AccentCyan.copy(alpha = 0.55f)),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = TextWhite)
+                            ) {
+                                Text(
+                                    selectedSmsInstitute?.instituteName
+                                        ?: "All active SMS buyers (${smsBuyers.size})",
+                                    modifier = Modifier.weight(1f),
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Start,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    fontSize = 11.sp
+                                )
+                                Icon(Icons.Filled.ArrowDropDown, null, tint = AccentCyan)
+                            }
+                            DropdownMenu(
+                                expanded = smsLedgerMenuExpanded,
+                                onDismissRequest = { smsLedgerMenuExpanded = false },
+                                modifier = Modifier.heightIn(max = 360.dp)
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("All active SMS buyers (${smsBuyers.size})") },
+                                    onClick = {
+                                        selectedSmsInstituteId = null
+                                        smsLedgerMenuExpanded = false
+                                    }
+                                )
+                                smsBuyers.forEach { institute ->
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                institute.instituteName.ifBlank { institute.instituteId },
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        },
+                                        onClick = {
+                                            selectedSmsInstituteId = institute.instituteId
+                                            smsLedgerMenuExpanded = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                        if (visibleSmsInstitutes.isEmpty()) {
+                            Spacer(Modifier.height(8.dp))
+                            Text("No institute has purchased or used SMS yet.", color = TextMuted, fontSize = 10.sp)
+                        }
+                        visibleSmsInstitutes.forEach { institute ->
                             Spacer(Modifier.height(6.dp))
                             Row(
                                 Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
